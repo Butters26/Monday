@@ -1,0 +1,98 @@
+{
+  "brain_system": {
+    "name": "Brain System",
+    "version": "1.0.0",
+    "base_path": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here"
+  },
+  
+  "lobes": {
+    "representation": {
+      "name": "Representation Layer",
+      "script": "representation.py",
+      "socket": "/tmp/representation.sock",
+      "enabled": true,
+      "auto_start": true
+    },
+    "pattern": {
+      "name": "Pattern Recognition",
+      "script": "pattern_recognition.py",
+      "socket": "/tmp/pattern.sock",
+      "enabled": true,
+      "auto_start": true,
+      "thresholds": {
+        "co_occurrence": 3,
+        "sequence": 2,
+        "cluster": 4
+      }
+    },
+    "reasoning": {
+      "name": "Reasoning",
+      "script": "reasoning.py",
+      "socket": "/tmp/reasoning.sock",
+      "enabled": true,
+      "auto_start": true
+    },
+    "notus": {
+      "name": "Notus Memory",
+      "script": "notus.py",
+      "socket": "/tmp/notus.sock",
+      "enabled": true,
+      "auto_start": true,
+      "database": "superhuman_memory.db"
+    },
+    "emotion": {
+      "name": "Emotional Engine",
+      "script": "advanced_emotional_engine.py",
+      "socket": "/tmp/emotion.sock",
+      "enabled": true,
+      "auto_start": true,
+      "state_file": "monday_emotional_state.json"
+    },
+    "perception": {
+      "name": "Perception",
+      "script": "perception.py",
+      "socket": "/tmp/perception.sock",
+      "enabled": true,
+      "auto_start": true
+    },
+    "output": {
+      "name": "Output",
+      "script": "output.py",
+      "socket": "/tmp/output.sock",
+      "enabled": true,
+      "auto_start": true
+    }
+  },
+  
+  "thalamus": {
+    "name": "Thalamus Coordinator",
+    "script": "thalamus.py",
+    "enabled": true
+  },
+  
+  "interface": {
+    "script": "brain_interface.py",
+    "enabled": true,
+    "update_interval_ms": 2000
+  },
+  
+  "paths": {
+    "sockets": "/tmp",
+    "data": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here",
+    "memory_db": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here/superhuman_memory.db",
+    "emotional_state": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here/monday_emotional_state.json",
+    "logs": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here/logs"
+  },
+  
+  "startup": {
+    "delay_between_lobes_ms": 500,
+    "max_startup_retries": 3,
+    "startup_timeout_seconds": 30
+  },
+  
+  "communication": {
+    "message_timeout_seconds": 10,
+    "max_message_size_bytes": 10485760
+  }
+}
+

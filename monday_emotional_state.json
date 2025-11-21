@@ -1,0 +1,101 @@
+{
+  "name": "Monday",
+  "current_emotion": "sad",
+  "emotional_intensity": 0.7952551700196827,
+  "emotional_resonance": 0.4,
+  "personality": {
+    "openness": 0.5,
+    "conscientiousness": 0.5,
+    "extraversion": 0.6,
+    "agreeableness": 0.5,
+    "neuroticism": 0.5,
+    "emotional_sensitivity": 0.7,
+    "emotional_stability": 0.5,
+    "emotional_expressiveness": 0.5,
+    "empathy_level": 0.8,
+    "pad_setpoint_v": 0.1,
+    "pad_setpoint_a": 0.15,
+    "pad_setpoint_d": 0.2,
+    "hysteresis_margin": 0.15,
+    "refractory_sec": 1.5
+  },
+  "emotional_memories": [
+    {
+      "emotion": "sad",
+      "intensity": 0.840615820272582,
+      "trigger": "Direct trigger: Why do people get lonely?...",
+      "timestamp": 1763266269.779835,
+      "context": "Threshold-based switch",
+      "influence_strength": 1.0,
+      "associated_emotions": []
+    },
+    {
+      "emotion": "sad",
+      "intensity": 0.8710167670777085,
+      "trigger": "Direct trigger: Why do people get lonely?...",
+      "timestamp": 1763271257.423459,
+      "context": "Threshold-based switch",
+      "influence_strength": 1.0,
+      "associated_emotions": []
+    },
+    {
+      "emotion": "sad",
+      "intensity": 0.9046020448824137,
+      "trigger": "Direct trigger: Why do people get lonely?...",
+      "timestamp": 1763271561.773524,
+      "context": "Threshold-based switch",
+      "influence_strength": 1.0,
+      "associated_emotions": []
+    },
+    {
+      "emotion": "sad",
+      "intensity": 0.8008463266248947,
+      "trigger": "Direct trigger: Why do people get lonely?...",
+      "timestamp": 1763271640.920743,
+      "context": "Threshold-based switch",
+      "influence_strength": 1.0,
+      "associated_emotions": []
+    },
+    {
+      "emotion": "sad",
+      "intensity": 0.9452551700196828,
+      "trigger": "Direct trigger: horrible name...",
+      "timestamp": 1763599711.9867241,
+      "context": "Threshold-based switch",
+      "influence_strength": 1.0,
+      "associated_emotions": []
+    }
+  ],
+  "mood_history": [
+    [
+      1763266269.779835,
+      "sad",
+      0.840615820272582
+    ],
+    [
+      1763271257.423459,
+      "sad",
+      0.8710167670777085
+    ],
+    [
+      1763271561.773524,
+      "sad",
+      0.9046020448824137
+    ],
+    [
+      1763271640.920743,
+      "sad",
+      0.8008463266248947
+    ],
+    [
+      1763599711.9867241,
+      "sad",
+      0.9452551700196828
+    ]
+  ],
+  "emotional_blends": [],
+  "emotional_patterns": {},
+  "emotional_intelligence_score": 0.7000000000000001,
+  "updated_at": 1763599766.9653609,
+  "created_at": 1763599766.9653609
+}

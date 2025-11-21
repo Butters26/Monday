@@ -1,0 +1,64 @@
+{
+  "output": {
+    "socket_path": "/tmp/output.sock",
+    
+    "voice": {
+      "enabled": false,
+      "engine": "pyttsx3",
+      "rate": 150,
+      "volume": 1.0,
+      "voice_id": null,
+      "waiting_for_custom_voice": true,
+      "custom_voice_name": "Shadowheart"
+    },
+    
+    "text": {
+      "enabled": true,
+      "default": true
+    },
+    
+    "formatting": {
+      "apply_emotional_formatting": true,
+      "high_intensity_threshold": 0.6,
+      "very_high_intensity_threshold": 0.8
+    },
+    
+    "emotional_formatting": {
+      "excited": {
+        "suffix": "!",
+        "transform": "none"
+      },
+      "happy": {
+        "suffix": "!",
+        "transform": "none"
+      },
+      "worried": {
+        "suffix": "...",
+        "transform": "none"
+      },
+      "scared": {
+        "suffix": "...",
+        "transform": "none"
+      },
+      "angry": {
+        "suffix": "",
+        "transform": "uppercase_if_very_high"
+      }
+    },
+    
+    "output_types": {
+      "response": {
+        "default": true,
+        "include_emotion": true
+      },
+      "thought": {
+        "prefix": "💭 "
+      },
+      "action": {
+        "prefix": "*",
+        "suffix": "*"
+      }
+    }
+  }
+}
+
