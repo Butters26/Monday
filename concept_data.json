@@ -1,0 +1,78 @@
+{
+  "emotions": [
+    "happy", "sad", "angry", "excited", "worried", "calm", "curious", "proud",
+    "anxious", "content", "frustrated", "grateful", "guilty", "hopeful", "jealous",
+    "lonely", "nostalgic", "overwhelmed", "peaceful", "resentful", "scared",
+    "surprised", "disappointed", "embarrassed", "relieved", "confident", "confused",
+    "disgusted", "envious", "grief", "joy", "love", "hate", "fear", "trust",
+    "anticipation", "bored", "stressed", "relaxed", "tired", "energized"
+  ],
+  
+  "objects": [
+    "dog", "cat", "bird", "fish", "tree", "flower", "rock", "water", "fire",
+    "house", "car", "phone", "computer", "book", "chair", "table", "window", "door",
+    "food", "drink", "coffee", "tea", "bread", "fruit", "meat", "sky", "sun", "moon",
+    "star", "cloud", "rain", "snow", "mountain", "ocean", "river", "forest",
+    "person", "friend", "family", "child", "adult", "baby", "hand", "face", "eye",
+    "heart", "brain", "body", "mind", "soul", "clothes", "shoes", "hat", "shirt",
+    "music", "song", "art", "painting", "photo", "movie", "game"
+  ],
+  
+  "actions": [
+    "think", "feel", "remember", "learn", "speak", "listen", "see", "understand",
+    "walk", "run", "jump", "sit", "stand", "sleep", "wake", "eat", "drink",
+    "read", "write", "draw", "paint", "sing", "dance", "play", "work", "rest",
+    "love", "hate", "like", "want", "need", "give", "take", "make", "break",
+    "build", "destroy", "create", "imagine", "dream", "hope", "fear", "wonder",
+    "question", "answer", "ask", "tell", "show", "hide", "find", "lose", "search",
+    "help", "hurt", "heal", "protect", "attack", "defend", "fight", "peace"
+  ],
+  
+  "abstract": [
+    "time", "space", "life", "death", "truth", "lie", "good", "bad", "right", "wrong",
+    "beauty", "ugly", "strength", "weakness", "knowledge", "ignorance", "wisdom",
+    "foolishness", "freedom", "slavery", "justice", "injustice", "peace", "war",
+    "order", "chaos", "meaning", "purpose", "existence", "void", "everything",
+    "nothing", "possibility", "impossibility", "reality", "fantasy", "past",
+    "present", "future", "memory", "hope", "dream", "nightmare", "success",
+    "failure", "beginning", "end", "cause", "effect", "reason", "emotion",
+    "thought", "consciousness", "awareness", "understanding", "confusion",
+    "clarity", "complexity", "simplicity", "unity", "separation", "connection",
+    "isolation", "belonging", "alienation", "identity", "change", "permanence"
+  ],
+  
+  "relations": [
+    {"type": "opposite_of", "pairs": [
+      ["happy", "sad"], ["love", "hate"], ["good", "bad"], ["hot", "cold"],
+      ["big", "small"], ["strong", "weak"], ["fast", "slow"], ["up", "down"],
+      ["light", "dark"], ["truth", "lie"], ["peace", "war"], ["life", "death"],
+      ["begin", "end"], ["give", "take"], ["create", "destroy"]
+    ]},
+    
+    {"type": "similar_to", "pairs": [
+      ["happy", "joyful"], ["sad", "depressed"], ["angry", "furious"],
+      ["think", "ponder"], ["walk", "stroll"], ["run", "sprint"],
+      ["small", "tiny"], ["big", "large"], ["beautiful", "pretty"]
+    ]},
+    
+    {"type": "causes", "pairs": [
+      ["rain", "wet"], ["fire", "hot"], ["sleep", "rest"], ["work", "tired"],
+      ["laugh", "happy"], ["cry", "sad"], ["learn", "knowledge"],
+      ["practice", "skill"], ["love", "connection"], ["fear", "avoidance"]
+    ]},
+    
+    {"type": "is_a", "pairs": [
+      ["dog", "animal"], ["cat", "animal"], ["bird", "animal"],
+      ["tree", "plant"], ["flower", "plant"], ["car", "vehicle"],
+      ["house", "building"], ["happy", "emotion"], ["sad", "emotion"],
+      ["run", "action"], ["think", "action"], ["truth", "concept"]
+    ]},
+    
+    {"type": "has_property", "pairs": [
+      ["dog", "loyal"], ["cat", "independent"], ["fire", "hot"],
+      ["water", "wet"], ["sky", "blue"], ["sun", "bright"],
+      ["snow", "cold"], ["friend", "trustworthy"], ["love", "powerful"]
+    ]}
+  ]
+}
+

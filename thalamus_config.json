@@ -1,0 +1,53 @@
+{
+  "thalamus": {
+    "name": "Thalamus Central Coordinator",
+    
+    "sockets": {
+      "notus": "/tmp/notus.sock",
+      "emotion": "/tmp/emotion.sock",
+      "perception": "/tmp/perception.sock",
+      "reasoning": "/tmp/reasoning.sock",
+      "output": "/tmp/output.sock",
+      "pattern": "/tmp/pattern.sock",
+      "representation": "/tmp/representation.sock"
+    },
+    
+    "priorities": {
+      "critical": 10,
+      "high": 7,
+      "normal": 5,
+      "low": 3,
+      "background": 1
+    },
+    
+    "coalitions": {
+      "user_input": {
+        "members": ["perception", "notus", "emotion", "reasoning", "output", "pattern"],
+        "coordinator": "reasoning",
+        "priority": "high"
+      },
+      "memory_query": {
+        "members": ["notus", "reasoning"],
+        "coordinator": "reasoning",
+        "priority": "normal"
+      },
+      "emotional_response": {
+        "members": ["emotion", "notus", "output"],
+        "coordinator": "emotion",
+        "priority": "high"
+      }
+    },
+    
+    "communication": {
+      "timeout_seconds": 10,
+      "max_retries": 3,
+      "retry_delay_ms": 100
+    },
+    
+    "status_check": {
+      "interval_seconds": 5,
+      "timeout_seconds": 2
+    }
+  }
+}
+

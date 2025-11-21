@@ -1,0 +1,514 @@
+#!/usr/bin/env python3
+"""
+Perception Lobe - Sensory Input Processing
+Handles: Speech-to-text, text input, converts to concepts
+"""
+
+import socket
+import struct
+import json
+import os
+import threading
+import queue
+import time
+from typing import Dict, Any, Optional
+
+# FIX: robust recv helper
+def _recv_all(conn, n, timeout=5.0):
+    """Read exactly n bytes or raise IOError on EOF/timeout"""
+    conn.settimeout(timeout)
+    data = b''
+    while len(data) < n:
+        chunk = conn.recv(n - len(data))
+        if not chunk:
+            raise IOError("Unexpected EOF while reading")
+        data += chunk
+    return data
+
+class PerceptionLobe:
+    """Perception system - processes all sensory input"""
+    
+    def __init__(self, socket_path="/tmp/perception.sock"):
+        self.socket_path = socket_path
+        self.running = True
+        
+        # Input queues
+        self.text_queue = queue.Queue()
+        self.audio_queue = queue.Queue()
+        self.visual_queue = queue.Queue()
+        
+        # Speech-to-text engine (will be initialized when needed)
+        self.stt_engine = None
+        self.stt_available = False
+        self.audio_thread = None
+        
+        # Visual processing
+        self.vision_available = False
+        self.camera = None
+        self.visual_thread = None
+        
+        self._initialize_stt()
+        self._start_autonomous_vision()
+        self._start_autonomous_hearing()
+        
+    def _initialize_stt(self):
+        """Initialize speech-to-text engine"""
+        try:
+            import speech_recognition as sr
+            self.stt_engine = sr.Recognizer()
+            self.stt_available = True
+            print("✅ Speech-to-text engine initialized")
+        except ImportError:
+            print("⚠️  speech_recognition not available - voice input disabled")
+            print("   Install with: pip install SpeechRecognition pyaudio")
+            self.stt_available = False
+    
+    def _start_autonomous_vision(self):
+        """Start autonomous vision processing - runs constantly"""
+        try:
+            import cv2
+            self.camera = cv2.VideoCapture(0)
+            if self.camera.isOpened():
+                self.vision_available = True
+                print("✅ Webcam initialized - autonomous vision active")
+                
+                # Start vision processing thread
+                self.visual_thread = threading.Thread(target=self._vision_loop, daemon=True)
+                self.visual_thread.start()
+            else:
+                print("⚠️  Webcam not available")
+                self.vision_available = False
+        except ImportError:
+            print("⚠️  opencv-python not available - vision disabled")
+            print("   Install with: pip install opencv-python")
+            self.vision_available = False
+    
+    def _vision_loop(self):
+        """Continuously process visual input"""
+        import cv2
+        import time
+        
+        while self.running:
+            try:
+                ret, frame = self.camera.read()
+                if not ret:
+                    time.sleep(1)
+                    continue
+                
+                # Process frame
+                visual_data = self._process_frame(frame)
+                
+                # Add to queue if significant
+                if visual_data and visual_data.get('significant'):
+                    self.visual_queue.put(visual_data)
+                
+                # Process every 2 seconds
+                time.sleep(2)
+                
+            except Exception as e:
+                print(f"❌ Vision loop error: {e}")
+                time.sleep(5)
+    
+    def _process_frame(self, frame) -> Optional[Dict[str, Any]]:
+        """Process a video frame"""
+        import cv2
+        
+        height, width, channels = frame.shape
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Detect faces
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+        
+        # Calculate brightness
+        brightness = float(gray.mean())
+        
+        # Check if anything significant
+        significant = len(faces) > 0 or brightness < 50 or brightness > 200
+        
+        visual_data = {
+            'faces_detected': len(faces),
+            'brightness': brightness,
+            'resolution': f"{width}x{height}",
+            'significant': significant,
+            'timestamp': time.time()
+        }
+        
+        return visual_data
+    
+    def _start_autonomous_hearing(self):
+        """Start autonomous audio processing - runs constantly"""
+        if not self.stt_available:
+            print("⚠️  Audio input not available - hearing disabled")
+            return
+        
+        print("✅ Microphone initialized - autonomous hearing active")
+        
+        # Start audio processing thread
+        self.audio_thread = threading.Thread(target=self._hearing_loop, daemon=True)
+        self.audio_thread.start()
+    
+    def _hearing_loop(self):
+        """Continuously listen for audio"""
+        import speech_recognition as sr
+        import time
+        
+        while self.running:
+            try:
+                with sr.Microphone() as source:
+                    # Quick adjustment for ambient noise
+                    self.stt_engine.adjust_for_ambient_noise(source, duration=0.3)
+                    
+                    # Listen with timeout
+                    try:
+                        audio = self.stt_engine.listen(source, timeout=5, phrase_time_limit=10)
+                        
+                        # Convert to text
+                        text = self.stt_engine.recognize_google(audio)
+                        
+                        # Process as text and queue
+                        audio_data = self.process_text_input(text)
+                        audio_data['source'] = 'audio'
+                        audio_data['original_audio'] = True
+                        self.audio_queue.put(audio_data)
+                        
+                        print(f"🎤 Heard: {text}")
+                        
+                    except sr.WaitTimeoutError:
+                        # No speech detected, keep listening
+                        pass
+                    except sr.UnknownValueError:
+                        # Could not understand, keep listening
+                        pass
+                
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"❌ Hearing loop error: {e}")
+                time.sleep(5)
+    
+    def process_text_input(self, text: str) -> Dict[str, Any]:
+        """Process text input into concepts"""
+        # Basic text processing
+        concepts = self._extract_concepts(text)
+        
+        return {
+            'type': 'text_input',
+            'raw_text': text,
+            'concepts': concepts,
+            'input_type': 'text'
+        }
+    
+    def process_audio_input(self) -> Optional[Dict[str, Any]]:
+        """Process audio input (speech-to-text)"""
+        if not self.stt_available:
+            return None
+            
+        try:
+            import speech_recognition as sr
+            
+            # Listen for audio
+            with sr.Microphone() as source:
+                print("🎤 Listening...")
+                self.stt_engine.adjust_for_ambient_noise(source, duration=0.5)
+                audio = self.stt_engine.listen(source, timeout=5, phrase_time_limit=10)
+            
+            # Convert to text
+            print("🔄 Processing audio...")
+            text = self.stt_engine.recognize_google(audio)
+            print(f"📝 Heard: {text}")
+            
+            # Process as text
+            return self.process_text_input(text)
+            
+        except sr.WaitTimeoutError:
+            print("⏱️  No speech detected")
+            return None
+        except sr.UnknownValueError:
+            print("❓ Could not understand audio")
+            return None
+        except Exception as e:
+            print(f"❌ Audio processing error: {e}")
+            return None
+    
+    def process_visual_input(self) -> Optional[Dict[str, Any]]:
+        """Process visual input from webcam"""
+        if not self.vision_available:
+            return None
+        
+        try:
+            import cv2
+            
+            # Capture frame
+            ret, frame = self.camera.read()
+            if not ret:
+                print("❌ Could not read from webcam")
+                return None
+            
+            print("📷 Processing visual input...")
+            
+            # Basic image analysis
+            height, width, channels = frame.shape
+            
+            # Convert to grayscale for analysis
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # Detect faces (basic object detection)
+            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+            
+            # Extract visual concepts
+            visual_concepts = {
+                'type': 'visual_input',
+                'resolution': f"{width}x{height}",
+                'faces_detected': len(faces),
+                'brightness': float(gray.mean()),
+                'objects': []
+            }
+            
+            if len(faces) > 0:
+                visual_concepts['objects'].append('face')
+                print(f"👤 Detected {len(faces)} face(s)")
+            
+            return {
+                'type': 'visual_input',
+                'raw_data': 'frame_data',  # Don't send actual frame data
+                'concepts': visual_concepts,
+                'input_type': 'vision'
+            }
+            
+        except Exception as e:
+            print(f"❌ Visual processing error: {e}")
+            return None
+    
+    def _extract_concepts(self, text: str) -> Dict[str, Any]:
+        """Extract concepts with proper language understanding"""
+        text_lower = text.lower()
+        words = text.split()
+        
+        # Ensure we always have meaningful words, even for simple inputs
+        meaningful_words = []
+        for word in words:
+            word_clean = word.lower().strip('.,!?;:')
+            if len(word_clean) >= 2:  # Include short words like "hi", "I", "am"
+                meaningful_words.append(word_clean)
+        
+        # If no meaningful words extracted, use the original words
+        if not meaningful_words:
+            meaningful_words = [w.lower().strip('.,!?;:') for w in words if w.strip()]
+        
+        concepts = {
+            'words': meaningful_words,  # Use meaningful_words instead of raw words
+            'length': len(text),
+            'questions': [],
+            'emotions': [],
+            'entities': [],
+            'negations': [],
+            'subject': None,
+            'verb': None,
+            'object': None,
+            'sentiment': 'neutral'
+        }
+        
+        # Detect questions
+        question_words = ['what', 'why', 'how', 'when', 'where', 'who', 'which']
+        for word in question_words:
+            if word in text_lower:
+                concepts['questions'].append(word)
+        
+        # Detect negations (not, never, no, etc)
+        negation_words = ['not', 'never', 'no', "n't", 'dont', "don't", 'cant', "can't", 'wont', "won't"]
+        for i, word in enumerate(words):
+            word_lower = word.lower()
+            if word_lower in negation_words:
+                # Track what's being negated
+                if i + 1 < len(words):
+                    negated_word = words[i+1]
+                    concepts['negations'].append(negated_word.lower())
+        
+        # Detect emotions with negation awareness
+        emotion_words = {
+            'happy': ['happy', 'joy', 'great', 'wonderful', 'amazing', 'glad', 'pleased'],
+            'sad': ['sad', 'unhappy', 'depressed', 'down', 'miserable', 'blue'],
+            'angry': ['angry', 'mad', 'furious', 'hate', 'pissed'],
+            'excited': ['excited', 'thrilled', 'pumped', 'enthusiastic'],
+            'worried': ['worried', 'anxious', 'concerned', 'scared', 'nervous']
+        }
+        
+        for emotion, emotion_word_list in emotion_words.items():
+            for emo_word in emotion_word_list:
+                if emo_word in text_lower:
+                    # Check if negated
+                    if emo_word in concepts['negations']:
+                        # Inverted emotion
+                        if emotion == 'happy':
+                            concepts['emotions'].append('sad')
+                        elif emotion == 'sad':
+                            concepts['emotions'].append('happy')
+                        # Don't add the negated emotion
+                    else:
+                        concepts['emotions'].append(emotion)
+                    break
+        
+        # Simple subject-verb-object extraction
+        if len(words) >= 3:
+            # Very basic SVO
+            concepts['subject'] = words[0]
+            # Look for common verbs
+            common_verbs = ['is', 'are', 'was', 'were', 'feel', 'think', 'want', 'need', 'like', 'love', 'hate']
+            for i, word in enumerate(words):
+                if word.lower() in common_verbs:
+                    concepts['verb'] = word
+                    if i + 1 < len(words):
+                        concepts['object'] = ' '.join(words[i+1:])
+                    break
+        
+        # Sentiment analysis
+        positive_words = ['good', 'great', 'wonderful', 'amazing', 'love', 'like', 'happy', 'excellent']
+        negative_words = ['bad', 'terrible', 'awful', 'hate', 'dislike', 'sad', 'horrible']
+        
+        pos_count = sum(1 for w in text_lower.split() if w in positive_words and w not in concepts['negations'])
+        neg_count = sum(1 for w in text_lower.split() if w in negative_words and w not in concepts['negations'])
+        
+        if pos_count > neg_count:
+            concepts['sentiment'] = 'positive'
+        elif neg_count > pos_count:
+            concepts['sentiment'] = 'negative'
+        
+        # Entity detection
+        for i, word in enumerate(words):
+            if len(word) > 1 and word[0].isupper() and i > 0:
+                concepts['entities'].append(word)
+        
+        return concepts
+    
+    def start(self):
+        """Start perception lobe with FIX: per-connection timeout"""
+        if os.path.exists(self.socket_path):
+            os.remove(self.socket_path)
+            
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(self.socket_path)
+        sock.listen(5)
+        sock.settimeout(1.0)  # FIX: accept timeout
+        
+        print(f"👁️  Perception Lobe: Online at {self.socket_path}")
+        if self.stt_available:
+            print("   🎤 Voice input: enabled")
+        else:
+            print("   🎤 Voice input: disabled")
+        if self.vision_available:
+            print("   📷 Vision input: enabled")
+        else:
+            print("   📷 Vision input: disabled")
+        print("   ⌨️  Text input: enabled")
+        
+        while self.running:
+            try:
+                try:
+                    conn, _ = sock.accept()
+                except socket.timeout:
+                    continue  # FIX: allow check of self.running
+                
+                # FIX: per-connection timeout + recv_all
+                try:
+                    conn.settimeout(5)
+                    
+                    length_data = _recv_all(conn, 4, timeout=5)
+                    msg_length = struct.unpack('!I', length_data)[0]
+                    
+                    # FIX: validate message length
+                    if msg_length <= 0 or msg_length > 10_000_000:
+                        raise ValueError(f"Invalid message length: {msg_length}")
+                    
+                    data = _recv_all(conn, msg_length, timeout=5)
+                    message = json.loads(data.decode('utf-8'))
+                    
+                    result = self.process_message(message)
+                    
+                    response_data = json.dumps(result).encode('utf-8')
+                    response_length = struct.pack('!I', len(response_data))
+                    conn.sendall(response_length + response_data)
+                    
+                except Exception as e:
+                    # FIX: try to send error
+                    try:
+                        err = {'status': 'error', 'message': str(e)}
+                        conn.sendall(struct.pack('!I', len(json.dumps(err).encode('utf-8'))) + json.dumps(err).encode('utf-8'))
+                    except Exception:
+                        pass
+                finally:
+                    # FIX: always close
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                        
+            except Exception as e:
+                print(f"❌ Perception error: {e}")
+                try:
+                    conn.close()
+                except:
+                    pass
+    
+    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Process incoming message"""
+        msg_type = message.get('type')
+        
+        # FIX: add health probe
+        if msg_type == 'health':
+            return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
+        
+        if msg_type == 'process_text':
+            # Process text input
+            text = message.get('text')
+            result = self.process_text_input(text)
+            return {'status': 'success', 'perception': result}
+            
+        elif msg_type == 'listen_audio':
+            # Listen for audio input
+            result = self.process_audio_input()
+            if result:
+                return {'status': 'success', 'perception': result}
+            else:
+                return {'status': 'no_input', 'message': 'No audio detected'}
+                
+        elif msg_type == 'capture_visual':
+            # Capture visual input from webcam
+            result = self.process_visual_input()
+            if result:
+                return {'status': 'success', 'perception': result}
+            else:
+                return {'status': 'no_input', 'message': 'No visual input'}
+                
+        elif msg_type == 'get_status':
+            # Get perception system status
+            return {
+                'status': 'success',
+                'stt_available': self.stt_available,
+                'vision_available': self.vision_available,
+                'text_input': True
+            }
+            
+        else:
+            return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
+    
+    def shutdown(self):
+        """Graceful shutdown"""
+        self.running = False
+        if self.camera:
+            try:
+                self.camera.release()
+            except:
+                pass
+        if os.path.exists(self.socket_path):
+            os.remove(self.socket_path)
+
+if __name__ == "__main__":
+    lobe = PerceptionLobe()
+    try:
+        lobe.start()
+    except KeyboardInterrupt:
+        print("\n🛑 Perception lobe shutting down...")
+        lobe.shutdown()
+

@@ -1,0 +1,128 @@
+{
+  "interface": {
+    "window": {
+      "title": "🧠 Brain Control System",
+      "min_width": 1400,
+      "min_height": 900,
+      "resizable": true
+    },
+    
+    "update": {
+      "interval_ms": 2000,
+      "auto_refresh": true
+    },
+    
+    "lobe_display": {
+      "grid_columns": 4,
+      "widget_width": 220,
+      "widget_height": 280,
+      "spacing": 20
+    },
+    
+    "colors": {
+      "representation": {
+        "r": 138,
+        "g": 43,
+        "b": 226,
+        "name": "Purple"
+      },
+      "pattern": {
+        "r": 255,
+        "g": 140,
+        "b": 0,
+        "name": "Orange"
+      },
+      "reasoning": {
+        "r": 30,
+        "g": 144,
+        "b": 255,
+        "name": "Blue"
+      },
+      "notus": {
+        "r": 50,
+        "g": 205,
+        "b": 50,
+        "name": "Green"
+      },
+      "emotion": {
+        "r": 255,
+        "g": 20,
+        "b": 147,
+        "name": "Pink"
+      },
+      "perception": {
+        "r": 0,
+        "g": 191,
+        "b": 255,
+        "name": "Cyan"
+      },
+      "output": {
+        "r": 255,
+        "g": 215,
+        "b": 0,
+        "name": "Gold"
+      }
+    },
+    
+    "effects": {
+      "shadows": {
+        "enabled": true,
+        "blur_radius": 30,
+        "offset_x": 5,
+        "offset_y": 5
+      },
+      "glow": {
+        "enabled": true,
+        "blur_radius": 40,
+        "online_color": "#00ff88",
+        "offline_color": "#ff0044"
+      },
+      "animations": {
+        "enabled": true,
+        "pulse_duration_ms": 1000
+      }
+    },
+    
+    "neural_view": {
+      "enabled": true,
+      "height": 150,
+      "show_connections": true,
+      "animate": true
+    },
+    
+    "control_panel": {
+      "enabled": true,
+      "input_height": 45,
+      "button_width": 120
+    },
+    
+    "fonts": {
+      "header": {
+        "family": "Arial",
+        "size": 28,
+        "weight": "bold"
+      },
+      "lobe_name": {
+        "family": "Arial",
+        "size": 14,
+        "weight": "bold"
+      },
+      "status": {
+        "family": "Arial",
+        "size": 24,
+        "weight": "normal"
+      },
+      "stats": {
+        "family": "Arial",
+        "size": 9,
+        "weight": "normal"
+      },
+      "button": {
+        "family": "Arial",
+        "size": 12,
+        "weight": "bold"
+      }
+    }
+  }
+}
+
