@@ -32,11 +32,15 @@ python demo_3d.py
 
 # Advanced models (cool detailed characters!)
 python demo_advanced.py
+
+# Monday character model
+python monday_character.py
 ```
 
 This will create various 3D models in the `models_output/` directory.
 
 **Example Models**:
+- Monday character (2,412 vertices, 4,128 faces) - Female humanoid with feminine proportions, hair, glasses, earrings, and dress
 - Armored hero character (1,737 vertices, 3,133 faces) - Master Chief style
 - Detailed humanoids with proper anatomy
 - Smooth subdivided spheres (2,504 vertices)
