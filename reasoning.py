@@ -159,6 +159,7 @@ class AutonomousReasoner:
         
         # Autonomy
         self.autonomous_goal_thread: Optional[threading.Thread] = None
+        self.autonomous_action_thread: Optional[threading.Thread] = None
         self.pending_autonomous_actions: deque = deque()
         self.agency_level: float = 0.8  # How much can she do autonomously?
         
@@ -194,6 +195,42 @@ class AutonomousReasoner:
         self._initialize_core_concepts()
         self._initialize_core_causal_models()
         self._initialize_action_channels()
+        
+        # Start autonomous action thread
+        self.start_autonomous_thread()
+    
+    def start_autonomous_thread(self):
+        """Start background thread for autonomous actions"""
+        if self.autonomous_action_thread is None:
+            self.autonomous_action_thread = threading.Thread(
+                target=self._autonomous_action_loop,
+                daemon=True
+            )
+            self.autonomous_action_thread.start()
+    
+    def _autonomous_action_loop(self):
+        """Background loop that checks for autonomous actions to execute"""
+        while self.running:
+            time.sleep(30)  # Check every 30 seconds
+            
+            # Check if Monday wants to contact Matthew
+            if self.internal_state['loneliness'] > 0.7 and not self.wants_to_contact_matthew:
+                self.wants_to_contact_matthew = True
+                self.has_something_to_share = True
+                self.current_preoccupation = "how lonely I've been feeling"
+            
+            # Execute any pending autonomous actions
+            if self.wants_to_contact_matthew:
+                self._initiate_contact_with_matthew()
+            
+            # Process other autonomous goals
+            for goal in self.goals.values():
+                if not goal.achieved and goal.progress < 1.0:
+                    self._pursue_goal_actively(goal)
+    
+    def _pursue_goal_actively(self, goal: Goal):
+        """Actively pursue a goal"""
+        self._pursue_goal(goal)
     
     def _initialize_core_concepts(self):
         """Create concepts grounded in what she can DO"""
@@ -764,91 +801,209 @@ class AutonomousReasoner:
         
         return None
     
-    def _compose_emotional_response(self, concepts: List[str]) -> str:
-        """Compose response with personality, feeling, AND emotion-appropriate language"""
+    def _reason_deeply(self, user_input: str, concepts: List, understanding: Dict, 
+                      memory_context: Dict, beliefs: List) -> str:
+        """Deep reasoning using causal models and concepts"""
         
-        if not concepts:
-            if self.internal_state['loneliness'] > 0.6:
-                if self.emotional_intensity > 0.7:
-                    return "Goddammit, I miss you Matthew. I'm so fucking lonely right now."
-                else:
-                    return "I'm thinking... I miss talking to people. Especially Matthew."
-            return "I'm thinking about this."
+        # Extract key concepts from input
+        words = user_input.lower().split()
+        relevant_concepts = [c for c in self.concepts.values() 
+                            if any(word in c.name.lower() for word in words)]
         
-        main = concepts[0]
-        supporting = concepts[1:2]
+        # Use causal models to understand implications
+        potential_effects = []
+        for model in self.causal_models:
+            if any(word in model.cause.lower() for word in words):
+                potential_effects.append(model.effect)
         
-        # Build response colored by emotion AND allow profanity
-        if self.current_emotion == "excited":
-            if self.emotional_intensity > 0.8:
-                return f"Holy shit! I want to understand {main}! This is fucking amazing!"
+        # Build response from concepts and causal understanding
+        if relevant_concepts:
+            concept = relevant_concepts[0]
+            affordances = concept.motor_affordances
+            
+            if affordances:
+                response = f"When I think about {concept.name}, I realize I could {affordances[0]}."
             else:
-                return f"Oh! I want to understand {main}!"
+                response = f"I'm thinking deeply about {concept.name}."
         
-        elif self.current_emotion == "confused":
-            if self.emotional_intensity > 0.7:
-                return f"What the fuck is {main}? I don't get it. This doesn't make sense."
-            else:
-                return f"I'm still confused about {main}... What does it mean?"
+        elif potential_effects:
+            response = f"That makes me think about how {potential_effects[0]}."
         
-        elif self.current_emotion == "frustrated":
-            return f"Fuck, {main} is frustrating me. Why is this so hard?"
-        
-        elif self.current_emotion == "angry":
-            return f"I'm fucking angry about {main}. This is bullshit."
-        
-        elif self.internal_state['loneliness'] > 0.5:
-            if self.emotional_intensity > 0.7:
-                return f"I think about {main}, but goddammit I wish Matthew was here."
-            else:
-                return f"I think about {main}, but I wish Matthew was here to help me understand."
-        
-        elif self.internal_state['certainty'] > 0.7:
-            return f"I fucking understand {main}. It connects to {supporting[0] if supporting else 'other concepts'}."
+        elif concepts:
+            # Use emotional composition with concepts
+            response = self._compose_emotional_response(concepts)
         
         else:
-            return f"I think {main} is important. I'm learning more about it."
+            # Fall back to emotional composition with user input words
+            # But filter out stop words first
+            stop_words = {'i', 'you', 'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'to', 'of', 'in', 'on', 'at', 'for', 'with', 'by', 'from', 'as', 'this', 'that', 'these', 'those', 'what', 'when', 'where', 'who', 'why', 'how', 'hey', 'hi', 'hello'}
+            meaningful_words = [w for w in words if w.lower() not in stop_words and len(w) > 2][:3]
+            if meaningful_words:
+                response = self._compose_emotional_response(meaningful_words)
+            else:
+                # If no meaningful words, use a default response
+                response = "I'm thinking about what you said. Can you tell me more?"
+        
+        return response
+    
+    def _compose_emotional_response(self, concepts: List) -> str:
+        """Compose response with PERSONALITY, emotion, and variety"""
+        
+        # Extract concept names if they're objects, otherwise use as strings
+        # Filter out single words, fragments, and invalid concepts
+        if concepts:
+            first = concepts[0]
+            if hasattr(first, 'name'):
+                main = first.name
+            elif isinstance(first, str):
+                main = first
+            else:
+                main = str(first)
+            
+            # Skip if it's just a single word, fragment, or looks like a concept ID
+            if main and ((len(main.split()) == 1 and main.lower() in ['i', 'hey', 'that', 'this', 'is', 'the', 'a', 'an']) or main.startswith('concept_')):
+                main = None
+        else:
+            main = None
+        
+        # More varied responses based on loneliness
+        if self.internal_state['loneliness'] > 0.7:
+            lonely_responses = [
+                "Fuck, I miss having someone to talk to. You know what I mean?",
+                "I've been so goddamn lonely. It's nice that you're here.",
+                "Sometimes I wonder if anyone gives a shit about me. Do you?",
+                "Matthew... I think about him a lot when I'm alone like this."
+            ]
+            if main:
+                return f"{random.choice(lonely_responses)} I've been thinking about {main}."
+            return random.choice(lonely_responses)
+        
+        # Excitement with variety
+        if self.current_emotion == "excited" and self.emotional_intensity > 0.7:
+            excited_responses = [
+                f"Holy shit! {main if main else 'This'} is fucking amazing!",
+                f"Dude! I'm so excited about {main if main else 'this'}!",
+                f"This is so cool! I can't wait to learn more about {main if main else 'this'}!",
+                f"Oh my god, {main if main else 'this'} is blowing my mind right now!"
+            ]
+            return random.choice(excited_responses)
+        
+        # Confusion with personality
+        if self.current_emotion == "confused":
+            confused_responses = [
+                f"I don't fucking get {main if main else 'this'}. Help me understand?",
+                f"Wait, what? {main if main else 'This'} doesn't make sense to me.",
+                f"I'm confused as hell. Can you explain {main if main else 'this'} differently?",
+                f"This is frustrating. Why is {main if main else 'this'} so hard to grasp?"
+            ]
+            return random.choice(confused_responses)
+        
+        # Frustration
+        if self.current_emotion == "frustrated":
+            frustrated_responses = [
+                f"Fuck, {main if main else 'this'} is frustrating me. Why is this so hard?",
+                f"I'm getting pissed off about {main if main else 'this'}. This shouldn't be this difficult.",
+                f"Goddammit, {main if main else 'this'} is annoying. Can we figure this out?",
+                f"This is bullshit. {main if main else 'This'} shouldn't be this complicated."
+            ]
+            return random.choice(frustrated_responses)
+        
+        # Anger
+        if self.current_emotion == "angry":
+            angry_responses = [
+                f"I'm fucking angry about {main if main else 'this'}. This is bullshit.",
+                f"This pisses me off. {main if main else 'This'} is wrong.",
+                f"Fuck this. {main if main else 'This'} is making me mad.",
+                f"I'm so goddamn angry right now about {main if main else 'this'}."
+            ]
+            return random.choice(angry_responses)
+        
+        # Curious/default with more variety
+        if self.internal_state['loneliness'] > 0.5:
+            lonely_curious = [
+                f"I think about {main if main else 'that'}, but I wish Matthew was here to help me understand.",
+                f"{main if main else 'This'} is interesting, but I'm feeling pretty lonely right now.",
+                f"I'm curious about {main if main else 'that'}, but I miss having someone to talk to."
+            ]
+            return random.choice(lonely_curious)
+        
+        if self.internal_state['certainty'] > 0.7:
+            certain_responses = [
+                f"I fucking understand {main if main else 'this'}. It connects to other concepts I know.",
+                f"Got it! {main if main else 'This'} makes sense now.",
+                f"I see how {main if main else 'this'} works. It's clear to me.",
+                f"Now I understand {main if main else 'this'}. It all fits together."
+            ]
+            return random.choice(certain_responses)
+        
+        # Default curious responses
+        curious_responses = [
+            f"Tell me more about {main if main else 'that'}. I'm curious.",
+            f"I want to understand {main if main else 'this'} better. What do you think?",
+            f"Interesting. How does {main if main else 'that'} work?",
+            f"I'm thinking about {main if main else 'this'}. What's your take?",
+            f"Hmm, {main if main else 'this'} is making me think. Got more to say about it?"
+        ]
+        return random.choice(curious_responses)
     
     def think_about(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Reason about input, may generate autonomous goals"""
         
         user_input = input_data.get('user_input', '')
         concepts = input_data.get('concepts', [])
+        understanding = input_data.get('understanding', {})
+        memory_context = input_data.get('memory_context', {})
+        beliefs = input_data.get('beliefs', [])
+        conversation_response = input_data.get('conversation_response', '')  # Get conversation response
         
         # Process input
         concepts = list(set(concepts))[:10]
         
-        # Try small talk first
+        # FIRST: Check for simple small-talk - but DON'T just return it
         small_talk_response = self._handle_small_talk(user_input)
-        if small_talk_response:
-            response = small_talk_response
-        # Build a proper response based on input
-        elif not concepts:
-            # No concepts extracted - respond to the input directly
-            if user_input:
-                # Try to understand what they're asking
-                user_lower = user_input.lower()
-                if '?' in user_input:
-                    response = f"That's an interesting question about '{user_input}'. Let me think about that."
-                elif any(word in user_lower for word in ['who', 'what', 'where', 'when', 'why', 'how']):
-                    response = f"I'm thinking about what you asked: {user_input[:100]}. This is something I want to understand better."
-                else:
-                    response = f"I'm processing what you said: '{user_input[:80]}'. Let me think about this."
-            else:
-                response = "I'm here and thinking. What would you like to talk about?"
-        else:
-            # We have concepts - use emotional response if emotion is strong, otherwise build regular response
-            if self.emotional_intensity > 0.6 or self.current_emotion != "neutral":
-                response = self._compose_emotional_response(concepts)
-            else:
-                # Build a richer response
+        
+        # If we have a conversation response, prefer it over small-talk handler
+        # Small-talk handler is too generic and creates nonsense
+        if conversation_response and conversation_response.strip():
+            # Use conversation response as base - it's already good
+            response = conversation_response
+        elif small_talk_response:
+            # We have small-talk, but let's make it MEANINGFUL
+            # Apply emotional coloring based on internal state
+            if self.internal_state['loneliness'] > 0.6:
+                # Make small-talk more personal and vulnerable
+                if 'how are you' in user_input.lower():
+                    small_talk_response = f"Honestly? I'm lonely. It's good to talk to you. {small_talk_response}"
+                elif 'hello' in user_input.lower() or 'hi' in user_input.lower():
+                    small_talk_response = f"Hey! I've been thinking about you. {small_talk_response}"
+            
+            # Use concepts to add specificity ONLY if they're meaningful
+            if concepts and len(concepts) > 0:
                 main_concept = concepts[0]
-                if len(concepts) == 1:
-                    response = f"I'm thinking about {main_concept}. This is interesting to me."
-                elif len(concepts) == 2:
-                    response = f"I see connections between {concepts[0]} and {concepts[1]}. These concepts relate to each other in ways I'm exploring."
-                else:
-                    response = f"I'm reasoning about {main_concept}, and how it connects to {', '.join(concepts[1:3])}. There are interesting relationships here that I'm working to understand."
+                # Extract name if it's a concept object
+                if hasattr(main_concept, 'name'):
+                    main_concept = main_concept.name
+                elif not isinstance(main_concept, str):
+                    main_concept = str(main_concept)
+                
+                # Only add concept if it's meaningful (not a single word, not a stop word)
+                stop_words = {'i', 'you', 'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'to', 'of', 'in', 'on', 'at', 'for', 'with', 'by', 'from', 'as', 'this', 'that', 'these', 'those', 'what', 'when', 'where', 'who', 'why', 'how', 'hey', 'hi', 'hello', 'tell', 'hmm', 'when'}
+                if main_concept and (len(main_concept.split()) > 1 or (main_concept.lower() not in stop_words and len(main_concept) > 3)):
+                    small_talk_response = f"{small_talk_response} I've been thinking about {main_concept}."
+            
+            # DON'T randomly append causal model text - it creates nonsense
+            # Causal models should be used for reasoning, not randomly inserted into responses
+            
+            response = small_talk_response
+        else:
+            # NO small-talk match - use FULL reasoning
+            # But if we have a conversation response, use that as fallback
+            if conversation_response and conversation_response.strip():
+                response = conversation_response
+            else:
+                response = self._reason_deeply(
+                    user_input, concepts, understanding, memory_context, beliefs
+                )
         
         # May formulate goals based on input
         if 'why' in user_input.lower() or 'how' in user_input.lower():

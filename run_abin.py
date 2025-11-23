@@ -83,7 +83,7 @@ def main():
         ("Pattern Recognition", "pattern_recognition.py", 0.5),
         ("Reasoning (Self-Aware)", "reasoning.py", 1.0),
         ("Language Generation", "language_generation.py", 0.5),
-        ("Notus Memory", "notus.py", 2.0),
+        ("Notus Memory", "notus.py", 8.0),
         ("Emotional Engine", "advanced_emotional_engine.py", 1.0),
         ("Perception", "perception.py", 0.5),
         ("Output", "output.py", 0.5),
@@ -106,7 +106,7 @@ def main():
     
     # FIX: Verify all sockets before launching GUI
     print("\n🔍 Verifying communication channels...\n")
-    time.sleep(2)
+    time.sleep(5)  # Give Notus more time to load ML models
     
     sockets = {
         "Representation": "/tmp/representation.sock",

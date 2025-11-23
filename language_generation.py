@@ -153,7 +153,7 @@ class GroundedLanguageGenerator:
         elif emotion == "frustrated" and intensity > 0.6:
             if use_profanity:
                 return f"Fuck, {main_concept} is pissing me off. This is bullshit."
-        else:
+            else:
                 return f"I'm really frustrated with {main_concept}. This sucks."
         
         elif emotion == "angry" and intensity > 0.7:
@@ -247,68 +247,64 @@ class GroundedLanguageGenerator:
         
         while self.running:
             try:
-            try:
                 conn, _ = sock.accept()
-                except socket.timeout:
-                    continue
+            except socket.timeout:
+                continue
+            
+            try:
+                conn.settimeout(5)
                 
-                try:
-                    conn.settimeout(5)
-                    
-                    length_data = _recv_all(conn, 4, timeout=5)
+                length_data = _recv_all(conn, 4, timeout=5)
                 msg_length = struct.unpack('!I', length_data)[0]
                 
-                    if msg_length <= 0 or msg_length > 10_000_000:
-                        raise ValueError(f"Invalid message length: {msg_length}")
-                    
-                    data = _recv_all(conn, msg_length, timeout=5)
+                if msg_length <= 0 or msg_length > 10_000_000:
+                    raise ValueError(f"Invalid message length: {msg_length}")
+                
+                data = _recv_all(conn, msg_length, timeout=5)
                 message = json.loads(data.decode('utf-8'))
                 
-                    if message.get('type') == 'generate_grounded':
-                        concepts = message.get('concepts', [])
-                        internal_state = message.get('internal_state', {})
-                        emotion = message.get('emotion', 'neutral')
-                        intensity = message.get('intensity', 0.5)
-                        
-                        sentence = self.generate_from_emotional_concepts(
-                            concepts=concepts,
-                            internal_state=internal_state,
-                            emotion=emotion,
-                            intensity=intensity
-                        )
-                        result = {'status': 'success', 'sentence': sentence}
+                if message.get('type') == 'generate_grounded':
+                    concepts = message.get('concepts', [])
+                    internal_state = message.get('internal_state', {})
+                    emotion = message.get('emotion', 'neutral')
+                    intensity = message.get('intensity', 0.5)
                     
-                    elif message.get('type') == 'health':
-                        result = {'status': 'success', 'healthy': True, 'pid': os.getpid()}
-                    
-                    elif message.get('type') == 'set_profanity':
-                        allowed = message.get('allowed', True)
-                        self.allow_profanity = allowed
-                        result = {'status': 'success', 'profanity_allowed': allowed}
-                    
+                    sentence = self.generate_from_emotional_concepts(
+                        concepts=concepts,
+                        internal_state=internal_state,
+                        emotion=emotion,
+                        intensity=intensity
+                    )
+                    result = {'status': 'success', 'sentence': sentence}
+                
+                elif message.get('type') == 'health':
+                    result = {'status': 'success', 'healthy': True, 'pid': os.getpid()}
+                
+                elif message.get('type') == 'set_profanity':
+                    allowed = message.get('allowed', True)
+                    self.allow_profanity = allowed
+                    result = {'status': 'success', 'profanity_allowed': allowed}
+                
                 else:
                     result = {'status': 'error', 'message': 'Unknown message type'}
                 
                 response_data = json.dumps(result).encode('utf-8')
                 response_length = struct.pack('!I', len(response_data))
-                    conn.sendall(response_length + response_data)
-                    
-                except Exception as e:
-                    try:
-                        err = {'status': 'error', 'message': str(e)}
-                        err_data = json.dumps(err).encode('utf-8')
-                        err_length = struct.pack('!I', len(err_data))
-                        conn.sendall(err_length + err_data)
-                    except Exception:
-                        pass
-                finally:
-                    try:
-                conn.close()
-                    except Exception:
-                        pass
+                conn.sendall(response_length + response_data)
                 
             except Exception as e:
-                print(f"❌ Language generation error: {e}")
+                try:
+                    err = {'status': 'error', 'message': str(e)}
+                    err_data = json.dumps(err).encode('utf-8')
+                    err_length = struct.pack('!I', len(err_data))
+                    conn.sendall(err_length + err_data)
+                except Exception:
+                    pass
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
     
     def shutdown(self):
         """Graceful shutdown"""

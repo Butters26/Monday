@@ -222,29 +222,47 @@ class Thalamus:
                 'concepts': [],
                 'understanding': understanding,
                 'memory_context': memory_context,  # Feed memory to reasoning
-                'beliefs': self.monday_memory['beliefs']
+                'beliefs': self.monday_memory['beliefs'],
+                'conversation_response': response  # Pass conversation response so reasoning can enhance it
             }
         })
         
+        # Track if reasoning already composed a response
+        reasoning_composed = False
         if reasoning_result.get('status') == 'success':
             thinking = reasoning_result.get('thinking', {})
             composed = thinking.get('composed_response')
             if composed:
                 response = composed
+                reasoning_composed = True  # Reasoning already composed the response
             emotion = thinking.get('emotion', emotion)
             intensity = thinking.get('intensity', intensity)
         
-        # 4. LANGUAGE LOBE - Emotionally color WITH context
-        print(f"   → Language lobe (expression)")
-        lang_result = self.send_message("language", "generate_grounded", {
-            'concepts': response.split()[:10],
-            'emotion': emotion,
-            'intensity': intensity,
-            'internal_state': memory_context['emotional_state']
-        })
-        
-        if lang_result.get('status') == 'success':
-            response = lang_result.get('sentence', response)
+        # 4. LANGUAGE LOBE - Only use if reasoning didn't compose a response
+        # Reasoning already handles language generation, so skip this step
+        if not reasoning_composed:
+            print(f"   → Language lobe (expression)")
+            # Extract meaningful concepts from user input, not response text
+            user_words = user_input.split()
+            # Filter out common words to get meaningful concepts
+            stop_words = {'i', 'you', 'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'to', 'of', 'in', 'on', 'at', 'for', 'with', 'by', 'from', 'as', 'this', 'that', 'these', 'those', 'what', 'when', 'where', 'who', 'why', 'how', 'hey', 'hi', 'hello'}
+            meaningful_concepts = [w for w in user_words if w.lower() not in stop_words and len(w) > 2][:5]
+            
+            # If no meaningful concepts, use topic from understanding
+            if not meaningful_concepts and understanding.get('topic'):
+                meaningful_concepts = [understanding['topic']]
+            
+            lang_result = self.send_message("language", "generate_grounded", {
+                'concepts': meaningful_concepts if meaningful_concepts else ['conversation'],
+                'emotion': emotion,
+                'intensity': intensity,
+                'internal_state': memory_context['emotional_state']
+            })
+            
+            if lang_result.get('status') == 'success':
+                response = lang_result.get('sentence', response)
+        else:
+            print(f"   → Language lobe (skipped - reasoning already composed response)")
         
         # 5. OUTPUT LOBE - Generate final output
         print(f"   → Output lobe (final generation)")
