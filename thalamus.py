@@ -149,7 +149,7 @@ class Thalamus:
             print(f"⚠️  Could not log conversation: {e}")
     
     def retrieve_relevant_memory(self, user_input: str) -> Dict[str, Any]:
-        """Pull relevant memories and beliefs FROM NOTUS"""
+        """Pull relevant memories and beliefs from Notus with dict fallback"""
         
         # Try Notus first
         try:
@@ -196,8 +196,7 @@ class Thalamus:
     
     def sync_memory_to_notus(self):
         """Sync unsynced conversations from dict to Notus when Notus comes back online"""
-        unsynced = [conv for conv in self.monday_memory['past_conversations'] 
-                   if not conv.get('synced_to_notus', False)]
+        unsynced = [conv for conv in self.monday_memory['past_conversations'] if not conv.get('synced_to_notus', False)]
         
         if not unsynced:
             return
@@ -321,7 +320,7 @@ class Thalamus:
         else:
             final_response = response
         
-        # 6. UPDATE MEMORY - Store in Notus (primary), dict (fallback)
+        # UPDATE MEMORY - Store in Notus (primary), dict (fallback)
         print(f"   → Storing memory in Notus")
         
         # Try to store in Notus first
