@@ -149,14 +149,43 @@ class Thalamus:
             print(f"⚠️  Could not log conversation: {e}")
     
     def retrieve_relevant_memory(self, user_input: str) -> Dict[str, Any]:
-        """Pull relevant memories and beliefs"""
+        """Pull relevant memories and beliefs FROM NOTUS"""
         
-        relevant_context = {
-            'beliefs': self.monday_memory['beliefs'],
-            'emotional_state': self.monday_memory['emotional_state'].copy(),
-            'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],  # Last 5
-            'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
-        }
+        # Try Notus first
+        try:
+            notus_result = self.send_message("notus", "context", {
+                'user_input': user_input
+            })
+            
+            if notus_result.get('status') == 'success':
+                # Notus is working - use it
+                notus_context = notus_result.get('context', '')
+                relevant_context = {
+                    'beliefs': self.monday_memory['beliefs'],
+                    'emotional_state': self.monday_memory['emotional_state'].copy(),
+                    'notus_context': notus_context,  # Real memory from Notus
+                    'memory_source': 'notus'
+                }
+            else:
+                # Notus failed - fallback to dict
+                print(f"   ⚠️  Notus unavailable, using short-term memory")
+                relevant_context = {
+                    'beliefs': self.monday_memory['beliefs'],
+                    'emotional_state': self.monday_memory['emotional_state'].copy(),
+                    'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],
+                    'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
+                    'memory_source': 'fallback'
+                }
+        except Exception as e:
+            # Notus completely failed - use dict
+            print(f"   ⚠️  Notus error: {e}, using short-term memory")
+            relevant_context = {
+                'beliefs': self.monday_memory['beliefs'],
+                'emotional_state': self.monday_memory['emotional_state'].copy(),
+                'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],
+                'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
+                'memory_source': 'fallback'
+            }
         
         # Check if user mentions Matthew
         if 'matthew' in user_input.lower():
@@ -164,6 +193,37 @@ class Thalamus:
             relevant_context['about_matthew'] = True
         
         return relevant_context
+    
+    def sync_memory_to_notus(self):
+        """Sync unsynced conversations from dict to Notus when Notus comes back online"""
+        unsynced = [conv for conv in self.monday_memory['past_conversations'] 
+                   if not conv.get('synced_to_notus', False)]
+        
+        if not unsynced:
+            return
+        
+        print(f"   → Syncing {len(unsynced)} unsynced conversations to Notus")
+        
+        for conv in unsynced:
+            try:
+                # Store user message
+                self.send_message("notus", "store", {
+                    'role': 'user',
+                    'content': conv['user_said'],
+                    'memory_type': 'conversation'
+                })
+                
+                # Store assistant response
+                self.send_message("notus", "store", {
+                    'role': 'assistant',
+                    'content': conv['monday_said'],
+                    'memory_type': 'conversation'
+                })
+                
+                conv['synced_to_notus'] = True
+            except Exception as e:
+                print(f"   ⚠️  Sync failed for conversation: {e}")
+                break  # Stop if Notus fails again
     
     def check_autonomous_actions(self):
         """Check if Monday wants to do something autonomously"""
@@ -261,13 +321,41 @@ class Thalamus:
         else:
             final_response = response
         
-        # 6. UPDATE MEMORY - What did Monday learn?
-        print(f"   → Updating memory")
+        # 6. UPDATE MEMORY - Store in Notus (primary), dict (fallback)
+        print(f"   → Storing memory in Notus")
+        
+        # Try to store in Notus first
+        notus_stored = False
+        try:
+            # Store user message
+            user_store_result = self.send_message("notus", "store", {
+                'role': 'user',
+                'content': user_input,
+                'memory_type': 'conversation'
+            })
+            
+            # Store assistant response
+            assistant_store_result = self.send_message("notus", "store", {
+                'role': 'assistant',
+                'content': final_response,
+                'memory_type': 'conversation'
+            })
+            
+            if user_store_result.get('status') == 'stored' and assistant_store_result.get('status') == 'stored':
+                notus_stored = True
+                print(f"   ✅ Stored in Notus")
+            else:
+                print(f"   ⚠️  Notus store failed, using fallback")
+        except Exception as e:
+            print(f"   ⚠️  Notus error: {e}, using fallback")
+        
+        # Always store in dict as fallback (for sync later if Notus was down)
         self.monday_memory['past_conversations'].append({
             'user_said': user_input,
             'monday_said': final_response,
             'emotion': emotion,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.utcnow().isoformat(),
+            'synced_to_notus': notus_stored  # Track if synced
         })
         
         # LOG CONVERSATION TO FILE
