@@ -149,14 +149,43 @@ class Thalamus:
             print(f"⚠️  Could not log conversation: {e}")
     
     def retrieve_relevant_memory(self, user_input: str) -> Dict[str, Any]:
-        """Pull relevant memories and beliefs"""
+        """Pull relevant memories and beliefs FROM NOTUS"""
         
-        relevant_context = {
-            'beliefs': self.monday_memory['beliefs'],
-            'emotional_state': self.monday_memory['emotional_state'].copy(),
-            'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],  # Last 5
-            'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
-        }
+        # Try Notus first
+        try:
+            notus_result = self.send_message("notus", "context", {
+                'user_input': user_input
+            })
+            
+            if notus_result.get('status') == 'success':
+                # Notus is working - use it
+                notus_context = notus_result.get('context', '')
+                relevant_context = {
+                    'beliefs': self.monday_memory['beliefs'],
+                    'emotional_state': self.monday_memory['emotional_state'].copy(),
+                    'notus_context': notus_context,  # Real memory from Notus
+                    'memory_source': 'notus'
+                }
+            else:
+                # Notus failed - fallback to dict
+                print(f"   ⚠️  Notus unavailable, using short-term memory")
+                relevant_context = {
+                    'beliefs': self.monday_memory['beliefs'],
+                    'emotional_state': self.monday_memory['emotional_state'].copy(),
+                    'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],
+                    'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
+                    'memory_source': 'fallback'
+                }
+        except Exception as e:
+            # Notus completely failed - use dict
+            print(f"   ⚠️  Notus error: {e}, using short-term memory")
+            relevant_context = {
+                'beliefs': self.monday_memory['beliefs'],
+                'emotional_state': self.monday_memory['emotional_state'].copy(),
+                'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],
+                'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
+                'memory_source': 'fallback'
+            }
         
         # Check if user mentions Matthew
         if 'matthew' in user_input.lower():
