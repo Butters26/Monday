@@ -4,32 +4,19 @@ Perception Lobe - Sensory Input Processing
 Handles: Speech-to-text, text input, converts to concepts
 """
 
-import socket
-import struct
 import json
 import os
 import threading
 import queue
 import time
+import sys
 from typing import Dict, Any, Optional
-
-# FIX: robust recv helper
-def _recv_all(conn, n, timeout=5.0):
-    """Read exactly n bytes or raise IOError on EOF/timeout"""
-    conn.settimeout(timeout)
-    data = b''
-    while len(data) < n:
-        chunk = conn.recv(n - len(data))
-        if not chunk:
-            raise IOError("Unexpected EOF while reading")
-        data += chunk
-    return data
+from thalamus import get_thalamus
 
 class PerceptionLobe:
     """Perception system - processes all sensory input"""
     
-    def __init__(self, socket_path="/tmp/perception.sock"):
-        self.socket_path = socket_path
+    def __init__(self):
         self.running = True
         
         # Input queues
@@ -46,6 +33,16 @@ class PerceptionLobe:
         self.vision_available = False
         self.camera = None
         self.visual_thread = None
+        
+        # Direct reference to Thalamus (NO SOCKETS)
+        self.thalamus = get_thalamus()
+        
+        # Track concepts we've seen before (for novelty detection)
+        self.seen_concepts = set()
+        self.seen_entities = set()
+        
+        # Register immediately so GUI can access it right away
+        self._register_with_thalamus()
         
         self._initialize_stt()
         self._start_autonomous_vision()
@@ -147,6 +144,10 @@ class PerceptionLobe:
         # Start audio processing thread
         self.audio_thread = threading.Thread(target=self._hearing_loop, daemon=True)
         self.audio_thread.start()
+        
+        # Start audio queue processor thread - reads queue and sends to Thalamus
+        self.audio_processor_thread = threading.Thread(target=self._audio_queue_processor, daemon=True)
+        self.audio_processor_thread.start()
     
     def _hearing_loop(self):
         """Continuously listen for audio"""
@@ -170,6 +171,7 @@ class PerceptionLobe:
                         audio_data = self.process_text_input(text)
                         audio_data['source'] = 'audio'
                         audio_data['original_audio'] = True
+                        audio_data['confidence'] = 0.85  # Speech-to-text confidence (lower than direct text)
                         self.audio_queue.put(audio_data)
                         
                         print(f"🎤 Heard: {text}")
@@ -187,20 +189,152 @@ class PerceptionLobe:
                 print(f"❌ Hearing loop error: {e}")
                 time.sleep(5)
     
+    def _audio_queue_processor(self):
+        """Process audio queue and send to Thalamus using persistent connection"""
+        while self.running:
+            try:
+                # Get audio from queue (blocking with timeout)
+                try:
+                    audio_data = self.audio_queue.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                
+                # Send to Reasoning via Thalamus with standardized format
+                result = self.thalamus.send_message(
+                    destination='reasoning',
+                    msg_type='process_perception',
+                    content={
+                        'text': audio_data.get('text', ''),
+                        'confidence': audio_data.get('confidence', 0.85),
+                        'intent_hints': audio_data.get('intent_hints', []),
+                        'entities': audio_data.get('entities', []),
+                        'source': 'audio',
+                        'timestamp': audio_data.get('timestamp')
+                    },
+                    source='perception'
+                )
+                
+                if result and result.get('status') == 'success':
+                    print(f"📤 Sent audio to Reasoning: {audio_data.get('text', '')[:50]}")
+                    
+            except Exception as e:
+                print(f"❌ Audio queue processor error: {e}")
+                time.sleep(1)
+    
+    def _register_with_thalamus(self):
+        """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
+        try:
+            result = self.thalamus.register_lobe('perception', self)
+            if result.get('status') == 'success':
+                print("✅ Perception registered with Thalamus (direct function calls)")
+                return True
+            return False
+        except Exception as e:
+            print(f"⚠️  Failed to register with Thalamus: {e}")
+            return False
+    
+    def _send_to_thalamus(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Send message to Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
+        try:
+            msg_type = message.get('type')
+            if msg_type == 'route_message':
+                destination = message.get('destination')
+                route_msg_type = message.get('msg_type')
+                content = message.get('content', {})
+                return self.thalamus.send_message(destination, route_msg_type, content)
+            elif msg_type == 'broadcast_message':
+                destinations = message.get('destinations', [])
+                broadcast_msg_type = message.get('msg_type')
+                broadcast_content = message.get('content', {})
+                return self.thalamus.broadcast_message(destinations, broadcast_msg_type, broadcast_content)
+            else:
+                return self.thalamus.handle_request(message)
+        except Exception:
+            return None
+    
     def process_text_input(self, text: str) -> Dict[str, Any]:
-        """Process text input into concepts"""
-        # Basic text processing
+        """Process text input into concepts and return standardized format"""
+        # Extract concepts from text
         concepts = self._extract_concepts(text)
+        
+        # Detect novelty in the input
+        self._detect_and_signal_novelty(text, concepts)
         
         return {
             'type': 'text_input',
             'raw_text': text,
+            'text': text,  # Standardized key
+            'confidence': 0.95,  # High confidence for direct text input
             'concepts': concepts,
-            'input_type': 'text'
+            'intent_hints': concepts.get('questions', []),
+            'entities': concepts.get('entities', []),
+            'input_type': 'text',
+            'timestamp': time.time()
         }
     
+    def _detect_and_signal_novelty(self, text: str, concepts: Dict[str, Any]):
+        """Detect novel concepts in the input and signal Novelty Lobe"""
+        # Check for novel entities (proper nouns, names, places)
+        novel_entities = []
+        for entity in concepts.get('entities', []):
+            if entity not in self.seen_entities:
+                novel_entities.append(entity)
+                self.seen_entities.add(entity)
+        
+        # Check for novel concepts/words
+        novel_concepts = []
+        for word in concepts.get('words', []):
+            word_lower = word.lower()
+            # Consider it novel if it's longer than 3 chars and not commonly seen
+            if len(word_lower) > 3 and word_lower not in self.seen_concepts:
+                # Skip common words
+                common = {'what', 'this', 'that', 'have', 'from', 'with', 'will', 'know', 'think', 'about', 'which'}
+                if word_lower not in common:
+                    novel_concepts.append(word)
+                    self.seen_concepts.add(word_lower)
+        
+        # Check for novel questions (if present)
+        novel_questions = bool(concepts.get('questions', []))
+        
+        # Send novelty signal if we found novel elements
+        if novel_entities or novel_concepts or (novel_questions and len(text) > 20):
+            try:
+                novelty_message = {
+                    'type': 'novelty_signal',
+                    'source': 'perception',
+                    'stimulus': text,
+                    'stimulus_type': 'text_input',
+                    'novel_entities': novel_entities,
+                    'novel_concepts': novel_concepts,
+                    'has_novel_questions': novel_questions,
+                    'confidence': min(0.95, (len(novel_entities) * 0.3 + len(novel_concepts) * 0.2 + (0.15 if novel_questions else 0)))
+                }
+                
+                # Send to Novelty Lobe
+                result = self.thalamus.send_message(
+                    destination='novelty',
+                    msg_type='novelty_signal',
+                    content=novelty_message,
+                    source='perception'
+                )
+                
+                if result and result.get('status') == 'success':
+                    print(f"✨ Detected novelty: {len(novel_entities)} entities, {len(novel_concepts)} concepts")
+                    
+            except Exception as e:
+                # Novelty Lobe might not be available, that's OK
+                pass
+    
+    def _broadcast_to_lobes(self, perception_data: Dict[str, Any]):
+        """Broadcast perception data to ALL lobes through Thalamus - DIRECT FUNCTION CALL"""
+        # Use Thalamus broadcast_message to send to ALL lobes at once
+        destinations = ['reasoning', 'emotion', 'pattern', 'notus', 'representation', 'language', 'output', 'voice', 'conversation']
+        self.thalamus.broadcast_message(destinations, 'perception_input', {
+            'perception_data': perception_data
+        })
+    
     def process_audio_input(self) -> Optional[Dict[str, Any]]:
-        """Process audio input (speech-to-text)"""
+        """Process audio input (speech-to-text) - returns standardized format"""
         if not self.stt_available:
             return None
             
@@ -218,8 +352,11 @@ class PerceptionLobe:
             text = self.stt_engine.recognize_google(audio)
             print(f"📝 Heard: {text}")
             
-            # Process as text
-            return self.process_text_input(text)
+            # Process as text and return standardized format
+            result = self.process_text_input(text)
+            result['source'] = 'audio'
+            result['confidence'] = 0.85  # Speech-to-text confidence
+            return result
             
         except sr.WaitTimeoutError:
             print("⏱️  No speech detected")
@@ -283,6 +420,20 @@ class PerceptionLobe:
     
     def _extract_concepts(self, text: str) -> Dict[str, Any]:
         """Extract concepts with proper language understanding"""
+        # Query Notus for known concepts/entities
+        known_concepts = []
+        try:
+            notus_concepts = self._send_to_thalamus({
+                'type': 'route_message',
+                'destination': 'notus',
+                'msg_type': 'query',
+                'content': {'type': 'get_known_concepts', 'text': text}
+            })
+            if notus_concepts and notus_concepts.get('status') == 'success':
+                known_concepts = notus_concepts.get('concepts', [])
+        except Exception:
+            pass
+        
         text_lower = text.lower()
         words = text.split()
         
@@ -383,16 +534,8 @@ class PerceptionLobe:
         return concepts
     
     def start(self):
-        """Start perception lobe with FIX: per-connection timeout"""
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
-            
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(self.socket_path)
-        sock.listen(5)
-        sock.settimeout(1.0)  # FIX: accept timeout
-        
-        print(f"👁️  Perception Lobe: Online at {self.socket_path}")
+        """Start perception - register with Thalamus (NO SOCKETS)"""
+        print(f"👁️  Perception Lobe: Registering with Thalamus...")
         if self.stt_available:
             print("   🎤 Voice input: enabled")
         else:
@@ -402,54 +545,17 @@ class PerceptionLobe:
         else:
             print("   📷 Vision input: disabled")
         print("   ⌨️  Text input: enabled")
+        print("   Communication: Direct function calls (NO SOCKETS)")
         
+        # Already registered in __init__, but verify
+        if 'perception' not in self.thalamus.lobe_handlers:
+            if not self._register_with_thalamus():
+                print("❌ Failed to register with Thalamus")
+                return
+        
+        # Keep running (Thalamus calls us directly, no listening loop needed)
         while self.running:
-            try:
-                try:
-                    conn, _ = sock.accept()
-                except socket.timeout:
-                    continue  # FIX: allow check of self.running
-                
-                # FIX: per-connection timeout + recv_all
-                try:
-                    conn.settimeout(5)
-                    
-                    length_data = _recv_all(conn, 4, timeout=5)
-                    msg_length = struct.unpack('!I', length_data)[0]
-                    
-                    # FIX: validate message length
-                    if msg_length <= 0 or msg_length > 10_000_000:
-                        raise ValueError(f"Invalid message length: {msg_length}")
-                    
-                    data = _recv_all(conn, msg_length, timeout=5)
-                    message = json.loads(data.decode('utf-8'))
-                    
-                    result = self.process_message(message)
-                    
-                    response_data = json.dumps(result).encode('utf-8')
-                    response_length = struct.pack('!I', len(response_data))
-                    conn.sendall(response_length + response_data)
-                    
-                except Exception as e:
-                    # FIX: try to send error
-                    try:
-                        err = {'status': 'error', 'message': str(e)}
-                        conn.sendall(struct.pack('!I', len(json.dumps(err).encode('utf-8'))) + json.dumps(err).encode('utf-8'))
-                    except Exception:
-                        pass
-                finally:
-                    # FIX: always close
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                        
-            except Exception as e:
-                print(f"❌ Perception error: {e}")
-                try:
-                    conn.close()
-                except:
-                    pass
+            time.sleep(0.1)
     
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
@@ -459,17 +565,25 @@ class PerceptionLobe:
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         
-        if msg_type == 'process_text':
-            # Process text input
-            text = message.get('text')
+        if msg_type == 'process_text' or msg_type == 'user_input':
+            # Process text input (from GUI or other sources)
+            text = message.get('text') or message.get('user_input', '')
             result = self.process_text_input(text)
-            return {'status': 'success', 'perception': result}
+            
+            # Return standardized perception output
+            return {
+                'status': 'success',
+                'content': result  # Thalamus will transform this
+            }
             
         elif msg_type == 'listen_audio':
             # Listen for audio input
             result = self.process_audio_input()
             if result:
-                return {'status': 'success', 'perception': result}
+                return {
+                    'status': 'success',
+                    'content': result  # Thalamus will transform this
+                }
             else:
                 return {'status': 'no_input', 'message': 'No audio detected'}
                 
@@ -477,7 +591,10 @@ class PerceptionLobe:
             # Capture visual input from webcam
             result = self.process_visual_input()
             if result:
-                return {'status': 'success', 'perception': result}
+                return {
+                    'status': 'success',
+                    'content': result  # Thalamus will transform this
+                }
             else:
                 return {'status': 'no_input', 'message': 'No visual input'}
                 
@@ -499,10 +616,9 @@ class PerceptionLobe:
         if self.camera:
             try:
                 self.camera.release()
-            except:
+            except Exception:
                 pass
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
+        # No sockets to close
 
 if __name__ == "__main__":
     lobe = PerceptionLobe()

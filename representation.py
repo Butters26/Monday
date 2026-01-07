@@ -5,26 +5,14 @@ The "corpus callosum" - translates between all brain lobes
 Provides a common language for concepts, relationships, and meaning
 """
 
-import socket
-import struct
 import json
 import os
 import time
+import sys
 from typing import Dict, Any, List, Set, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
-
-# FIX: robust recv helper
-def _recv_all(conn, n, timeout=5.0):
-    """Read exactly n bytes or raise IOError on EOF/timeout"""
-    conn.settimeout(timeout)
-    data = b''
-    while len(data) < n:
-        chunk = conn.recv(n - len(data))
-        if not chunk:
-            raise IOError("Unexpected EOF while reading")
-        data += chunk
-    return data
+from thalamus import get_thalamus
 
 @dataclass
 class Concept:
@@ -41,9 +29,10 @@ class Concept:
 class RepresentationLayer:
     """Shared concept space for all brain lobes"""
     
-    def __init__(self, socket_path="/tmp/representation.sock"):
-        self.socket_path = socket_path
+    def __init__(self):
         self.running = True
+        # Direct reference to Thalamus (NO SOCKETS)
+        self.thalamus = get_thalamus()
         
         # Concept storage
         self.concepts: Dict[str, Concept] = {}
@@ -73,6 +62,17 @@ class RepresentationLayer:
     
     def create_concept(self, name: str, concept_type: str, properties: Dict[str, Any]) -> str:
         """Create a new concept"""
+        # Query Notus to check if concept already exists
+        try:
+            notus_check = self._query_lobe('notus', {'type': 'concept_exists', 'name': name})
+            if notus_check and notus_check.get('status') == 'success' and notus_check.get('exists', False):
+                # Concept exists in Notus, use that one
+                existing = notus_check.get('concept', {})
+                if existing.get('concept_id'):
+                    return existing['concept_id']
+        except Exception:
+            pass
+        
         concept_id = f"concept_{self.concept_counter}"
         self.concept_counter += 1
         
@@ -97,6 +97,26 @@ class RepresentationLayer:
         for concept in self.concepts.values():
             if concept.name.lower() == name_lower:
                 return concept
+        
+        # Query Notus for concept if not found locally
+        try:
+            notus_concept = self._query_lobe('notus', {'type': 'get_concept', 'name': name})
+            if notus_concept and notus_concept.get('status') == 'success':
+                concept_data = notus_concept.get('concept', {})
+                if concept_data:
+                    # Create concept from Notus data
+                    concept = Concept(
+                        concept_id=concept_data.get('concept_id', f"concept_{self.concept_counter}"),
+                        name=concept_data.get('name', name),
+                        concept_type=concept_data.get('type', 'unknown'),
+                        properties=concept_data.get('properties', {}),
+                        created_at=concept_data.get('created_at', time.time())
+                    )
+                    self.concepts[concept.concept_id] = concept
+                    return concept
+        except Exception:
+            pass
+        
         return None
     
     def activate_concept(self, concept_id: str, activation_level: float = 1.0):
@@ -109,6 +129,21 @@ class RepresentationLayer:
         concept.last_activated = time.time()
         self.active_concepts.add(concept_id)
         
+        # Query Notus for related concepts to activate
+        try:
+            notus_related = self._query_lobe('notus', {'type': 'get_related_concepts', 'concept_id': concept_id})
+            if notus_related and notus_related.get('status') == 'success':
+                related = notus_related.get('related', [])
+                for rel_data in related:
+                    if isinstance(rel_data, dict):
+                        rel_id = rel_data.get('concept_id', '')
+                        strength = rel_data.get('strength', 0.5)
+                        if rel_id and rel_id in self.concepts:
+                            spread_amount = activation_level * strength * self.spread_strength
+                            self.activate_concept(rel_id, spread_amount)
+        except Exception:
+            pass
+        
         for relation_type, target_id, strength in concept.relationships:
             if target_id in self.concepts:
                 spread_amount = activation_level * strength * self.spread_strength
@@ -116,68 +151,58 @@ class RepresentationLayer:
     
     def get_active_concepts(self) -> List[Concept]:
         """Get currently active concepts"""
-        return [self.concepts[cid] for cid in self.active_concepts if cid in self.concepts]
+        local_active = [self.concepts[cid] for cid in self.active_concepts if cid in self.concepts]
+        
+        # Query Notus for related active concepts
+        try:
+            notus_related = self._query_lobe('notus', {'type': 'get_related_active', 'concepts': [c.concept_id for c in local_active]})
+            if notus_related and notus_related.get('status') == 'success':
+                related = notus_related.get('related', [])
+                for rel_data in related:
+                    if isinstance(rel_data, dict):
+                        rel_id = rel_data.get('concept_id', '')
+                        if rel_id and rel_id in self.concepts:
+                            if rel_id not in self.active_concepts:
+                                local_active.append(self.concepts[rel_id])
+        except Exception:
+            pass
+        
+        return local_active
+    
+    def _register_with_thalamus(self):
+        """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
+        try:
+            result = self.thalamus.register_lobe('representation', self)
+            if result.get('status') == 'success':
+                print("✅ Representation registered with Thalamus (direct function calls)")
+                return True
+            return False
+        except Exception as e:
+            print(f"⚠️  Failed to register with Thalamus: {e}")
+            return False
     
     def start(self):
-        """Start representation layer with FIX: per-connection timeout"""
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
-            
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(self.socket_path)
-        sock.listen(5)
-        sock.settimeout(1.0)  # FIX: accept timeout
+        """Start representation - register with Thalamus (NO SOCKETS)"""
+        print(f"🔗 Representation Layer: Registering with Thalamus...")
+        print(f"   Shared concept space for all lobes")
+        print(f"   Communication: Direct function calls (NO SOCKETS)")
         
-        print(f"🔗 Representation Layer: Online at {self.socket_path}")
-        print(f"   Concepts: {len(self.concepts)}")
+        # Register with Thalamus
+        if not self._register_with_thalamus():
+            print("❌ Failed to register with Thalamus")
+            return
         
+        # Keep running (Thalamus calls us directly, no listening loop needed)
         while self.running:
-            try:
-                try:
-                    conn, _ = sock.accept()
-                except socket.timeout:
-                    continue  # FIX: allow check of self.running
-                
-                # FIX: per-connection timeout + recv_all
-                try:
-                    conn.settimeout(5)
-                    
-                    length_data = _recv_all(conn, 4, timeout=5)
-                    msg_length = struct.unpack('!I', length_data)[0]
-                    
-                    # FIX: validate message length
-                    if msg_length <= 0 or msg_length > 10_000_000:
-                        raise ValueError(f"Invalid message length: {msg_length}")
-                    
-                    data = _recv_all(conn, msg_length, timeout=5)
-                    message = json.loads(data.decode('utf-8'))
-                    
-                    result = self.process_message(message)
-                    
-                    response_data = json.dumps(result).encode('utf-8')
-                    response_length = struct.pack('!I', len(response_data))
-                    conn.sendall(response_length + response_data)
-                    
-                except Exception as e:
-                    # FIX: try to send error
-                    try:
-                        err = {'status': 'error', 'message': str(e)}
-                        conn.sendall(struct.pack('!I', len(json.dumps(err).encode('utf-8'))) + json.dumps(err).encode('utf-8'))
-                    except Exception:
-                        pass
-                finally:
-                    # FIX: always close
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                
-            except Exception as e:
-                print(f"❌ Representation error: {e}")
-                try:
-                    conn.close()
-                except:
-                    pass
+            time.sleep(0.1)
+    
+    def _query_lobe(self, lobe_name: str, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Query a lobe through Thalamus - DIRECT FUNCTION CALL"""
+        try:
+            msg_type = message.get('type', 'query')
+            return self.thalamus.send_message(lobe_name, msg_type, message)
+        except Exception:
+            return None
     
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
@@ -230,8 +255,7 @@ class RepresentationLayer:
     def shutdown(self):
         """Graceful shutdown"""
         self.running = False
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
+        # No sockets to close
 
 if __name__ == "__main__":
     layer = RepresentationLayer()
