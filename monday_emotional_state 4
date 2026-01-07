@@ -1,0 +1,29 @@
+{
+  "name": "Monday",
+  "current_emotion": "calm",
+  "emotional_intensity": 0.4,
+  "emotional_resonance": 0.0,
+  "personality": {
+    "openness": 0.5,
+    "conscientiousness": 0.5,
+    "extraversion": 0.5,
+    "agreeableness": 0.5,
+    "neuroticism": 0.5,
+    "emotional_sensitivity": 0.6,
+    "emotional_stability": 0.5,
+    "emotional_expressiveness": 0.6,
+    "empathy_level": 0.6,
+    "pad_setpoint_v": 0.1,
+    "pad_setpoint_a": 0.15,
+    "pad_setpoint_d": 0.2,
+    "hysteresis_margin": 0.15,
+    "refractory_sec": 1.5
+  },
+  "emotional_memories": [],
+  "mood_history": [],
+  "emotional_blends": [],
+  "emotional_patterns": {},
+  "emotional_intelligence_score": 0.5,
+  "updated_at": 1764534022.518502,
+  "created_at": 1764534022.518504
+}

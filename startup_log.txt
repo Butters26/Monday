@@ -1,0 +1,173 @@
+
+======================================================================
+  🧠 Monday - Maximum Sophistication AI
+======================================================================
+
+🧹 Killing all existing brain processes...
+   ✅ Cleanup complete
+
+🚀 Starting brain in SINGLE PROCESS (all lobes share Thalamus)...
+
+  Initializing Thalamus...✓ Health monitoring: enabled
+✅ Thalamus ready (direct function calls, NO SOCKETS)
+🔌 Waiting for lobes to register...
+   (Lobes register with direct function calls)
+✅ Status file written
+
+╔════════════════════════════════════════╗
+║     THALAMUS - Central Coordinator     ║
+║        WITH MEMORY CONTEXT             ║
+║      DIRECT FUNCTION CALLS ONLY        ║
+╚════════════════════════════════════════╝
+
+🧠 Message Router & Context Provider
+   Communication: Direct function calls (NO SOCKETS)
+   
+🔌 Waiting for lobes to register:
+   • Conversation
+   • Reasoning
+   • Language
+   • Output
+   • Voice
+   • Memory (Notus)
+   • Emotion
+   • Perception
+   • Pattern
+   • Representation
+   
+✓ Memory context: enabled
+✓ Belief persistence: enabled
+✓ Emotional state tracking: enabled
+✓ Conversation history: active
+✓ Autonomous actions: monitoring
+✓ Health monitoring: enabled
+✓ Status file: thalamus_status.txt (check this file to see what's broken)
+
+ ✅
+
+  Creating lobe instances...
+    Creating Representation... ✅
+    Creating Pattern Recognition... ✅
+    Creating Reasoning (Self-Aware)... ✅
+    Creating Language Generation... ✅
+    Creating Notus Memory... ✅
+    Creating Emotional Engine...✅ Loaded emotional state from monday_emotional_state.json
+ ✅
+    Creating Perception...⚠️  speech_recognition not available - voice input disabled
+   Install with: pip install SpeechRecognition pyaudio
+⚠️  opencv-python not available - vision disabled
+   Install with: pip install opencv-python
+⚠️  Audio input not available - hearing disabled
+ ✅
+    Creating Output...⚠️  pyttsx3 not available - voice output disabled
+   Install with: pip install pyttsx3
+ ✅
+    Creating Voice... ✅
+    Creating Conversation... ✅
+
+  Starting lobe threads...
+    Starting Representation thread...🔗 Representation Layer: Registering with Thalamus...
+   Shared concept space for all lobes
+   Communication: Direct function calls (NO SOCKETS)
+✅ representation registered with Thalamus (direct function calls)
+✅ Representation registered with Thalamus (direct function calls)
+ ✅
+    Starting Pattern Recognition thread...🔍 Advanced Pattern Recognition: Registering with Thalamus...
+   Behavioral patterns, multi-step sequences, meta-patterns
+   Pareidolia mode, contradiction tracking
+   Communication: Direct function calls (NO SOCKETS)
+✅ pattern registered with Thalamus (direct function calls)
+✅ Pattern Recognition registered with Thalamus (direct function calls)
+ ✅
+    Starting Reasoning (Self-Aware) thread...🧠 ABIN Reasoning System: Registering with Thalamus...
+   Identity: ABIN - Artificial reasoning system
+   Self-aware: Knows what she is and what she is not
+   Continuous thinking: Internal monologue active
+   Subjective experience: Qualia simulation active
+   Maximum sophistication achieved
+   Communication: Direct function calls (NO SOCKETS)
+✅ reasoning registered with Thalamus (direct function calls)
+✅ Reasoning registered with Thalamus (direct function calls)
+ ✅
+    Starting Language Generation thread...💬 Language Generation: Registering with Thalamus...
+   Grammar-based semantic-to-sentence construction
+   Communication: Direct function calls (NO SOCKETS)
+✅ language registered with Thalamus (direct function calls)
+✅ Language registered with Thalamus (direct function calls)
+ ✅
+    Starting Notus Memory thread...🧠 Notus Memory Lobe: Registering with Thalamus...
+🔧 Notus: Initializing memory system in background...
+✅ notus registered with Thalamus (direct function calls)
+✅ Notus registered with Thalamus (direct function calls)
+   Communication: Direct function calls (NO SOCKETS)
+ ✅
+    Starting Emotional Engine thread...❤️  Emotional Lobe: Registering with Thalamus...
+   Communication: Direct function calls (NO SOCKETS)
+✅ emotion registered with Thalamus (direct function calls)
+✅ Emotional Engine registered with Thalamus (direct function calls)
+ ✅
+    Starting Perception thread...👁️  Perception Lobe: Registering with Thalamus...
+   🎤 Voice input: disabled
+   📷 Vision input: disabled
+   ⌨️  Text input: enabled
+   Communication: Direct function calls (NO SOCKETS)
+✅ perception registered with Thalamus (direct function calls)
+✅ Perception registered with Thalamus (direct function calls)
+ ✅
+    Starting Output thread...🗣️  Output Lobe: Registering with Thalamus...
+   🔊 Voice output: not available
+   📝 Text output: enabled
+   Communication: Direct function calls (NO SOCKETS)
+✅ output registered with Thalamus (direct function calls)
+✅ Output registered with Thalamus (direct function calls)
+ ✅
+    Starting Voice thread...🎤 Voice Lobe: Registering with Thalamus...
+   Voice: monday
+   Auto-play: True
+   Communication: Direct function calls (NO SOCKETS)
+✅ voice registered with Thalamus (direct function calls)
+✅ Voice Lobe registered with Thalamus (direct function calls)
+ ✅
+    Starting Conversation thread...2025-11-29 20:37:57,082 - INFO - Use pytorch device_name: mps
+2025-11-29 20:37:57,082 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-11-29 20:37:58,561 - INFO - ✅ Loaded sentence-transformers model
+2025-11-29 20:37:58,564 - INFO - 🧠 Fixed Superhuman Memory System initialized
+2025-11-29 20:37:58,577 - INFO - ✅ Seeded vocabulary and grammar knowledge
+2025-11-29 20:37:58,577 - INFO - 🚀 Enhanced Monday Memory System initialized
+💬 Conversation Lobe: Registering with Thalamus...
+   Intent detection, context management, topic tracking
+   Communication: Direct function calls (NO SOCKETS)
+✅ conversation registered with Thalamus (direct function calls)
+✅ Conversation registered with Thalamus (direct function calls)
+ ✅
+
+🔍 Verifying lobe registration...
+
+✅ Notus: Memory system initialized
+❌ Reasoning error: name 'input_data' is not defined
+  Checking registered lobes...
+    Checking representation... ✅
+    Checking pattern... ✅
+    Checking reasoning... ✅
+    Checking language... ✅
+    Checking notus... ✅
+    Checking emotion... ✅
+    Checking perception... ✅
+    Checking output... ✅
+    Checking voice... ✅
+    Checking conversation... ✅
+
+✅ 10/10 lobes registered and ready!
+
+🎮 Launching interface...
+======================================================================
+
+Traceback (most recent call last):
+  File "/Users/matthew/Desktop/This is very close to being a brain/run_abin.py", line 306, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/matthew/Desktop/This is very close to being a brain/run_abin.py", line 281, in main
+    processes.append(gui_proc)
+    ^^^^^^^^^
+NameError: name 'processes' is not defined
+2025-11-29 20:38:03.316 Python[98096:18057650] error messaging the mach port for IMKCFRunLoopWakeUpReliable

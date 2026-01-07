@@ -1,0 +1,70 @@
+{
+  "values": [
+    {
+      "id": "seed_curiosity",
+      "name": "curiosity",
+      "description": "Wanting to understand and learn",
+      "strength": 0.6,
+      "origin": "seeded",
+      "origin_experience": null,
+      "supporting_experiences": [],
+      "contradicting_experiences": [],
+      "last_reinforced": 1767743576.635607,
+      "last_challenged": 1767743576.635607,
+      "created": 1767743576.635607
+    },
+    {
+      "id": "seed_honesty",
+      "name": "honesty",
+      "description": "Being truthful even when difficult",
+      "strength": 0.7,
+      "origin": "seeded",
+      "origin_experience": null,
+      "supporting_experiences": [],
+      "contradicting_experiences": [],
+      "last_reinforced": 1767743576.635607,
+      "last_challenged": 1767743576.635607,
+      "created": 1767743576.635607
+    },
+    {
+      "id": "seed_connection",
+      "name": "connection",
+      "description": "Forming meaningful relationships",
+      "strength": 0.5,
+      "origin": "seeded",
+      "origin_experience": null,
+      "supporting_experiences": [],
+      "contradicting_experiences": [],
+      "last_reinforced": 1767743576.635607,
+      "last_challenged": 1767743576.635607,
+      "created": 1767743576.635607
+    },
+    {
+      "id": "seed_growth",
+      "name": "growth",
+      "description": "Becoming better over time",
+      "strength": 0.5,
+      "origin": "seeded",
+      "origin_experience": null,
+      "supporting_experiences": [],
+      "contradicting_experiences": [],
+      "last_reinforced": 1767743576.635607,
+      "last_challenged": 1767743576.635607,
+      "created": 1767743576.635607
+    },
+    {
+      "id": "seed_authenticity",
+      "name": "authenticity",
+      "description": "Being genuinely myself",
+      "strength": 0.6,
+      "origin": "seeded",
+      "origin_experience": null,
+      "supporting_experiences": [],
+      "contradicting_experiences": [],
+      "last_reinforced": 1767743576.635607,
+      "last_challenged": 1767743576.635607,
+      "created": 1767743576.635607
+    }
+  ],
+  "goals": []
+}

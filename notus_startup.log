@@ -1,0 +1,32 @@
+
+======================================================================
+Starting notus.py at 2025-11-29 20:24:07
+======================================================================
+🧠 Notus Memory Lobe: Registering with Thalamus...
+🔧 Notus: Initializing memory system in background...
+2025-11-29 20:24:11,426 - INFO - Use pytorch device_name: mps
+2025-11-29 20:24:11,426 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-11-29 20:24:12,855 - INFO - ✅ Loaded sentence-transformers model
+2025-11-29 20:24:12,869 - INFO - 🧠 Fixed Superhuman Memory System initialized
+2025-11-29 20:24:12,877 - INFO - ✅ Seeded vocabulary and grammar knowledge
+2025-11-29 20:24:12,877 - INFO - 🚀 Enhanced Monday Memory System initialized
+✅ notus registered with Thalamus (direct function calls)
+✅ Notus registered with Thalamus (direct function calls)
+   Communication: Direct function calls (NO SOCKETS)
+✅ Notus: Memory system initialized
+
+======================================================================
+Starting notus.py at 2025-11-29 20:24:38
+======================================================================
+🧠 Notus Memory Lobe: Registering with Thalamus...
+🔧 Notus: Initializing memory system in background...
+2025-11-29 20:24:41,406 - INFO - Use pytorch device_name: mps
+2025-11-29 20:24:41,406 - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2025-11-29 20:24:42,859 - INFO - ✅ Loaded sentence-transformers model
+2025-11-29 20:24:42,860 - INFO - 🧠 Fixed Superhuman Memory System initialized
+2025-11-29 20:24:42,867 - INFO - ✅ Seeded vocabulary and grammar knowledge
+2025-11-29 20:24:42,867 - INFO - 🚀 Enhanced Monday Memory System initialized
+✅ notus registered with Thalamus (direct function calls)
+✅ Notus registered with Thalamus (direct function calls)
+   Communication: Direct function calls (NO SOCKETS)
+✅ Notus: Memory system initialized

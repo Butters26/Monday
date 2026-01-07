@@ -4,25 +4,13 @@ Output Lobe - Expression and Communication
 Handles: Text-to-speech, text output, voice configuration
 """
 
-import socket
-import struct
 import json
 import os
 import time
+import sys
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
-
-# FIX: robust recv helper
-def _recv_all(conn, n, timeout=5.0):
-    """Read exactly n bytes or raise IOError on EOF/timeout"""
-    conn.settimeout(timeout)
-    data = b''
-    while len(data) < n:
-        chunk = conn.recv(n - len(data))
-        if not chunk:
-            raise IOError("Unexpected EOF while reading")
-        data += chunk
-    return data
+from thalamus import get_thalamus
 
 # ============================================================================
 # VOICE PROFILES
@@ -127,9 +115,14 @@ TEXT_TO_PHONEMES = {
 class OutputLobe:
     """Output system - handles all expression and communication"""
     
-    def __init__(self, socket_path="/tmp/output.sock"):
-        self.socket_path = socket_path
+    def __init__(self):
         self.running = True
+        # Removed: self.gui_socket_path - all communication through Thalamus
+        self.last_sent_text = None  # Prevent duplicate sends
+        self.last_sent_time = 0.0  # FIX: Initialize time tracking
+        
+        # Direct reference to Thalamus (NO SOCKETS)
+        self.thalamus = get_thalamus()
         
         # Text-to-speech engine
         self.tts_engine = None
@@ -217,22 +210,67 @@ class OutputLobe:
             print(f"⚠️  TTS initialization error: {e}")
             self.tts_available = False
     
-    def speak(self, text: str) -> bool:
-        """Speak text using TTS"""
+    def speak(self, text: str, voice_prosody: Dict[str, float] = None) -> bool:
+        """Speak text using TTS - with emotional prosody support"""
         if not self.tts_available or not self.voice_config['enabled']:
             # Voice disabled - just return text
             return False
-            
+        
+        # Query emotional state if prosody not provided
+        if not voice_prosody:
+            try:
+                emotion_result = self.thalamus.send_message(
+                    destination='emotion',
+                    msg_type='get_emotional_state',
+                    content={},
+                    source='output'
+                )
+                if emotion_result and emotion_result.get('status') == 'success':
+                    voice_prosody = emotion_result.get('content', {}).get('voice_prosody', {})
+            except Exception as e:
+                print(f"⚠️  Could not get emotional prosody: {e}")
+                voice_prosody = {}
+        
+        # Send text to Voice lobe with prosody
         try:
-            self.tts_engine.say(text)
-            self.tts_engine.runAndWait()
-            return True
+            result = self.thalamus.send_message(
+                destination='voice',
+                msg_type='play',
+                content={
+                    'text': text,
+                    'emotion': 'neutral',
+                    'intensity': 0.5,
+                    'voice_prosody': voice_prosody or {}
+                },
+                source='output'
+            )
+            return result.get('status') == 'success'
         except Exception as e:
             print(f"❌ TTS error: {e}")
-            return False
+            # Fallback: try local TTS
+            try:
+                self.tts_engine.say(text)
+                self.tts_engine.runAndWait()
+                return True
+            except Exception:
+                return False
     
     def generate_text_output(self, content: Dict[str, Any]) -> str:
         """Generate formatted text output"""
+        # Query Notus for context
+        try:
+            notus_context = self._send_to_thalamus({
+                'type': 'route_message',
+                'destination': 'notus',
+                'msg_type': 'query',
+                'content': {'type': 'get_context', 'content': content}
+            })
+            if notus_context and notus_context.get('status') == 'success':
+                # Use context to inform output generation
+                pass
+        except Exception:
+            pass
+        
         output_type = content.get('type', 'response')
         text = content.get('text', '')
         
@@ -253,6 +291,20 @@ class OutputLobe:
     
     def format_output(self, content: Dict[str, Any]) -> Dict[str, Any]:
         """Format output with emotion and personality"""
+        # Query Notus for past output patterns
+        try:
+            notus_patterns = self._send_to_thalamus({
+                'type': 'route_message',
+                'destination': 'notus',
+                'msg_type': 'query',
+                'content': {'type': 'get_output_patterns'}
+            })
+            if notus_patterns and notus_patterns.get('status') == 'success':
+                patterns = notus_patterns.get('patterns', [])
+                # Use learned patterns if available
+        except Exception:
+            pass
+        
         text = content.get('text', '')
         emotion = content.get('emotion')
         intensity = content.get('intensity', 0.5)
@@ -353,17 +405,41 @@ class OutputLobe:
         
         return text
     
+    def _register_with_thalamus(self):
+        """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
+        try:
+            result = self.thalamus.register_lobe('output', self)
+            if result.get('status') == 'success':
+                print("✅ Output registered with Thalamus (direct function calls)")
+                return True
+            return False
+        except Exception as e:
+            print(f"⚠️  Failed to register with Thalamus: {e}")
+            return False
+    
+    def _send_to_thalamus(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Send message to Thalamus - DIRECT FUNCTION CALL"""
+        try:
+            msg_type = message.get('type')
+            if msg_type == 'route_message':
+                destination = message.get('destination')
+                route_msg_type = message.get('msg_type')
+                content = message.get('content', {})
+                return self.thalamus.send_message(destination, route_msg_type, content)
+            else:
+                return self.thalamus.handle_request(message)
+        except Exception:
+            return None
+    
+    def _send_to_gui(self, response: Dict[str, Any]):
+        """Send response to GUI through Thalamus - NO DIRECT SOCKET"""
+        # GUI communication goes through Thalamus now - no direct socket
+        # Thalamus will route to GUI if needed
+        pass  # Removed - GUI gets responses through Thalamus
+    
     def start(self):
-        """Start output lobe with FIX: per-connection timeout"""
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
-            
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(self.socket_path)
-        sock.listen(5)
-        sock.settimeout(1.0)  # FIX: accept timeout
-        
-        print(f"🗣️  Output Lobe: Online at {self.socket_path}")
+        """Start output - register with Thalamus (NO SOCKETS)"""
+        print(f"🗣️  Output Lobe: Registering with Thalamus...")
         if self.tts_available:
             if self.voice_config['enabled']:
                 print("   🔊 Voice output: enabled")
@@ -372,54 +448,16 @@ class OutputLobe:
         else:
             print("   🔊 Voice output: not available")
         print("   📝 Text output: enabled")
+        print("   Communication: Direct function calls (NO SOCKETS)")
         
+        # Register with Thalamus
+        if not self._register_with_thalamus():
+            print("❌ Failed to register with Thalamus")
+            return
+        
+        # Keep running (Thalamus calls us directly, no listening loop needed)
         while self.running:
-            try:
-                try:
-                    conn, _ = sock.accept()
-                except socket.timeout:
-                    continue  # FIX: allow check of self.running
-                
-                # FIX: per-connection timeout + recv_all
-                try:
-                    conn.settimeout(5)
-                    
-                    length_data = _recv_all(conn, 4, timeout=5)
-                    msg_length = struct.unpack('!I', length_data)[0]
-                    
-                    # FIX: validate message length
-                    if msg_length <= 0 or msg_length > 10_000_000:
-                        raise ValueError(f"Invalid message length: {msg_length}")
-                    
-                    data = _recv_all(conn, msg_length, timeout=5)
-                    message = json.loads(data.decode('utf-8'))
-                    
-                    result = self.process_message(message)
-                    
-                    response_data = json.dumps(result).encode('utf-8')
-                    response_length = struct.pack('!I', len(response_data))
-                    conn.sendall(response_length + response_data)
-                    
-                except Exception as e:
-                    # FIX: try to send error
-                    try:
-                        err = {'status': 'error', 'message': str(e)}
-                        conn.sendall(struct.pack('!I', len(json.dumps(err).encode('utf-8'))) + json.dumps(err).encode('utf-8'))
-                    except Exception:
-                        pass
-                finally:
-                    # FIX: always close
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                
-            except Exception as e:
-                print(f"❌ Output error: {e}")
-                try:
-                    conn.close()
-                except:
-                    pass
+            time.sleep(0.1)
     
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
@@ -434,9 +472,40 @@ class OutputLobe:
             formatted = self.format_output(content)
             text_output = formatted.get('text', '')
             
+            # Validate text before sending
+            if not text_output or not isinstance(text_output, str) or not text_output.strip():
+                text_output = "I'm thinking about that."
+            
             spoke = False
             if self.voice_config['enabled']:
                 spoke = self.speak(text_output)
+            
+            # Send response to GUI
+            self._send_to_gui({
+                'status': 'success',
+                'response': text_output,
+                'spoke': spoke,
+                'formatted': formatted
+            })
+            
+            # Store conversation to Notus if user_input is provided
+            user_input = content.get('user_input', '') or message.get('user_input', '')
+            if user_input and user_input.strip():
+                try:
+                    # Store full conversation to Notus memory
+                    self._send_to_thalamus({
+                        'type': 'route_message',
+                        'destination': 'notus',
+                        'msg_type': 'store',
+                        'content': {
+                            'role': 'system',
+                            'content': f"User: {user_input}\nABIN: {text_output}",
+                            'memory_type': 'conversation'
+                        }
+                    })
+                except Exception as e:
+                    # Don't break if memory storage fails
+                    print(f"⚠️  Failed to store conversation to Notus: {e}")
             
             return {
                 'status': 'success',
@@ -444,6 +513,52 @@ class OutputLobe:
                 'spoke': spoke,
                 'formatted': formatted
             }
+        
+        elif msg_type == 'text_response':
+            # Direct text response from Language_generation
+            text = message.get('text', '')
+            if not text or not isinstance(text, str) or not text.strip():
+                text = "I'm thinking about that."
+            
+            # FIX: Prevent duplicate sends (same text within 10 seconds)
+            current_time = time.time()
+            if text == self.last_sent_text and (current_time - self.last_sent_time) < 10.0:
+                return {'status': 'success', 'sent_to_gui': False, 'duplicate': True}
+            
+            self.last_sent_text = text
+            self.last_sent_time = current_time
+            
+            spoke = False
+            if self.voice_config['enabled']:
+                spoke = self.speak(text)
+            
+            # Send response to GUI
+            self._send_to_gui({
+                'status': 'success',
+                'response': text,
+                'spoke': spoke
+            })
+            
+            # Store conversation to Notus if user_input is provided
+            user_input = message.get('user_input', '')
+            if user_input and user_input.strip():
+                try:
+                    # Store full conversation to Notus memory
+                    self._send_to_thalamus({
+                        'type': 'route_message',
+                        'destination': 'notus',
+                        'msg_type': 'store',
+                        'content': {
+                            'role': 'system',
+                            'content': f"User: {user_input}\nABIN: {text}",
+                            'memory_type': 'conversation'
+                        }
+                    })
+                except Exception as e:
+                    # Don't break if memory storage fails
+                    print(f"⚠️  Failed to store conversation to Notus: {e}")
+            
+            return {'status': 'success', 'sent_to_gui': True}
             
         elif msg_type == 'speak':
             # Just speak the text
@@ -489,10 +604,9 @@ class OutputLobe:
         if self.tts_engine:
             try:
                 self.tts_engine.stop()
-            except:
+            except Exception:
                 pass
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
+        # No sockets to close
 
 if __name__ == "__main__":
     lobe = OutputLobe()

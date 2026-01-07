@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""
+Dual Stream Thinking - Integration of spontaneous and controlled thought
+Monday experiences both streams simultaneously with meta-control
+"""
+
+import time
+import threading
+from typing import Optional, Dict, Any
+from continuous_thought_generator import ContinuousThoughtGenerator
+from controlled_thinking import ControlledThinking
+from meta_awareness import MetaAwareness, ThinkingMode
+from thalamus import get_thalamus
+
+
+class DualStreamThinking:
+    """
+    Manages both spontaneous and controlled thinking streams
+    Monday experiences both, with meta-awareness controlling engagement
+    Integrated with Thalamus for communication with other lobes
+    """
+    
+    def __init__(self):
+        # Initialize both systems
+        self.spontaneous = ContinuousThoughtGenerator()
+        self.controlled = ControlledThinking()
+        self.meta = MetaAwareness()
+        
+        # Connect systems to meta-awareness
+        self.meta.set_spontaneous_system(self.spontaneous)
+        self.meta.set_controlled_system(self.controlled)
+        
+        # Thalamus integration
+        self.thalamus = get_thalamus()
+        self.running = False
+        
+        # Tracking
+        self.total_thoughts = 0
+        self.thought_log = []
+        
+        # Register with Thalamus
+        self._register_with_thalamus()
+    
+    def _register_with_thalamus(self):
+        """Register with Thalamus"""
+        try:
+            result = self.thalamus.register_lobe('dual_stream', self)
+            if result.get('status') == 'success':
+                print("✅ Dual Stream Thinking registered with Thalamus")
+                return True
+            return False
+        except Exception as e:
+            print(f"⚠️  Failed to register Dual Stream Thinking: {e}")
+            return False
+    
+    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle incoming messages from other lobes"""
+        msg_type = message.get('type')
+        
+        if msg_type == 'get_current_thought':
+            # Return what Monday is currently thinking about
+            if self.thought_log:
+                recent = self.thought_log[-1]
+                return {
+                    'status': 'success',
+                    'thought': recent['spontaneous']['text'],
+                    'mode': self.meta.state.mode.value,
+                    'topic': recent['spontaneous'].get('topic')
+                }
+            return {'status': 'success', 'thought': None}
+        
+        elif msg_type == 'get_stream_summary':
+            summary = self.meta.get_meta_state_summary()
+            return {'status': 'success', 'summary': summary}
+        
+        elif msg_type == 'set_emotional_state':
+            emotion = message.get('emotion', 'neutral')
+            self.spontaneous.set_emotional_state(emotion)
+            return {'status': 'success'}
+        
+        elif msg_type == 'set_arousal':
+            level = message.get('level', 0.5)
+            self.spontaneous.set_arousal(level)
+            return {'status': 'success'}
+        
+        elif msg_type == 'health':
+            return {'status': 'success', 'healthy': True}
+        
+        else:
+            return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
+    
+    def start(self, duration: Optional[float] = None):
+        """Start both thought streams"""
+        self.running = True
+        
+        print("🧠 Dual Stream Thinking: Starting conscious experience...")
+        
+        start_time = time.time()
+        
+        # Run integrated loop
+        while self.running:
+            try:
+                if duration and (time.time() - start_time) > duration:
+                    break
+                
+                # Get emotional context from emotion lobe
+                try:
+                    emotion_state = self.thalamus.send_message('emotion', 'get_state', {})
+                    if emotion_state and emotion_state.get('status') == 'success':
+                        emotion = emotion_state.get('emotion', 'neutral')
+                        self.spontaneous.set_emotional_state(emotion)
+                except:
+                    pass
+                
+                # SPONTANEOUS STREAM (always running)
+                spontaneous_thought = self.spontaneous.generate_thought()
+                self.total_thoughts += 1
+                
+                # META-AWARENESS: notice and decide
+                meta_response = self.meta.notice_spontaneous_thought(spontaneous_thought)
+                
+                # CONTROLLED STREAM (only if engaged)
+                if meta_response["action"] == "engaged":
+                    # Start controlled reasoning
+                    topic = meta_response.get("topic", "unknown")
+                    question = meta_response.get("question", f"Think about {topic}")
+                    
+                    self.controlled.start_reasoning(topic, question, depth=3)
+                    
+                    # Take reasoning steps
+                    for i in range(3):
+                        time.sleep(0.5)
+                        step = self.controlled.reason_step()
+                        if not step:
+                            break
+                    
+                    # After controlled reasoning completes, return to wandering
+                    if self.controlled.current_goal and self.controlled.current_goal.completed:
+                        self.meta.shift_to_wandering("Completed reasoning")
+                        
+                        # Send insight to autonomous speech if significant
+                        if self.controlled.current_goal.conclusion:
+                            try:
+                                self.thalamus.send_message('speech', 'evaluate_thought', {
+                                    'thought': {
+                                        'id': f"insight_{int(time.time())}",
+                                        'content': self.controlled.current_goal.conclusion,
+                                        'thought_type': 'insight',
+                                        'intensity': 0.7
+                                    }
+                                })
+                            except:
+                                pass
+                
+                # Log thought
+                self.thought_log.append({
+                    "spontaneous": spontaneous_thought,
+                    "meta_response": meta_response,
+                    "timestamp": time.time(),
+                })
+                
+                # Keep log bounded
+                if len(self.thought_log) > 100:
+                    self.thought_log = self.thought_log[-100:]
+                
+                # Calculate next spontaneous thought interval
+                interval = self.spontaneous._calculate_thought_interval()
+                
+                # Wait before next spontaneous thought
+                time.sleep(interval)
+                
+            except Exception as e:
+                print(f"❌ Dual Stream error: {e}")
+                time.sleep(2)
+    
+    def shutdown(self):
+        """Stop both thought streams"""
+        self.running = False
+        print("🧠 Dual Stream Thinking: Shutdown complete")
+    
+    def _print_summary(self, duration: float):
+        """Print summary of thinking session"""
+        print("\n" + "=" * 70)
+        print("SESSION SUMMARY")
+        print("=" * 70)
+        
+        meta_summary = self.meta.get_meta_state_summary()
+        
+        print(f"Duration: {duration:.1f}s")
+        print(f"Total spontaneous thoughts: {self.total_thoughts}")
+        print(f"Thoughts noticed: {meta_summary['thoughts_noticed']}")
+        print(f"Thoughts engaged: {meta_summary['thoughts_engaged']}")
+        print(f"Thoughts dismissed: {meta_summary['thoughts_dismissed']}")
+        print(f"Engagement rate: {meta_summary['engagement_rate']:.1%}")
+        print(f"Mode shifts: {meta_summary['mode_shifts']}")
+        print(f"Final mode: {meta_summary['mode']}")
+        print(f"Final awareness level: {meta_summary['awareness_level']:.2f}")
+        
+        print("\n" + "=" * 70)
+
+
+def test_dual_stream():
+    """Test the integrated dual stream thinking"""
+    system = DualStreamThinking()
+    
+    try:
+        # Run for 45 seconds
+        system.start(duration=45.0)
+    except KeyboardInterrupt:
+        system.stop()
+        print("\n✅ Test interrupted by user")
+
+
+if __name__ == "__main__":
+    test_dual_stream()

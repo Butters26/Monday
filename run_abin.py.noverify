@@ -3,11 +3,9 @@
 Monday Single-Process Runner
 Runs all lobes in ONE process as threads - they all share the same Thalamus instance
 NO SOCKETS - All communication via direct function calls
-
-SINGLE-PROCESS MODE ONLY: All lobes run as threads in one process, sharing the same Thalamus instance.
-NO SOCKETS, NO SUBPROCESSES: All communication is via direct function calls.
-Subprocess orchestration is not supported in this mode.
 """
+
+import subprocess
 import sys
 import os
 import time
@@ -15,7 +13,6 @@ import signal
 import atexit
 import threading
 
-# SINGLE-PROCESS MODE ONLY
 # Import all lobe classes so they run in the same process
 from thalamus import get_thalamus, Thalamus
 from reasoning import MaximumSophisticationReasoning
@@ -28,17 +25,6 @@ from pattern_recognition import AdvancedPatternRecognition
 from language_generation import LanguageGenerator
 from output import OutputLobe
 from advanced_emotional_engine import EmotionalProcess
-from novelty_lobe import NoveltyLobe
-
-# New systems
-from experience_processor import ExperienceProcessor
-from self_reflection import SelfReflectionEngine
-from value_evolution import ValueEvolutionSystem
-from autonomous_thinking import AutonomousThinkingLoop
-from autonomous_speech import AutonomousSpeechSystem
-from behavioral_reinforcement import BehavioralReinforcement
-from value_system_learning import ValueSystemLearning
-from dual_stream_thinking import DualStreamThinking
 
 def cleanup_sockets():
     """Clean up old socket files - NO SOCKETS USED ANYMORE"""
@@ -76,7 +62,44 @@ def check_syntax(script_path: str) -> tuple:
     except Exception as e:
         return False, f"❌ Error checking {script_path}: {e}"
 
-## Subprocess orchestration removed: start_lobe and related logic are not supported in single-process mode.
+def start_lobe(script_path: str, wait_time: float = 0.5):
+    """Start a lobe in background - errors shown in terminal AND logged"""
+    log_path = f"{script_path.replace('.py', '')}_startup.log"
+    log_file = open(log_path, 'a')
+    log_file.write(f"\n{'='*70}\n")
+    log_file.write(f"Starting {script_path} at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    log_file.write(f"{'='*70}\n")
+    log_file.flush()
+    
+    # Use PIPE to capture output
+    proc = subprocess.Popen(
+        [sys.executable, script_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        bufsize=0,
+        text=True,
+        start_new_session=True
+    )
+    
+    # Thread to read output and show errors in terminal + log everything
+    def read_output():
+        for line in proc.stdout:
+            line = line.rstrip()
+            # Show errors in terminal immediately
+            if any(keyword in line for keyword in ['error', 'Error', 'ERROR', 'Exception', 'Traceback', 'SyntaxError', 'IndentationError']):
+                print(f"  ❌ {script_path}: {line}")
+            # Also log everything
+            log_file.write(line + '\n')
+            log_file.flush()
+        log_file.close()
+    
+    thread = threading.Thread(target=read_output, daemon=True)
+    thread.start()
+    proc._log_file = log_file
+    proc._output_thread = thread
+    time.sleep(wait_time)
+    return proc
 
 def main():
     brain_dir = os.path.dirname(os.path.abspath(__file__))
@@ -117,10 +140,31 @@ def main():
     print("  🧠 Monday - Maximum Sophistication AI")
     print("=" * 70)
     
-    # Subprocess cleanup removed: all lobes run in-process as threads. No pkill or process cleanup needed.
-    print("\n🧹 No process cleanup needed in single-process mode.")
+    # Kill ALL existing processes first - be thorough
+    print("\n🧹 Killing all existing brain processes...")
+    lobe_scripts = [
+        "representation.py", "pattern_recognition.py", "reasoning.py",
+        "language_generation.py", "notus.py", "advanced_emotional_engine.py",
+        "perception.py", "output.py", "voice_lobe.py", "conversation.py",
+        "thalamus.py", "abin_interface.py"
+    ]
     
-    # Clean old sockets (noop)
+    # Kill by script name
+    for script in lobe_scripts:
+        try:
+            subprocess.run(["pkill", "-9", "-f", script], 
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        except Exception:
+            pass
+    
+    # NO SOCKETS - All communication is direct function calls
+    # No need to kill processes by socket files
+    
+    # Wait and verify they're actually dead
+    time.sleep(3)
+    print("   ✅ Cleanup complete")
+    
+    # Clean old sockets
     cleanup_sockets()
     
     print("\n🚀 Starting brain in SINGLE PROCESS (all lobes share Thalamus)...\n")
@@ -142,22 +186,12 @@ def main():
         ("Pattern Recognition", AdvancedPatternRecognition, 0.5),
         ("Reasoning (Self-Aware)", MaximumSophisticationReasoning, 1.0),
         ("Language Generation", LanguageGenerator, 0.5),
-        ("Notus Memory", NotusProcess, 3.5),  # Needs extra time for DB initialization to prevent race conditions
+        ("Notus Memory", NotusProcess, 2.0),  # Needs time for memory init
         ("Emotional Engine", EmotionalProcess, 1.0),
-        ("Novelty Lobe", NoveltyLobe, 0.5),  # Curiosity detection
         ("Perception", PerceptionLobe, 0.5),
         ("Output", OutputLobe, 0.5),
         ("Voice", VoiceLobe, 0.5),
         ("Conversation", ConversationSystem, 0.5),
-        # New systems - wire them in
-        ("Dual Stream Thinking", DualStreamThinking, 0.5),  # Conscious experience
-        ("Experience Processor", ExperienceProcessor, 0.5),
-        ("Self Reflection", SelfReflectionEngine, 0.5),
-        ("Value Evolution", ValueEvolutionSystem, 0.5),
-        ("Autonomous Thinking", AutonomousThinkingLoop, 0.5),
-        ("Autonomous Speech", AutonomousSpeechSystem, 0.5),
-        ("Behavioral Reinforcement", BehavioralReinforcement, 0.5),
-        ("Value System Learning", ValueSystemLearning, 0.5),
     ]
     
     print(f"\n  Creating lobe instances...")
@@ -185,41 +219,9 @@ def main():
         except Exception as e:
             print(f" ❌ (Error: {e})")
     
-    # Instantiate and register new lobes with Thalamus
-    from attention_lobe import AttentionLobe
-    from motor_action_lobe import MotorActionLobe
-    from executive_control_lobe import ExecutiveControlLobe
-    from meta_cognition_lobe import MetaCognitionLobe
-    from social_context_lobe import SocialContextLobe
-    from sensory_integration_lobe import SensoryIntegrationLobe
-    from value_goal_management_lobe import ValueGoalManagementLobe
-
-    new_lobes = [
-        ("attention", AttentionLobe),
-        ("motor_action", MotorActionLobe),
-        ("executive_control", ExecutiveControlLobe),
-        ("meta_cognition", MetaCognitionLobe),
-        ("social_context", SocialContextLobe),
-        ("sensory_integration", SensoryIntegrationLobe),
-        ("value_goal_management", ValueGoalManagementLobe)
-    ]
-
-    print(f"\n  Creating and registering new lobes...")
-    for lobe_name, lobe_class in new_lobes:
-        print(f"    Creating {lobe_name}...", end='', flush=True)
-        try:
-            lobe_instance = lobe_class(thalamus=thalamus)
-            thalamus.register_lobe(lobe_name, lobe_instance)
-            lobe_instances.append((lobe_name, lobe_instance))
-            print(" ✅")
-        except Exception as e:
-            print(f" ❌ (Error: {e})")
-            cleanup()
-            return 1
-    
     # Wait for all lobes to register with Thalamus
     print("\n🔍 Verifying lobe registration...\n")
-    time.sleep(3)  # Give all lobes time to register
+    time.sleep(5)  # Give all lobes time to register
     
     lobes_to_test = [
         "representation",
@@ -231,14 +233,7 @@ def main():
         "perception",
         "output",
         "voice",
-        "conversation",
-        "attention",
-        "motor_action",
-        "executive_control",
-        "meta_cognition",
-        "social_context",
-        "sensory_integration",
-        "value_goal_management"
+        "conversation"
     ]
     
     print(f"  Checking registered lobes...")
@@ -247,41 +242,34 @@ def main():
     
     for lobe_name in lobes_to_test:
         print(f"    Checking {lobe_name}...", end='', flush=True)
-        try:
-            if test_lobe_registration(lobe_name):
-                print(" ✅")
-            else:
-                print(" ❌")
-                all_registered = False
-                failed_lobes.append(lobe_name)
-        except Exception as e:
-            print(f" ⚠️ (error: {e})")
+        if test_lobe_registration(lobe_name):
+            print(" ✅")
+        else:
+            print(" ❌")
+            all_registered = False
             failed_lobes.append(lobe_name)
     
-    # Retry failed registrations once
-    if failed_lobes:
+    # Retry failed registrations
+    if not all_registered:
         print(f"\n⚠️  Some lobes not registered yet: {', '.join(failed_lobes)}")
-        print("   Retrying in 2 seconds...\n")
-        time.sleep(2)
+        print("   Retrying in 3 seconds...\n")
+        time.sleep(3)
         
         still_failed = []
         for lobe_name in failed_lobes:
             print(f"    Retrying {lobe_name}...", end='', flush=True)
-            try:
-                if test_lobe_registration(lobe_name):
-                    print(" ✅")
-                else:
-                    print(" ❌")
-                    still_failed.append(lobe_name)
-            except Exception as e:
-                print(f" ⚠️ (error: {e})")
+            if test_lobe_registration(lobe_name):
+                print(" ✅")
+            else:
+                print(" ❌")
                 still_failed.append(lobe_name)
         
         if still_failed:
             print(f"\n⚠️  Some lobes still not registered: {', '.join(still_failed)}")
             print("   Continuing anyway - they may register later...\n")
     
-    print(f"\n✅ Verification complete!")
+    registered = [name for name in lobes_to_test if test_lobe_registration(name)]
+    print(f"\n✅ {len(registered)}/{len(lobes_to_test)} lobes registered and ready!")
     
     print("\n🎮 Launching interface...")
     print("=" * 70)

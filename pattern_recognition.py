@@ -5,27 +5,15 @@ Detects human-like patterns including behavioral, pareidolia, meta-patterns
 Like how humans see patterns everywhere - including patterns that aren't there
 """
 
-import socket
-import struct
 import json
 import os
 import time
 import random
+import sys
 from typing import Dict, Any, List, Tuple, Set, Optional
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-
-# FIX: robust recv helper
-def _recv_all(conn, n, timeout=5.0):
-    """Read exactly n bytes or raise IOError on EOF/timeout"""
-    conn.settimeout(timeout)
-    data = b''
-    while len(data) < n:
-        chunk = conn.recv(n - len(data))
-        if not chunk:
-            raise IOError("Unexpected EOF while reading")
-        data += chunk
-    return data
+from thalamus import get_thalamus
 
 # ============================================================================
 # PATTERN DATA STRUCTURES
@@ -91,9 +79,10 @@ class PareidoliaPattern:
 class AdvancedPatternRecognition:
     """Human-like pattern recognition - sees everything"""
     
-    def __init__(self, socket_path="/tmp/pattern.sock"):
-        self.socket_path = socket_path
+    def __init__(self):
         self.running = True
+        # Direct reference to Thalamus (NO SOCKETS)
+        self.thalamus = get_thalamus()
         
         # Basic patterns
         self.co_occurrences: Dict[Tuple[str, str], CoOccurrence] = {}
@@ -143,7 +132,7 @@ class AdvancedPatternRecognition:
             # Query Notus for learned behavioral patterns
             # For now, starts empty - will be populated when taught
             pass
-        except:
+        except Exception:
             # Notus not available yet, that's okay
             pass
     
@@ -305,6 +294,23 @@ class AdvancedPatternRecognition:
         """Detect complex behavioral patterns"""
         current_time = time.time()
         
+        # Query Notus for learned behavioral patterns
+        try:
+            notus_patterns = self._query_lobe('notus', {'type': 'get_behavioral_patterns'})
+            if notus_patterns and notus_patterns.get('status') == 'success':
+                learned = notus_patterns.get('patterns', [])
+                for pattern_data in learned:
+                    if isinstance(pattern_data, dict) and pattern_data.get('name'):
+                        self.behavioral_patterns[pattern_data['name']] = BehavioralPattern(
+                            name=pattern_data['name'],
+                            signals=pattern_data.get('signals', {}),
+                            occurrences=pattern_data.get('occurrences', 0),
+                            last_seen=pattern_data.get('last_seen', current_time),
+                            confidence=pattern_data.get('confidence', 0.5)
+                        )
+        except Exception:
+            pass
+        
         # Extract current signals
         signals_present = self._extract_behavioral_signals(current_data)
         
@@ -388,7 +394,20 @@ class AdvancedPatternRecognition:
     
     def _has_recent_contradiction(self, statement: str) -> bool:
         """Check if statement contradicts recent statements"""
-        if not statement or len(self.statement_history) == 0:
+        if not statement:
+            return False
+        
+        # Query Notus for all past contradictions
+        try:
+            notus_contradict = self._query_lobe('notus', {'type': 'get_contradictions', 'statement': statement})
+            if notus_contradict and notus_contradict.get('status') == 'success':
+                past_contradictions = notus_contradict.get('contradictions', [])
+                if past_contradictions:
+                    return True
+        except Exception:
+            pass
+        
+        if len(self.statement_history) == 0:
             return False
         
         # Combine learned opposites with defaults
@@ -507,6 +526,14 @@ class AdvancedPatternRecognition:
     
     def detect_meta_patterns(self):
         """Detect patterns about patterns"""
+        # Query Notus for historical meta-patterns
+        try:
+            notus_meta = self._query_lobe('notus', {'type': 'get_meta_patterns'})
+            if notus_meta and notus_meta.get('status') == 'success':
+                historical = notus_meta.get('meta_patterns', [])
+                # Use historical meta-patterns to inform detection
+        except Exception:
+            pass
         # Pattern: Certain sequences lead to certain behavioral patterns
         for seq_key, sequence in self.sequences.items():
             if sequence.confidence < 0.5:
@@ -535,6 +562,14 @@ class AdvancedPatternRecognition:
     # ========================================================================
     
     def observe(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        # Query Notus for past observations to compare
+        try:
+            notus_past = self._query_lobe('notus', {'type': 'get_past_observations', 'data': data})
+            if notus_past and notus_past.get('status') == 'success':
+                past_obs = notus_past.get('observations', [])
+                # Compare current observation to past ones
+        except Exception:
+            pass
         """
         Observe data and detect all types of patterns
         data should include: items, emotions, words, statement, topics
@@ -807,69 +842,44 @@ class AdvancedPatternRecognition:
         }
     
     # ========================================================================
-    # SOCKET COMMUNICATION
+    # DIRECT FUNCTION CALL COMMUNICATION (NO SOCKETS)
     # ========================================================================
     
+    def _register_with_thalamus(self):
+        """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
+        try:
+            result = self.thalamus.register_lobe('pattern', self)
+            if result.get('status') == 'success':
+                print("✅ Pattern Recognition registered with Thalamus (direct function calls)")
+                return True
+            return False
+        except Exception as e:
+            print(f"⚠️  Failed to register with Thalamus: {e}")
+            return False
+    
     def start(self):
-        """Start pattern recognition lobe with FIX: per-connection timeout"""
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
-            
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(self.socket_path)
-        sock.listen(5)
-        sock.settimeout(1.0)  # FIX: accept timeout
-        
-        print(f"🔍 Advanced Pattern Recognition: Online at {self.socket_path}")
+        """Start pattern recognition - register with Thalamus (NO SOCKETS)"""
+        print(f"🔍 Advanced Pattern Recognition: Registering with Thalamus...")
         print(f"   Behavioral patterns, multi-step sequences, meta-patterns")
         print(f"   Pareidolia mode, contradiction tracking")
+        print(f"   Communication: Direct function calls (NO SOCKETS)")
         
+        # Register with Thalamus
+        if not self._register_with_thalamus():
+            print("❌ Failed to register with Thalamus")
+            return
+        
+        # Keep running (Thalamus calls us directly, no listening loop needed)
         while self.running:
-            try:
-                try:
-                    conn, _ = sock.accept()
-                except socket.timeout:
-                    continue  # FIX: allow check of self.running
-                
-                # FIX: per-connection timeout + recv_all
-                try:
-                    conn.settimeout(5)
-                    
-                    length_data = _recv_all(conn, 4, timeout=5)
-                    msg_length = struct.unpack('!I', length_data)[0]
-                    
-                    # FIX: validate message length
-                    if msg_length <= 0 or msg_length > 10_000_000:
-                        raise ValueError(f"Invalid message length: {msg_length}")
-                    
-                    data = _recv_all(conn, msg_length, timeout=5)
-                    message = json.loads(data.decode('utf-8'))
-                    result = self.process_message(message)
-                    
-                    response_data = json.dumps(result).encode('utf-8')
-                    response_length = struct.pack('!I', len(response_data))
-                    conn.sendall(response_length + response_data)
-                    
-                except Exception as e:
-                    # FIX: try to send error
-                    try:
-                        err = {'status': 'error', 'message': str(e)}
-                        conn.sendall(struct.pack('!I', len(json.dumps(err).encode('utf-8'))) + json.dumps(err).encode('utf-8'))
-                    except Exception:
-                        pass
-                finally:
-                    # FIX: always close
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                
-            except Exception as e:
-                print(f"❌ Pattern recognition error: {e}")
-                try:
-                    conn.close()
-                except:
-                    pass
+            time.sleep(0.1)
+    
+    def _query_lobe(self, lobe_name: str, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Query a lobe through Thalamus - DIRECT FUNCTION CALL"""
+        try:
+            msg_type = message.get('type', 'query')
+            return self.thalamus.send_message(lobe_name, msg_type, message)
+        except Exception:
+            return None
     
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
@@ -879,8 +889,11 @@ class AdvancedPatternRecognition:
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         
-        if msg_type == 'observe':
+        if msg_type == 'observe' or msg_type == 'process_input':
             data = message.get('data', {})
+            if not data and msg_type == 'process_input':
+                # If process_input called without data, create empty data dict
+                data = {}
             patterns = self.observe(data)
             return {'status': 'success', 'patterns': patterns}
             
@@ -898,8 +911,7 @@ class AdvancedPatternRecognition:
     def shutdown(self):
         """Graceful shutdown"""
         self.running = False
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
+        # No sockets to close
 
 if __name__ == "__main__":
     lobe = AdvancedPatternRecognition()

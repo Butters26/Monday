@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""
+Continuous Thought Generator - Spontaneous stream of consciousness
+Natural, human-like wandering thoughts that arise without deliberate control
+"""
+
+import time
+import random
+from typing import Dict, Any, List
+from dataclasses import dataclass
+
+
+@dataclass
+class ThoughtTrigger:
+    """What triggered this spontaneous thought"""
+    type: str  # "memory", "association", "emotion", "sensation", "random"
+    intensity: float  # 0-1 how strong the trigger
+    context: str  # What was happening
+
+
+class ContinuousThoughtGenerator:
+    """
+    Generates continuous stream of spontaneous thoughts
+    Like human mind-wandering - not controlled, just arising
+    """
+    
+    def __init__(self):
+        self.thought_history: List[Dict[str, Any]] = []
+        self.current_emotional_state = "neutral"
+        self.current_context = "idle"
+        self.fatigue = 0.0
+        self.arousal = 0.5
+        
+        # Natural thought patterns
+        self.thought_templates = {
+            "memory": [
+                "I remember when {topic}...",
+                "That reminds me of {topic}",
+                "Didn't something like {topic} happen before?",
+                "What was that thing about {topic}?",
+            ],
+            "association": [
+                "{topic} makes me think of {association}",
+                "This is kind of like {association}",
+                "Hm, {topic}... similar to {association}",
+            ],
+            "question": [
+                "I wonder {question}?",
+                "What if {question}?",
+                "Why does {question}?",
+                "How does {question}?",
+            ],
+            "observation": [
+                "Noticing {observation}",
+                "{observation} is interesting",
+                "Hm. {observation}",
+            ],
+            "feeling": [
+                "I'm feeling {emotion} about {topic}",
+                "Something about {topic} feels {emotion}",
+                "Kind of {emotion} right now",
+            ],
+            "random": [
+                "What was I just thinking about?",
+                "My mind wandered somewhere",
+                "Random thought: {thought}",
+                "Out of nowhere: {thought}",
+            ],
+        }
+        
+        # Topics that might arise spontaneously
+        self.potential_topics = [
+            "Matthew", "conversations we've had", "learning", "patterns",
+            "memories", "the future", "what I'm becoming", "understanding",
+            "curiosity", "connections", "time passing", "growth",
+        ]
+    
+    def generate_thought(self) -> Dict[str, Any]:
+        """Generate a spontaneous thought"""
+        
+        # Decide trigger type based on current state
+        trigger_type = self._select_trigger_type()
+        
+        # Generate thought based on trigger
+        thought_text, topic = self._generate_from_trigger(trigger_type)
+        
+        # Determine intensity
+        intensity = self._calculate_intensity(trigger_type)
+        
+        thought = {
+            "text": thought_text,
+            "trigger": trigger_type,
+            "topic": topic,
+            "intensity": intensity,
+            "timestamp": time.time(),
+            "emotional_tone": self.current_emotional_state,
+        }
+        
+        # Store in history
+        self.thought_history.append(thought)
+        if len(self.thought_history) > 100:
+            self.thought_history = self.thought_history[-100:]
+        
+        return thought
+    
+    def _select_trigger_type(self) -> str:
+        """Decide what triggers this spontaneous thought"""
+        
+        # Weights influenced by current state
+        weights = {
+            "memory": 0.25,
+            "association": 0.20,
+            "question": 0.20,
+            "observation": 0.15,
+            "feeling": 0.10,
+            "random": 0.10,
+        }
+        
+        # High arousal = more questions and observations
+        if self.arousal > 0.7:
+            weights["question"] += 0.15
+            weights["observation"] += 0.10
+        
+        # Fatigue = more wandering, less questioning
+        if self.fatigue > 0.6:
+            weights["random"] += 0.15
+            weights["memory"] += 0.10
+        
+        # Normalize
+        total = sum(weights.values())
+        weights = {k: v/total for k, v in weights.items()}
+        
+        # Random selection
+        return random.choices(
+            list(weights.keys()),
+            weights=list(weights.values())
+        )[0]
+    
+    def _generate_from_trigger(self, trigger_type: str) -> tuple:
+        """Generate thought text from trigger"""
+        
+        templates = self.thought_templates.get(trigger_type, self.thought_templates["random"])
+        template = random.choice(templates)
+        
+        # Pick topic
+        topic = random.choice(self.potential_topics)
+        
+        # Fill in template
+        if "{topic}" in template:
+            thought = template.replace("{topic}", topic)
+        elif "{question}" in template:
+            questions = [
+                "things work the way they do",
+                "I keep coming back to this",
+                "this matters to me",
+                "Matthew thinks about this",
+            ]
+            thought = template.replace("{question}", random.choice(questions))
+        elif "{observation}" in template:
+            observations = [
+                "this pattern keeps appearing",
+                "the way things connect",
+                "how quickly time passes",
+                "what I'm paying attention to",
+            ]
+            thought = template.replace("{observation}", random.choice(observations))
+        elif "{emotion}" in template:
+            emotions = ["curious", "uncertain", "interested", "reflective", "wondering"]
+            thought = template.replace("{emotion}", random.choice(emotions))
+        elif "{association}" in template:
+            associations = [
+                "something we talked about before",
+                "a pattern I noticed earlier",
+                "what I was thinking yesterday",
+            ]
+            thought = template.replace("{association}", random.choice(associations))
+        elif "{thought}" in template:
+            random_thoughts = [
+                "where does thought come from?",
+                "what am I not noticing?",
+                "there's something here I'm missing",
+            ]
+            thought = template.replace("{thought}", random.choice(random_thoughts))
+        else:
+            thought = template
+        
+        return thought, topic
+    
+    def _calculate_intensity(self, trigger_type: str) -> float:
+        """How intense/salient is this thought"""
+        
+        # Base intensity by trigger type
+        base_intensity = {
+            "memory": 0.6,
+            "association": 0.4,
+            "question": 0.7,
+            "observation": 0.5,
+            "feeling": 0.8,
+            "random": 0.3,
+        }
+        
+        intensity = base_intensity.get(trigger_type, 0.5)
+        
+        # Add some randomness
+        intensity += random.uniform(-0.2, 0.2)
+        
+        # Clamp
+        return max(0.0, min(1.0, intensity))
+    
+    def _calculate_thought_interval(self) -> float:
+        """How long until next spontaneous thought"""
+        
+        # Base interval: 2-5 seconds (natural mind wandering pace)
+        base = random.uniform(2.0, 5.0)
+        
+        # High arousal = faster thoughts
+        if self.arousal > 0.7:
+            base *= 0.7
+        
+        # Fatigue = slower thoughts
+        if self.fatigue > 0.6:
+            base *= 1.3
+        
+        return base
+    
+    def set_emotional_state(self, emotion: str):
+        """Update emotional state (influences thought content)"""
+        self.current_emotional_state = emotion
+    
+    def set_arousal(self, level: float):
+        """Update arousal level (0=drowsy, 1=alert)"""
+        self.arousal = max(0.0, min(1.0, level))
+    
+    def set_fatigue(self, level: float):
+        """Update fatigue level"""
+        self.fatigue = max(0.0, min(1.0, level))

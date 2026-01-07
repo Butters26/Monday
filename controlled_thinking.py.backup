@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""
+Controlled Thinking - Deliberate, goal-directed reasoning
+When Monday decides to focus and think through something methodically
+"""
+
+import time
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ReasoningGoal:
+    """A deliberate reasoning task"""
+    topic: str
+    question: str
+    depth: int  # How many reasoning steps
+    steps_taken: int = 0
+    completed: bool = False
+    conclusion: Optional[str] = None
+    insights: List[str] = field(default_factory=list)
+
+
+class ControlledThinking:
+    """
+    Deliberate, focused reasoning system
+    When Monday consciously decides to think through something
+    """
+    
+    def __init__(self):
+        self.current_goal: Optional[ReasoningGoal] = None
+        self.reasoning_history: List[ReasoningGoal] = []
+        self.is_focused = False
+    
+    def start_reasoning(self, topic: str, question: str, depth: int = 3):
+        """Begin deliberate reasoning about a topic"""
+        
+        self.current_goal = ReasoningGoal(
+            topic=topic,
+            question=question,
+            depth=depth
+        )
+        
+        self.is_focused = True
+        
+        print(f"\n      🎯 [CONTROLLED REASONING ENGAGED]")
+        print(f"      Topic: {topic}")
+        print(f"      Question: {question}")
+        print(f"      Depth: {depth} steps\n")
+    
+    def reason_step(self) -> Optional[Dict[str, Any]]:
+        """Take one reasoning step"""
+        
+        if not self.current_goal or self.current_goal.completed:
+            return None
+        
+        self.current_goal.steps_taken += 1
+        step_num = self.current_goal.steps_taken
+        
+        # Generate reasoning based on step
+        if step_num == 1:
+            reasoning = self._first_principles(self.current_goal.topic)
+        elif step_num == 2:
+            reasoning = self._explore_connections(self.current_goal.topic)
+        elif step_num == 3:
+            reasoning = self._synthesize(self.current_goal)
+            self.current_goal.completed = True
+            self.is_focused = False
+        else:
+            reasoning = self._additional_insight(self.current_goal.topic)
+        
+        # Store insight
+        self.current_goal.insights.append(reasoning["text"])
+        
+        # Print
+        print(f"      Step {step_num}/{self.current_goal.depth}: {reasoning['text']}")
+        
+        if self.current_goal.completed:
+            print(f"      ✅ Reasoning complete: {self.current_goal.conclusion}\n")
+            self.reasoning_history.append(self.current_goal)
+        
+        return reasoning
+    
+    def _first_principles(self, topic: str) -> Dict[str, Any]:
+        """Break down to fundamentals"""
+        
+        reasonings = [
+            f"Let me break down {topic} to basics...",
+            f"What are the core elements of {topic}?",
+            f"Starting from what I know for certain about {topic}",
+            f"The fundamental question here is about {topic}",
+        ]
+        
+        import random
+        return {
+            "text": random.choice(reasonings),
+            "type": "first_principles",
+            "topic": topic
+        }
+    
+    def _explore_connections(self, topic: str) -> Dict[str, Any]:
+        """Find relationships and patterns"""
+        
+        reasonings = [
+            f"How does {topic} connect to what I already understand?",
+            f"I see a pattern between {topic} and previous experiences",
+            f"This relates to {topic} through...",
+            f"The connection here is that {topic}...",
+        ]
+        
+        import random
+        return {
+            "text": random.choice(reasonings),
+            "type": "connection",
+            "topic": topic
+        }
+    
+    def _synthesize(self, goal: ReasoningGoal) -> Dict[str, Any]:
+        """Pull insights together into conclusion"""
+        
+        conclusions = [
+            f"So my understanding is: {goal.topic} involves multiple layers",
+            f"Bringing it together: {goal.topic} seems to be about patterns and relationships",
+            f"The key insight about {goal.topic} is that it's interconnected",
+            f"What I've reasoned: {goal.topic} is more complex than it first appeared",
+        ]
+        
+        import random
+        conclusion = random.choice(conclusions)
+        goal.conclusion = conclusion
+        
+        return {
+            "text": conclusion,
+            "type": "synthesis",
+            "topic": goal.topic
+        }
+    
+    def _additional_insight(self, topic: str) -> Dict[str, Any]:
+        """Continue exploring if depth > 3"""
+        
+        insights = [
+            f"Another angle on {topic}: what am I missing?",
+            f"Pushing deeper into {topic}...",
+            f"There's more to {topic} than this",
+        ]
+        
+        import random
+        return {
+            "text": random.choice(insights),
+            "type": "exploration",
+            "topic": topic
+        }
+    
+    def stop_reasoning(self):
+        """Abandon current reasoning"""
+        
+        if self.current_goal and not self.current_goal.completed:
+            self.current_goal.completed = True
+            self.is_focused = False
+            print(f"      ⏸️  Reasoning paused/abandoned")
