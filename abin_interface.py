@@ -1,439 +1,416 @@
-#!/usr/bin/env python3
-"""
-Monday Communication Interface
-With detailed USS Arizona battleship visualization
-"""
-
-import sys
-import os
+import tkinter as tk
+from tkinter import scrolledtext, ttk
+import threading
+import queue
 import json
-import time
-import math
-from typing import Dict, Any, Optional, List
-from thalamus import get_thalamus
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                              QHBoxLayout, QTextEdit, QLineEdit, QPushButton,
-                              QLabel, QFrame, QScrollArea, QGraphicsView, 
-                              QGraphicsScene, QGraphicsPolygonItem, QGraphicsRectItem,
-                              QGraphicsEllipseItem, QGraphicsLineItem, QGraphicsPathItem)
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QPointF, QRectF
-from PyQt5.QtGui import (QColor, QFont, QPainter, QBrush, QPen, QLinearGradient,
-                         QPolygonF, QPainterPath, QRadialGradient, QPixmap)
+from datetime import datetime
 
-# NO SOCKETS - Direct function calls only
 
-class USSArizonaBattleship(QLabel):
-    """USS Arizona battleship photo display"""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
+class USSArizonaBattleship:
+    """
+    Main data structure for managing communication between components.
+    Handles message routing and state management.
+    """
+    def __init__(self):
+        self.message_queue = queue.Queue()
+        self.response_queue = queue.Queue()
+        self.emotional_state = "neutral"
+        self.conversation_history = []
+        self.is_active = True
         
-        # Load USS Arizona image
-        image_path = os.path.join(os.path.dirname(__file__), 'uss_arizona.png')
+    def send_message(self, message, sender="user"):
+        """Add message to queue for processing"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        msg_data = {
+            "content": message,
+            "sender": sender,
+            "timestamp": timestamp
+        }
+        self.message_queue.put(msg_data)
+        self.conversation_history.append(msg_data)
         
-        if os.path.exists(image_path):
-            pixmap = QPixmap(image_path)
-            # Scale to fit width while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaledToWidth(1000, Qt.SmoothTransformation)
-            self.setPixmap(scaled_pixmap)
-            self.setAlignment(Qt.AlignCenter)
-        else:
-            # Fallback text if image not found
-            self.setText("USS ARIZONA (BB-39)\n[Save battleship image as 'uss_arizona.png' in project folder]")
-            self.setAlignment(Qt.AlignCenter)
-            self.setFont(QFont("Arial", 14, QFont.Bold))
+    def get_response(self, timeout=0.1):
+        """Retrieve response from queue if available"""
+        try:
+            return self.response_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+            
+    def update_emotional_state(self, state):
+        """Update the current emotional state"""
+        self.emotional_state = state
         
-        self.setStyleSheet("""
-            QLabel {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(20, 40, 80, 255),
-                    stop:1 rgba(10, 30, 60, 255));
-                border: 3px solid rgba(100, 120, 150, 200);
-                border-radius: 15px;
-                padding: 10px;
-            }
-        """)
+    def get_emotional_state(self):
+        """Get current emotional state"""
+        return self.emotional_state
         
-        self.setMinimumHeight(250)
-        self.setMaximumHeight(400)
+    def shutdown(self):
+        """Gracefully shutdown the system"""
+        self.is_active = False
 
-class BrainWorker(QThread):
-    """Thread for communicating with Monday"""
-    response_ready = pyqtSignal(dict)
-    error_occurred = pyqtSignal(str)
-    
-    def __init__(self, user_input: str):
-        super().__init__()
-        self.user_input = user_input
+
+class BrainWorker(threading.Thread):
+    """
+    Worker thread that processes messages and generates responses.
+    Handles the AI/brain processing in the background.
+    """
+    def __init__(self, battleship):
+        super().__init__(daemon=True)
+        self.battleship = battleship
+        self.running = True
+        self.processing = False
         
     def run(self):
-        """Send to Thalamus and get response directly"""
-        try:
-            print(f"📤 Sending to Perception: {self.user_input[:50]}...")
-            result = self.send_to_perception(self.user_input)
-            print(f"📥 Got response: {result.get('status', 'unknown')}")
-            # Response comes directly from Thalamus now
-            self.response_ready.emit(result)
-        except Exception as e:
-            print(f"❌ Error in BrainWorker: {e}")
-            import traceback
-            traceback.print_exc()
-            self.error_occurred.emit(str(e))
-    
-    def send_to_perception(self, text: str) -> Dict[str, Any]:
-        """Send message to Perception first (Perception is the eyes/brain that receives input)"""
-        try:
-            # Get Perception instance from Thalamus
-            thalamus = get_thalamus()
-            if not thalamus:
-                return {'status': 'error', 'message': 'Thalamus not initialized'}
-            
-            # Retry if Perception not registered yet (wait up to 2 seconds)
-            perception = None
-            for attempt in range(4):
-                with thalamus.lobe_handlers_lock:
-                    perception = thalamus.lobe_handlers.get('perception')
-                if perception:
-                    break
-                time.sleep(0.5)
-            
-            if not perception:
-                return {'status': 'error', 'message': 'Perception not registered - system may still be starting up'}
-            
-            # Send to Perception - it will receive input, process it, and broadcast to all lobes
-            print("  → Sending to Perception...")
-            perception_result = perception.process_message({'type': 'user_input', 'user_input': text})
-            print(f"  ← Perception result: {perception_result.get('status', 'unknown')}")
-            
-            # After Perception broadcasts, Reasoning needs to query other lobes for their responses
-            # Get response from Reasoning through Thalamus - Thalamus just routes the message
-            print("  → Sending to Reasoning...")
-            reasoning_response = thalamus.send_message('reasoning', 'think', {
-                'input': {
-                    'user_input': text,
-                    'perception_result': perception_result if perception_result.get('status') == 'success' else {'status': 'error'},
-                    'emotion_result': {'status': 'error'},
-                    'memory_result': {'status': 'error'},
-                    'representation_result': {'status': 'error'},
-                    'pattern_result': {'status': 'error'}
-                }
-            })
-            if reasoning_response.get('status') == 'success':
-                thinking = reasoning_response.get('thinking', {})
-                composed = thinking.get('composed_response', '')
-                if composed:
-                    return {'status': 'success', 'response': composed}
-            return {'status': 'error', 'message': 'No response from Reasoning'}
-        except Exception as e:
-            return {'status': 'error', 'message': f'System error: {str(e)}'}
-
-class MessageBubble(QFrame):
-    """Chat message bubble"""
-    
-    def __init__(self, text: str, is_user: bool, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout()
-        layout.setContentsMargins(15, 10, 15, 10)
+        """Main worker loop"""
+        while self.running and self.battleship.is_active:
+            try:
+                # Check for new messages to process
+                if not self.battleship.message_queue.empty():
+                    msg_data = self.battleship.message_queue.get(timeout=0.1)
+                    self.process_message(msg_data)
+            except queue.Empty:
+                pass
+            except Exception as e:
+                print(f"Error in BrainWorker: {e}")
+                
+    def process_message(self, msg_data):
+        """Process incoming message and generate response"""
+        self.processing = True
+        message = msg_data.get("content", "")
         
-        label = QLabel(text)
-        label.setWordWrap(True)
-        label.setFont(QFont("Arial", 12))
+        # Send to perception system
+        perception_result = self.send_to_perception(message)
         
-        if is_user:
-            self.setStyleSheet("""
-                QFrame {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba(30, 80, 150, 200),
-                        stop:1 rgba(20, 60, 120, 220));
-                    border: 2px solid rgba(100, 140, 200, 180);
-                    border-radius: 18px;
-                }
-            """)
-            label.setStyleSheet("color: white; background: transparent;")
-            label.setAlignment(Qt.AlignRight)
+        # Generate response based on perception
+        response = self.generate_response(message, perception_result)
+        
+        # Update emotional state based on content
+        self.update_emotion(message, response)
+        
+        # Send response back
+        response_data = {
+            "content": response,
+            "sender": "Monday",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "emotional_state": self.battleship.get_emotional_state()
+        }
+        self.battleship.response_queue.put(response_data)
+        self.processing = False
+        
+    def send_to_perception(self, message):
+        """
+        Send message to perception system for analysis.
+        Returns analyzed perception data including sentiment, intent, and context.
+        """
+        perception_data = {
+            "sentiment": self.analyze_sentiment(message),
+            "intent": self.detect_intent(message),
+            "keywords": self.extract_keywords(message),
+            "context": self.analyze_context(message)
+        }
+        return perception_data
+        
+    def analyze_sentiment(self, message):
+        """Analyze sentiment of the message"""
+        message_lower = message.lower()
+        if any(word in message_lower for word in ["happy", "great", "awesome", "love", "good"]):
+            return "positive"
+        elif any(word in message_lower for word in ["sad", "bad", "hate", "terrible", "angry"]):
+            return "negative"
         else:
-            self.setStyleSheet("""
-                QFrame {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba(80, 60, 100, 180),
-                        stop:1 rgba(60, 40, 80, 200));
-                    border: 2px solid rgba(140, 100, 160, 180);
-                    border-radius: 18px;
-                }
-            """)
-            label.setStyleSheet("color: white; background: transparent;")
-            label.setAlignment(Qt.AlignLeft)
+            return "neutral"
+            
+    def detect_intent(self, message):
+        """Detect user intent from message"""
+        message_lower = message.lower()
+        if "?" in message:
+            return "question"
+        elif any(word in message_lower for word in ["help", "assist", "support"]):
+            return "request_help"
+        elif any(word in message_lower for word in ["hello", "hi", "hey"]):
+            return "greeting"
+        else:
+            return "statement"
+            
+    def extract_keywords(self, message):
+        """Extract important keywords from message"""
+        # Simple keyword extraction
+        words = message.split()
+        return [w for w in words if len(w) > 4][:5]
         
-        layout.addWidget(label)
-        self.setLayout(layout)
-        self.setMaximumWidth(600)
+    def analyze_context(self, message):
+        """Analyze conversational context"""
+        return {
+            "length": len(message),
+            "word_count": len(message.split()),
+            "has_question": "?" in message
+        }
+        
+    def generate_response(self, message, perception):
+        """Generate appropriate response based on message and perception"""
+        intent = perception.get("intent", "statement")
+        sentiment = perception.get("sentiment", "neutral")
+        
+        if intent == "greeting":
+            return "Hello! How can I help you today?"
+        elif intent == "question":
+            return f"That's an interesting question. Let me think about that..."
+        elif intent == "request_help":
+            return "I'm here to help! What do you need assistance with?"
+        else:
+            if sentiment == "positive":
+                return "I'm glad to hear that! Is there anything else you'd like to discuss?"
+            elif sentiment == "negative":
+                return "I understand. How can I help make things better?"
+            else:
+                return "I see. Tell me more about that."
+                
+    def update_emotion(self, message, response):
+        """Update emotional state based on conversation"""
+        message_lower = message.lower()
+        
+        if any(word in message_lower for word in ["happy", "joy", "excited"]):
+            self.battleship.update_emotional_state("happy")
+        elif any(word in message_lower for word in ["sad", "down", "depressed"]):
+            self.battleship.update_emotional_state("concerned")
+        elif any(word in message_lower for word in ["angry", "mad", "furious"]):
+            self.battleship.update_emotional_state("calm")
+        else:
+            self.battleship.update_emotional_state("neutral")
+            
+    def stop(self):
+        """Stop the worker thread"""
+        self.running = False
 
-# REMOVED: ResponseListener - all responses come directly from Thalamus, no socket needed
 
-class MondayInterface(QMainWindow):
-    """Monday Communication Interface"""
-    
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Monday Communication System")
-        self.setMinimumSize(1200, 900)
+class MondarInterface:
+    """
+    Main GUI interface for Monday AI assistant.
+    Provides chat display, input controls, and emotional state monitoring.
+    """
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Monday - AI Assistant Interface")
+        self.root.geometry("800x600")
+        self.root.configure(bg="#2b2b2b")
         
-        self.worker = None
+        # Initialize battleship and worker
+        self.battleship = USSArizonaBattleship()
+        self.brain_worker = BrainWorker(self.battleship)
+        self.brain_worker.start()
         
+        # Setup GUI components
         self.setup_ui()
-        self.apply_style()
-    
-    def closeEvent(self, event):
-        """Clean up on window close"""
-        event.accept()
+        
+        # Start response polling
+        self.poll_responses()
         
     def setup_ui(self):
-        """Setup interface"""
-        central = QWidget()
-        self.setCentralWidget(central)
+        """Setup all UI components"""
+        # Main container
+        main_frame = tk.Frame(self.root, bg="#2b2b2b")
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(15)
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        # Title label
+        title_label = tk.Label(
+            main_frame,
+            text="🤖 Monday AI Assistant",
+            font=("Arial", 18, "bold"),
+            bg="#2b2b2b",
+            fg="#00ff00"
+        )
+        title_label.pack(pady=(0, 10))
         
-        # Header
-        header = QLabel("Monday")
-        header.setAlignment(Qt.AlignCenter)
-        header.setFont(QFont("Arial", 32, QFont.Bold))
-        header.setStyleSheet("""
-            color: rgba(220, 220, 255, 255);
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 rgba(60, 40, 100, 220),
-                stop:0.5 rgba(100, 60, 140, 220),
-                stop:1 rgba(60, 40, 100, 220));
-            border: 3px solid rgba(140, 100, 180, 200);
-            border-radius: 20px;
-            padding: 20px;
-        """)
-        main_layout.addWidget(header)
+        # Emotional state display
+        self.emotion_frame = tk.Frame(main_frame, bg="#1a1a1a", relief=tk.RAISED, borderwidth=2)
+        self.emotion_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # USS Arizona battleship
-        self.battleship = USSArizonaBattleship()
-        main_layout.addWidget(self.battleship)
+        tk.Label(
+            self.emotion_frame,
+            text="Emotional State:",
+            font=("Arial", 10, "bold"),
+            bg="#1a1a1a",
+            fg="#ffffff"
+        ).pack(side=tk.LEFT, padx=10, pady=5)
         
-        # Status
-        self.status_label = QLabel("System Ready")
-        self.status_label.setFont(QFont("Arial", 11, QFont.Bold))
-        self.status_label.setStyleSheet("color: #00ff88; padding: 5px;")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.status_label)
+        self.emotion_label = tk.Label(
+            self.emotion_frame,
+            text="😐 Neutral",
+            font=("Arial", 12, "bold"),
+            bg="#1a1a1a",
+            fg="#ffaa00"
+        )
+        self.emotion_label.pack(side=tk.LEFT, padx=10, pady=5)
         
-        # Chat area
-        chat_scroll = QScrollArea()
-        chat_scroll.setWidgetResizable(True)
-        chat_scroll.setStyleSheet("""
-            QScrollArea {
-                background: rgba(20, 15, 35, 180);
-                border: 2px solid rgba(100, 80, 130, 150);
-                border-radius: 15px;
-            }
-            QScrollBar:vertical {
-                background: rgba(40, 30, 60, 200);
-                width: 14px;
-                border-radius: 7px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(100, 60, 140, 200);
-                border-radius: 7px;
-            }
-        """)
+        # Chat display area
+        chat_frame = tk.Frame(main_frame, bg="#1a1a1a")
+        chat_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        self.chat_widget = QWidget()
-        self.chat_layout = QVBoxLayout()
-        self.chat_layout.setSpacing(15)
-        self.chat_layout.setContentsMargins(20, 20, 20, 20)
-        self.chat_layout.addStretch()
-        self.chat_widget.setLayout(self.chat_layout)
-        chat_scroll.setWidget(self.chat_widget)
-        main_layout.addWidget(chat_scroll, stretch=1)
+        tk.Label(
+            chat_frame,
+            text="Conversation",
+            font=("Arial", 11, "bold"),
+            bg="#1a1a1a",
+            fg="#00ccff"
+        ).pack(anchor=tk.W, padx=5, pady=5)
         
-        # Input
-        input_frame = QFrame()
-        input_frame.setStyleSheet("""
-            QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(50, 30, 90, 230),
-                    stop:1 rgba(70, 40, 110, 250));
-                border: 3px solid rgba(120, 80, 160, 200);
-                border-radius: 20px;
-                padding: 15px;
-            }
-        """)
+        self.chat_display = scrolledtext.ScrolledText(
+            chat_frame,
+            wrap=tk.WORD,
+            font=("Consolas", 10),
+            bg="#1e1e1e",
+            fg="#00ff00",
+            insertbackground="#00ff00",
+            state=tk.DISABLED,
+            relief=tk.FLAT,
+            padx=10,
+            pady=10
+        )
+        self.chat_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
         
-        input_layout = QHBoxLayout()
+        # Configure text tags for different message types
+        self.chat_display.tag_config("user", foreground="#00ccff")
+        self.chat_display.tag_config("monday", foreground="#00ff00")
+        self.chat_display.tag_config("timestamp", foreground="#888888")
+        self.chat_display.tag_config("system", foreground="#ffaa00")
         
-        self.input_field = QLineEdit()
-        self.input_field.setPlaceholderText("Communicate with Monday...")
-        self.input_field.setMinimumHeight(50)
-        self.input_field.setFont(QFont("Arial", 13))
-        self.input_field.setStyleSheet("""
-            QLineEdit {
-                background: rgba(25, 15, 45, 200);
-                border: 2px solid rgba(100, 60, 140, 150);
-                border-radius: 12px;
-                padding: 12px;
-                color: white;
-            }
-            QLineEdit:focus {
-                border: 3px solid rgba(140, 100, 180, 255);
-                background: rgba(35, 20, 55, 220);
-            }
-        """)
-        self.input_field.returnPressed.connect(self.send_message)
+        # Input area
+        input_frame = tk.Frame(main_frame, bg="#2b2b2b")
+        input_frame.pack(fill=tk.X)
         
-        self.send_btn = QPushButton("⚡ TRANSMIT")
-        self.send_btn.setMinimumSize(180, 50)
-        self.send_btn.setFont(QFont("Arial", 13, QFont.Bold))
-        self.send_btn.setCursor(Qt.PointingHandCursor)
-        self.send_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(120, 80, 160, 255),
-                    stop:1 rgba(80, 50, 120, 255));
-                border: 3px solid rgba(160, 120, 200, 200);
-                border-radius: 12px;
-                color: white;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(160, 120, 200, 255),
-                    stop:1 rgba(120, 80, 160, 255));
-            }
-            QPushButton:disabled {
-                background: rgba(80, 60, 100, 150);
-                color: rgba(150, 150, 150, 200);
-            }
-        """)
-        self.send_btn.clicked.connect(self.send_message)
+        tk.Label(
+            input_frame,
+            text="Your Message:",
+            font=("Arial", 10),
+            bg="#2b2b2b",
+            fg="#ffffff"
+        ).pack(anchor=tk.W, pady=(0, 5))
         
-        input_layout.addWidget(self.input_field, stretch=1)
-        input_layout.addWidget(self.send_btn)
-        input_frame.setLayout(input_layout)
-        main_layout.addWidget(input_frame)
+        # Input field and send button container
+        entry_frame = tk.Frame(input_frame, bg="#2b2b2b")
+        entry_frame.pack(fill=tk.X)
         
-        central.setLayout(main_layout)
+        self.input_field = tk.Entry(
+            entry_frame,
+            font=("Arial", 11),
+            bg="#1e1e1e",
+            fg="#00ff00",
+            insertbackground="#00ff00",
+            relief=tk.FLAT,
+            borderwidth=2
+        )
+        self.input_field.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        self.input_field.bind("<Return>", lambda e: self.send_message())
         
-        self.add_system_message("Monday online. Communication channel established.")
+        self.send_button = tk.Button(
+            entry_frame,
+            text="📤 Send",
+            font=("Arial", 11, "bold"),
+            bg="#00aa00",
+            fg="#ffffff",
+            activebackground="#00ff00",
+            activeforeground="#000000",
+            relief=tk.RAISED,
+            borderwidth=2,
+            padx=20,
+            pady=5,
+            cursor="hand2",
+            command=self.send_message
+        )
+        self.send_button.pack(side=tk.RIGHT)
         
-        # Poll for unprompted speech every 5 seconds
-        self.speech_timer = QTimer()
-        self.speech_timer.timeout.connect(self.check_unprompted_speech)
-        self.speech_timer.start(5000)  # Check every 5 seconds
-    
-    def apply_style(self):
-        """Global styling"""
-        self.setStyleSheet("""
-            QMainWindow {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(15, 10, 25, 255),
-                    stop:0.5 rgba(25, 15, 40, 255),
-                    stop:1 rgba(15, 10, 25, 255));
-            }
-        """)
-    
-    def add_user_message(self, text: str):
-        """Add user message"""
-        bubble = MessageBubble(text, True)
-        self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble, alignment=Qt.AlignRight)
-        QTimer.singleShot(50, self.scroll_to_bottom)
-    
-    def add_system_message(self, text: str):
-        """Add Monday response"""
-        bubble = MessageBubble(text, False)
-        self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble, alignment=Qt.AlignLeft)
-        QTimer.singleShot(50, self.scroll_to_bottom)
-    
-    def scroll_to_bottom(self):
-        """Scroll to bottom"""
-        scroll_area = self.chat_widget.parent().parent()
-        if isinstance(scroll_area, QScrollArea):
-            scroll_area.verticalScrollBar().setValue(scroll_area.verticalScrollBar().maximum())
-    
+        # Add welcome message
+        self.add_system_message("Monday AI Assistant initialized. How can I help you today?")
+        
     def send_message(self):
-        """Send to Monday"""
-        text = self.input_field.text().strip()
-        if not text:
+        """Send user message to the brain worker"""
+        message = self.input_field.get().strip()
+        if not message:
             return
-        
-        self.add_user_message(text)
-        self.input_field.clear()
-        
-        self.input_field.setEnabled(False)
-        self.send_btn.setEnabled(False)
-        self.status_label.setText("Processing...")
-        self.status_label.setStyleSheet("color: #ffaa00; padding: 5px;")
-        
-        self.worker = BrainWorker(text)
-        self.worker.response_ready.connect(self.handle_response)
-        self.worker.error_occurred.connect(self.handle_error)
-        self.worker.start()
-    
-    def handle_response(self, result: Dict[str, Any]):
-        """Handle response from Output lobe"""
-        self.input_field.setEnabled(True)
-        self.send_btn.setEnabled(True)
-        self.status_label.setText("System Ready")
-        self.status_label.setStyleSheet("color: #00ff88; padding: 5px;")
-        self.input_field.setFocus()
-        
-        if result.get('status') != 'success':
-            error_msg = result.get('message', 'Unknown error')
-            # Show the actual error
-            if 'Error:' in error_msg:
-                self.add_system_message(error_msg)
-            else:
-                self.add_system_message(f"Error: {error_msg}")
-            return
-        
-        # Perception returns the final response (from Reasoning)
-        response_text = result.get('response', 'No response')
-        if response_text and response_text != 'No response':
-            self.add_system_message(response_text)
-        else:
-            # Fallback if no response
-            self.add_system_message("I'm processing that...")
-    
-    def handle_error(self, error: str):
-        """Handle error"""
-        self.input_field.setEnabled(True)
-        self.send_btn.setEnabled(True)
-        self.status_label.setText("Error")
-        self.status_label.setStyleSheet("color: #ff4444; padding: 5px;")
-        self.add_system_message(f"Error: {error}")
-    
-    def check_unprompted_speech(self):
-        """Check if Monday wants to say something without prompting"""
-        try:
-            thalamus = get_thalamus()
-            if not thalamus:
-                return
             
-            # Check if conversation system has unprompted speech
-            result = thalamus.send_message('conversation', 'check_unprompted_speech', {})
+        # Display user message
+        self.display_message(message, "user")
+        
+        # Send to battleship for processing
+        self.battleship.send_message(message, sender="user")
+        
+        # Clear input field
+        self.input_field.delete(0, tk.END)
+        
+    def display_message(self, message, sender):
+        """Display message in chat window"""
+        self.chat_display.config(state=tk.NORMAL)
+        
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        
+        if sender == "user":
+            self.chat_display.insert(tk.END, f"[{timestamp}] ", "timestamp")
+            self.chat_display.insert(tk.END, "You: ", "user")
+            self.chat_display.insert(tk.END, f"{message}\n\n")
+        elif sender == "Monday":
+            self.chat_display.insert(tk.END, f"[{timestamp}] ", "timestamp")
+            self.chat_display.insert(tk.END, "Monday: ", "monday")
+            self.chat_display.insert(tk.END, f"{message}\n\n")
             
-            if result and result.get('status') == 'success':
-                if result.get('has_speech'):
-                    speech_text = result.get('speech', '')
-                    if speech_text:
-                        # Monday is speaking unprompted!
-                        self.add_system_message(f"💭 {speech_text}")
-                        
-                        # Notify speech system that it was delivered
-                        thalamus.send_message('speech', 'speech_delivered', {})
-        except Exception as e:
-            # Silently fail - don't interrupt user experience
-            pass
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.see(tk.END)
+        
+    def add_system_message(self, message):
+        """Add system message to chat"""
+        self.chat_display.config(state=tk.NORMAL)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.chat_display.insert(tk.END, f"[{timestamp}] ", "timestamp")
+        self.chat_display.insert(tk.END, "SYSTEM: ", "system")
+        self.chat_display.insert(tk.END, f"{message}\n\n")
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.see(tk.END)
+        
+    def update_emotional_display(self, emotion):
+        """Update the emotional state display"""
+        emotion_map = {
+            "neutral": "😐 Neutral",
+            "happy": "😊 Happy",
+            "concerned": "😟 Concerned",
+            "calm": "😌 Calm",
+            "curious": "🤔 Curious",
+            "excited": "😃 Excited"
+        }
+        
+        display_text = emotion_map.get(emotion, f"❓ {emotion.capitalize()}")
+        self.emotion_label.config(text=display_text)
+        
+    def poll_responses(self):
+        """Poll for responses from brain worker"""
+        response_data = self.battleship.get_response()
+        
+        if response_data:
+            # Display response
+            self.display_message(response_data["content"], "Monday")
+            
+            # Update emotional state
+            emotional_state = response_data.get("emotional_state", "neutral")
+            self.update_emotional_display(emotional_state)
+            
+        # Continue polling
+        self.root.after(100, self.poll_responses)
+        
+    def on_closing(self):
+        """Handle window closing"""
+        self.battleship.shutdown()
+        self.brain_worker.stop()
+        self.root.destroy()
+
 
 def main():
-    app = QApplication(sys.argv)
-    window = MondayInterface()
-    window.show()
-    sys.exit(app.exec_())
+    """
+    Main entry point for the Monday AI Assistant interface.
+    Initializes the GUI and starts the application.
+    """
+    root = tk.Tk()
+    app = MondarInterface(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    root.mainloop()
+
 
 if __name__ == "__main__":
     main()
