@@ -443,6 +443,18 @@ class Thalamus:
             os.remove(self.socket_path)
         print("\n🛑 Thalamus shutting down...")
 
+# Singleton instance for direct access (no sockets)
+_thalamus_instance = None
+_thalamus_lock = threading.Lock()
+
+def get_thalamus():
+    """Get or create the singleton Thalamus instance"""
+    global _thalamus_instance
+    with _thalamus_lock:
+        if _thalamus_instance is None:
+            _thalamus_instance = Thalamus()
+        return _thalamus_instance
+
 if __name__ == "__main__":
     thalamus = Thalamus()
     try:
