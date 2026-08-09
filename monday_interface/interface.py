@@ -29,6 +29,7 @@ class MondayInterface(QMainWindow):
     """Main window for Monday AI interface"""
 
     response_received = pyqtSignal(str)
+    autonomous_message_received = pyqtSignal(str)
     emotion_received = pyqtSignal(str, float)
     thinking_changed = pyqtSignal(bool)
     
@@ -117,9 +118,11 @@ class MondayInterface(QMainWindow):
             # Connector callbacks run on worker threads; Qt signals marshal updates
             # back to this window's event-loop thread.
             self.response_received.connect(self.on_monday_response)
+            self.autonomous_message_received.connect(self.on_autonomous_message)
             self.emotion_received.connect(self.on_emotion_update)
             self.thinking_changed.connect(self.on_thinking_update)
             self.brain_connector.on_response = self.response_received.emit
+            self.brain_connector.on_autonomous_response = self.autonomous_message_received.emit
             self.brain_connector.on_emotion_update = self.emotion_received.emit
             self.brain_connector.on_thinking_update = self.thinking_changed.emit
             
@@ -179,6 +182,11 @@ class MondayInterface(QMainWindow):
         self.input_field.setEnabled(True)
         self.send_button.setEnabled(True)
         self.input_field.setFocus()
+
+    @pyqtSlot(str)
+    def on_autonomous_message(self, message):
+        """Display unsolicited speech without altering a pending request's UI state."""
+        self.chat_panel.add_monday_message(message)
     
     @pyqtSlot(str, float)
     def on_emotion_update(self, emotion, intensity):

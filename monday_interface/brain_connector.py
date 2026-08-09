@@ -30,6 +30,7 @@ class BrainConnector:
         
         # Callbacks
         self.on_response = None
+        self.on_autonomous_response = None
         self.on_emotion_update = None
         self.on_thinking_update = None
         self.on_state_update = None
@@ -143,8 +144,8 @@ class BrainConnector:
     def _deliver_autonomous_speech(self):
         """Forward completed, socially approved speech to the visible conversation."""
         delivery = self.thalamus.get_autonomous_delivery()
-        if delivery and self.on_response:
-            self.on_response(delivery['content'])
+        if delivery and self.on_autonomous_response:
+            self.on_autonomous_response(delivery['content'])
     
     def _update_emotion_state(self):
         """Update emotional state from the engine"""
