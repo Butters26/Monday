@@ -35,6 +35,12 @@ class SocialContextLobe:
     def process_message(self, message):
         msg_type = message.get('type')
         content = message.get('content', {})
+        if msg_type == 'analyze_context':
+            text = content.get('text', content.get('user_input', ''))
+            cue = 'greeting' if isinstance(text, str) and text.lower().strip().split()[:1] in (['hi'], ['hello'], ['hey']) else 'conversation'
+            context = {'cue': cue, 'text': text}
+            self.update_context(context)
+            return {'status': 'success', 'context': context}
         if msg_type == 'update_context':
             ctx = content.get('context', {})
             self.update_context(ctx)

@@ -232,6 +232,15 @@ def main():
         "output",
         "voice",
         "conversation",
+        "novelty",
+        "experience",
+        "reflection",
+        "value_evolution",
+        "autonomous",
+        "speech",
+        "reinforcement",
+        "value_learning",
+        "dual_stream",
         "attention",
         "motor_action",
         "executive_control",
@@ -322,4 +331,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

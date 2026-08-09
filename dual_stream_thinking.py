@@ -1,12 +1,25 @@
-import anthropic
 import os
 from datetime import datetime
+from typing import Any, Dict
+
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
 
 class DualStreamThinking:
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        self.running = True
+        self.client = (
+            anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+            if anthropic is not None
+            else None
+        )
         self.model = "claude-3-7-sonnet-20250219"
         self.max_reasoning_depth = 5
+
+        from thalamus import get_thalamus
+        self.thalamus = get_thalamus()
         
     def start_reasoning(self, user_query):
         """
@@ -16,6 +29,8 @@ class DualStreamThinking:
         print(f"Starting reasoning for query: {user_query}")
         print(f"{'='*80}\n")
         
+        if self.client is None:
+            return None
         try:
             response = self.client.messages.create(
                 model=self.model,
@@ -35,6 +50,32 @@ class DualStreamThinking:
         except Exception as e:
             print(f"Error in reasoning: {str(e)}")
             return None
+
+    def start(self):
+        self.thalamus.register_lobe("dual_stream", self)
+
+    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        message_type = message.get("type")
+        if message_type == "health":
+            return {
+                "status": "success",
+                "healthy": True,
+                "anthropic_available": self.client is not None,
+            }
+        if message_type == "think":
+            if self.client is None:
+                return {
+                    "status": "error",
+                    "message": "Dual-stream reasoning requires the anthropic package",
+                }
+            result = self.start_reasoning(message.get("content", {}).get("user_input", ""))
+            if result is None:
+                return {"status": "error", "message": "Dual-stream reasoning failed"}
+            return {"status": "success", "content": result}
+        return {"status": "error", "message": f"Unknown message type: {message_type}"}
+
+    def shutdown(self):
+        self.running = False
     
     def _process_response(self, response):
         """

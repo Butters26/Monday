@@ -98,6 +98,74 @@ class LanguageStub:
         return {'status': 'success'}
 
 
+class EnvelopeProbe:
+    def process_message(self, message):
+        assert set(message) == {'type', 'source', 'content', 'message_id', 'timestamp', 'trace_id'}
+        assert message['content'] == {'value': 'preserved'}
+        assert message.get('value') == 'preserved'
+        return {'status': 'success', 'received': dict(message)}
+
+
+class ErrorProbe:
+    def process_message(self, message):
+        return {'status': 'error', 'message': 'intentional failure'}
+
+
+class PipelineProbe:
+    def __init__(self, name, calls):
+        self.name = name
+        self.calls = calls
+
+    def process_message(self, message):
+        self.calls.append((self.name, message['type'], message['content'], message['trace_id']))
+        if self.name == 'notus':
+            return {'status': 'success', 'memory_context': 'remembered'}
+        if self.name == 'conversation':
+            return {'status': 'success', 'content': {'understanding': {'intent': 'question'}}}
+        if self.name == 'reasoning':
+            return {'status': 'success', 'thinking': {'composed_response': 'A considered answer.'}}
+        if self.name == 'language':
+            return {'status': 'success', 'sentence': 'A clear answer.'}
+        if self.name == 'output':
+            return {'status': 'success', 'text': message['content']['text']}
+        return {'status': 'success'}
+
+
+def run_user_pipeline_integration():
+    thalamus = Thalamus()
+    calls = []
+    lobe_names = (
+        'notus', 'perception', 'pattern', 'representation', 'social_context', 'emotion',
+        'value_goal_management', 'conversation', 'reasoning', 'language',
+        'output', 'voice', 'experience', 'reinforcement', 'reflection', 'autonomous', 'speech',
+    )
+    for name in lobe_names:
+        assert thalamus.register_lobe(name, PipelineProbe(name, calls))['status'] == 'success'
+
+    result = thalamus.process_user_input('What changed?')
+    assert result == {
+        'status': 'success',
+        'response': 'A clear answer.',
+        'trace_id': result['trace_id'],
+    }
+    assert {name for name, _, _, _ in calls} == set(lobe_names)
+    assert len({trace_id for _, _, _, trace_id in calls}) == 1
+    conversation_call = next(call for call in calls if call[0] == 'conversation')
+    assert conversation_call[2]['context']['memory']['memory_context'] == 'remembered'
+    language_call = next(call for call in calls if call[0] == 'language')
+    assert language_call[1] == 'express'
+    assert language_call[2]['thought'] == 'A considered answer.'
+
+    autonomous_results = thalamus._route_autonomous_actions(
+        [{'type': 'message', 'target': 'interface', 'content': 'An autonomous thought.'}]
+    )
+    assert autonomous_results[0]['status'] == 'success'
+    autonomous_language_call = [call for call in calls if call[0] == 'language'][-1]
+    assert autonomous_language_call[2]['thought'] == 'An autonomous thought.'
+    assert [call for call in calls if call[0] == 'voice']
+    print('User pipeline integration SUCCESS')
+
+
 def run_integration():
     th = get_thalamus()
 
@@ -134,6 +202,16 @@ def run_integration():
         r = th.register_lobe(name, inst)
         print(f"Registered {name}: {r}")
 
+    assert th.register_lobe('envelope_probe', EnvelopeProbe())['status'] == 'success'
+    envelope_result = th.send_message(
+        'envelope_probe', 'probe', {'value': 'preserved'}, source='integration_test'
+    )
+    assert envelope_result['status'] == 'success'
+    assert th.register_lobe('error_probe', ErrorProbe())['status'] == 'success'
+    failure = th.send_message('error_probe', 'fail', {}, source='integration_test')
+    assert failure['status'] == 'error'
+    assert failure['message'] == 'intentional failure'
+
     # Run the flow: ingest sensory inputs
     print('\n--- Starting flow: sensory ingestion ---')
     result = th.send_message('sensory_integration', 'ingest', {'inputs': ['Important sound', 'visual cue']}, source='test')
@@ -154,6 +232,7 @@ def run_integration():
     # Check output received motor output
     assert output.received, 'Output did not receive motor output'
     print('Integration test SUCCESS: output received:', output.received)
+    run_user_pipeline_integration()
 
 if __name__ == '__main__':
     run_integration()

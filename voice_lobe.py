@@ -4,9 +4,6 @@ Voice Lobe - Speech Synthesis and Audio Output
 Integrated with other lobes through central hub
 """
 
-import socket
-import struct
-import json
 import os
 import time
 import threading
@@ -17,17 +14,7 @@ import wave
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 import random
-
-def _recv_all(conn, n, timeout=5.0):
-    """Read exactly n bytes or raise IOError on EOF/timeout"""
-    conn.settimeout(timeout)
-    data = b''
-    while len(data) < n:
-        chunk = conn.recv(n - len(data))
-        if not chunk:
-            raise IOError("Unexpected EOF while reading")
-        data += chunk
-    return data
+from thalamus import get_thalamus
 
 # ============================================================================
 # VOICE PROFILES
@@ -310,10 +297,9 @@ class VoiceSynthesizer:
 class VoiceLobe:
     """Voice synthesis and audio output lobe"""
     
-    def __init__(self, socket_path="/tmp/voice.sock", voice_name: str = "monday"):
-        self.socket_path = socket_path
+    def __init__(self, voice_name: str = "monday"):
         self.running = True
-        self.user = "Butters26"
+        self.thalamus = get_thalamus()
         
         # Voice synthesis
         self.voice_profile = VOICE_PROFILES.get(voice_name, VOICE_PROFILES['monday'])
@@ -414,67 +400,18 @@ class VoiceLobe:
         
         else:
             return {'status': 'error', 'message': f'Unknown type: {msg_type}'}
+
+    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle direct Thalamus messages."""
+        return self.handle_request(message)
     
     def start(self):
-        """Start voice lobe"""
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
-        
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(self.socket_path)
-        sock.listen(5)
-        sock.settimeout(1.0)
-        
-        print(f"🎤 Voice Lobe: Online at {self.socket_path}")
-        print(f"   Voice: {self.voice_config['voice_name']}")
-        print(f"   Auto-play: {self.voice_config['auto_play']}\n")
-        
-        while self.running:
-            try:
-                try:
-                    conn, _ = sock.accept()
-                except socket.timeout:
-                    continue
-                
-                try:
-                    conn.settimeout(5)
-                    
-                    length_data = _recv_all(conn, 4, timeout=5)
-                    msg_length = struct.unpack('!I', length_data)[0]
-                    
-                    if msg_length <= 0 or msg_length > 10_000_000:
-                        raise ValueError(f"Invalid length: {msg_length}")
-                    
-                    data = _recv_all(conn, msg_length, timeout=5)
-                    message = json.loads(data.decode('utf-8'))
-                    
-                    result = self.handle_request(message)
-                    
-                    response_data = json.dumps(result).encode('utf-8')
-                    response_length = struct.pack('!I', len(response_data))
-                    conn.sendall(response_length + response_data)
-                    
-                except Exception as e:
-                    try:
-                        err = {'status': 'error', 'message': str(e)}
-                        resp = json.dumps(err).encode('utf-8')
-                        conn.sendall(struct.pack('!I', len(resp)) + resp)
-                    except:
-                        pass
-                finally:
-                    try:
-                        conn.close()
-                    except:
-                        pass
-                
-            except Exception as e:
-                print(f"❌ Error: {e}")
+        """Register voice as an in-process lobe."""
+        self.thalamus.register_lobe("voice", self)
     
     def shutdown(self):
         """Graceful shutdown"""
         self.running = False
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
 
 if __name__ == "__main__":
     lobe = VoiceLobe()
@@ -483,4 +420,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n🛑 Voice lobe shutting down...")
         lobe.shutdown()
-

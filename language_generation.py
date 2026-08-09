@@ -673,7 +673,17 @@ class LanguageGenerator:
         """Process incoming message - DIRECT FUNCTION CALL"""
         msg_type = message.get('type')
         
-        if msg_type == 'generate':
+        if msg_type == 'express':
+            thought = message.get('thought', '')
+            if not isinstance(thought, str) or not thought.strip():
+                return {'status': 'error', 'message': 'A complete thought is required for expression'}
+            return {
+                'status': 'success',
+                'response': thought,
+                'sentence': thought,
+                'preserved_thought': True,
+            }
+        elif msg_type == 'generate':
             semantic_input = message.get('semantic_input', {})
             sentence = self.generate(semantic_input)
             

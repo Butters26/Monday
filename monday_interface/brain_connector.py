@@ -69,7 +69,12 @@ class BrainConnector:
                 
                 # Process through Thalamus
                 try:
-                    response = self.thalamus.process_user_input(user_input)
+                    result = self.thalamus.process_user_input(user_input)
+                    response = (
+                        result.get('response', result.get('message', 'Unable to process input.'))
+                        if isinstance(result, dict)
+                        else result
+                    )
                     
                     # Send response via callback
                     if self.on_response:
@@ -111,24 +116,18 @@ class BrainConnector:
     def _update_emotion_state(self):
         """Update emotional state from the engine"""
         try:
-            # Try to get emotional state from Thalamus
-            if hasattr(self.thalamus, 'monday_memory'):
-                emotional_state = self.thalamus.monday_memory.get('emotional_state', {})
-                
-                # Calculate dominant emotion
-                if emotional_state:
-                    # Find the emotion with highest value
-                    max_emotion = max(emotional_state.items(), key=lambda x: x[1])
-                    emotion_name = max_emotion[0]
-                    intensity = max_emotion[1]
-                    
-                    # Update if changed
-                    if emotion_name != self.current_emotion or abs(intensity - self.emotion_intensity) > 0.1:
-                        self.current_emotion = emotion_name
-                        self.emotion_intensity = intensity
-                        
-                        if self.on_emotion_update:
-                            self.on_emotion_update(emotion_name, intensity)
+            result = self.thalamus.send_message(
+                'emotion', 'get_emotional_state', {}, source='brain_connector', timeout=1
+            )
+            emotional_state = result.get('content', result)
+            if result.get('status') == 'success':
+                emotion_name = emotional_state.get('emotion', self.current_emotion)
+                intensity = emotional_state.get('intensity', self.emotion_intensity)
+                if emotion_name != self.current_emotion or abs(intensity - self.emotion_intensity) > 0.1:
+                    self.current_emotion = emotion_name
+                    self.emotion_intensity = intensity
+                    if self.on_emotion_update:
+                        self.on_emotion_update(emotion_name, intensity)
         except Exception as e:
             # Silent fail - emotion updates are non-critical
             pass
@@ -136,18 +135,15 @@ class BrainConnector:
     def _update_thinking_state(self):
         """Update thinking/processing state"""
         try:
-            # Check if there are recent thoughts
-            if hasattr(self.thalamus, 'monday_memory'):
-                past_convs = self.thalamus.monday_memory.get('past_conversations', [])
-                
-                # Get last few conversations
-                recent = list(past_convs)[-3:] if past_convs else []
-                
-                if recent != self.recent_thoughts:
-                    self.recent_thoughts = recent
-                    
-                    if self.on_thinking_update:
-                        self.on_thinking_update(self.is_thinking)
+            result = self.thalamus.send_message(
+                'reasoning', 'get_internal_state', {}, source='brain_connector', timeout=1
+            )
+            state = result.get('subjective_state', result.get('content', {}))
+            recent = state.get('internal_monologue', []) if result.get('status') == 'success' else []
+            if recent != self.recent_thoughts:
+                self.recent_thoughts = recent
+                if self.on_thinking_update:
+                    self.on_thinking_update(self.is_thinking)
         except Exception as e:
             # Silent fail - thinking updates are non-critical
             pass
