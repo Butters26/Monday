@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLineEdit, QPushButton, QSplitter, QShortcut
 )
-from PyQt5.QtCore import Qt, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QKeySequence, QFont
 import sys
 import os
@@ -27,6 +27,10 @@ from monday_interface.styles import (
 
 class MondayInterface(QMainWindow):
     """Main window for Monday AI interface"""
+
+    response_received = pyqtSignal(str)
+    emotion_received = pyqtSignal(str, float)
+    thinking_changed = pyqtSignal(bool)
     
     def __init__(self):
         super().__init__()
@@ -109,11 +113,15 @@ class MondayInterface(QMainWindow):
         """Initialize the brain connector"""
         try:
             self.brain_connector = BrainConnector()
-            
-            # Set up callbacks
-            self.brain_connector.on_response = self.on_monday_response
-            self.brain_connector.on_emotion_update = self.on_emotion_update
-            self.brain_connector.on_thinking_update = self.on_thinking_update
+
+            # Connector callbacks run on worker threads; Qt signals marshal updates
+            # back to this window's event-loop thread.
+            self.response_received.connect(self.on_monday_response)
+            self.emotion_received.connect(self.on_emotion_update)
+            self.thinking_changed.connect(self.on_thinking_update)
+            self.brain_connector.on_response = self.response_received.emit
+            self.brain_connector.on_emotion_update = self.emotion_received.emit
+            self.brain_connector.on_thinking_update = self.thinking_changed.emit
             
             # Connect debug panel
             self.debug_panel.set_brain_connector(self.brain_connector)

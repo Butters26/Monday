@@ -297,7 +297,7 @@ def main():
     # Launch GUI in SAME PROCESS (so it shares the same Thalamus instance)
     try:
         from PyQt5.QtWidgets import QApplication
-        from abin_interface import MondayInterface
+        from monday_interface.interface import MondayInterface
         import sys
         
         # Create QApplication in this process

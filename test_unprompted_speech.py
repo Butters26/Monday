@@ -76,7 +76,6 @@ class AutonomousSpeechPipelineTest(unittest.TestCase):
     def test_typing_holds_candidate_until_a_natural_pause(self):
         self.speech.user_is_typing = True
         actions = self.thalamus.send_message("reasoning", "get_autonomous_actions")["actions"]
-        actions[0]["intensity"] = 0.8
         decisions = self.thalamus._route_autonomous_actions(actions)
         self.assertEqual(decisions[0]["decision"]["timing"], "wait")
 

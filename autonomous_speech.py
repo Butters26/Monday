@@ -175,14 +175,14 @@ class AutonomousSpeechSystem:
         """Return NOW, WAIT, or DROP without inventing new content."""
         if intensity <= 0.5:
             return 'never', 'Insufficient priority'
-        if self.user_is_typing and intensity < self.interruption_threshold:
+        if self.user_is_typing and intensity <= self.interruption_threshold:
             return 'wait', 'User is typing'
         if self.user_is_busy and intensity < 0.9:
             return 'wait', 'User is busy'
         time_since_speech = time.time() - self.last_speech_time
         if time_since_speech < self.min_speech_interval and intensity < 0.7:
             return 'wait', f"Spoke {time_since_speech:.0f}s ago"
-        if self.conversation_active and intensity < 0.6:
+        if self.conversation_active and intensity < 0.9:
             return 'wait', 'Conversation active, letting user lead'
         return 'now', 'Social context allows'
     
