@@ -39,6 +39,7 @@ class BrainConnector:
         self.emotion_intensity = 0.5
         self.is_thinking = False
         self.recent_thoughts = []
+        self.user_is_typing = False
         
         # Processing thread
         self.process_thread = threading.Thread(target=self._process_loop, daemon=True)
@@ -50,7 +51,20 @@ class BrainConnector:
     
     def send_message(self, user_input: str):
         """Send a message to Monday (thread-safe)"""
+        self.set_user_typing(False)
         self.input_queue.put(user_input)
+
+    def set_user_typing(self, is_typing: bool):
+        """Synchronize the UI's typing state with the speech inhibition gate."""
+        if self.user_is_typing == is_typing:
+            return
+        self.user_is_typing = is_typing
+        self.thalamus.send_message(
+            "speech",
+            "user_typing",
+            {"is_typing": is_typing},
+            source="brain_connector",
+        )
     
     def _process_loop(self):
         """Process messages from the input queue"""
@@ -64,6 +78,12 @@ class BrainConnector:
                 
                 # Set thinking state
                 self.is_thinking = True
+                self.thalamus.send_message(
+                    "speech",
+                    "conversation_active",
+                    {"active": True},
+                    source="brain_connector",
+                )
                 if self.on_thinking_update:
                     self.on_thinking_update(True)
                 
@@ -89,6 +109,12 @@ class BrainConnector:
                 finally:
                     # Clear thinking state
                     self.is_thinking = False
+                    self.thalamus.send_message(
+                        "speech",
+                        "conversation_active",
+                        {"active": False},
+                        source="brain_connector",
+                    )
                     if self.on_thinking_update:
                         self.on_thinking_update(False)
                 
@@ -105,6 +131,7 @@ class BrainConnector:
                 
                 # Check thinking state
                 self._update_thinking_state()
+                self._deliver_autonomous_speech()
                 
                 # Sleep to avoid busy-waiting
                 time.sleep(0.5)
@@ -112,6 +139,12 @@ class BrainConnector:
             except Exception as e:
                 print(f"Monitor loop error: {e}")
                 time.sleep(1.0)
+
+    def _deliver_autonomous_speech(self):
+        """Forward completed, socially approved speech to the visible conversation."""
+        delivery = self.thalamus.get_autonomous_delivery()
+        if delivery and self.on_response:
+            self.on_response(delivery['content'])
     
     def _update_emotion_state(self):
         """Update emotional state from the engine"""

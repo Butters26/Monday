@@ -34,7 +34,6 @@ from novelty_lobe import NoveltyLobe
 from experience_processor import ExperienceProcessor
 from self_reflection import SelfReflectionEngine
 from value_evolution import ValueEvolutionSystem
-from autonomous_thinking import AutonomousThinkingLoop
 from autonomous_speech import AutonomousSpeechSystem
 from behavioral_reinforcement import BehavioralReinforcement
 from value_system_learning import ValueSystemLearning
@@ -154,7 +153,6 @@ def main():
         ("Experience Processor", ExperienceProcessor, 0.5),
         ("Self Reflection", SelfReflectionEngine, 0.5),
         ("Value Evolution", ValueEvolutionSystem, 0.5),
-        ("Autonomous Thinking", AutonomousThinkingLoop, 0.5),
         ("Autonomous Speech", AutonomousSpeechSystem, 0.5),
         ("Behavioral Reinforcement", BehavioralReinforcement, 0.5),
         ("Value System Learning", ValueSystemLearning, 0.5),

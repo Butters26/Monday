@@ -93,7 +93,9 @@ class Thalamus:
         self._failure_counts: Dict[str, int] = {}
         self._circuit_opened_at: Dict[str, float] = {}
         self.message_routes: deque[Dict[str, Any]] = deque(maxlen=1_000)
+        self.autonomous_deliveries: deque[Dict[str, Any]] = deque(maxlen=100)
         self._route_lock = threading.RLock()
+        self._autonomous_delivery_lock = threading.Lock()
         self._shutdown_event = threading.Event()
         self.autonomous_thread: Optional[threading.Thread] = None
 
@@ -410,11 +412,12 @@ class Thalamus:
                 continue
             if result.get("status") == "success":
                 self._route_autonomous_actions(result.get("actions", []), result.get("trace_id"))
+            self._deliver_pending_autonomous_speech()
 
     def _route_autonomous_actions(
         self, actions: Any, trace_id: Optional[str] = None
     ) -> list[Dict[str, Any]]:
-        """Express autonomous messages through language and output, not the console."""
+        """Send Reasoning's candidate messages to Speech for social gating."""
         results = []
         if not isinstance(actions, list):
             return [{"status": "error", "message": "Autonomous actions must be a list"}]
@@ -427,36 +430,90 @@ class Thalamus:
                 results.append({"status": "error", "message": "Autonomous message content is required"})
                 continue
 
-            language = self.send_message(
-                "language",
-                "express",
+            decision = self.send_message(
+                "speech",
+                "evaluate_thought",
                 {
-                    "thought": thought,
-                    "context": {"autonomous": True, "target": action.get("target")},
+                    "thought": {
+                        "id": action.get("id", str(uuid.uuid4())),
+                        "content": thought,
+                        "thought_type": action.get("thought_type", "statement"),
+                        "intensity": action.get("intensity", 0.85),
+                    },
                 },
                 source="reasoning",
                 trace_id=trace_id,
             )
-            if language.get("status") != "success":
-                results.append(language)
-                continue
-
-            text = language.get("sentence", language.get("response", thought))
-            output = self.send_message(
-                "output",
-                "generate_output",
-                {
-                    "text": text,
-                    "autonomous": True,
-                    "target": action.get("target"),
-                },
-                source="language",
-                trace_id=trace_id,
-            )
-            if output.get("status") == "success":
-                self._deliver_to_voice(text, "neutral", 0.5, trace_id)
-            results.append(output)
+            results.append(decision)
         return results
+
+    def _deliver_pending_autonomous_speech(self) -> None:
+        """Deliver Speech-approved content through Language, Output, Voice, and the GUI."""
+        with self.lobe_handlers_lock:
+            required_lobes = {"speech", "language", "output"}
+            if not required_lobes.issubset(self.lobe_handlers):
+                return
+
+        speech_result = self.send_message(
+            "speech", "get_pending_speech", source="thalamus"
+        )
+        if speech_result.get("status") != "success":
+            return
+        speech = speech_result.get("speech")
+        if not isinstance(speech, dict):
+            return
+
+        text = speech.get("content")
+        if not isinstance(text, str) or not text.strip():
+            return
+        trace_id = str(uuid.uuid4())
+        language = self.send_message(
+            "language",
+            "express",
+            {"thought": text, "context": {"autonomous": True}},
+            source="speech",
+            trace_id=trace_id,
+        )
+        if language.get("status") != "success":
+            self.send_message(
+                "speech", "delivery_failed", {"speech": speech}, source="thalamus"
+            )
+            return
+
+        delivered_text = language.get("sentence", language.get("response", text))
+        output = self.send_message(
+            "output",
+            "generate_output",
+            {"text": delivered_text, "autonomous": True},
+            source="language",
+            trace_id=trace_id,
+        )
+        if output.get("status") != "success":
+            self.send_message(
+                "speech", "delivery_failed", {"speech": speech}, source="thalamus"
+            )
+            return
+
+        self._deliver_to_voice(delivered_text, "neutral", speech.get("priority", 0.5), trace_id)
+        self.send_message(
+            "speech", "speech_delivered", {"speech": speech}, source="thalamus"
+        )
+        with self._autonomous_delivery_lock:
+            self.autonomous_deliveries.append(
+                {
+                    "content": output.get("text", delivered_text),
+                    "speech_id": speech.get("thought_id"),
+                    "priority": speech.get("priority", 0.5),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+    def get_autonomous_delivery(self) -> Optional[Dict[str, Any]]:
+        """Return the next autonomous message that completed the output pipeline."""
+        with self._autonomous_delivery_lock:
+            if self.autonomous_deliveries:
+                return self.autonomous_deliveries.popleft()
+        return None
 
     def _deliver_to_voice(
         self, text: str, emotion: str, intensity: float, trace_id: Optional[str]

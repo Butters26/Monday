@@ -824,20 +824,6 @@ class MaximumSophisticationReasoning:
         speaking_value = emotional_pressure + goal_relevance + novelty
         return speaking_value - interruption_cost - repetition_penalty >= 0.85
     
-    def send_autonomous_message(self, message: str) -> bool:
-        """Send autonomous message to Thalamus - DIRECT FUNCTION CALL"""
-        try:
-            # Direct function call - NO SOCKETS
-            self.thalamus.handle_request({
-                'type': 'autonomous_message',
-                'message': message,
-                'source': 'reasoning',
-                'timestamp': time.time()
-            })
-            return True
-        except Exception:
-            return False
-    
     def autonomous_think_continuously(self):
         """Deep continuous thinking - always active"""
         
@@ -905,7 +891,9 @@ class MaximumSophisticationReasoning:
                 actions.append({
                     'type': 'message',
                     'target': 'matthew',
-                    'content': msg['content']
+                    'content': msg['content'],
+                    'thought_type': msg['type'],
+                    'intensity': 0.85,
                 })
             return {'status': 'success', 'actions': actions}
         return {'status': 'success', 'actions': []}

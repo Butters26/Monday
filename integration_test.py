@@ -115,6 +115,7 @@ class PipelineProbe:
     def __init__(self, name, calls):
         self.name = name
         self.calls = calls
+        self.pending_speech = None
 
     def process_message(self, message):
         self.calls.append((self.name, message['type'], message['content'], message['trace_id']))
@@ -128,6 +129,23 @@ class PipelineProbe:
             return {'status': 'success', 'sentence': 'A clear answer.'}
         if self.name == 'output':
             return {'status': 'success', 'text': message['content']['text']}
+        if self.name == 'speech':
+            if message['type'] == 'evaluate_thought':
+                self.pending_speech = message['content']['thought']
+                return {
+                    'status': 'success',
+                    'decision': {'timing': 'now', 'should_speak': True},
+                }
+            if message['type'] == 'get_pending_speech':
+                thought, self.pending_speech = self.pending_speech, None
+                return {
+                    'status': 'success',
+                    'speech': {
+                        'content': thought['content'],
+                        'priority': thought['intensity'],
+                        'thought_id': thought['id'],
+                    } if thought else None,
+                }
         return {'status': 'success'}
 
 
@@ -160,6 +178,8 @@ def run_user_pipeline_integration():
         [{'type': 'message', 'target': 'interface', 'content': 'An autonomous thought.'}]
     )
     assert autonomous_results[0]['status'] == 'success'
+    assert autonomous_results[0]['decision']['timing'] == 'now'
+    thalamus._deliver_pending_autonomous_speech()
     autonomous_language_call = [call for call in calls if call[0] == 'language'][-1]
     assert autonomous_language_call[2]['thought'] == 'An autonomous thought.'
     assert [call for call in calls if call[0] == 'voice']

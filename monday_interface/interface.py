@@ -69,6 +69,7 @@ class MondayInterface(QMainWindow):
         self.input_field.setPlaceholderText("Type your message to Monday...")
         self.input_field.setStyleSheet(INPUT_AREA_STYLE)
         self.input_field.returnPressed.connect(self.send_message)
+        self.input_field.textChanged.connect(self.on_input_changed)
         
         # Set font
         font = QFont(FONTS['main'].split(',')[0], FONTS['size_normal'])
@@ -150,6 +151,12 @@ class MondayInterface(QMainWindow):
             self.chat_panel.add_system_message("Brain connector not available")
             self.input_field.setEnabled(True)
             self.send_button.setEnabled(True)
+
+    @pyqtSlot(str)
+    def on_input_changed(self, text):
+        """Let Speech hold autonomous messages while the user is composing."""
+        if self.brain_connector:
+            self.brain_connector.set_user_typing(bool(text.strip()))
     
     @pyqtSlot(str)
     def on_monday_response(self, response):
