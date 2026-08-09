@@ -143,6 +143,10 @@ class GrammarEngine:
     
     def compose_sentence(self, semantic_input: Dict[str, Any]) -> str:
         """Compose sentence from semantic structure"""
+        proposition = semantic_input.get('proposition', '')
+        if isinstance(proposition, str) and proposition.strip():
+            return proposition.strip()
+
         intent = semantic_input.get('intent', 'state')
         concepts = semantic_input.get('concepts', [])
         relations = semantic_input.get('relations', {})
@@ -642,18 +646,6 @@ class LanguageGenerator:
         except Exception:
             return None
     
-    def _send_to_output(self, sentence: str, user_input: str = None):
-        """Send generated sentence to Output through Thalamus - DIRECT FUNCTION CALL"""
-        if not sentence or not isinstance(sentence, str) or not sentence.strip():
-            sentence = "I'm thinking about that."
-        
-        # Direct function call - NO SOCKETS
-        # Pass user_input so Output can store the full conversation to Notus
-        self.thalamus.send_message('output', 'text_response', {
-            'text': sentence,
-            'user_input': user_input  # Pass user_input for memory storage
-        })
-    
     def start(self):
         """Start language generation - register with Thalamus (NO SOCKETS)"""
         print(f"💬 Language Generation: Registering with Thalamus...")
@@ -676,15 +668,18 @@ class LanguageGenerator:
         if msg_type == 'generate':
             semantic_input = message.get('semantic_input', {})
             sentence = self.generate(semantic_input)
-            
-            # Only send to Output if reasoning explicitly says this is the main response
-            is_main_response = message.get('is_main_response', False)
-            if is_main_response:
-                # Pass user_input so Output can store the full conversation
-                user_input = message.get('user_input', '')
-                self._send_to_output(sentence, user_input)
-            
-            return {'status': 'success', 'response': sentence, 'sentence': sentence, 'sent_to_output': is_main_response}
+
+            return {'status': 'success', 'response': sentence, 'sentence': sentence}
+        elif msg_type == 'express':
+            thought = message.get('thought', '')
+            if not isinstance(thought, str) or not thought.strip():
+                return {'status': 'error', 'message': 'A non-empty thought is required'}
+            return {
+                'status': 'success',
+                'response': thought,
+                'sentence': thought,
+                'preserved_thought': True,
+            }
         elif msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         else:

@@ -582,11 +582,8 @@ class MaximumSophisticationReasoning:
             print(f"⚠️ User information query failed: {e}")
             return {'status': 'error', 'message': str(e)}
     
-    def _generate_language(self, semantic_input: Dict[str, Any], user_input: str, is_main_response: bool = False) -> Optional[str]:
-        """Send semantic input to Language Generation lobe through Thalamus. NO TEMPLATES - only generation.
-        
-        is_main_response: True if this is the actual response to send to user, False for internal thinking.
-        """
+    def _generate_language(self, semantic_input: Dict[str, Any], user_input: str) -> Optional[str]:
+        """Send semantic input to Language Generation through Thalamus for verbalization."""
         # BARRIER: Block internal thinking from generating language
         # Only allow language generation when there's actual user input
         if not user_input or not user_input.strip():
@@ -597,7 +594,6 @@ class MaximumSophisticationReasoning:
             result = self.thalamus.send_message('language', 'generate', {
                 'user_input': user_input, 
                 'semantic_input': semantic_input,
-                'is_main_response': is_main_response  # Reasoning controls what gets sent
             })
 
             if result.get('status') == 'success':
@@ -1907,6 +1903,18 @@ class MaximumSophisticationReasoning:
         metadata_words = {'words', 'length', 'question', 'intent', 'concepts', 'relations', 'certainty', 'emotion', 'tense', 'perspective', 'think', 'processing', 'internal', 'debug', 'metadata', 'response', 'input', 'output', 'message', 'data', 'dict', 'list', 'str', 'bool', 'float', 'int'}
         concepts = [c for c in concepts if isinstance(c, str) and c.lower() not in metadata_words and len(c.strip()) > 2]
         
+        reasoning_context = {
+            'theories': thinking.get('theories', []),
+            'causal_links': thinking.get('causal_links', []),
+            'thoughts': thinking.get('thoughts', []),
+            'subjective_state': thinking.get('subjective_state'),
+            'how_this_feels': thinking.get('how_this_feels'),
+        }
+        theories = reasoning_context['theories']
+        proposition = ''
+        if theories and isinstance(theories[0], dict):
+            proposition = theories[0].get('explanation', '')
+
         semantic_input = {
             'intent': intent,
             'concepts': concepts,  # Now filtered
@@ -1914,7 +1922,9 @@ class MaximumSophisticationReasoning:
             'certainty': certainty,
             'emotion': emotion,
             'personal_perspective': True,
-            'tense': 'present'
+            'tense': 'present',
+            'proposition': proposition,
+            'reasoning_context': reasoning_context,
         }
         
         return semantic_input
@@ -1934,8 +1944,7 @@ class MaximumSophisticationReasoning:
         # Try Language Generation - this is the ONLY way to generate responses
         semantic_input = self._build_semantic_input(thinking, user_input, is_question, understanding)
         if semantic_input:
-            # This is the main response - mark it so language generation sends it to Output
-            language_result = self._generate_language(semantic_input, user_input, is_main_response=True)
+            language_result = self._generate_language(semantic_input, user_input)
             # Only return if Language Generation actually worked
             if language_result and isinstance(language_result, str) and len(language_result.strip()) > 0:
                 return language_result

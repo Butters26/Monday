@@ -234,25 +234,14 @@ class Thalamus:
             emotion = thinking.get('emotion', emotion)
             intensity = thinking.get('intensity', intensity)
         
-        # 4. LANGUAGE LOBE - Emotionally color WITH context
-        print(f"   → Language lobe (expression)")
-        lang_result = self.send_message("language", "generate_grounded", {
-            'concepts': response.split()[:10],
-            'emotion': emotion,
-            'intensity': intensity,
-            'internal_state': memory_context['emotional_state']
-        })
-        
-        if lang_result.get('status') == 'success':
-            response = lang_result.get('sentence', response)
-        
-        # 5. OUTPUT LOBE - Generate final output
+        # 4. OUTPUT LOBE - Thalamus is the sole owner of final delivery.
         print(f"   → Output lobe (final generation)")
         output_result = self.send_message("output", "generate_output", {
             'content': {
                 'text': response,
                 'emotion': emotion,
-                'intensity': intensity
+                'intensity': intensity,
+                'user_input': user_input,
             }
         })
         
@@ -261,7 +250,7 @@ class Thalamus:
         else:
             final_response = response
         
-        # 6. UPDATE MEMORY - What did Monday learn?
+        # 5. UPDATE MEMORY - What did Monday learn?
         print(f"   → Updating memory")
         self.monday_memory['past_conversations'].append({
             'user_said': user_input,
