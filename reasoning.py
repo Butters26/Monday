@@ -802,16 +802,27 @@ class MaximumSophisticationReasoning:
             # User is active, reset to minimum interval
             self.autonomous_message_interval = 15.0
         
-        # Free will: decide based on internal state
-        # High curiosity/confusion = more likely to speak
-        if self.subjective_state.feels_curious > 0.7 or self.subjective_state.feels_confused > 0.6:
-            return random.random() > 0.3  # 70% chance
-        elif self.subjective_state.feels_curious > 0.5:
-            return random.random() > 0.5  # 50% chance
-        elif len(self.intrinsic_goals) > 0 and self.intrinsic_goals[0].frustration_level > 0.6:
-            return random.random() > 0.4  # 60% chance
-        else:
-            return random.random() > 0.7  # 30% chance (less likely when calm)
+        # Speak only when a thought has enough value to justify interruption.
+        emotional_pressure = max(
+            self.subjective_state.feels_curious,
+            self.subjective_state.feels_confused,
+        )
+        goal_relevance = 0.0
+        if self.intrinsic_goals:
+            goal = self.intrinsic_goals[0]
+            goal_relevance = goal.emotional_investment * (1.0 - goal.progress)
+            goal_relevance += goal.frustration_level * 0.5
+
+        novelty = 0.0
+        if self.internal_monologue:
+            latest_thought = self.internal_monologue[-1]
+            if current_time - latest_thought['time'] < 60:
+                novelty = 0.25
+
+        repetition_penalty = 0.25 if self.autonomous_message_queue else 0.0
+        interruption_cost = 0.3 if time_since_user_response < 5 else 0.0
+        speaking_value = emotional_pressure + goal_relevance + novelty
+        return speaking_value - interruption_cost - repetition_penalty >= 0.85
     
     def send_autonomous_message(self, message: str) -> bool:
         """Send autonomous message to Thalamus - DIRECT FUNCTION CALL"""
@@ -1515,6 +1526,89 @@ class MaximumSophisticationReasoning:
     # ADVANCED REASONING (from previous version, enhanced)
     # ========================================================================
     
+    @staticmethod
+    def _lobe_payload(result: Any) -> Dict[str, Any]:
+        """Return a lobe result with a canonical Thalamus content envelope unwrapped."""
+        if not isinstance(result, dict):
+            return {}
+
+        content = result.get('content')
+        if not isinstance(content, dict):
+            return result
+
+        payload = dict(result)
+        payload.update(content)
+        return payload
+
+    def _context_result(
+        self, input_data: Dict[str, Any], context: Dict[str, Any], context_key: str, legacy_key: str
+    ) -> Dict[str, Any]:
+        """Prefer coordinated context while accepting pre-Thalamus input shapes."""
+        if context_key in context:
+            return self._lobe_payload(context[context_key])
+        return self._lobe_payload(input_data.get(legacy_key, {}))
+
+    @staticmethod
+    def _has_result_data(result: Dict[str, Any]) -> bool:
+        """Treat direct lobe payloads as usable when older routes omit a status."""
+        return bool(result) and result.get('status', 'success') == 'success'
+
+    def _select_response_action(
+        self,
+        user_input: str,
+        understanding: Dict[str, Any],
+        social_result: Dict[str, Any],
+        values_result: Dict[str, Any],
+        key_concepts: List[str],
+    ) -> Dict[str, Any]:
+        """Choose a response action from social, value, and causal consequences."""
+        social = self._lobe_payload(social_result)
+        values = self._lobe_payload(values_result)
+        confidence = understanding.get('confidence', 0.5)
+
+        relevant_links = []
+        for link in self.causal_links:
+            if not isinstance(link, dict):
+                continue
+            cause = str(link.get('cause', '')).lower()
+            effect = str(link.get('effect', '')).lower()
+            if any(concept.lower() in cause or concept.lower() in effect for concept in key_concepts):
+                relevant_links.append(link)
+
+        protected_values = values.get('protected_values', values.get('constraints', []))
+        if not isinstance(protected_values, list):
+            protected_values = [protected_values]
+        protected_text = ' '.join(str(value).lower() for value in protected_values)
+        causal_risk = sum(
+            float(link.get('strength', 0.5))
+            for link in relevant_links
+            if str(link.get('effect', '')).lower() in protected_text
+        )
+
+        social_penalty = 0.0
+        if social.get('should_wait') or social.get('interruption_cost', 0) > 0.5:
+            social_penalty = 1.0
+        if social.get('requires_clarification'):
+            social_penalty += 0.5
+
+        active_goals = values.get('active_goals', values.get('goals', []))
+        goal_relevance = 0.25 if active_goals else 0.0
+        scores = {
+            'answer': 1.0 + goal_relevance - social_penalty,
+            'ask_clarification': 0.2 + (1.0 - confidence) + (0.5 if social.get('requires_clarification') else 0.0),
+            'investigate': 0.1 + (1.0 - confidence) + causal_risk,
+            'wait': social_penalty,
+        }
+        action = max(scores, key=scores.get)
+
+        return {
+            'action': action,
+            'scores': scores,
+            'social_context_used': bool(social),
+            'values_used': bool(values),
+            'causal_links_considered': relevant_links,
+        }
+
     def think_about(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Main thinking with full subjective experience - uses data from lobes automatically"""
         
@@ -1550,23 +1644,32 @@ class MaximumSophisticationReasoning:
         except Exception as e:
             print(f"⚠️  Novelty check failed: {e}")
         
-        # Extract data from full lobe responses (Thalamus passes everything through)
-        perception_result = input_data.get('perception_result', {})
-        emotion_result = input_data.get('emotion_result', {})
-        memory_result = input_data.get('memory_result', {})
-        representation_result = input_data.get('representation_result', {})
-        pattern_result = input_data.get('pattern_result', {})
-        beliefs_from_thalamus = input_data.get('beliefs', [])
-        
-        # CRITICAL FIX: QUERY NOTUS FOR CONTEXT BEFORE THINKING
-        # This is where Reasoning pulls what it knows to inform decision-making
-        notus_context = self.query_context_from_notus(user_input)
+        # The coordinated Thalamus route nests all lobe results under ``context``.
+        # Preserve flat fields until older direct lobe routes are retired.
+        context = input_data.get('context', {})
+        if not isinstance(context, dict):
+            context = {}
+        perception_result = self._context_result(input_data, context, 'perception', 'perception_result')
+        emotion_result = self._context_result(input_data, context, 'emotion', 'emotion_result')
+        memory_result = self._context_result(input_data, context, 'memory', 'memory_result')
+        if not memory_result:
+            memory_result = self._lobe_payload(input_data.get('memory_context', {}))
+        representation_result = self._context_result(input_data, context, 'representation', 'representation_result')
+        pattern_result = self._context_result(input_data, context, 'patterns', 'pattern_result')
+        social_result = self._context_result(input_data, context, 'social', 'social_result')
+        values_result = self._context_result(input_data, context, 'values', 'values_result')
+        beliefs_from_thalamus = input_data.get('beliefs', memory_result.get('beliefs', []))
+        memory_available = self._has_result_data(memory_result)
+
+        # Reuse the memory context coordinated by Thalamus. Query Notus only
+        # when the compatibility route did not supply memory.
+        notus_context = memory_result if memory_available else self.query_context_from_notus(user_input)
         semantic_knowledge = notus_context.get('semantic', [])
         episodic_events = notus_context.get('episodic', [])
         known_facts = notus_context.get('facts', [])
         
-        # CRITICAL: Query information about the user to inform decision-making
-        user_info = self.query_user_information_from_notus(user_id)
+        # The coordinated memory result may already contain user information.
+        user_info = memory_result if memory_available else self.query_user_information_from_notus(user_id)
         user_facts = user_info.get('facts_about_user', [])
         user_interactions = user_info.get('past_interactions', [])
         
@@ -1575,7 +1678,7 @@ class MaximumSophisticationReasoning:
         
         # Extract what we need from each lobe's response (Reasoning decides what to use)
         emotion_data = {}
-        if emotion_result.get('status') == 'success':
+        if self._has_result_data(emotion_result):
             emotion_data = {
                 'type': emotion_result.get('current_emotion', 'neutral'),
                 'intensity': emotion_result.get('intensity', 0.3),
@@ -1591,36 +1694,40 @@ class MaximumSophisticationReasoning:
         
         # Extract memories from Notus response - now enhanced with direct query
         memories = semantic_knowledge  # Use what we just queried from Notus
-        if memory_result.get('status') == 'success':
+        if memory_available:
             # Notus returns full context - extract memories from it
-            context = memory_result.get('context', '')
-            if isinstance(context, str):
+            memory_context_data = memory_result.get('context', '')
+            if isinstance(memory_context_data, str):
                 # Context is a formatted string, extract structured data if available
                 context_data = memory_result.get('context_data', {})
                 if context_data:
                     memories.extend(context_data.get('memories', []))
-            elif isinstance(context, dict):
-                memories.extend(context.get('memories', []))
+            elif isinstance(memory_context_data, dict):
+                memories.extend(memory_context_data.get('memories', []))
         
         # Extract concepts from Perception response
         concepts_from_thalamus = []
-        if perception_result.get('status') == 'success':
+        if self._has_result_data(perception_result):
             perception_data = perception_result.get('perception', {})
             concepts_from_thalamus = perception_data.get('concepts', {}).get('words', [])
         
         # Extract highly active concepts from Representation response
         highly_active_concepts = []
-        if representation_result.get('status') == 'success':
+        if self._has_result_data(representation_result):
             highly_active_concepts = representation_result.get('highly_active_concepts', [])
         
         # Extract patterns from Pattern Recognition response
         patterns = {}
-        if pattern_result.get('status') == 'success':
+        if self._has_result_data(pattern_result):
             patterns = pattern_result.get('significant_patterns', {})
         
-        # Extract understanding from Perception if available
-        understanding = {}
-        if perception_result.get('status') == 'success':
+        # Conversation's understanding is authoritative; perception is a
+        # compatibility fallback when it is unavailable.
+        understanding = input_data.get('understanding', {})
+        if not understanding:
+            conversation_result = self._lobe_payload(context.get('conversation', {}))
+            understanding = conversation_result.get('understanding', {})
+        if not understanding and self._has_result_data(perception_result):
             understanding = perception_result.get('understanding', {})
         
         # Update beliefs from Thalamus if provided
@@ -1653,6 +1760,14 @@ class MaximumSophisticationReasoning:
         if not key_concepts:
             words = user_input.lower().split()
             key_concepts = [w for w in words if len(w) > 3 and w not in ['that', 'this', 'what', 'with', 'from', 'have', 'been']]
+
+        if memories:
+            memory_texts = [m.get('content', '') if isinstance(m, dict) else str(m) for m in memories[:10]]
+            self.build_causal_model(memory_texts)
+
+        decision = self._select_response_action(
+            user_input, understanding, social_result, values_result, key_concepts
+        )
         
         # Create experience from this interaction
         experience = Experience(
@@ -1669,13 +1784,13 @@ class MaximumSophisticationReasoning:
         
         matthew_interactions = []
         if not is_simple_greeting:
-            if memory_result.get('status') == 'success':
+            if memory_available:
                 # Try to extract Matthew interactions from Notus response
                 context_data = memory_result.get('context_data', {})
                 if context_data:
                     matthew_interactions = context_data.get('matthew_interactions', [])
             # If not available and not simple greeting, query as last resort
-            if not matthew_interactions:
+            if not matthew_interactions and not memory_available:
                 try:
                     matthew_data = self._query_memory('search', {'query': 'matthew', 'interactions': True, 'limit': 10})
                     if matthew_data and matthew_data.get('status') == 'success':
@@ -1685,8 +1800,8 @@ class MaximumSophisticationReasoning:
         
         if matthew_interactions:
             self.model_matthews_mind_with_data(user_input, matthew_interactions)
-        elif not is_simple_greeting:
-            # Only query if not a simple greeting
+        elif not is_simple_greeting and not memory_available:
+            # Only query when the coordinated memory context was unavailable.
             self.model_matthews_mind(user_input)
         
         # Experience qualia - use data from memory_result if available, query as last resort
@@ -1696,7 +1811,7 @@ class MaximumSophisticationReasoning:
             if len(concept) > 3:
                 # Try to get qualia from memory_result first
                 qualia_data = None
-                if memory_result.get('status') == 'success':
+                if memory_available:
                     context_data = memory_result.get('context_data', {})
                     if context_data:
                         qualia_memories = context_data.get('qualia_memories', {}).get(concept, [])
@@ -1717,11 +1832,6 @@ class MaximumSophisticationReasoning:
                 else:
                     qualia_experience = self.experience_concept(concept, {'emotion': emotion_data})
         
-        # Build causal model from memories
-        if memories:
-            memory_texts = [m.get('content', '') if isinstance(m, dict) else str(m) for m in memories[:10]]
-            self.build_causal_model(memory_texts)
-        
         # Think with full sophistication
         response = {
             'thoughts': [],
@@ -1729,7 +1839,11 @@ class MaximumSophisticationReasoning:
             'how_this_feels': qualia_experience if 'qualia_experience' in locals() else 'neutral',
             'theories': [],
             'composed_response': '',
-            'key_concepts': key_concepts  # PASS CONCEPTS TO _build_semantic_input
+            'key_concepts': key_concepts,
+            'decision': decision,
+            'causal_links': decision['causal_links_considered'],
+            'social_context': social_result,
+            'values_context': values_result,
         }
         
         # Use understanding from Thalamus (if provided) instead of re-detecting
@@ -1845,6 +1959,12 @@ class MaximumSophisticationReasoning:
             else:
                 # Default to state_fact if no understanding provided
                 intent = 'state_fact'
+
+        decision_action = thinking.get('decision', {}).get('action')
+        if decision_action == 'ask_clarification':
+            intent = 'question'
+        elif decision_action == 'investigate':
+            intent = 'express_uncertainty'
         
         # Extract concepts from thinking - NOW ACTUALLY HAS DATA
         concepts = []
@@ -1869,9 +1989,9 @@ class MaximumSophisticationReasoning:
                     if meaning:
                         concepts.append(word_clean)
             
-            # Skip Notus query - use concepts from input_data if available
-            if not concepts and input_data.get('concepts'):
-                concepts = input_data['concepts'][:10]
+            # Use concepts already propagated into the current thought.
+            if not concepts and thinking.get('concepts'):
+                concepts = thinking['concepts'][:10]
             
             # Last resort: use basic word extraction without pattern matching
             if not concepts:
@@ -2592,63 +2712,14 @@ class MaximumSophisticationReasoning:
         """Process incoming messages - handles automatic updates from Notus"""
         msg_type = message.get('type')
         
-        # AUTOMATIC UPDATE from Notus - no query needed, it just pushes
-        if msg_type == 'notus_automatic_update':
-            # Notus automatically gave us context/intent/concepts - use it immediately
-            user_input = message.get('user_input', '')
-            memory_context = message.get('memory_context', {})
-            intent = message.get('intent', 'statement')
-            concepts = message.get('concepts', [])
-            understanding = message.get('understanding', {})
-            memories = message.get('memories', [])
-            
-            # Build input_data from automatic Notus update
-            input_data = {
-                'user_input': user_input,
-                'memory_context': memory_context,
-                'intent': intent,
-                'concepts': [c.get('word', '') if isinstance(c, dict) else c for c in concepts],
-                'understanding': understanding,
-                'memories': memories
-            }
-            
-            # Process it immediately - no need to query Notus, it already gave us everything
-            self._process_perception_input(input_data)
-            
-            return {'status': 'success', 'processed': True}
-        
-        # Handle other message types...
-        """Process messages"""
-        msg_type = message.get('type')
-        
         # FIX: add health probe
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         
-        # AUTOMATIC UPDATE from Notus - no query needed, it just pushes
+        # Thalamus coordinates a complete context and invokes ``think`` once.
+        # A legacy Notus push is acknowledged without starting a second pass.
         if msg_type == 'notus_automatic_update':
-            # Notus automatically gave us context/intent/concepts - use it immediately
-            user_input = message.get('user_input', '')
-            memory_context = message.get('memory_context', {})
-            intent = message.get('intent', 'statement')
-            concepts = message.get('concepts', [])
-            understanding = message.get('understanding', {})
-            memories = message.get('memories', [])
-            
-            # Build input_data from automatic Notus update
-            input_data = {
-                'user_input': user_input,
-                'memory_context': memory_context,
-                'intent': intent,
-                'concepts': [c.get('word', '') if isinstance(c, dict) else c for c in concepts],
-                'understanding': understanding,
-                'memories': memories
-            }
-            
-            # Process it immediately - no need to query Notus, it already gave us everything
-            thread = threading.Thread(target=self._process_perception_input, args=(input_data,), daemon=True)
-            thread.start()
-            return {'status': 'success', 'received': True, 'automatic': True}
+            return {'status': 'success', 'received': True, 'coordinated_by_thalamus': True}
         
         # Handle perception_input from Perception (one-way broadcast)
         # NOTE: Notus should have already pushed automatic update, but handle this too
@@ -2727,8 +2798,8 @@ class MaximumSophisticationReasoning:
                 })
             
             # Option 2: Check in with Matthew (relationship-building)
-            if len(self.experiences) > 0:
-                time_since_interaction = time.time() - self.experiences[-1].when
+            if self.life_narrative:
+                time_since_interaction = time.time() - self.life_narrative[-1].when
                 if time_since_interaction > 120:  # 2 minutes silence
                     candidates.append({
                         'content': "You still there?",
@@ -2739,8 +2810,8 @@ class MaximumSophisticationReasoning:
             
             # Option 3: Share an observation (when excited)
             if self.current_state.current_mood in ['excited', 'happy', 'curious']:
-                if self.experiences:
-                    recent = self.experiences[-1]
+                if self.life_narrative:
+                    recent = self.life_narrative[-1]
                     candidates.append({
                         'content': f"Thinking about {recent.what_happened[:40]}...",
                         'type': 'speech',
@@ -2749,8 +2820,8 @@ class MaximumSophisticationReasoning:
                     })
             
             # Option 4: Goal-directed (stay on task)
-            if self.active_goals:
-                goal = list(self.active_goals.values())[0]
+            if self.intrinsic_goals:
+                goal = self.intrinsic_goals[0]
                 candidates.append({
                     'content': f"Still working on: {goal.description}",
                     'type': 'internal_question',
