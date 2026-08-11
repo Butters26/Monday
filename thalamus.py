@@ -11,6 +11,7 @@ import json
 import os
 import time
 import threading
+import uuid
 from typing import Dict, List, Any, Set, Optional
 from collections import defaultdict, deque
 from datetime import datetime
@@ -29,9 +30,10 @@ def _recv_all(conn, n, timeout=5.0):
 class Thalamus:
     """Central coordinator with memory context and autonomous actions"""
     
-    def __init__(self, socket_path="/tmp/thalamus.sock"):
+    def __init__(self, socket_path="/tmp/thalamus.sock", fallback_memory_path=".notus_fallback_memory.json"):
         self.socket_path = socket_path
         self.running = True
+        self.fallback_memory_path = fallback_memory_path
         
         # All lobe connections
         self.lobe_sockets = {
@@ -74,6 +76,8 @@ class Thalamus:
                 'confusion': 0.0,
             }
         }
+        self._pending_conversations = self._load_pending_conversations()
+        self.monday_memory['past_conversations'].extend(self._pending_conversations)
         
         self.message_routes: deque = deque(maxlen=100)
     
@@ -147,16 +151,74 @@ class Thalamus:
                 f.write("-" * 60 + "\n")
         except Exception as e:
             print(f"⚠️  Could not log conversation: {e}")
-    
-    def retrieve_relevant_memory(self, user_input: str) -> Dict[str, Any]:
-        """Pull relevant memories and beliefs"""
-        
-        relevant_context = {
+
+    def _load_pending_conversations(self) -> List[Dict[str, Any]]:
+        """Load conversations that still need to be written to Notus."""
+        if not os.path.exists(self.fallback_memory_path):
+            return []
+
+        try:
+            with open(self.fallback_memory_path, 'r', encoding='utf-8') as memory_file:
+                conversations = json.load(memory_file)
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(
+                f"Unable to load pending Notus memory from {self.fallback_memory_path}: {error}"
+            ) from error
+
+        if not isinstance(conversations, list) or not all(
+            isinstance(conversation, dict) for conversation in conversations
+        ):
+            raise RuntimeError(
+                f"Pending Notus memory in {self.fallback_memory_path} must be a list of conversations"
+            )
+        return conversations
+
+    def _persist_pending_conversations(self) -> None:
+        """Atomically persist only conversations that Notus has not fully accepted."""
+        pending = [
+            conversation for conversation in self._pending_conversations
+            if not conversation.get('synced_to_notus', False)
+        ]
+        temporary_path = f"{self.fallback_memory_path}.tmp"
+        try:
+            with open(temporary_path, 'w', encoding='utf-8') as memory_file:
+                json.dump(pending, memory_file)
+                memory_file.flush()
+                os.fsync(memory_file.fileno())
+            os.replace(temporary_path, self.fallback_memory_path)
+        except OSError as error:
+            raise RuntimeError(
+                f"Unable to persist pending Notus memory to {self.fallback_memory_path}: {error}"
+            ) from error
+        finally:
+            if os.path.exists(temporary_path):
+                os.remove(temporary_path)
+
+    def _fallback_context(self) -> Dict[str, Any]:
+        return {
             'beliefs': self.monday_memory['beliefs'],
             'emotional_state': self.monday_memory['emotional_state'].copy(),
-            'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],  # Last 5
-            'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
+            'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],
+            'facts_about_user': self.monday_memory['learned_facts'].get(
+                self.monday_memory['user'], {}
+            ),
+            'memory_source': 'fallback',
         }
+
+    def retrieve_relevant_memory(self, user_input: str) -> Dict[str, Any]:
+        """Pull relevant memories and beliefs"""
+
+        notus_result = self.send_message("notus", "context", {'user_input': user_input})
+        if notus_result.get('status') == 'success':
+            self.sync_memory_to_notus()
+            relevant_context = {
+                'beliefs': self.monday_memory['beliefs'],
+                'emotional_state': self.monday_memory['emotional_state'].copy(),
+                'notus_context': notus_result.get('context', ''),
+                'memory_source': 'notus',
+            }
+        else:
+            relevant_context = self._fallback_context()
         
         # Check if user mentions Matthew
         if 'matthew' in user_input.lower():
@@ -164,6 +226,65 @@ class Thalamus:
             relevant_context['about_matthew'] = True
         
         return relevant_context
+
+    def _store_pending_message(self, message: Dict[str, Any]) -> bool:
+        try:
+            result = self.send_message("notus", "store", {
+                'role': message['role'],
+                'content': message['content'],
+                'memory_type': 'conversation',
+                'idempotency_key': message['idempotency_key'],
+            })
+        except Exception as error:
+            print(f"   ⚠️  Notus sync error: {error}")
+            return False
+
+        if result.get('status') != 'stored':
+            print(f"   ⚠️  Notus rejected memory: {result.get('message', 'unknown error')}")
+            return False
+        return True
+
+    def sync_memory_to_notus(self) -> bool:
+        """Sync each unacknowledged message after Notus becomes available."""
+        for conversation in self._pending_conversations:
+            for message in (conversation['user_message'], conversation['assistant_message']):
+                if message['synced_to_notus']:
+                    continue
+                if not self._store_pending_message(message):
+                    self._persist_pending_conversations()
+                    return False
+                message['synced_to_notus'] = True
+                conversation['synced_to_notus'] = all(
+                    item['synced_to_notus']
+                    for item in (conversation['user_message'], conversation['assistant_message'])
+                )
+                self._persist_pending_conversations()
+        return True
+
+    def _record_conversation(self, user_input: str, response: str, emotion: str) -> None:
+        conversation_id = str(uuid.uuid4())
+        conversation = {
+            'conversation_id': conversation_id,
+            'emotion': emotion,
+            'timestamp': datetime.utcnow().isoformat(),
+            'user_message': {
+                'role': 'user',
+                'content': user_input,
+                'idempotency_key': f'{conversation_id}:user',
+                'synced_to_notus': False,
+            },
+            'assistant_message': {
+                'role': 'assistant',
+                'content': response,
+                'idempotency_key': f'{conversation_id}:assistant',
+                'synced_to_notus': False,
+            },
+            'synced_to_notus': False,
+        }
+        self.monday_memory['past_conversations'].append(conversation)
+        self._pending_conversations.append(conversation)
+        self._persist_pending_conversations()
+        self.sync_memory_to_notus()
     
     def check_autonomous_actions(self):
         """Check if Monday wants to do something autonomously"""
@@ -263,12 +384,7 @@ class Thalamus:
         
         # 6. UPDATE MEMORY - What did Monday learn?
         print(f"   → Updating memory")
-        self.monday_memory['past_conversations'].append({
-            'user_said': user_input,
-            'monday_said': final_response,
-            'emotion': emotion,
-            'timestamp': datetime.utcnow().isoformat()
-        })
+        self._record_conversation(user_input, final_response, emotion)
         
         # LOG CONVERSATION TO FILE
         self._log_conversation(user_input, final_response, emotion)
@@ -321,6 +437,9 @@ class Thalamus:
             # Check all lobes
             for lobe_name in self.lobe_sockets.keys():
                 self.send_message(lobe_name, 'health', {})
+
+            if self.lobe_status['notus'] == 'online':
+                self.sync_memory_to_notus()
             
             all_online = all(s == "online" for s in self.lobe_status.values())
             

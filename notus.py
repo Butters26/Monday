@@ -5,6 +5,8 @@ Instead of trying to BE the AI, this helps your cheap AI be smarter
 """
 
 import json
+import socket
+import struct
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import time
@@ -28,7 +30,6 @@ import heapq
 from functools import lru_cache
 import signal
 import sys
-from thalamus import get_thalamus
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -383,6 +384,7 @@ class SuperhumanMemorySystem:
                         user_id TEXT,
                         memory_type TEXT DEFAULT 'episodic',
                         conversation_id TEXT,
+                        source_id TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
@@ -488,6 +490,11 @@ class SuperhumanMemorySystem:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversation_id ON superhuman_memories(conversation_id)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON superhuman_memories(timestamp)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_role ON superhuman_memories(role)')
+                cursor.execute('ALTER TABLE superhuman_memories ADD COLUMN IF NOT EXISTS source_id TEXT')
+                cursor.execute(
+                    'CREATE UNIQUE INDEX IF NOT EXISTS uq_memory_source_id '
+                    'ON superhuman_memories(source_id) WHERE source_id IS NOT NULL'
+                )
                 
                 self._db_connection.commit()
                 
@@ -496,7 +503,7 @@ class SuperhumanMemorySystem:
     
     def store_memory(self, role: str, content: str, user_id: str = "default", tag: str = "General", 
                     importance: float = 5.0, mode: str = "writing", memory_type: str = MemoryType.CONVERSATION,
-                    personality: str = "witty") -> str:
+                    personality: str = "witty", source_id: Optional[str] = None) -> str:
         """Store a memory"""
         try:
             memory_id = str(uuid.uuid4())
@@ -523,16 +530,20 @@ class SuperhumanMemorySystem:
                 cursor.execute('''
                     INSERT INTO superhuman_memories 
                     (id, timestamp, role, content, tag, importance_score, mode, personality, 
-                     embedding, entities, concepts, semantic_hash, user_id, memory_type, conversation_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     embedding, entities, concepts, semantic_hash, user_id, memory_type, conversation_id, source_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (source_id) WHERE source_id IS NOT NULL DO NOTHING
+                    RETURNING id
                 ''', (memory_id, timestamp, role, content, tag, importance, mode, personality,
-                     psycopg2.Binary(embedding_blob), entities_json, concepts_json, semantic_hash, user_id, memory_type, self.conversation_id))
-                
-                # Learn vocabulary from conversation
-                self._learn_vocabulary_from_content(content, role)
-                
+                     psycopg2.Binary(embedding_blob), entities_json, concepts_json, semantic_hash, user_id,
+                     memory_type, self.conversation_id, source_id))
+                stored_row = cursor.fetchone()
                 self._db_connection.commit()
-            
+
+            if stored_row is None and source_id:
+                logger.info(f"💾 Memory already stored: {source_id}")
+                return source_id
+            self._learn_vocabulary_from_content(content, role)
             logger.info(f"💾 Stored memory: {role} - {content[:50]}...")
             return memory_id
             
@@ -3925,31 +3936,16 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 # Notus Independent Process - Runs as standalone brain lobe
 
 class NotusProcess:
-    """Notus as an independent process - DIRECT FUNCTION CALLS (NO SOCKETS)"""
+    """Notus memory lobe served over the Unix socket used by Thalamus."""
     
     def __init__(self):
         self.running = True
         self.memory_system = None  # Initialize in background thread
         self.memory_ready = threading.Event()  # Signal when memory is ready
         
-        # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
-    
-    def _register_with_thalamus(self):
-        """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
-        try:
-            result = self.thalamus.register_lobe('notus', self)
-            if result.get('status') == 'success':
-                print("✅ Notus registered with Thalamus (direct function calls)")
-                return True
-            return False
-        except Exception as e:
-            print(f"⚠️  Failed to register with Thalamus: {e}")
-            return False
-        
     def start(self):
-        """Start Notus - register with Thalamus (NO SOCKETS)"""
-        print(f"🧠 Notus Memory Lobe: Registering with Thalamus...")
+        """Start Notus as the Unix-socket lobe used by Thalamus."""
+        print("🧠 Notus Memory Lobe: Starting...")
         
         # Initialize memory system in background thread (non-blocking)
         def init_memory_background():
@@ -3967,16 +3963,49 @@ class NotusProcess:
         memory_thread = threading.Thread(target=init_memory_background, daemon=True)
         memory_thread.start()
         
-        # Register with Thalamus
-        if not self._register_with_thalamus():
-            print("❌ Failed to register with Thalamus")
-            return
-        
-        print("   Communication: Direct function calls (NO SOCKETS)")
-        
-        # Keep running (Thalamus calls us directly, no listening loop needed)
-        while self.running:
-            time.sleep(0.1)
+        socket_path = "/tmp/notus.sock"
+        if os.path.exists(socket_path):
+            os.remove(socket_path)
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(socket_path)
+        server.listen(5)
+        server.settimeout(1.0)
+        print(f"✅ Notus listening on {socket_path}")
+
+        try:
+            while self.running:
+                try:
+                    connection, _ = server.accept()
+                except socket.timeout:
+                    continue
+                with connection:
+                    connection.settimeout(10)
+                    try:
+                        size = struct.unpack('!I', self._recv_exact(connection, 4))[0]
+                        if size <= 0 or size > 10_000_000:
+                            raise ValueError("Invalid message length")
+                        message = json.loads(self._recv_exact(connection, size).decode('utf-8'))
+                        response = self.process_message(message)
+                    except (OSError, ValueError, json.JSONDecodeError) as error:
+                        response = {'status': 'error', 'message': str(error)}
+                    data = json.dumps(response).encode('utf-8')
+                    connection.sendall(struct.pack('!I', len(data)) + data)
+        finally:
+            server.close()
+            if os.path.exists(socket_path):
+                os.remove(socket_path)
+
+    @staticmethod
+    def _recv_exact(connection: socket.socket, size: int) -> bytes:
+        chunks = []
+        remaining = size
+        while remaining:
+            chunk = connection.recv(remaining)
+            if not chunk:
+                raise OSError("Unexpected EOF while reading request")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b''.join(chunks)
     
     # ========== QUERY INTERFACE FOR OTHER LOBES ==========
     # These methods allow Reasoning, Language, and other lobes to query Notus
@@ -4181,13 +4210,20 @@ class NotusProcess:
         
         if msg_type == 'store':
             # Store new memory
-            data = message.get('content', {})  # Get the data dict from Thalamus-wrapped message
+            data = message.get('content', {})
+            if not isinstance(data, dict):
+                data = message
             role = data.get('role', 'system')
             content = data.get('content')  # Get the actual content string
             memory_type = data.get('memory_type', 'conversation')
-            result = self.memory_system.store_memory(role, content, memory_type=memory_type)
+            idempotency_key = data.get('idempotency_key')
+            if not isinstance(content, str) or not content:
+                return {'status': 'error', 'message': 'content must be a non-empty string'}
+            result = self.memory_system.store_memory(
+                role, content, memory_type=memory_type, source_id=idempotency_key
+            )
             if result:
-                return {'status': 'stored', 'content': content}
+                return {'status': 'stored', 'content': content, 'memory_id': result}
             else:
                 
                 return {'status': 'error', 'message': 'Failed to store memory'}
