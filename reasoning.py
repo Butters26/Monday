@@ -582,11 +582,8 @@ class MaximumSophisticationReasoning:
             print(f"⚠️ User information query failed: {e}")
             return {'status': 'error', 'message': str(e)}
     
-    def _generate_language(self, semantic_input: Dict[str, Any], user_input: str, is_main_response: bool = False) -> Optional[str]:
-        """Send semantic input to Language Generation lobe through Thalamus. NO TEMPLATES - only generation.
-        
-        is_main_response: True if this is the actual response to send to user, False for internal thinking.
-        """
+    def _generate_language(self, semantic_input: Dict[str, Any], user_input: str) -> Optional[str]:
+        """Generate text for internal reflection without delivering it to Output."""
         # BARRIER: Block internal thinking from generating language
         # Only allow language generation when there's actual user input
         if not user_input or not user_input.strip():
@@ -597,7 +594,6 @@ class MaximumSophisticationReasoning:
             result = self.thalamus.send_message('language', 'generate', {
                 'user_input': user_input, 
                 'semantic_input': semantic_input,
-                'is_main_response': is_main_response  # Reasoning controls what gets sent
             })
 
             if result.get('status') == 'success':
@@ -1618,9 +1614,10 @@ class MaximumSophisticationReasoning:
         if pattern_result.get('status') == 'success':
             patterns = pattern_result.get('significant_patterns', {})
         
-        # Extract understanding from Perception if available
-        understanding = {}
-        if perception_result.get('status') == 'success':
+        # Thalamus provides the canonical conversation understanding. Perception
+        # may supplement it only when this direct path did not provide one.
+        understanding = input_data.get('understanding') or {}
+        if not understanding and perception_result.get('status') == 'success':
             understanding = perception_result.get('understanding', {})
         
         # Update beliefs from Thalamus if provided
@@ -1751,11 +1748,15 @@ class MaximumSophisticationReasoning:
             
             response['theories'].append({
                 'explanation': theory.explanation,
-                'confidence': theory.confidence
+                'confidence': theory.confidence,
+                'supporting_facts': theory.evidence_for,
+                'causal_relations': theory.components,
+                'predictions': theory.predictions,
             })
         
         # Forward chain to derive facts - use data from memory_result if available, query as last resort
         new_facts = self.forward_chain_with_data(memory_result)
+        response['inferred_facts'] = new_facts
         
         # Skip Notus query - use memories already provided by Thalamus in input_data
         # memories are already in input_data['memories'] and used above
@@ -1783,14 +1784,13 @@ class MaximumSophisticationReasoning:
         # Detect and signal any novel ideas to Novelty Lobe
         self._detect_and_signal_reasoning_novelty(user_input, response, key_concepts)
         
-        # Compose response with subjective perspective - pass understanding
+        # Produce semantic content; Thalamus owns final realization and delivery.
         try:
-            composed = self._compose_with_subjectivity(response, user_input, is_question, understanding)
-            # If Language Generation failed, composed will be None - that's correct
-            # Don't add fake fallback responses
-            response['composed_response'] = composed
+            response['semantic_input'] = self._build_semantic_input(
+                response, user_input, is_question, understanding
+            )
+            response['composed_response'] = None
         except Exception as e:
-            # System broken - return None (don't use error message as response)
             print(f"⚠️  Response composition error: {e}")
             response['composed_response'] = None
         
@@ -1869,10 +1869,6 @@ class MaximumSophisticationReasoning:
                     if meaning:
                         concepts.append(word_clean)
             
-            # Skip Notus query - use concepts from input_data if available
-            if not concepts and input_data.get('concepts'):
-                concepts = input_data['concepts'][:10]
-            
             # Last resort: use basic word extraction without pattern matching
             if not concepts:
                 words = user_input.lower().split()
@@ -1907,15 +1903,42 @@ class MaximumSophisticationReasoning:
         metadata_words = {'words', 'length', 'question', 'intent', 'concepts', 'relations', 'certainty', 'emotion', 'tense', 'perspective', 'think', 'processing', 'internal', 'debug', 'metadata', 'response', 'input', 'output', 'message', 'data', 'dict', 'list', 'str', 'bool', 'float', 'int'}
         concepts = [c for c in concepts if isinstance(c, str) and c.lower() not in metadata_words and len(c.strip()) > 2]
         
+        propositions = []
+        for theory in thinking.get('theories', []):
+            explanation = theory.get('explanation', '')
+            if isinstance(explanation, str) and explanation.strip():
+                propositions.append(explanation.strip())
+            for fact in theory.get('supporting_facts', []):
+                if isinstance(fact, str) and fact.strip():
+                    propositions.append(fact.strip())
+            for relation in theory.get('causal_relations', []):
+                if isinstance(relation, str) and relation.strip():
+                    propositions.append(relation.strip())
+
+        for fact in thinking.get('inferred_facts', []):
+            if isinstance(fact, dict):
+                fact = fact.get('content', '')
+            if isinstance(fact, str) and fact.strip():
+                propositions.append(fact.strip())
+
+        answer = propositions[0] if propositions else ''
         semantic_input = {
             'intent': intent,
             'concepts': concepts,  # Now filtered
             'relations': relations,
+            'answer': answer,
+            'propositions': propositions,
             'certainty': certainty,
             'emotion': emotion,
             'personal_perspective': True,
             'tense': 'present'
         }
+        if intent == 'greeting':
+            semantic_input['greeting'] = {
+                'acknowledgment': 'Hello',
+                'current_emotion': emotion,
+                'relationship_context': understanding.get('topic') if understanding else None,
+            }
         
         return semantic_input
     
@@ -1934,8 +1957,7 @@ class MaximumSophisticationReasoning:
         # Try Language Generation - this is the ONLY way to generate responses
         semantic_input = self._build_semantic_input(thinking, user_input, is_question, understanding)
         if semantic_input:
-            # This is the main response - mark it so language generation sends it to Output
-            language_result = self._generate_language(semantic_input, user_input, is_main_response=True)
+            language_result = self._generate_language(semantic_input, user_input)
             # Only return if Language Generation actually worked
             if language_result and isinstance(language_result, str) and len(language_result.strip()) > 0:
                 return language_result
@@ -2662,9 +2684,10 @@ class MaximumSophisticationReasoning:
         
         if msg_type == 'think':
             print("🧠 Reasoning: Received think request")
-            # Unwrap Thalamus message structure: message['content'] contains the actual data
+            # Socket routing places input at the top level; direct routing nests it
+            # in content. Accept both without changing the canonical understanding.
             content = message.get('content', {})
-            input_data = content.get('input', {})
+            input_data = content.get('input', message.get('input', {}))
             print(f"🧠 Reasoning: Input data keys: {list(input_data.keys())}")
             result = self.think_about(input_data)
             print(f"🧠 Reasoning: think_about completed, response: {result.get('composed_response', 'None')[:50] if result.get('composed_response') else 'None'}")

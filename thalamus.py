@@ -206,10 +206,11 @@ class Thalamus:
         if conv_result.get('status') != 'success':
             return "I'm having trouble understanding right now."
         
-        understanding = conv_result.get('understanding', {})
-        response = conv_result.get('response', '')
-        emotion = conv_result.get('emotion', 'neutral')
-        intensity = conv_result.get('intensity', 0.5)
+        conversation = conv_result.get('content', conv_result)
+        understanding = conversation.get('understanding', {})
+        response = conversation.get('response', '')
+        emotion = conversation.get('emotion', 'neutral')
+        intensity = conversation.get('intensity', 0.5)
         
         print(f"   Intent: {understanding.get('intent')}")
         print(f"   Confidence: {understanding.get('confidence', 0):.0%}")
@@ -228,19 +229,22 @@ class Thalamus:
         
         if reasoning_result.get('status') == 'success':
             thinking = reasoning_result.get('thinking', {})
-            composed = thinking.get('composed_response')
-            if composed:
-                response = composed
             emotion = thinking.get('emotion', emotion)
             intensity = thinking.get('intensity', intensity)
+        else:
+            thinking = {}
         
-        # 4. LANGUAGE LOBE - Emotionally color WITH context
+        # 4. LANGUAGE LOBE - Realize the semantic conclusion from Reasoning.
         print(f"   → Language lobe (expression)")
-        lang_result = self.send_message("language", "generate_grounded", {
-            'concepts': response.split()[:10],
+        semantic_input = thinking.get('semantic_input', {
+            'intent': understanding.get('intent', 'conversation'),
+            'answer': response,
             'emotion': emotion,
-            'intensity': intensity,
-            'internal_state': memory_context['emotional_state']
+            'certainty': understanding.get('confidence', 0.5),
+        })
+        lang_result = self.send_message("language", "generate", {
+            'semantic_input': semantic_input,
+            'user_input': user_input,
         })
         
         if lang_result.get('status') == 'success':
@@ -252,7 +256,8 @@ class Thalamus:
             'content': {
                 'text': response,
                 'emotion': emotion,
-                'intensity': intensity
+                'intensity': intensity,
+                'user_input': user_input,
             }
         })
         

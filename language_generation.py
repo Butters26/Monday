@@ -150,6 +150,17 @@ class GrammarEngine:
         emotion = semantic_input.get('emotion', 'neutral')
         perspective = semantic_input.get('personal_perspective', True)
         tense = semantic_input.get('tense', 'present')
+        answer = semantic_input.get('answer', '')
+        propositions = semantic_input.get('propositions', [])
+
+        if isinstance(answer, str) and answer.strip():
+            return answer.strip()
+        if propositions:
+            return ' '.join(
+                proposition.strip()
+                for proposition in propositions
+                if isinstance(proposition, str) and proposition.strip()
+            )
         
         # Query Notus for past language patterns
         try:
@@ -167,8 +178,8 @@ class GrammarEngine:
         except Exception:
             pass
         
-        if intent == 'greet':
-            return self._compose_greeting(emotion)
+        if intent == 'greeting':
+            return self._compose_greeting(semantic_input)
         elif intent == 'introduce':
             return self._compose_introduction()
         elif intent == 'identify':
@@ -190,15 +201,22 @@ class GrammarEngine:
         else:
             return self._compose_statement(concepts, relations, certainty, perspective, tense)
     
-    def _compose_greeting(self, emotion: str) -> str:
-        greetings = [
-            "Hello",
-            "Hi there",
-            "Hello! Nice to meet you",
-            "Hi! How are you?",
-            "Hey there"
-        ]
-        return random.choice(greetings)
+    def _compose_greeting(self, semantic_input: Dict[str, Any]) -> str:
+        """Realize a greeting from its semantic components."""
+        greeting = semantic_input.get('greeting', {})
+        acknowledgment = greeting.get('acknowledgment', 'Hello')
+        emotion = greeting.get('current_emotion', semantic_input.get('emotion', 'neutral'))
+        relationship_context = greeting.get('relationship_context')
+        continuation = greeting.get('continuation')
+
+        parts = [acknowledgment]
+        if emotion in {'happy', 'excited', 'curious', 'caring'}:
+            parts.append("I'm glad to connect.")
+        if relationship_context:
+            parts.append(f"I'm ready to talk about {relationship_context}.")
+        if continuation:
+            parts.append(continuation)
+        return ' '.join(parts)
     
     def _compose_introduction(self) -> str:
         patterns = [
@@ -642,18 +660,6 @@ class LanguageGenerator:
         except Exception:
             return None
     
-    def _send_to_output(self, sentence: str, user_input: str = None):
-        """Send generated sentence to Output through Thalamus - DIRECT FUNCTION CALL"""
-        if not sentence or not isinstance(sentence, str) or not sentence.strip():
-            sentence = "I'm thinking about that."
-        
-        # Direct function call - NO SOCKETS
-        # Pass user_input so Output can store the full conversation to Notus
-        self.thalamus.send_message('output', 'text_response', {
-            'text': sentence,
-            'user_input': user_input  # Pass user_input for memory storage
-        })
-    
     def start(self):
         """Start language generation - register with Thalamus (NO SOCKETS)"""
         print(f"💬 Language Generation: Registering with Thalamus...")
@@ -677,14 +683,7 @@ class LanguageGenerator:
             semantic_input = message.get('semantic_input', {})
             sentence = self.generate(semantic_input)
             
-            # Only send to Output if reasoning explicitly says this is the main response
-            is_main_response = message.get('is_main_response', False)
-            if is_main_response:
-                # Pass user_input so Output can store the full conversation
-                user_input = message.get('user_input', '')
-                self._send_to_output(sentence, user_input)
-            
-            return {'status': 'success', 'response': sentence, 'sentence': sentence, 'sent_to_output': is_main_response}
+            return {'status': 'success', 'response': sentence, 'sentence': sentence, 'sent_to_output': False}
         elif msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         else:
