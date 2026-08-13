@@ -1,17 +1,29 @@
 """Deterministic E2E coverage for the prompted direct-call core path."""
 
 import random
+import os
+from pathlib import Path
 
 import psycopg2
+import pytest
 
 from reasoning import MaximumSophisticationReasoning
 from run_abin import create_core_systems, shutdown_core_systems
 
 
-def setup_function():
+@pytest.fixture(autouse=True)
+def isolated_notus_database():
     """Keep PostgreSQL-backed core tests isolated without changing production data."""
-    with psycopg2.connect("dbname=notus_memory host=localhost") as connection:
+    dsn = os.environ.get("MONDAY_NOTUS_TEST_DSN")
+    if not dsn or "monday_notus_test" not in dsn:
+        pytest.skip("PostgreSQL Notus tests require the dedicated monday_notus_test database")
+    with psycopg2.connect(dsn) as connection:
         with connection.cursor() as cursor:
+            cursor.execute(
+                Path(__file__).with_name("postgresql_schema.sql").read_text(
+                    encoding="utf-8"
+                )
+            )
             cursor.execute(
                 "TRUNCATE facts, events, memories, conversations, conversation_turns, "
                 "pattern_evidence, vocabulary, word_meanings, grammar_knowledge, "

@@ -203,7 +203,12 @@ class DirectNotusProcess:
     def _store(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         content, role = payload.get("content"), payload.get("role", "user")
         user_id = payload.get("user_id", "default")
-        if not self._is_safe_memory(role, content) or not isinstance(user_id, str) or not user_id:
+        if (
+            role not in {"user", "fact", "note"}
+            or not self._is_safe_memory(role, content)
+            or not isinstance(user_id, str)
+            or not user_id
+        ):
             return {"status": "error", "message": "Memory must be clean, user-scoped content"}
         memory_id = str(uuid.uuid4())
         concepts = self._extract_concepts(content)
@@ -281,13 +286,17 @@ class DirectNotusProcess:
                       "assistant_text": row[3], "timestamp": row[4].isoformat(), "importance": row[5]}
                      for row in cursor.fetchall()]
         facts = self._facts(query, user_id, scope, min(max(int(limits.get("facts", 12)), 1), 50))
-        memories = [{"role": "user", "content": turn["user_text"], "timestamp": turn["timestamp"]}
-                    for turn in turns]
+        memories = [
+            {"role": role, "content": content, "timestamp": turn["timestamp"]}
+            for turn in turns
+            for role, content in (("user", turn["user_text"]), ("assistant", turn["assistant_text"]))
+            if isinstance(content, str) and content.strip()
+        ]
         return {"status": "success", "content": {"query": query, "user_id": user_id, "scope": scope,
                 "turns": turns, "memories": memories, "semantic": memories, "facts": facts,
                 "episodes": [], "patterns": [], "working_set": memories, "conflicts": [],
                 "concepts": self._extract_concepts(query),
-                "retrieval": {"lexical_available": True, "semantic_available": True,
+                "retrieval": {"lexical_available": True, "semantic_available": False,
                               "candidate_count": len(turns), "returned_count": len(turns), "truncated": False},
                 "summary": f"Found {len(turns)} turns and {len(facts)} facts"}}
 

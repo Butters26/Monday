@@ -7,13 +7,28 @@ on:
 jobs:
   direct-core:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: monday_notus_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d monday_notus_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MONDAY_NOTUS_DSN: dbname=monday_notus_test user=postgres password=postgres host=localhost port=5432
+      MONDAY_NOTUS_TEST_DSN: dbname=monday_notus_test user=postgres password=postgres host=localhost port=5432
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install focused test dependency
-        run: python -m pip install --disable-pip-version-check pytest
+      - name: Install focused test dependencies
+        run: python -m pip install --disable-pip-version-check pytest psycopg2-binary
       - name: Check direct-core syntax and JSON configuration
         run: |
           python -m py_compile run_abin.py thalamus.py direct_reasoning.py direct_notus.py
