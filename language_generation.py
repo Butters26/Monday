@@ -150,6 +150,19 @@ class GrammarEngine:
         emotion = semantic_input.get('emotion', 'neutral')
         perspective = semantic_input.get('personal_perspective', True)
         tense = semantic_input.get('tense', 'present')
+        answer = semantic_input.get('answer', '')
+        propositions = semantic_input.get('propositions', [])
+
+        if isinstance(answer, str) and answer.strip():
+            return answer.strip()
+        if isinstance(propositions, list):
+            grounded = [
+                proposition.strip()
+                for proposition in propositions
+                if isinstance(proposition, str) and proposition.strip()
+            ]
+            if grounded:
+                return ' '.join(grounded)
         
         # Query Notus for past language patterns
         try:
@@ -167,7 +180,7 @@ class GrammarEngine:
         except Exception:
             pass
         
-        if intent == 'greet':
+        if intent == 'greeting':
             return self._compose_greeting(emotion)
         elif intent == 'introduce':
             return self._compose_introduction()

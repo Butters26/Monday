@@ -17,16 +17,18 @@ import threading
 import uuid
 from typing import Any, Dict, Iterable, Optional
 
+from direct_response import DeterministicResponseProvider, ResponseProvider
 
 class Thalamus:
     """Synchronously route direct calls between registered lobes."""
 
-    def __init__(self) -> None:
+    def __init__(self, response_provider: Optional[ResponseProvider] = None) -> None:
         self.running = True
         self.lobe_handlers: Dict[str, Any] = {}
         self.lobe_handlers_lock = threading.RLock()
         self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=100)
+        self.response_provider = response_provider or DeterministicResponseProvider()
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -158,7 +160,16 @@ class Thalamus:
         )
         if reasoning["status"] != "success":
             return "I'm having trouble thinking right now."
-        semantic_input = self._content(reasoning).get("semantic_input", {})
+        semantic_input = self._content(reasoning).get("semantic_input", {}).copy()
+        memories = self._content(memory_context).get("memories", [])
+        response = self.response_provider.render(user_input, understanding, memories)
+        semantic_input.update(
+            {
+                "intent": understanding.get("intent", semantic_input.get("intent", "conversation")),
+                "answer": response,
+                "propositions": [response],
+            }
+        )
 
         language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
         if language["status"] != "success":

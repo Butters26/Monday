@@ -9,21 +9,12 @@ Monday stores mutable data outside the repository. By default, the directory is
 directory. This includes learned memory, emotional state, snapshots, logs, and
 local recovery files. Do not add runtime data to Git.
 
-## Updated Files (All sockets removed):
+## Legacy and experimental modules
 
-- **thalamus.py** - Central coordinator (NO SOCKETS - direct function calls only)
-- **reasoning.py** - Core thinking system (NO SOCKETS)
-- **perception.py** - Input processing (NO SOCKETS)
-- **notus.py** - Memory system (NO SOCKETS)
-- **language_generation.py** - Language construction (NO SOCKETS)
-- **pattern_recognition.py** - Pattern detection (NO SOCKETS)
-- **advanced_emotional_engine.py** - Emotional processing (NO SOCKETS)
-- **output.py** - Output formatting (NO SOCKETS)
-- **representation.py** - Concept representation (NO SOCKETS)
-- **voice_lobe.py** - Speech synthesis (NO SOCKETS)
-- **conversation.py** - Conversation management (NO SOCKETS)
-- **abin_interface.py** - GUI interface (may still have some socket code - needs update)
-- **run_abin.py** - System launcher (may still have socket testing code - needs update)
+The direct core intentionally excludes the legacy/experimental launcher,
+PostgreSQL-backed `notus.py`, GUI, socket integrations, and autonomous loops.
+They remain in the repository for compatibility work but are not imported by
+`run_abin.py`.
 
 ## Communication Architecture:
 
@@ -42,8 +33,8 @@ receives `{"type", "content", "source", "message_id"}`; `content` is the
 message payload.  Runtime memory is private SQLite state, so core startup does
 not require PostgreSQL, API keys, sockets, a GUI, or background loops.
 
-## Status:
+## Status
 
-✅ All core lobe files updated
-⚠️ abin_interface.py may need socket removal
-⚠️ run_abin.py may need socket testing code removal
+✅ `run_abin.py` is the active direct-core launcher. It uses the lightweight
+`direct_notus.py` SQLite adapter and deterministic, credential-free response
+provider; it does not start sockets, PostgreSQL, a GUI, or background loops.

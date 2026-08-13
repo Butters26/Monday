@@ -492,18 +492,18 @@ class OutputLobe:
             })
             self.last_output = text_output
             
-            # Store conversation to Notus if user_input is provided
+            # The direct core stores user input before reasoning.  Other callers
+            # can opt in to storing that one structured record.
             user_input = content.get('user_input', '') or message.get('user_input', '')
-            if user_input and user_input.strip():
+            if content.get('store_user_input') and user_input and user_input.strip():
                 try:
-                    # Store full conversation to Notus memory
                     self._send_to_thalamus({
                         'type': 'route_message',
                         'destination': 'notus',
                         'msg_type': 'store',
                         'content': {
-                            'role': 'system',
-                            'content': f"User: {user_input}\nABIN: {text_output}",
+                            'role': 'user',
+                            'content': user_input,
                             'memory_type': 'conversation',
                             'user_id': content.get('user_id', 'default'),
                         }
@@ -545,18 +545,17 @@ class OutputLobe:
                 'spoke': spoke
             })
             
-            # Store conversation to Notus if user_input is provided
+            # Store only explicit, structured user input; never a transcript.
             user_input = payload.get('user_input', '')
-            if user_input and user_input.strip():
+            if payload.get('store_user_input') and user_input and user_input.strip():
                 try:
-                    # Store full conversation to Notus memory
                     self._send_to_thalamus({
                         'type': 'route_message',
                         'destination': 'notus',
                         'msg_type': 'store',
                         'content': {
-                            'role': 'system',
-                            'content': f"User: {user_input}\nABIN: {text}",
+                            'role': 'user',
+                            'content': user_input,
                             'memory_type': 'conversation',
                             'user_id': payload.get('user_id', 'default'),
                         }

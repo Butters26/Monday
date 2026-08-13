@@ -1,6 +1,7 @@
-"""Deterministic acceptance test for the prompted direct-call core path."""
+"""Deterministic E2E coverage for the prompted direct-call core path."""
 
 import random
+
 from run_abin import create_core_systems, shutdown_core_systems
 
 
@@ -44,3 +45,63 @@ def test_prompted_core_path_keeps_user_memory_isolated(tmp_path):
         assert not default_memories
     finally:
         shutdown_core_systems(systems)
+
+
+def test_prompted_core_path_renders_grounded_greeting_and_gravity_answer(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        greeting = systems["thalamus"].process_user_input("hello")
+        gravity = systems["thalamus"].process_user_input("What is gravity?")
+
+        assert "hello" in greeting.lower() or "hi" in greeting.lower()
+        assert "mass" in gravity.lower()
+        assert "attraction" in gravity.lower()
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_legacy_transcript_rows_are_not_retrieved_or_rendered(tmp_path):
+    runtime = tmp_path / "runtime"
+    systems = create_core_systems(str(runtime))
+    try:
+        database = runtime / "notus_memory.sqlite3"
+        systems["notus"]._connection.execute(
+            "INSERT INTO memories(role, content, user_id, memory_type, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "system",
+                "User: hidden prompt\nABIN: hidden response about gravity",
+                "default",
+                "conversation",
+                "2000-01-01T00:00:00+00:00",
+            ),
+        )
+        systems["notus"]._connection.commit()
+
+        response = systems["thalamus"].process_user_input("Tell me about gravity")
+        memories = systems["notus"].retrieve_memories("gravity", user_id="default")
+
+        assert memories
+        assert all("user:" not in memory["content"].lower() for memory in memories)
+        assert all("abin:" not in memory["content"].lower() for memory in memories)
+        assert "user:" not in response.lower()
+        assert "abin:" not in response.lower()
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_direct_notus_close_is_idempotent_and_uses_sqlite_only(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    notus = systems["notus"]
+    try:
+        notus.shutdown()
+        notus.shutdown()
+    finally:
+        shutdown_core_systems(systems)
+
+    import direct_notus
+
+    source = open(direct_notus.__file__, encoding="utf-8").read()
+    assert "psycopg2" not in source
+    assert "torch" not in source
+    assert "numpy" not in source

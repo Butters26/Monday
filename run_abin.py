@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from advanced_emotional_engine import EmotionalProcess
 from conversation import ConversationSystem
 from language_generation import LanguageGenerator
-from notus import NotusProcess
+from direct_notus import DirectNotusProcess
 from output import OutputLobe
 from reasoning import MaximumSophisticationReasoning
 from runtime_paths import runtime_dir
@@ -28,7 +28,7 @@ def create_core_systems(runtime_directory: Optional[str] = None) -> Dict[str, An
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
         "conversation": ConversationSystem(thalamus=thalamus),
-        "notus": NotusProcess(
+        "notus": DirectNotusProcess(
             storage_path=str(directory / "notus_memory.sqlite3"), thalamus=thalamus
         ),
         "emotion": EmotionalProcess(
