@@ -2,6 +2,7 @@
 
 import random
 
+from reasoning import MaximumSophisticationReasoning
 from run_abin import create_core_systems, shutdown_core_systems
 
 
@@ -101,6 +102,47 @@ def test_reasoning_answer_reaches_output_without_provider_replacement(tmp_path):
     try:
         response = systems["thalamus"].process_user_input("What is photosynthesis?")
         assert response == "UNMISTAKABLE_REASONING_RESULT"
+        assert systems["output"].last_output == response
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_full_reasoner_think_about_runs_for_every_direct_prompt(tmp_path):
+    class SpyFullReasoner(MaximumSophisticationReasoning):
+        calls = []
+
+        def think_about(self, input_data):
+            type(self).calls.append(input_data)
+            return super().think_about(input_data)
+
+    systems = create_core_systems(
+        str(tmp_path / "runtime"), reasoning_factory=SpyFullReasoner
+    )
+    try:
+        systems["thalamus"].process_user_input("hello")
+        systems["thalamus"].process_user_input("What is gravity?")
+
+        assert len(SpyFullReasoner.calls) == 2
+        assert all(call["user_id"] == "default" for call in SpyFullReasoner.calls)
+        assert all(call["memory_result"]["status"] == "success" for call in SpyFullReasoner.calls)
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_injected_full_reasoner_conclusion_reaches_language_and_output(tmp_path):
+    class InjectedFullReasoner(MaximumSophisticationReasoning):
+        def think_about(self, input_data):
+            return {
+                "composed_response": "FULL_REASONER_CONCLUSION",
+                "theories": [{"components": ["injected evidence"]}],
+            }
+
+    systems = create_core_systems(
+        str(tmp_path / "runtime"), reasoning_factory=InjectedFullReasoner
+    )
+    try:
+        response = systems["thalamus"].process_user_input("Any prompt")
+        assert response == "FULL_REASONER_CONCLUSION"
         assert systems["output"].last_output == response
     finally:
         shutdown_core_systems(systems)

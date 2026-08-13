@@ -591,6 +591,13 @@ class MaximumSophisticationReasoning:
         # Only allow language generation when there's actual user input
         if not user_input or not user_input.strip():
             return None  # Internal thinking cannot generate language
+
+        if getattr(self, '_direct_core', False):
+            # The synchronous direct pipeline performs the one public Language
+            # pass after think_about returns.  Do not let legacy internal
+            # reflections create extra Output routes.
+            answer = semantic_input.get('answer') if isinstance(semantic_input, dict) else None
+            return answer.strip() if isinstance(answer, str) and answer.strip() else None
         
         try:
             # Direct function call - NO SOCKETS
@@ -1560,8 +1567,17 @@ class MaximumSophisticationReasoning:
         
         # CRITICAL FIX: QUERY NOTUS FOR CONTEXT BEFORE THINKING
         # This is where Reasoning pulls what it knows to inform decision-making
-        notus_context = self.query_context_from_notus(user_input)
-        semantic_knowledge = notus_context.get('semantic', [])
+        notus_context = self.query_context_from_notus(user_input, user_id)
+        semantic_knowledge = [
+            memory for memory in notus_context.get('semantic', [])
+            if not isinstance(memory, dict)
+            or memory.get('content', '').strip().casefold() != user_input.strip().casefold()
+        ]
+        if getattr(self, '_direct_core', False):
+            # The adapter has already retrieved, scoped, and normalized this
+            # context.  Keep that evidence authoritative while still exercising
+            # the legacy Notus context query above.
+            semantic_knowledge = []
         episodic_events = notus_context.get('episodic', [])
         known_facts = notus_context.get('facts', [])
         
@@ -1741,7 +1757,9 @@ class MaximumSophisticationReasoning:
             # Fallback: detect manually
             is_question = '?' in user_input or any(q in user_input.lower() for q in ['why', 'how', 'what'])
         
-        if is_question:
+        if is_question or (
+            getattr(self, '_direct_core', False) and memories and not is_simple_greeting
+        ):
             # Build theory using understanding context
             theory = self.build_theory(user_input, {
                 'emotion': emotion_data, 
@@ -1751,7 +1769,10 @@ class MaximumSophisticationReasoning:
             
             response['theories'].append({
                 'explanation': theory.explanation,
-                'confidence': theory.confidence
+                'confidence': theory.confidence,
+                'components': theory.components,
+                'evidence_for': theory.evidence_for,
+                'predictions': theory.predictions,
             })
         
         # Forward chain to derive facts - use data from memory_result if available, query as last resort
@@ -1916,6 +1937,15 @@ class MaximumSophisticationReasoning:
             'personal_perspective': True,
             'tense': 'present'
         }
+        theories = thinking.get('theories', [])
+        if getattr(self, '_direct_core', False) and theories and isinstance(theories[0], dict):
+            conclusion = theories[0].get('explanation')
+            if isinstance(conclusion, str) and conclusion.strip() and theories[0].get('components'):
+                semantic_input.update({
+                    'answer': conclusion.strip(),
+                    'conclusion': conclusion.strip(),
+                    'propositions': [conclusion.strip()],
+                })
         
         return semantic_input
     
@@ -1934,8 +1964,15 @@ class MaximumSophisticationReasoning:
         # Try Language Generation - this is the ONLY way to generate responses
         semantic_input = self._build_semantic_input(thinking, user_input, is_question, understanding)
         if semantic_input:
+            if getattr(self, '_direct_core', False):
+                conclusion = semantic_input.get('answer')
+                return conclusion.strip() if isinstance(conclusion, str) and conclusion.strip() else None
             # This is the main response - mark it so language generation sends it to Output
-            language_result = self._generate_language(semantic_input, user_input, is_main_response=True)
+            language_result = self._generate_language(
+                semantic_input,
+                user_input,
+                is_main_response=not getattr(self, '_direct_core', False),
+            )
             # Only return if Language Generation actually worked
             if language_result and isinstance(language_result, str) and len(language_result.strip()) > 0:
                 return language_result
@@ -2665,36 +2702,6 @@ class MaximumSophisticationReasoning:
             # Unwrap Thalamus message structure: message['content'] contains the actual data
             content = message.get('content', {})
             input_data = content.get('input', {})
-            if content.get('core_pipeline'):
-                understanding = input_data.get('understanding', {})
-                emotional_state = input_data.get('emotion_result', {})
-                memory_context = input_data.get('memory_context', {})
-                memories = memory_context.get('memories', memory_context.get('results', []))
-                memory_text = " ".join(
-                    memory.get('content', '')
-                    for memory in memories
-                    if isinstance(memory, dict)
-                )
-                concepts = [
-                    word.strip(".,!?").lower()
-                    for word in f"{input_data.get('user_input', '')} {memory_text}".split()
-                    if len(word.strip(".,!?")) > 2
-                ]
-                semantic_input = {
-                    'intent': understanding.get('intent', 'conversation'),
-                    'concepts': list(dict.fromkeys(concepts))[:10] or ['conversation'],
-                    'relations': {},
-                    'certainty': understanding.get('confidence', 0.5),
-                    'emotion': emotional_state.get('current_emotion', 'neutral'),
-                    'personal_perspective': True,
-                    'tense': 'present',
-                    'memory_context': memories,
-                }
-                return {
-                    'status': 'success',
-                    'content': {'semantic_input': semantic_input},
-                    'semantic_input': semantic_input,
-                }
             print(f"🧠 Reasoning: Input data keys: {list(input_data.keys())}")
             result = self.think_about(input_data)
             print(f"🧠 Reasoning: think_about completed, response: {result.get('composed_response', 'None')[:50] if result.get('composed_response') else 'None'}")

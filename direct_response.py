@@ -60,11 +60,18 @@ class DeterministicResponseProvider:
             return "Memory is information retained so it can be retrieved and used later."
 
         intent = understanding.get("intent") if isinstance(understanding, dict) else None
-        if intent in {"question", "request"}:
+        if intent in {"question", "request"} or re.search(
+            r"\b(?:tell me|explain|what|who|where|when|why|how)\b",
+            user_input,
+            re.IGNORECASE,
+        ):
             if has_safe_context:
                 return (
-                    "I do not have a grounded answer to that yet. "
-                    "I will keep the private conversation context in mind if you add more detail."
+                    "I do not have enough grounded information to answer that. "
+                    "Please provide more context or a fact I can reason from."
                 )
-            return "I do not have a grounded answer to that yet. Please ask about a specific fact or provide more context."
+            return (
+                "I do not have enough grounded information to answer that. "
+                "Please provide more context or a fact I can reason from."
+            )
         return "I understand. Please tell me more about what you would like to discuss."

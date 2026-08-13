@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from advanced_emotional_engine import EmotionalProcess
 from conversation import ConversationSystem
-from direct_reasoning import DirectReasoningProcess
+from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
 from direct_notus import DirectNotusProcess
 from output import OutputLobe
@@ -16,7 +16,10 @@ from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
 
-def create_core_systems(runtime_directory: Optional[str] = None) -> Dict[str, Any]:
+def create_core_systems(
+    runtime_directory: Optional[str] = None,
+    reasoning_factory: Optional[Any] = None,
+) -> Dict[str, Any]:
     """Instantiate and register only the six prompted-path systems.
 
     `runtime_directory` is intended for embedding and tests.  It defaults to
@@ -34,7 +37,10 @@ def create_core_systems(runtime_directory: Optional[str] = None) -> Dict[str, An
         "emotion": EmotionalProcess(
             state_file=str(directory / "emotional_state.json"), thalamus=thalamus
         ),
-        "reasoning": DirectReasoningProcess(thalamus=thalamus),
+        "reasoning": DirectMaximumSophisticationAdapter(
+            thalamus=thalamus,
+            **({"reasoner_factory": reasoning_factory} if reasoning_factory else {}),
+        ),
         "language": LanguageGenerator(thalamus=thalamus),
         "output": OutputLobe(thalamus=thalamus, enable_tts=False),
     }

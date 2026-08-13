@@ -33,14 +33,21 @@ receives `{"type", "content", "source", "message_id"}`; `content` is the
 message payload.  Runtime memory is private SQLite state, so core startup does
 not require PostgreSQL, API keys, sockets, a GUI, or background loops.
 
-The direct reasoning lobe derives conclusions and propositions from structured
-understanding plus user-scoped SQLite memory. It can recall stable personal
-facts across a restart, and its conclusion passes through language and output.
-The deterministic response provider is a fallback only when reasoning supplies
-no usable answer or proposition; it does not replace a reasoning result.
+The direct reasoning lobe is a thin envelope and evidence adapter around the
+existing `MaximumSophisticationReasoning` engine: every prompted request calls
+its `think_about()` method. The adapter presents user-scoped SQLite memories in
+the legacy engine's expected context shape and prevents the current prompt from
+being treated as evidence for itself. Its full-engine conclusion passes through
+Language unchanged. A small favorite-fact normalizer and baseline facts provide
+evidence only; they do not generate final answers. The deterministic response
+provider is an emergency fallback only when the full engine has no grounded,
+usable conclusion.
 
 ## Status
 
 ✅ `run_abin.py` is the active direct-core launcher. It uses the lightweight
-`direct_notus.py` SQLite adapter and a dependency-free direct reasoning lobe;
-it does not start sockets, PostgreSQL, a GUI, or background loops.
+`direct_notus.py` SQLite adapter plus the legacy full reasoning engine through
+a direct adapter; it does not start sockets, PostgreSQL, a GUI, or background
+loops. The legacy engine's broader optional Notus queries return no data under
+the direct adapter, so direct reliability is limited to supplied SQLite context
+and its local baseline facts.

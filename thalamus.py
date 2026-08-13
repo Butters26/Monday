@@ -183,6 +183,7 @@ class Thalamus:
             {
                 "input": {
                     "user_input": user_input,
+                    "user_id": user_id,
                     "understanding": understanding,
                     "memory_context": self._content(memory_context),
                     "emotion_result": emotional_state,
