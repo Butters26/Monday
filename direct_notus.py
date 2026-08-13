@@ -80,7 +80,10 @@ class DirectNotusProcess:
         ]
         sql = (
             "SELECT role, content, user_id, memory_type, created_at FROM memories "
-            "WHERE user_id = ?"
+            "WHERE user_id = ? "
+            "AND role IN ('user', 'fact', 'note') "
+            "AND lower(trim(content)) NOT LIKE 'user:%' "
+            "AND lower(trim(content)) NOT LIKE 'abin:%'"
         )
         params: List[Any] = [user_id]
         if terms:
@@ -90,8 +93,9 @@ class DirectNotusProcess:
             normalized_limit = int(limit)
         except (TypeError, ValueError):
             normalized_limit = 15
+        normalized_limit = max(1, min(normalized_limit, 100))
         sql += " ORDER BY id DESC LIMIT ?"
-        params.append(max(1, min(normalized_limit, 100)))
+        params.append(normalized_limit)
 
         with self._lock:
             rows = self._require_connection().execute(sql, params).fetchall()
@@ -105,7 +109,7 @@ class DirectNotusProcess:
             }
             for role, content, stored_user, memory_type, created_at in rows
             if self._is_safe_memory(role, content)
-        ]
+        ][:normalized_limit]
 
     def _store(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         content = payload.get("content")

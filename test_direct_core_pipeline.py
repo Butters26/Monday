@@ -69,7 +69,7 @@ def test_legacy_transcript_rows_are_not_retrieved_or_rendered(tmp_path):
             "INSERT INTO memories(role, content, user_id, memory_type, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (
-                "system",
+                "note",
                 "User: hidden prompt\nABIN: hidden response about gravity",
                 "default",
                 "conversation",
@@ -105,3 +105,19 @@ def test_direct_notus_close_is_idempotent_and_uses_sqlite_only(tmp_path):
     assert "psycopg2" not in source
     assert "torch" not in source
     assert "numpy" not in source
+
+
+def test_response_provider_failure_uses_safe_fallback(tmp_path):
+    class FailingProvider:
+        def render(self, user_input, understanding, memories):
+            raise RuntimeError("provider unavailable")
+
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    systems["thalamus"].response_provider = FailingProvider()
+    try:
+        assert (
+            systems["thalamus"].process_user_input("hello")
+            == "I am unable to formulate a response right now."
+        )
+    finally:
+        shutdown_core_systems(systems)

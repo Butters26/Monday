@@ -162,7 +162,10 @@ class Thalamus:
             return "I'm having trouble thinking right now."
         semantic_input = self._content(reasoning).get("semantic_input", {}).copy()
         memories = self._content(memory_context).get("memories", [])
-        response = self.response_provider.render(user_input, understanding, memories)
+        try:
+            response = self.response_provider.render(user_input, understanding, memories)
+        except Exception:
+            response = "I am unable to formulate a response right now."
         semantic_input.update(
             {
                 "intent": understanding.get("intent", semantic_input.get("intent", "conversation")),
