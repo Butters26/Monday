@@ -9,8 +9,9 @@ import psycopg2
 from psycopg2.extras import execute_values
 import sys
 import os
+from runtime_paths import runtime_file
 
-SQLITE_DB = "superhuman_memory.db"
+SQLITE_DB = runtime_file("superhuman_memory.db")
 POSTGRES_DB = "notus_memory"
 POSTGRES_USER = os.environ.get("USER", "matthew")
 POSTGRES_HOST = "localhost"
@@ -132,4 +133,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

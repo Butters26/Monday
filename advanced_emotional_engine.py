@@ -15,6 +15,7 @@ import time
 import random
 import re
 import os
+from runtime_paths import runtime_file
 import tempfile
 import sys
 import threading
@@ -1008,10 +1009,10 @@ class MondayAffect(AdvancedEmotionalEngine):
 class EmotionalProcess:
     """Emotional/Personality engine as independent process (HARDENED)"""
     
-    def __init__(self, state_file="monday_emotional_state.json"):
+    def __init__(self, state_file=None):
         self.thalamus = get_thalamus()
         self.engine = MondayAffect("Monday", thalamus=self.thalamus)
-        self.state_file = state_file
+        self.state_file = state_file or runtime_file("monday_emotional_state.json")
         self.running = True
         # Persistent connection to Thalamus (no own socket)
         # Direct reference to Thalamus (NO SOCKETS)

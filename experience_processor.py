@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from thalamus import get_thalamus
 import os
+from runtime_paths import runtime_file
 
 @dataclass
 class Experience:
@@ -60,9 +61,9 @@ class ExperienceProcessor:
     Forms preferences from accumulated emotional experiences.
     """
     
-    def __init__(self, storage_path: str = "monday_experiences.json"):
+    def __init__(self, storage_path: Optional[str] = None):
         self.thalamus = get_thalamus()
-        self.storage_path = storage_path
+        self.storage_path = storage_path or runtime_file("monday_experiences.json")
         self.running = True
         
         # Experience storage

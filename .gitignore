@@ -1,0 +1,54 @@
+# Private runtime state (may contain conversation-derived data)
+superhuman_memory.db*
+*.sqlite
+*.sqlite3
+monday_notus_snapshot.json
+monday_emotional_state*
+monday_beliefs.json
+monday_emergent_values.json
+monday_experiences.json
+monday_values.json
+monday_behavior_weights.json
+
+# Logs and generated process output
+*.log
+startup_log.txt
+logs/
+*.pid
+*.tmp
+
+# Python caches and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local configuration and environments
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+
+# Local backups and temporary copies
+*.bak
+*.bak[0-9]*
+*.backup
+*.noverify
+*.slowfix
+*.before_speed_fix
+*.pre_postgresql_backup
+*_backup_*.py
+*.thalamus_backup
+
+# Archived code snapshots retained outside the working source tree
+Non-Essential Files/ABIN backups/
+Non-Essential Files/ABIN_backups/
+Non-Essential Files/EXAMINE_THIS/

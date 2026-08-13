@@ -2,6 +2,13 @@
 
 All socket code has been removed. All lobes now communicate through direct function calls via Thalamus.
 
+## Runtime data
+
+Monday stores mutable data outside the repository. By default, the directory is
+`~/.local/state/monday`; set `MONDAY_RUNTIME_DIR` to use another private
+directory. This includes learned memory, emotional state, snapshots, logs, and
+local recovery files. Do not add runtime data to Git.
+
 ## Updated Files (All sockets removed):
 
 - **thalamus.py** - Central coordinator (NO SOCKETS - direct function calls only)
@@ -32,4 +39,3 @@ All lobes now use:
 ✅ All core lobe files updated
 ⚠️ abin_interface.py may need socket removal
 ⚠️ run_abin.py may need socket testing code removal
-

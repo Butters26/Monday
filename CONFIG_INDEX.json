@@ -19,13 +19,14 @@
       "brain_system": "brain_config.json"
     },
     
-    "data_files": {
-      "memory_database": "superhuman_memory.db",
-      "emotional_state": "monday_emotional_state.json"
+    "runtime_data": {
+      "directory": "${MONDAY_RUNTIME_DIR:-~/.local/state/monday}",
+      "memory_database": "${MONDAY_RUNTIME_DIR}/superhuman_memory.db",
+      "emotional_state": "${MONDAY_RUNTIME_DIR}/monday_emotional_state.json"
     },
     
     "config_locations": {
-      "base_path": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here",
+      "base_path": ".",
       "all_configs_in_root": true
     },
     
@@ -41,4 +42,3 @@
     ]
   }
 }
-

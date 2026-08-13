@@ -11,6 +11,7 @@ import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field, asdict
 from thalamus import get_thalamus
+from runtime_paths import runtime_file
 
 @dataclass
 class BehaviorRecord:
@@ -47,9 +48,9 @@ class BehavioralReinforcement:
     Updates decision-making based on feedback.
     """
     
-    def __init__(self, storage_path: str = "monday_behavior_weights.json"):
+    def __init__(self, storage_path: Optional[str] = None):
         self.thalamus = get_thalamus()
-        self.storage_path = storage_path
+        self.storage_path = storage_path or runtime_file("monday_behavior_weights.json")
         self.running = True
         
         # Behavior tracking

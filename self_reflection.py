@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, asdict
 from thalamus import get_thalamus
 import os
 import random
+from runtime_paths import runtime_file
 
 @dataclass
 class Belief:
@@ -53,9 +54,9 @@ class SelfReflectionEngine:
     Not just storing beliefs - actively examining them.
     """
     
-    def __init__(self, storage_path: str = "monday_beliefs.json"):
+    def __init__(self, storage_path: Optional[str] = None):
         self.thalamus = get_thalamus()
-        self.storage_path = storage_path
+        self.storage_path = storage_path or runtime_file("monday_beliefs.json")
         self.running = True
         
         # Belief storage

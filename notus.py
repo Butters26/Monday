@@ -29,13 +29,14 @@ from functools import lru_cache
 import signal
 import sys
 from thalamus import get_thalamus
+from runtime_paths import runtime_file
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Configuration
-MEMORY_DB_PATH = "superhuman_memory.db"  # Legacy - kept for migration reference
+MEMORY_DB_PATH = runtime_file("superhuman_memory.db")  # Legacy migration source
 POSTGRES_DB_NAME = "notus_memory"
 POSTGRES_USER = os.environ.get("USER", "matthew")  # Use current system user
 POSTGRES_HOST = "localhost"
@@ -81,7 +82,7 @@ class SuperhumanConfig:
     working_set_max_facts: int = 20
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
-    snapshot_path: str = "monday_notus_snapshot.json"
+    snapshot_path: str = runtime_file("monday_notus_snapshot.json")
     
     # Advanced retrieval
     attention_heads: int = 4
