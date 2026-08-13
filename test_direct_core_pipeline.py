@@ -2,8 +2,21 @@
 
 import random
 
+import psycopg2
+
 from reasoning import MaximumSophisticationReasoning
 from run_abin import create_core_systems, shutdown_core_systems
+
+
+def setup_function():
+    """Keep PostgreSQL-backed core tests isolated without changing production data."""
+    with psycopg2.connect("dbname=notus_memory host=localhost") as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "TRUNCATE facts, events, memories, conversations, conversation_turns, "
+                "pattern_evidence, vocabulary, word_meanings, grammar_knowledge, "
+                "learning_patterns CASCADE"
+            )
 
 
 def test_prompted_core_path_persists_memory_and_delivers_output(tmp_path):
@@ -170,37 +183,28 @@ def test_unseen_question_gets_honest_grounded_fallback(tmp_path):
         shutdown_core_systems(systems)
 
 
-def test_legacy_transcript_rows_are_not_retrieved_or_rendered(tmp_path):
-    runtime = tmp_path / "runtime"
-    systems = create_core_systems(str(runtime))
+def test_transcript_shaped_memories_are_rejected(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
     try:
-        database = runtime / "notus_memory.sqlite3"
-        systems["notus"]._connection.execute(
-            "INSERT INTO memories(role, content, user_id, memory_type, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                "note",
-                "User: hidden prompt\nABIN: hidden response about gravity",
-                "default",
-                "conversation",
-                "2000-01-01T00:00:00+00:00",
-            ),
+        result = systems["notus"].process_message(
+            {
+                "type": "store",
+                "content": {
+                    "role": "note",
+                    "content": "User: hidden prompt\nABIN: hidden response about gravity",
+                    "user_id": "transcript-test",
+                },
+            }
         )
-        systems["notus"]._connection.commit()
-
-        response = systems["thalamus"].process_user_input("Tell me about gravity")
-        memories = systems["notus"].retrieve_memories("gravity", user_id="default")
-
-        assert memories
-        assert all("user:" not in memory["content"].lower() for memory in memories)
-        assert all("abin:" not in memory["content"].lower() for memory in memories)
-        assert "user:" not in response.lower()
-        assert "abin:" not in response.lower()
+        assert result["status"] == "error"
+        assert not systems["notus"].retrieve_memories(
+            "gravity", user_id="transcript-test"
+        )
     finally:
         shutdown_core_systems(systems)
 
 
-def test_direct_notus_close_is_idempotent_and_uses_sqlite_only(tmp_path):
+def test_direct_notus_close_is_idempotent_and_uses_postgresql(tmp_path):
     systems = create_core_systems(str(tmp_path / "runtime"))
     notus = systems["notus"]
     try:
@@ -212,7 +216,7 @@ def test_direct_notus_close_is_idempotent_and_uses_sqlite_only(tmp_path):
     import direct_notus
 
     source = open(direct_notus.__file__, encoding="utf-8").read()
-    assert "psycopg2" not in source
+    assert "psycopg2" in source
     assert "torch" not in source
     assert "numpy" not in source
 

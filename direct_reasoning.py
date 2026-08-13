@@ -87,6 +87,26 @@ class DirectMaximumSophisticationAdapter:
         return evidence
 
     @staticmethod
+    def _fact_evidence(memory_context: Any) -> List[Dict[str, Any]]:
+        if not isinstance(memory_context, dict):
+            return []
+        facts = memory_context.get("facts", [])
+        if not isinstance(facts, list):
+            return []
+        evidence = []
+        for fact in facts:
+            if not isinstance(fact, dict) or fact.get("confidence", 0) < 0.8:
+                continue
+            subject, predicate, object_value = (
+                fact.get("subject"), fact.get("predicate"), fact.get("object")
+            )
+            if all(isinstance(value, str) and value.strip() for value in (subject, predicate, object_value)):
+                evidence.append(
+                    {"role": "fact", "content": f"Your {subject} {predicate} {object_value}."}
+                )
+        return evidence
+
+    @staticmethod
     def _usable_conclusion(
         thinking: Dict[str, Any], understanding: Dict[str, Any]
     ) -> Optional[str]:
@@ -125,7 +145,7 @@ class DirectMaximumSophisticationAdapter:
             else []
         )
         memories = self._clean_memories(raw_memories, user_input)
-        evidence = self._evidence(memories, user_input)
+        evidence = self._evidence(memories, user_input) + self._fact_evidence(memory_context)
         emotional_state = direct_input.get("emotion_result", {})
         emotional_state = emotional_state if isinstance(emotional_state, dict) else {}
         legacy_input = {

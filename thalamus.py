@@ -146,7 +146,14 @@ class Thalamus:
         )
         return semantic_input, answer
 
-    def process_user_input(self, user_input: str, user_id: str = "default") -> str:
+    def process_user_input(
+        self,
+        user_input: str,
+        user_id: str = "default",
+        scope: str = "general",
+        conversation_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> str:
         """Run the sole prompted path: conversation → Notus → emotion → reasoning → language → output."""
         if not isinstance(user_input, str) or not user_input.strip():
             return "Please send a message."
@@ -158,14 +165,16 @@ class Thalamus:
             return "I'm having trouble understanding right now."
         understanding = self._content(conversation).get("understanding", {})
 
-        memory = self.send_and_wait(
-            "notus", "store", {"role": "user", "content": user_input, "user_id": user_id}
-        )
-        if memory["status"] != "success":
-            return "I'm having trouble remembering that right now."
-
         memory_context = self.send_and_wait(
-            "notus", "query", {"query": user_input, "user_id": user_id, "limit": 15}
+            "notus",
+            "query_context",
+            {
+                "query": user_input,
+                "user_id": user_id,
+                "scope": scope,
+                "conversation_id": conversation_id,
+                "limits": {"turns": 8, "facts": 12, "episodes": 8, "patterns": 4, "max_chars": 6000},
+            },
         )
         if memory_context["status"] != "success":
             return "I'm having trouble retrieving context right now."
@@ -227,7 +236,22 @@ class Thalamus:
                 "preserve_text": True,
             },
         )
-        return self._content(output).get("text", response_text)
+        delivered_text = self._content(output).get("text", response_text)
+        self.send_and_wait(
+            "notus",
+            "store_turn",
+            {
+                "turn_id": str(uuid.uuid4()),
+                "idempotency_key": request_id or str(uuid.uuid4()),
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "scope": scope,
+                "user_text": user_input,
+                "assistant_text": delivered_text,
+                "metadata": {"intent": understanding.get("intent", "conversation")},
+            },
+        )
+        return delivered_text
 
     def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Small compatibility entry point for direct callers."""

@@ -31,9 +31,7 @@ def create_core_systems(
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
         "conversation": ConversationSystem(thalamus=thalamus),
-        "notus": DirectNotusProcess(
-            storage_path=str(directory / "notus_memory.sqlite3"), thalamus=thalamus
-        ),
+        "notus": DirectNotusProcess(thalamus=thalamus),
         "emotion": EmotionalProcess(
             state_file=str(directory / "emotional_state.json"), thalamus=thalamus
         ),

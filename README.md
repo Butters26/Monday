@@ -35,7 +35,7 @@ not require PostgreSQL, API keys, sockets, a GUI, or background loops.
 
 The direct reasoning lobe is a thin envelope and evidence adapter around the
 existing `MaximumSophisticationReasoning` engine: every prompted request calls
-its `think_about()` method. The adapter presents user-scoped SQLite memories in
+its `think_about()` method. The adapter presents user-scoped PostgreSQL/pgvector memories in
 the legacy engine's expected context shape and prevents the current prompt from
 being treated as evidence for itself. Its full-engine conclusion passes through
 Language unchanged. A small favorite-fact normalizer and baseline facts provide
@@ -45,9 +45,8 @@ usable conclusion.
 
 ## Status
 
-✅ `run_abin.py` is the active direct-core launcher. It uses the lightweight
-`direct_notus.py` SQLite adapter plus the legacy full reasoning engine through
-a direct adapter; it does not start sockets, PostgreSQL, a GUI, or background
-loops. The legacy engine's broader optional Notus queries return no data under
-the direct adapter, so direct reliability is limited to supplied SQLite context
-and its local baseline facts.
+✅ `run_abin.py` is the active direct-core launcher. It uses the PostgreSQL and
+pgvector-backed `direct_notus.py` service plus the legacy full reasoning engine
+through a direct adapter; it does not start sockets, a GUI, or background loops.
+Set `MONDAY_NOTUS_DSN` to select the PostgreSQL connection; it defaults to the
+local `notus_memory` database.
