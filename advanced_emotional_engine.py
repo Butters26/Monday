@@ -1009,8 +1009,8 @@ class MondayAffect(AdvancedEmotionalEngine):
 class EmotionalProcess:
     """Emotional/Personality engine as independent process (HARDENED)"""
     
-    def __init__(self, state_file=None):
-        self.thalamus = get_thalamus()
+    def __init__(self, state_file=None, thalamus=None):
+        self.thalamus = thalamus or get_thalamus()
         self.engine = MondayAffect("Monday", thalamus=self.thalamus)
         self.state_file = state_file or runtime_file("monday_emotional_state.json")
         self.running = True
@@ -1018,10 +1018,10 @@ class EmotionalProcess:
         # Direct reference to Thalamus (NO SOCKETS)
         
         # Load existing emotional state if exists
-        if os.path.exists(state_file):
+        if os.path.exists(self.state_file):
             try:
-                self.engine.load_emotional_state(state_file)
-                print(f"✅ Loaded emotional state from {state_file}")
+                self.engine.load_emotional_state(self.state_file)
+                print(f"✅ Loaded emotional state from {self.state_file}")
             except Exception as e:
                 print(f"⚠️  Could not load emotional state: {e}")
     
@@ -1146,6 +1146,7 @@ class EmotionalProcess:
         """Safe dispatcher with validation (FIX)"""
         with self.engine.engine_lock:
             msg_type = message.get('type')
+            message = {**message.get('content', message), 'type': msg_type}
             
             # FIX: add health probe
             if msg_type == 'health':
@@ -1220,7 +1221,9 @@ class EmotionalProcess:
     
     def _atomic_save_state(self):
         """FIX: atomic save using tempfile + os.replace"""
-        tmpfd, tmppath = tempfile.mkstemp(prefix="emostate-", dir=".")
+        tmpfd, tmppath = tempfile.mkstemp(
+            prefix="emostate-", dir=os.path.dirname(self.state_file) or "."
+        )
         os.close(tmpfd)
         try:
             self.engine.save_emotional_state(tmppath)

@@ -115,14 +115,14 @@ TEXT_TO_PHONEMES = {
 class OutputLobe:
     """Output system - handles all expression and communication"""
     
-    def __init__(self):
+    def __init__(self, thalamus=None, enable_tts: bool = True):
         self.running = True
         # Removed: self.gui_socket_path - all communication through Thalamus
         self.last_sent_text = None  # Prevent duplicate sends
         self.last_sent_time = 0.0  # FIX: Initialize time tracking
         
         # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
+        self.thalamus = thalamus or get_thalamus()
         
         # Text-to-speech engine
         self.tts_engine = None
@@ -141,7 +141,9 @@ class OutputLobe:
         self.voice_profiles = VOICE_PROFILES
         self.text_to_phonemes = TEXT_TO_PHONEMES
         
-        self._initialize_tts()
+        self.last_output = None
+        if enable_tts:
+            self._initialize_tts()
         
     def _apply_voice_profile(self, profile_name: str = 'monday'):
         """Apply voice profile settings to TTS engine"""
@@ -462,13 +464,14 @@ class OutputLobe:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
         msg_type = message.get('type')
+        payload = message.get('content', message)
         
         # FIX: add health probe
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         
         if msg_type == 'generate_output':
-            content = message.get('content', {})
+            content = payload
             formatted = self.format_output(content)
             text_output = formatted.get('text', '')
             
@@ -487,6 +490,7 @@ class OutputLobe:
                 'spoke': spoke,
                 'formatted': formatted
             })
+            self.last_output = text_output
             
             # Store conversation to Notus if user_input is provided
             user_input = content.get('user_input', '') or message.get('user_input', '')
@@ -509,6 +513,7 @@ class OutputLobe:
             
             return {
                 'status': 'success',
+                'content': {'text': text_output, 'spoke': spoke, 'formatted': formatted},
                 'text': text_output,
                 'spoke': spoke,
                 'formatted': formatted
@@ -516,7 +521,7 @@ class OutputLobe:
         
         elif msg_type == 'text_response':
             # Direct text response from Language_generation
-            text = message.get('text', '')
+            text = payload.get('text', '')
             if not text or not isinstance(text, str) or not text.strip():
                 text = "I'm thinking about that."
             
@@ -540,7 +545,7 @@ class OutputLobe:
             })
             
             # Store conversation to Notus if user_input is provided
-            user_input = message.get('user_input', '')
+            user_input = payload.get('user_input', '')
             if user_input and user_input.strip():
                 try:
                     # Store full conversation to Notus memory
@@ -558,7 +563,8 @@ class OutputLobe:
                     # Don't break if memory storage fails
                     print(f"⚠️  Failed to store conversation to Notus: {e}")
             
-            return {'status': 'success', 'sent_to_gui': True}
+            self.last_output = text
+            return {'status': 'success', 'content': {'text': text, 'sent_to_gui': True}, 'sent_to_gui': True}
             
         elif msg_type == 'speak':
             # Just speak the text
@@ -615,4 +621,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n🛑 Output lobe shutting down...")
         lobe.shutdown()
-

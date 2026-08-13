@@ -34,6 +34,14 @@ All lobes now use:
 
 **NO SOCKETS. NO SOCKET IMPORTS. NO SOCKET CODE.**
 
+## Direct-call core
+
+`run_abin.create_core_systems()` creates only the prompted path:
+conversation → Notus → emotion → reasoning → language → output.  Each lobe
+receives `{"type", "content", "source", "message_id"}`; `content` is the
+message payload.  Runtime memory is private SQLite state, so core startup does
+not require PostgreSQL, API keys, sockets, a GUI, or background loops.
+
 ## Status:
 
 ✅ All core lobe files updated

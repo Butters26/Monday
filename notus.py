@@ -5,6 +5,7 @@ Instead of trying to BE the AI, this helps your cheap AI be smarter
 """
 
 import json
+import sqlite3
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import time
@@ -15,7 +16,7 @@ import numpy as np
 import torch
 import sys
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple, Union, Set
 from collections import defaultdict, Counter, deque
 from dataclasses import dataclass, field
@@ -4449,6 +4450,118 @@ class NotusProcess:
         """Graceful shutdown"""
         self.running = False
         # No sockets to close
+
+
+class DirectNotusProcess:
+    """Small persistent Notus adapter used by the direct prompted runtime.
+
+    The historical PostgreSQL-backed classes above remain available for
+    compatibility, but startup must not require a database service.  This
+    adapter keeps the core conversation memory in private SQLite storage.
+    """
+
+    def __init__(self, storage_path: str = None, thalamus=None):
+        self.running = True
+        self.thalamus = thalamus or get_thalamus()
+        self.storage_path = storage_path or runtime_file("notus_memory.sqlite3")
+        os.makedirs(os.path.dirname(os.path.abspath(self.storage_path)), exist_ok=True)
+        self._connection = sqlite3.connect(self.storage_path, check_same_thread=False)
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        self._connection.commit()
+        self.memory_ready = threading.Event()
+        self.memory_ready.set()
+
+    def start(self):
+        self.thalamus.register_lobe("notus", self)
+        return self
+
+    def retrieve_memories(self, query: str = "", user_id: str = "default", limit: int = 15):
+        terms = [term.lower() for term in query.split() if len(term) > 2]
+        sql = (
+            "SELECT role, content, user_id, memory_type, created_at FROM memories "
+            "WHERE user_id = ?"
+        )
+        params = [user_id]
+        if terms:
+            sql += " AND (" + " OR ".join("lower(content) LIKE ?" for _ in terms) + ")"
+            params.extend(f"%{term}%" for term in terms)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        rows = self._connection.execute(sql, params).fetchall()
+        return [
+            {
+                "role": role,
+                "content": content,
+                "user_id": stored_user,
+                "memory_type": memory_type,
+                "timestamp": created_at,
+            }
+            for role, content, stored_user, memory_type, created_at in rows
+        ]
+
+    def _store(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        content = payload.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return {"status": "error", "message": "Memory content must be a non-empty string"}
+        user_id = payload.get("user_id", "default")
+        self._connection.execute(
+            "INSERT INTO memories(role, content, user_id, memory_type, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                payload.get("role", "system"),
+                content,
+                user_id,
+                payload.get("memory_type", "conversation"),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self._connection.commit()
+        return {"status": "success", "content": {"stored": True, "content": content}}
+
+    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        msg_type = message.get("type")
+        payload = message.get("content", message)
+        if msg_type == "health":
+            return {"status": "success", "content": {"healthy": True, "memory_status": "ready"}}
+        if msg_type == "store":
+            return self._store(payload)
+        if msg_type in {"query", "query_semantic"}:
+            query = payload.get("query", payload.get("text", ""))
+            memories = self.retrieve_memories(query, payload.get("user_id", "default"), payload.get("limit", 15))
+            return {"status": "success", "content": {"results": memories, "memories": memories}}
+        if msg_type == "query_context":
+            query = payload.get("text", "")
+            memories = self.retrieve_memories(query, payload.get("user_id", "default"), payload.get("max_results", 15))
+            return {
+                "status": "success",
+                "content": {
+                    "query_text": query,
+                    "semantic": memories,
+                    "episodic": [],
+                    "facts": [],
+                    "summary": f"Found {len(memories)} stored memories",
+                },
+            }
+        if msg_type in {"query_episodic", "query_facts", "query_patterns"}:
+            key = {"query_episodic": "events", "query_facts": "facts", "query_patterns": "patterns"}[msg_type]
+            return {"status": "success", "content": {key: []}}
+        return {"status": "error", "message": f"Unknown message type: {msg_type}"}
+
+    def shutdown(self):
+        self.running = False
+        self._connection.close()
+
+
+# Core startup intentionally uses the private, service-free adapter.
+NotusProcess = DirectNotusProcess
 
 if __name__ == "__main__":
     process = None

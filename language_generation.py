@@ -489,13 +489,13 @@ class GrammarEngine:
 class LanguageGenerator:
     """Builds sentences from meaning - Monday's voice"""
     
-    def __init__(self):
+    def __init__(self, thalamus=None):
         self.running = True
         self.grammar = GrammarEngine()
         
         # Persistent connection to Thalamus (created once at startup, reused forever)
         # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
+        self.thalamus = thalamus or get_thalamus()
         
         # Cache for emotional state (avoid repeated queries)
         self.current_emotional_state = None
@@ -672,16 +672,17 @@ class LanguageGenerator:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message - DIRECT FUNCTION CALL"""
         msg_type = message.get('type')
+        payload = message.get('content', message)
         
-        if msg_type == 'generate':
-            semantic_input = message.get('semantic_input', {})
+        if msg_type in {'generate', 'generate_grounded'}:
+            semantic_input = payload.get('semantic_input', payload)
             sentence = self.generate(semantic_input)
             
             # Only send to Output if reasoning explicitly says this is the main response
-            is_main_response = message.get('is_main_response', False)
+            is_main_response = payload.get('is_main_response', False)
             if is_main_response:
                 # Pass user_input so Output can store the full conversation
-                user_input = message.get('user_input', '')
+                user_input = payload.get('user_input', '')
                 self._send_to_output(sentence, user_input)
             
             return {'status': 'success', 'response': sentence, 'sentence': sentence, 'sent_to_output': is_main_response}

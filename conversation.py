@@ -27,12 +27,12 @@ class ConversationState:
 class ConversationSystem:
     """Conversation understanding and context management"""
     
-    def __init__(self):
+    def __init__(self, thalamus=None):
         self.running = True
         self.state = ConversationState()
         
         # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
+        self.thalamus = thalamus or get_thalamus()
         
         # Novelty Lobe integration (lazy-loaded when first used)
         self.novelty_lobe = None
@@ -236,24 +236,16 @@ class ConversationSystem:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
         msg_type = message.get('type')
+        payload = message.get('content', message)
         
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         
         elif msg_type == 'understand':
-            user_input = message.get('user_input', '')
-            context = message.get('context', {})
-            
-            # Notify speech system that user spoke
-            try:
-                self.thalamus.send_message('speech', 'user_spoke', {})
-            except:
-                pass
+            user_input = payload.get('user_input', '')
+            context = payload.get('context', {})
             
             understanding = self.understand(user_input, context)
-            
-            # CRITICAL: Push intent hints to Reasoning
-            self._push_intent_to_reasoning(user_input, understanding)
             
             return {
                 'status': 'success',

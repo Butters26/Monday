@@ -156,10 +156,10 @@ class Experience:
 class MaximumSophisticationReasoning:
     """ABIN's mind - as sophisticated as symbolic AI can be"""
     
-    def __init__(self):
+    def __init__(self, thalamus=None):
         self.running = True
         # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
+        self.thalamus = thalamus or get_thalamus()
         
         # STEP 1: Self-Model
         self.self_model = SelfModel(
@@ -2665,6 +2665,28 @@ class MaximumSophisticationReasoning:
             # Unwrap Thalamus message structure: message['content'] contains the actual data
             content = message.get('content', {})
             input_data = content.get('input', {})
+            if content.get('core_pipeline'):
+                understanding = input_data.get('understanding', {})
+                emotional_state = input_data.get('emotion_result', {})
+                concepts = [
+                    word.strip(".,!?").lower()
+                    for word in input_data.get('user_input', '').split()
+                    if len(word.strip(".,!?")) > 2
+                ]
+                semantic_input = {
+                    'intent': understanding.get('intent', 'conversation'),
+                    'concepts': concepts[:10] or ['conversation'],
+                    'relations': {},
+                    'certainty': understanding.get('confidence', 0.5),
+                    'emotion': emotional_state.get('current_emotion', 'neutral'),
+                    'personal_perspective': True,
+                    'tense': 'present',
+                }
+                return {
+                    'status': 'success',
+                    'content': {'semantic_input': semantic_input},
+                    'semantic_input': semantic_input,
+                }
             print(f"🧠 Reasoning: Input data keys: {list(input_data.keys())}")
             result = self.think_about(input_data)
             print(f"🧠 Reasoning: think_about completed, response: {result.get('composed_response', 'None')[:50] if result.get('composed_response') else 'None'}")
