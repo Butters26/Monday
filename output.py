@@ -472,7 +472,15 @@ class OutputLobe:
         
         if msg_type == 'generate_output':
             content = payload
-            formatted = self.format_output(content)
+            if content.get('preserve_text') and isinstance(content.get('text'), str):
+                formatted = {
+                    'text': content['text'],
+                    'emotion': content.get('emotion'),
+                    'intensity': content.get('intensity', 0.5),
+                    'formatted': False,
+                }
+            else:
+                formatted = self.format_output(content)
             text_output = formatted.get('text', '')
             
             # Validate text before sending

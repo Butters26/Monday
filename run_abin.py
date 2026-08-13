@@ -8,10 +8,10 @@ from typing import Any, Dict, Optional
 
 from advanced_emotional_engine import EmotionalProcess
 from conversation import ConversationSystem
+from direct_reasoning import DirectReasoningProcess
 from language_generation import LanguageGenerator
 from direct_notus import DirectNotusProcess
 from output import OutputLobe
-from reasoning import MaximumSophisticationReasoning
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -34,7 +34,7 @@ def create_core_systems(runtime_directory: Optional[str] = None) -> Dict[str, An
         "emotion": EmotionalProcess(
             state_file=str(directory / "emotional_state.json"), thalamus=thalamus
         ),
-        "reasoning": MaximumSophisticationReasoning(thalamus=thalamus),
+        "reasoning": DirectReasoningProcess(thalamus=thalamus),
         "language": LanguageGenerator(thalamus=thalamus),
         "output": OutputLobe(thalamus=thalamus, enable_tts=False),
     }

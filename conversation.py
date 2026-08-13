@@ -85,10 +85,6 @@ class ConversationSystem:
     
     def _detect_intent(self, text: str) -> str:
         """Detect user intent from text"""
-        # Greeting
-        if any(word in text for word in ['hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening']):
-            return 'greeting'
-        
         # Question
         if text.endswith('?') or any(word in text.split()[:3] for word in ['what', 'who', 'where', 'when', 'why', 'how', 'can', 'could', 'would', 'should', 'is', 'are', 'do', 'does']):
             return 'question'
@@ -96,6 +92,10 @@ class ConversationSystem:
         # Request/Command
         if any(word in text.split()[:5] for word in ['please', 'can you', 'could you', 'would you', 'help me', 'show me', 'tell me', 'give me']):
             return 'request'
+
+        # A greeting is social intent only when it is not paired with a request.
+        if any(word in text for word in ['hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening']):
+            return 'greeting'
         
         # Statement
         if any(word in text for word in ['i think', 'i feel', 'i believe', 'i want', 'i need', 'i like', 'i love', 'i hate']):

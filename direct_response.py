@@ -49,7 +49,7 @@ class DeterministicResponseProvider:
         ]
         has_safe_context = bool(clean_memories)
 
-        if self._greeting.search(user_input):
+        if self._greeting.fullmatch(user_input):
             return "Hello! How can I help?"
         if self._gravity.search(user_input):
             return (

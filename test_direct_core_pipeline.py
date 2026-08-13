@@ -60,6 +60,74 @@ def test_prompted_core_path_renders_grounded_greeting_and_gravity_answer(tmp_pat
         shutdown_core_systems(systems)
 
 
+def test_prompted_core_recalls_stable_fact_after_restart(tmp_path):
+    runtime = tmp_path / "runtime"
+    first_core = create_core_systems(str(runtime))
+    try:
+        learned = first_core["thalamus"].process_user_input(
+            "My favorite color is violet", user_id="alice"
+        )
+        assert "favorite color is violet" in learned.lower()
+    finally:
+        shutdown_core_systems(first_core)
+
+    reopened_core = create_core_systems(str(runtime))
+    try:
+        recalled = reopened_core["thalamus"].process_user_input(
+            "What is my favorite color?", user_id="alice"
+        )
+        assert recalled == "Your favorite color is violet."
+    finally:
+        shutdown_core_systems(reopened_core)
+
+
+def test_reasoning_answer_reaches_output_without_provider_replacement(tmp_path):
+    class InjectedReasoning:
+        def process_message(self, message):
+            return {
+                "status": "success",
+                "content": {
+                    "answer": "UNMISTAKABLE_REASONING_RESULT",
+                    "conclusion": "A lower-priority conclusion",
+                    "propositions": ["A lower-priority proposition"],
+                },
+            }
+
+        def shutdown(self):
+            pass
+
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    systems["thalamus"].register_lobe("reasoning", InjectedReasoning())
+    try:
+        response = systems["thalamus"].process_user_input("What is photosynthesis?")
+        assert response == "UNMISTAKABLE_REASONING_RESULT"
+        assert systems["output"].last_output == response
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_greeting_with_request_keeps_request_response(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        response = systems["thalamus"].process_user_input(
+            "Hello Monday, explain memory?"
+        )
+        assert "memory is information retained" in response.lower()
+        assert response != "Hello! How can I help?"
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_unseen_question_gets_honest_grounded_fallback(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        response = systems["thalamus"].process_user_input("Tell me about Mercy.")
+        assert response.startswith("I do not have enough grounded information")
+        assert "concept" not in response.lower()
+    finally:
+        shutdown_core_systems(systems)
+
+
 def test_legacy_transcript_rows_are_not_retrieved_or_rendered(tmp_path):
     runtime = tmp_path / "runtime"
     systems = create_core_systems(str(runtime))
@@ -114,9 +182,17 @@ def test_response_provider_failure_uses_safe_fallback(tmp_path):
 
     systems = create_core_systems(str(tmp_path / "runtime"))
     systems["thalamus"].response_provider = FailingProvider()
+    class NoAnswerReasoning:
+        def process_message(self, message):
+            return {"status": "success", "content": {"semantic_input": {}}}
+
+        def shutdown(self):
+            pass
+
+    systems["thalamus"].register_lobe("reasoning", NoAnswerReasoning())
     try:
         assert (
-            systems["thalamus"].process_user_input("hello")
+            systems["thalamus"].process_user_input("an unknown prompt")
             == "I am unable to formulate a response right now."
         )
     finally:

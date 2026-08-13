@@ -114,6 +114,38 @@ class Thalamus:
         content = response.get("content", {})
         return content if isinstance(content, dict) else {}
 
+    @staticmethod
+    def _first_usable_text(*candidates: Any) -> Optional[str]:
+        """Select a reasoning conclusion without replacing it with a provider response."""
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+            if isinstance(candidate, (list, tuple)):
+                propositions = [
+                    proposition
+                    for proposition in candidate
+                    if isinstance(proposition, str) and proposition.strip()
+                ]
+                if propositions:
+                    return " ".join(propositions)
+        return None
+
+    def _reasoning_answer(self, reasoning: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[str]]:
+        content = self._content(reasoning)
+        semantic_input = content.get("semantic_input", {})
+        semantic_input = semantic_input.copy() if isinstance(semantic_input, dict) else {}
+        for key in ("answer", "conclusion", "propositions"):
+            if key not in semantic_input:
+                value = content.get(key, reasoning.get(key))
+                if value is not None:
+                    semantic_input[key] = value
+        answer = self._first_usable_text(
+            semantic_input.get("answer"),
+            semantic_input.get("conclusion"),
+            semantic_input.get("propositions"),
+        )
+        return semantic_input, answer
+
     def process_user_input(self, user_input: str, user_id: str = "default") -> str:
         """Run the sole prompted path: conversation → Notus → emotion → reasoning → language → output."""
         if not isinstance(user_input, str) or not user_input.strip():
@@ -149,7 +181,6 @@ class Thalamus:
             "reasoning",
             "think",
             {
-                "core_pipeline": True,
                 "input": {
                     "user_input": user_input,
                     "understanding": understanding,
@@ -160,19 +191,23 @@ class Thalamus:
         )
         if reasoning["status"] != "success":
             return "I'm having trouble thinking right now."
-        semantic_input = self._content(reasoning).get("semantic_input", {}).copy()
+        semantic_input, reasoning_answer = self._reasoning_answer(reasoning)
         memories = self._content(memory_context).get("memories", [])
-        try:
-            response = self.response_provider.render(user_input, understanding, memories)
-        except Exception:
-            response = "I am unable to formulate a response right now."
-        semantic_input.update(
-            {
-                "intent": understanding.get("intent", semantic_input.get("intent", "conversation")),
-                "answer": response,
-                "propositions": [response],
-            }
+        if reasoning_answer is None:
+            try:
+                reasoning_answer = self.response_provider.render(
+                    user_input, understanding, memories
+                )
+            except Exception:
+                reasoning_answer = None
+            reasoning_answer = self._first_usable_text(reasoning_answer)
+            if reasoning_answer is None:
+                reasoning_answer = "I am unable to formulate a response right now."
+        semantic_input.setdefault(
+            "intent", understanding.get("intent", "conversation")
         )
+        semantic_input.setdefault("answer", reasoning_answer)
+        semantic_input.setdefault("propositions", [reasoning_answer])
 
         language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
         if language["status"] != "success":
@@ -188,6 +223,7 @@ class Thalamus:
                 "intensity": emotional_state.get("intensity", 0.5),
                 "user_input": user_input,
                 "user_id": user_id,
+                "preserve_text": True,
             },
         )
         return self._content(output).get("text", response_text)
