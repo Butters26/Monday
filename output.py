@@ -504,7 +504,8 @@ class OutputLobe:
                         'content': {
                             'role': 'system',
                             'content': f"User: {user_input}\nABIN: {text_output}",
-                            'memory_type': 'conversation'
+                            'memory_type': 'conversation',
+                            'user_id': content.get('user_id', 'default'),
                         }
                     })
                 except Exception as e:
@@ -556,7 +557,8 @@ class OutputLobe:
                         'content': {
                             'role': 'system',
                             'content': f"User: {user_input}\nABIN: {text}",
-                            'memory_type': 'conversation'
+                            'memory_type': 'conversation',
+                            'user_id': payload.get('user_id', 'default'),
                         }
                     })
                 except Exception as e:

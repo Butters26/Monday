@@ -2668,19 +2668,27 @@ class MaximumSophisticationReasoning:
             if content.get('core_pipeline'):
                 understanding = input_data.get('understanding', {})
                 emotional_state = input_data.get('emotion_result', {})
+                memory_context = input_data.get('memory_context', {})
+                memories = memory_context.get('memories', memory_context.get('results', []))
+                memory_text = " ".join(
+                    memory.get('content', '')
+                    for memory in memories
+                    if isinstance(memory, dict)
+                )
                 concepts = [
                     word.strip(".,!?").lower()
-                    for word in input_data.get('user_input', '').split()
+                    for word in f"{input_data.get('user_input', '')} {memory_text}".split()
                     if len(word.strip(".,!?")) > 2
                 ]
                 semantic_input = {
                     'intent': understanding.get('intent', 'conversation'),
-                    'concepts': concepts[:10] or ['conversation'],
+                    'concepts': list(dict.fromkeys(concepts))[:10] or ['conversation'],
                     'relations': {},
                     'certainty': understanding.get('confidence', 0.5),
                     'emotion': emotional_state.get('current_emotion', 'neutral'),
                     'personal_perspective': True,
                     'tense': 'present',
+                    'memory_context': memories,
                 }
                 return {
                     'status': 'success',

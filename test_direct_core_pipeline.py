@@ -1,16 +1,12 @@
 """Deterministic acceptance test for the prompted direct-call core path."""
 
 import random
-import shutil
-from pathlib import Path
-
 from run_abin import create_core_systems, shutdown_core_systems
 
 
-def test_prompted_core_path_persists_memory_and_delivers_output():
+def test_prompted_core_path_persists_memory_and_delivers_output(tmp_path):
     random.seed(0)
-    private_runtime = Path(".test-runtime-direct-core")
-    shutil.rmtree(private_runtime, ignore_errors=True)
+    private_runtime = tmp_path / "runtime"
     systems = create_core_systems(str(private_runtime))
     try:
         response = systems["thalamus"].process_user_input("Hello Monday, explain memory?")
@@ -28,4 +24,23 @@ def test_prompted_core_path_persists_memory_and_delivers_output():
         assert any(memory["content"] == "Hello Monday, explain memory?" for memory in memories)
     finally:
         shutdown_core_systems(systems)
-        shutil.rmtree(private_runtime, ignore_errors=True)
+
+
+def test_prompted_core_path_keeps_user_memory_isolated(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        systems["thalamus"].process_user_input(
+            "ALICE_PRIVATE_TOKEN", user_id="alice"
+        )
+
+        alice_memories = systems["notus"].retrieve_memories(
+            "ALICE_PRIVATE_TOKEN", user_id="alice"
+        )
+        default_memories = systems["notus"].retrieve_memories(
+            "ALICE_PRIVATE_TOKEN", user_id="default"
+        )
+
+        assert alice_memories
+        assert not default_memories
+    finally:
+        shutdown_core_systems(systems)

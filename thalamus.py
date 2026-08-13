@@ -130,6 +130,12 @@ class Thalamus:
         if memory["status"] != "success":
             return "I'm having trouble remembering that right now."
 
+        memory_context = self.send_and_wait(
+            "notus", "query", {"query": user_input, "user_id": user_id, "limit": 15}
+        )
+        if memory_context["status"] != "success":
+            return "I'm having trouble retrieving context right now."
+
         emotion = self.send_and_wait(
             "emotion", "process_input", {"user_input": user_input}
         )
@@ -145,7 +151,7 @@ class Thalamus:
                 "input": {
                     "user_input": user_input,
                     "understanding": understanding,
-                    "memory_context": self._content(memory),
+                    "memory_context": self._content(memory_context),
                     "emotion_result": emotional_state,
                 },
             },

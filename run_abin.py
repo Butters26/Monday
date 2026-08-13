@@ -55,7 +55,20 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
 
 def main() -> int:
     systems = create_core_systems()
-    print("Monday direct-call core ready:", ", ".join(systems["thalamus"].lobe_handlers))
+    print("Monday direct-call core ready. Type a message, or press Ctrl-D to exit.")
+    try:
+        while True:
+            try:
+                user_input = input("> ")
+            except EOFError:
+                print()
+                break
+            if user_input.strip():
+                print(systems["thalamus"].process_user_input(user_input))
+    except KeyboardInterrupt:
+        print()
+    finally:
+        shutdown_core_systems(systems)
     return 0
 
 
