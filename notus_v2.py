@@ -11,7 +11,6 @@ import uuid
 import re
 import pickle
 import numpy as np
-import torch
 import sys
 import traceback
 from datetime import datetime, timedelta
@@ -39,8 +38,10 @@ MEMORY_DB_PATH = runtime_file("superhuman_memory.db")
 MAX_CONTEXT_LENGTH = 50000
 EMBEDDING_DIM = 768
 
-# Thread safety
-DB_LOCK = Lock()
+# Thread safety - RLock allows the same thread to re-acquire the lock (needed
+# because store_memory holds the lock while calling _learn_vocabulary_from_content
+# which also needs to acquire it).
+DB_LOCK = threading.RLock()
 
 @dataclass
 class SuperhumanConfig:
@@ -2943,13 +2944,18 @@ __all__ = [
 
 class NotusProcess:
     
-    def __init__(self):
+    def __init__(self, storage_path: str = None, thalamus=None):
         self.running = True
         self.memory_system = None  # Initialize in background thread
         self.memory_ready = threading.Event()  # Signal when memory is ready
+        self._storage_path = storage_path
         
         # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
+        self.thalamus = thalamus or get_thalamus()
+        
+        # Start background memory initialization immediately so the process is
+        # usable without needing to call start() in a separate thread.
+        self._start_memory_background()
     
     def _register_with_thalamus(self):
         """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
@@ -2962,16 +2968,13 @@ class NotusProcess:
         except Exception as e:
             print(f"⚠️  Failed to register with Thalamus: {e}")
             return False
-        
-    def start(self):
-        """Start Notus - register with Thalamus (NO SOCKETS)"""
-        print(f"🧠 Notus Memory Lobe: Registering with Thalamus...")
-        
-        # Initialize memory system in background thread (non-blocking)
+    
+    def _start_memory_background(self):
+        """Start the background memory-system initialization thread."""
         def init_memory_background():
             try:
                 print("🔧 Notus: Initializing memory system in background...", flush=True)
-                self.memory_system = EnhancedMondayMemorySystem()
+                self.memory_system = EnhancedMondayMemorySystem(storage_path=self._storage_path)
                 self.memory_ready.set()
                 print("✅ Notus: Memory system initialized", flush=True)
             except Exception as e:
@@ -2982,6 +2985,10 @@ class NotusProcess:
         
         memory_thread = threading.Thread(target=init_memory_background, daemon=True)
         memory_thread.start()
+
+    def start(self):
+        """Start Notus - register with Thalamus (NO SOCKETS)"""
+        print(f"🧠 Notus Memory Lobe: Registering with Thalamus...")
         
         # Register with Thalamus
         if not self._register_with_thalamus():
@@ -3184,6 +3191,11 @@ class NotusProcess:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message and return result"""
         msg_type = message.get('type')
+        # The Thalamus wraps payloads in message['content'].  Fall back to
+        # accessing top-level keys for legacy callers that bypass the envelope.
+        payload = message.get('content')
+        if not isinstance(payload, dict):
+            payload = message
         
         # Health check - works immediately, doesn't need memory
         if msg_type == 'health':
@@ -3197,9 +3209,9 @@ class NotusProcess:
         
         if msg_type == 'store':
             # Store new memory
-            role = message.get('role', 'system')  # role is required
-            content = message.get('content')
-            memory_type = message.get('memory_type', 'conversation')
+            role = payload.get('role', 'system')  # role is required
+            content = payload.get('content')
+            memory_type = payload.get('memory_type', 'conversation')
             result = self.memory_system.store_memory(role, content, memory_type=memory_type)
             if result:
                 return {'status': 'stored', 'content': content}
@@ -3209,30 +3221,30 @@ class NotusProcess:
             
         elif msg_type == 'query':
             # Query memory
-            query = message.get('query')
+            query = payload.get('query', payload.get('text', ''))
             results = self.memory_system.retrieve_memories(query)
-            return {'status': 'success', 'results': results}
+            return {'status': 'success', 'results': results, 'memories': results}
             
         elif msg_type == 'context':
             # Get context for AI response
-            user_input = message.get('user_input')
-            user_id = message.get('user_id', 'default')
-            story_text = message.get('story_text', None)
+            user_input = payload.get('user_input')
+            user_id = payload.get('user_id', 'default')
+            story_text = payload.get('story_text', None)
             # Use generate_smart_prompt_for_ai instead of non-existent get_smart_context
             context = self.memory_system.generate_smart_prompt_for_ai(user_input, user_id, story_text)
             return {'status': 'success', 'context': context}
         
         elif msg_type == 'get_vocabulary':
             # Get learned vocabulary
-            category = message.get('category')
-            emotion = message.get('emotion')
-            intensity = message.get('intensity')
+            category = payload.get('category')
+            emotion = payload.get('emotion')
+            intensity = payload.get('intensity')
             vocabulary = self.memory_system.get_vocabulary(category, emotion, intensity)
             return {'status': 'success', 'vocabulary': vocabulary}
         
         elif msg_type == 'get_word_meaning':
             # Get word meaning and intent type
-            word = message.get('word', '')
+            word = payload.get('word', '')
             if not word:
                 return {'status': 'error', 'message': 'word parameter required'}
             meaning = self.memory_system.get_word_meaning(word)
@@ -3243,13 +3255,13 @@ class NotusProcess:
         
         elif msg_type == 'get_grammar_knowledge':
             # Get grammar knowledge
-            rule_type = message.get('rule_type')
+            rule_type = payload.get('rule_type')
             grammar = self.memory_system.get_grammar_knowledge(rule_type)
             return {'status': 'success', 'grammar': grammar}
         
         elif msg_type == 'detect_intent':
             # Detect intent using vocabulary knowledge
-            user_input = message.get('user_input', '')
+            user_input = payload.get('user_input', '')
             if not user_input:
                 return {'status': 'error', 'message': 'user_input parameter required'}
             intent = self.memory_system.detect_intent_from_vocabulary(user_input)
@@ -3258,7 +3270,7 @@ class NotusProcess:
         elif msg_type == 'perception_input':
             # FULLY AUTOMATIC: Notus automatically stores, learns, analyzes, AND pushes to reasoning
             # No prompting needed - it just does its job automatically
-            perception_data = message.get('perception_data', {})
+            perception_data = payload.get('perception_data', {})
             user_input = perception_data.get('raw_text', '') or perception_data.get('text', '')
             user_id = perception_data.get('user_id', 'default')
             
@@ -3281,8 +3293,8 @@ class NotusProcess:
         
         elif msg_type == 'get_context':
             # Get context - now includes intent detection from vocabulary
-            user_input = message.get('user_input', '')
-            user_id = message.get('user_id', 'default')
+            user_input = payload.get('user_input', '')
+            user_id = payload.get('user_id', 'default')
             
             # Detect intent using vocabulary knowledge
             intent_result = self.memory_system.detect_intent_from_vocabulary(user_input)
@@ -3316,8 +3328,8 @@ class NotusProcess:
         
         elif msg_type == 'query_semantic':
             # Query semantic memory
-            text = message.get('text', '')
-            limit = message.get('limit', 5)
+            text = payload.get('text', '')
+            limit = payload.get('limit', 5)
             result = self.query_semantic(text, limit)
             return {
                 'status': result.get('status'),
@@ -3326,8 +3338,8 @@ class NotusProcess:
         
         elif msg_type == 'query_episodic':
             # Query episodic memory
-            pattern = message.get('pattern')
-            limit = message.get('limit', 5)
+            pattern = payload.get('pattern')
+            limit = payload.get('limit', 5)
             result = self.query_episodic(pattern, limit)
             return {
                 'status': result.get('status'),
@@ -3336,8 +3348,8 @@ class NotusProcess:
         
         elif msg_type == 'query_facts':
             # Query brain facts
-            subject = message.get('subject')
-            limit = message.get('limit', 10)
+            subject = payload.get('subject')
+            limit = payload.get('limit', 10)
             result = self.query_facts(subject, limit)
             return {
                 'status': result.get('status'),
@@ -3346,8 +3358,8 @@ class NotusProcess:
         
         elif msg_type == 'query_patterns':
             # Query learning patterns
-            pattern_type = message.get('pattern_type')
-            limit = message.get('limit', 10)
+            pattern_type = payload.get('pattern_type')
+            limit = payload.get('limit', 10)
             result = self.query_patterns(pattern_type, limit)
             return {
                 'status': result.get('status'),
@@ -3356,9 +3368,9 @@ class NotusProcess:
         
         elif msg_type == 'query_context':
             # Get comprehensive context for reasoning
-            text = message.get('text', '')
-            user_id = message.get('user_id', 'default')
-            max_results = message.get('max_results', 15)
+            text = payload.get('text', '')
+            user_id = payload.get('user_id', 'default')
+            max_results = payload.get('max_results', 15)
             result = self.query_context(text, user_id, max_results)
             return {
                 'status': result.get('status'),
