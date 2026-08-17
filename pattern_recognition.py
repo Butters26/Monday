@@ -7,6 +7,7 @@ Like how humans see patterns everywhere - including patterns that aren't there
 
 import json
 import os
+import threading
 import time
 import random
 import sys
@@ -28,6 +29,7 @@ class CoOccurrence:
     strength: float = 0.0
     last_seen: float = 0.0
     contexts: List[str] = field(default_factory=list)
+    source: str = 'user'  # 'user' or 'self'
 
 @dataclass
 class Sequence:
@@ -37,6 +39,7 @@ class Sequence:
     confidence: float = 0.0
     last_seen: float = 0.0
     average_time_between_steps: float = 0.0
+    source: str = 'user'  # 'user' or 'self'
 
 @dataclass
 class BehavioralPattern:
@@ -47,6 +50,18 @@ class BehavioralPattern:
     confidence: float = 0.0
     examples: List[Dict] = field(default_factory=list)
     last_seen: float = 0.0
+    source: str = 'user'  # 'user' or 'self'
+
+@dataclass
+class SelfMystery:
+    """An internal pattern Monday notices but cannot explain"""
+    description: str
+    signals: List[str] = field(default_factory=list)
+    first_seen: float = field(default_factory=time.time)
+    last_seen: float = field(default_factory=time.time)
+    occurrence_count: int = 1
+    resolved: bool = False
+    resolution: str = ''
 
 @dataclass
 class Contradiction:
@@ -117,6 +132,12 @@ class AdvancedPatternRecognition:
         # Learned knowledge from Notus
         self.learned_opposites: Dict[str, List[str]] = {}
         self.learned_behavioral_patterns: Dict[str, Dict] = {}
+        
+        # Self-observation: mysteries and background polling
+        self.self_mysteries: List[SelfMystery] = []
+        self.self_observation_interval: float = 45.0  # seconds; overridden by config
+        self._self_obs_lock = threading.Lock()
+        self._last_self_alert_time: float = 0.0  # throttle broadcasts
         
         # Load learned knowledge from memory
         self._load_learned_knowledge()
@@ -739,7 +760,8 @@ class AdvancedPatternRecognition:
                 significant['strong_co_occurrences'].append({
                     'items': list(pair),
                     'strength': pattern.strength,
-                    'count': pattern.count
+                    'count': pattern.count,
+                    'source': pattern.source,
                 })
         
         # Reliable sequences
@@ -756,7 +778,8 @@ class AdvancedPatternRecognition:
                 significant['behavioral_patterns'].append({
                     'name': name,
                     'confidence': behavior.confidence,
-                    'occurrences': behavior.occurrences
+                    'occurrences': behavior.occurrences,
+                    'source': behavior.source,
                 })
         
         # High severity contradictions
@@ -842,6 +865,394 @@ class AdvancedPatternRecognition:
         }
     
     # ========================================================================
+    # SELF-OBSERVATION SYSTEM
+    # ========================================================================
+
+    def _collect_self_state(self) -> Optional[Dict[str, Any]]:
+        """Poll active lobes for Monday's internal state and return as observation data."""
+        items = []
+        emotions = {}
+        topics = []
+        words = []
+
+        # Emotion lobe
+        try:
+            result = self._query_lobe('emotion', {'type': 'get_state'})
+            if result and result.get('status') == 'success':
+                state = result.get('state', {})
+                emotion_type = state.get('emotion', state.get('type', ''))
+                intensity = state.get('intensity', 0.0)
+                valence = state.get('valence', 0.0)
+                if emotion_type:
+                    items.append(f'self_emotion:{emotion_type}')
+                    emotions = {'type': emotion_type, 'intensity': intensity, 'valence': valence}
+                    if intensity > 0.6:
+                        words.append(emotion_type)
+        except Exception:
+            pass
+
+        # Autonomous Thinking lobe — get recent thought types and focus
+        try:
+            result = self._query_lobe('autonomous', {'type': 'get_recent_thoughts', 'limit': 5})
+            if result and result.get('status') == 'success':
+                thoughts = result.get('thoughts', [])
+                for thought in thoughts:
+                    t_type = thought.get('thought_type', '')
+                    focus = thought.get('trigger', '')
+                    if t_type:
+                        items.append(f'self_thought:{t_type}')
+                    if focus and not focus.startswith('feeling_') and not focus.startswith('no_'):
+                        topics.append(focus)
+        except Exception:
+            pass
+
+        # Meta-cognition lobe
+        try:
+            result = self._query_lobe('meta_cognition', {'type': 'get_state'})
+            if result and result.get('status') == 'success':
+                state = result.get('state', {})
+                awareness = state.get('awareness_level', '')
+                if awareness:
+                    items.append(f'self_meta:{awareness}')
+        except Exception:
+            pass
+
+        # Values lobe
+        try:
+            result = self._query_lobe('values', {'type': 'get_values', 'min_strength': 0.5})
+            if result and result.get('status') == 'success':
+                values = result.get('values', [])
+                for v in values[:3]:
+                    v_name = v.get('name', '')
+                    if v_name:
+                        items.append(f'self_value:{v_name}')
+                        topics.append(v_name)
+        except Exception:
+            pass
+
+        # Notus — recent memory topics
+        try:
+            result = self._query_lobe('notus', {'type': 'get_recent_memories', 'limit': 5})
+            if result and result.get('status') == 'success':
+                memories = result.get('memories', [])
+                for m in memories:
+                    topic = m.get('topic', '')
+                    if topic:
+                        topics.append(f'memory:{topic}')
+        except Exception:
+            pass
+
+        if not items:
+            return None
+
+        return {
+            'items': items,
+            'emotions': emotions,
+            'words': words,
+            'topics': topics,
+            'statement': '',
+            'source': 'self',
+        }
+
+    def _detect_significant_self_patterns(self):
+        """Scan patterns tagged 'self' for significant findings and mysteries."""
+        significant: List[str] = []
+
+        # Emotion cycling: same emotion seen in multiple self-observations
+        self_emotion_items = [
+            item for item, _ in self.recent_items
+            if item.startswith('self_emotion:')
+        ]
+        if len(self_emotion_items) >= 3:
+            from collections import Counter
+            counts = Counter(self_emotion_items)
+            for emotion_item, cnt in counts.items():
+                if cnt >= 3:
+                    emotion_name = emotion_item.split(':', 1)[1]
+                    significant.append(
+                        f"I've been feeling {emotion_name} repeatedly in my recent internal state."
+                    )
+
+        # Thought type looping
+        self_thought_items = [
+            item for item, _ in self.recent_items
+            if item.startswith('self_thought:')
+        ]
+        if len(self_thought_items) >= 4:
+            from collections import Counter
+            counts = Counter(self_thought_items)
+            for thought_item, cnt in counts.items():
+                if cnt >= 4:
+                    thought_name = thought_item.split(':', 1)[1]
+                    significant.append(
+                        f"I keep generating {thought_name} thoughts — there may be something on my mind."
+                    )
+
+        # Recurring topics in self-observations
+        self_topics = [t for ts, _ in self.recent_topics for t in ts if not t.startswith('memory:')]
+        if len(self_topics) >= 4:
+            from collections import Counter
+            counts = Counter(self_topics)
+            for topic, cnt in counts.items():
+                if cnt >= 3 and not topic.startswith('self_'):
+                    significant.append(
+                        f"I keep returning to the topic of '{topic}' in my internal observations."
+                    )
+
+        # Self behavioral patterns (source='self', confident)
+        for name, behavior in self.behavioral_patterns.items():
+            if behavior.source == 'self' and behavior.confidence >= 0.5:
+                significant.append(
+                    f"I've noticed a '{name}' pattern in my own processing."
+                )
+
+        # High-confidence self co-occurrences
+        for pair, pattern in self.co_occurrences.items():
+            if pattern.source == 'self' and pattern.strength >= 0.5 and pattern.count >= 3:
+                significant.append(
+                    f"Internally, '{pattern.item_a}' and '{pattern.item_b}' keep appearing together in me."
+                )
+
+        return significant
+
+    def _update_self_mysteries(self, self_state: Dict[str, Any]):
+        """Track patterns that recur but don't fit any known template — mysteries."""
+        items = self_state.get('items', [])
+        if not items:
+            return
+
+        with self._self_obs_lock:
+            # A mystery is triggered when self-items appear repeatedly without
+            # any matching behavioral pattern explanation
+            unexplained_items = [
+                item for item in items
+                if not any(
+                    item in str(bp.signals)
+                    for bp in self.behavioral_patterns.values()
+                    if bp.source == 'self'
+                )
+            ]
+            if not unexplained_items:
+                return
+
+            description = f"Unexplained internal signals: {', '.join(unexplained_items[:3])}"
+
+            # Check if this mystery already exists
+            for mystery in self.self_mysteries:
+                if mystery.description == description and not mystery.resolved:
+                    mystery.occurrence_count += 1
+                    mystery.last_seen = time.time()
+                    return
+
+            # New mystery
+            self.self_mysteries.append(SelfMystery(
+                description=description,
+                signals=unexplained_items,
+                first_seen=time.time(),
+                last_seen=time.time(),
+            ))
+
+            # Cap mystery list
+            if len(self.self_mysteries) > 20:
+                # Remove oldest resolved ones first, then oldest unresolved
+                resolved = [m for m in self.self_mysteries if m.resolved]
+                unresolved = [m for m in self.self_mysteries if not m.resolved]
+                self.self_mysteries = (resolved[-5:] + unresolved)[-20:]
+
+    def _get_escalated_mysteries(self) -> List[str]:
+        """Return mysteries that have recurred enough to tell Monday about."""
+        with self._self_obs_lock:
+            escalated = []
+            for mystery in self.self_mysteries:
+                if not mystery.resolved and mystery.occurrence_count >= 3:
+                    escalated.append(
+                        f"I keep noticing '{mystery.description}' internally and I'm not sure why."
+                    )
+            return escalated
+
+    def _broadcast_self_patterns(self, messages: List[str]):
+        """Send significant self-pattern insights to the Autonomous Thinking lobe."""
+        if not messages:
+            return
+        # Throttle: only broadcast every 2 minutes to avoid flooding
+        now = time.time()
+        if now - self._last_self_alert_time < 120:
+            return
+        self._last_self_alert_time = now
+
+        for msg in messages[:3]:  # Cap at 3 per cycle
+            try:
+                self._query_lobe('autonomous', {
+                    'type': 'self_pattern_alert',
+                    'description': msg,
+                    'timestamp': now,
+                })
+            except Exception:
+                pass
+
+        # Store significant patterns in Notus for long-term memory
+        try:
+            for msg in messages[:3]:
+                self._query_lobe('notus', {
+                    'type': 'store_self_pattern',
+                    'pattern': msg,
+                    'timestamp': now,
+                })
+        except Exception:
+            pass
+
+    def _self_observation_loop(self):
+        """Background thread: periodically poll lobes and observe Monday's internal state."""
+        print("🔭 Self-observation loop started")
+        while self.running:
+            time.sleep(self.self_observation_interval)
+            if not self.running:
+                break
+            try:
+                self_state = self._collect_self_state()
+                if self_state is None:
+                    continue
+
+                # Feed internal state into pattern detection as source='self'
+                # We duplicate the observe() logic but tag source on newly created patterns
+                self._observe_self(self_state)
+
+                # Detect significant self-patterns and mysteries
+                significant = self._detect_significant_self_patterns()
+                mysteries = self._get_escalated_mysteries()
+                all_messages = significant + mysteries
+
+                if all_messages:
+                    self._broadcast_self_patterns(all_messages)
+                    print(f"🔭 [self-observation] Found {len(all_messages)} self-pattern(s) to report")
+
+            except Exception as e:
+                print(f"⚠️  Self-observation error: {e}")
+
+    def _observe_self(self, data: Dict[str, Any]):
+        """Like observe() but tags new patterns with source='self'."""
+        current_time = time.time()
+        items = data.get('items', [])
+        emotions = data.get('emotions', {})
+        words = data.get('words', [])
+        topics = data.get('topics', [])
+        statement = data.get('statement', '')
+
+        # Update history
+        for item in items:
+            self.recent_items.append((item, current_time))
+        if emotions:
+            self.recent_emotions.append((emotions, current_time))
+        if topics:
+            self.recent_topics.append((topics, current_time))
+        if words:
+            self.recent_word_choices.extend([(w, current_time) for w in words])
+        if statement:
+            self.statement_history.append((statement, current_time))
+
+        # Record co-occurrences tagged as self
+        for i, item_a in enumerate(items):
+            for item_b in items[i + 1:]:
+                self._record_co_occurrence_sourced(item_a, item_b, current_time, 'self')
+
+        # Update self-mysteries
+        self._update_self_mysteries(data)
+
+        # Detect behavioral patterns in self data
+        self._detect_self_behavioral_patterns(data)
+
+        self.detect_multi_step_sequences()
+        self.detect_meta_patterns()
+        self.update_boredom()
+
+        if current_time - self.last_decay > 60:
+            self._decay_patterns()
+            self.last_decay = current_time
+
+    def _record_co_occurrence_sourced(self, item_a: str, item_b: str, timestamp: float, source: str):
+        """Record co-occurrence with an explicit source tag."""
+        pair = tuple(sorted([item_a, item_b]))
+        if pair in self.co_occurrences:
+            pattern = self.co_occurrences[pair]
+            pattern.count += 1
+            pattern.last_seen = timestamp
+            pattern.strength = min(1.0, pattern.count / 10.0)
+        else:
+            self.co_occurrences[pair] = CoOccurrence(
+                item_a=pair[0],
+                item_b=pair[1],
+                count=1,
+                strength=0.1,
+                last_seen=timestamp,
+                source=source,
+            )
+
+    def _detect_self_behavioral_patterns(self, data: Dict[str, Any]):
+        """Detect behavioral-style patterns within Monday's own internal signals."""
+        items = data.get('items', [])
+        emotions = data.get('emotions', {})
+
+        emotion_type = emotions.get('type', '') if isinstance(emotions, dict) else ''
+        intensity = emotions.get('intensity', 0.0) if isinstance(emotions, dict) else 0.0
+
+        # Self-rumination: keeps cycling through heavy emotions
+        if emotion_type in ('sad', 'anxious', 'worried', 'angry') and intensity > 0.5:
+            name = 'self_rumination'
+            if name not in self.behavioral_patterns:
+                self.behavioral_patterns[name] = BehavioralPattern(
+                    name=name,
+                    signals={'required': ['self_emotion:sad', 'self_emotion:anxious'],
+                              'optional': ['self_emotion:worried', 'self_emotion:angry']},
+                    source='self',
+                )
+            bp = self.behavioral_patterns[name]
+            bp.occurrences += 1
+            bp.last_seen = time.time()
+            bp.confidence = min(1.0, bp.occurrences / 3.0)
+            bp.source = 'self'
+
+        # Self-curiosity loop: many question-type thoughts
+        question_items = [i for i in items if i == 'self_thought:question']
+        if len(question_items) >= 2:
+            name = 'self_curiosity_loop'
+            if name not in self.behavioral_patterns:
+                self.behavioral_patterns[name] = BehavioralPattern(
+                    name=name,
+                    signals={'required': ['self_thought:question'], 'optional': []},
+                    source='self',
+                )
+            bp = self.behavioral_patterns[name]
+            bp.occurrences += 1
+            bp.last_seen = time.time()
+            bp.confidence = min(1.0, bp.occurrences / 3.0)
+            bp.source = 'self'
+
+    def get_self_mysteries(self) -> List[Dict[str, Any]]:
+        """Return the current list of self-mysteries."""
+        with self._self_obs_lock:
+            return [
+                {
+                    'description': m.description,
+                    'signals': m.signals,
+                    'occurrence_count': m.occurrence_count,
+                    'first_seen': m.first_seen,
+                    'last_seen': m.last_seen,
+                    'resolved': m.resolved,
+                    'resolution': m.resolution,
+                }
+                for m in self.self_mysteries
+            ]
+
+    def resolve_mystery(self, description: str, resolution: str):
+        """Mark a mystery as resolved with an explanation."""
+        with self._self_obs_lock:
+            for mystery in self.self_mysteries:
+                if mystery.description == description:
+                    mystery.resolved = True
+                    mystery.resolution = resolution
+                    break
+
+    # ========================================================================
     # DIRECT FUNCTION CALL COMMUNICATION (NO SOCKETS)
     # ========================================================================
     
@@ -861,13 +1272,30 @@ class AdvancedPatternRecognition:
         """Start pattern recognition - register with Thalamus (NO SOCKETS)"""
         print(f"🔍 Advanced Pattern Recognition: Registering with Thalamus...")
         print(f"   Behavioral patterns, multi-step sequences, meta-patterns")
-        print(f"   Pareidolia mode, contradiction tracking")
+        print(f"   Pareidolia mode, contradiction tracking, self-observation")
         print(f"   Communication: Direct function calls (NO SOCKETS)")
         
+        # Load self-observation interval from config if available
+        try:
+            config_path = os.path.join(os.path.dirname(__file__), 'pattern_config.json')
+            with open(config_path) as f:
+                cfg = json.load(f)
+            interval = cfg.get('pattern_recognition', {}).get('self_observation', {}).get(
+                'interval_seconds', self.self_observation_interval
+            )
+            self.self_observation_interval = float(interval)
+        except Exception:
+            pass
+
         # Register with Thalamus
         if not self._register_with_thalamus():
             print("❌ Failed to register with Thalamus")
             return
+
+        # Start self-observation background thread
+        self_obs_thread = threading.Thread(target=self._self_observation_loop, daemon=True)
+        self_obs_thread.start()
+        print(f"🔭 Self-observation thread started (interval: {self.self_observation_interval}s)")
         
         # Keep running (Thalamus calls us directly, no listening loop needed)
         while self.running:
@@ -904,6 +1332,35 @@ class AdvancedPatternRecognition:
         elif msg_type == 'get_statistics':
             stats = {'total_co_occurrences': len(self.co_occurrences)}
             return {'status': 'success', 'statistics': stats}
+
+        elif msg_type == 'get_self_mysteries':
+            return {'status': 'success', 'mysteries': self.get_self_mysteries()}
+
+        elif msg_type == 'resolve_mystery':
+            description = message.get('description', '')
+            resolution = message.get('resolution', '')
+            if description:
+                self.resolve_mystery(description, resolution)
+                return {'status': 'success'}
+            return {'status': 'error', 'message': 'Missing description'}
+
+        elif msg_type == 'get_self_patterns':
+            self_co = [
+                {'items': list(p), 'strength': co.strength, 'count': co.count}
+                for p, co in self.co_occurrences.items()
+                if co.source == 'self' and co.count >= 2
+            ]
+            self_behaviors = [
+                {'name': b.name, 'confidence': b.confidence, 'occurrences': b.occurrences}
+                for b in self.behavioral_patterns.values()
+                if b.source == 'self' and b.confidence >= 0.3
+            ]
+            return {
+                'status': 'success',
+                'self_co_occurrences': self_co,
+                'self_behavioral_patterns': self_behaviors,
+                'self_mysteries': self.get_self_mysteries(),
+            }
             
         else:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}

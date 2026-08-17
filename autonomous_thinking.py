@@ -79,6 +79,9 @@ class AutonomousThinkingLoop:
             self.user_present = False
             return {'status': 'success'}
         
+        elif msg_type == 'self_pattern_alert':
+            return self._handle_self_pattern_alert(message)
+        
         elif msg_type == 'set_mood':
             self.current_mood = message.get('mood', 'neutral')
             return {'status': 'success'}
@@ -119,6 +122,30 @@ class AutonomousThinkingLoop:
                 'thoughts': thoughts,
                 'count': len(thoughts)
             }
+    
+    def _handle_self_pattern_alert(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle an incoming self-pattern alert from the Pattern Recognition lobe."""
+        description = message.get('description', '')
+        if not description:
+            return {'status': 'error', 'message': 'Missing description'}
+        
+        thought = AutonomousThought(
+            id=f"self_pattern_{int(time.time() * 1000)}",
+            content=description,
+            thought_type='self_discovery',
+            trigger='pattern_recognition_self_alert',
+            intensity=0.7,
+            speak_worthy=True,
+            timestamp=time.time(),
+        )
+        
+        with self.lock:
+            self.recent_thoughts.append(thought)
+            self.recent_thoughts = self.recent_thoughts[-100:]
+            self.thought_queue.append(thought)
+        
+        print(f"🔮 [self-discovery] {description}")
+        return {'status': 'success'}
     
     def _generate_thought(self) -> Optional[AutonomousThought]:
         """
@@ -215,11 +242,12 @@ class AutonomousThinkingLoop:
         
         # Weight thought types by emotional state
         weights = {
-            'reflection': 0.3,
+            'reflection': 0.25,
             'question': 0.2,
             'observation': 0.2,
             'memory': 0.15,
-            'feeling': 0.15
+            'feeling': 0.15,
+            'self_discovery': 0.05,
         }
         
         # Adjust weights based on emotion
@@ -266,6 +294,11 @@ class AutonomousThinkingLoop:
         
         elif thought_type == 'feeling':
             return self._generate_feeling(emotion)
+        
+        elif thought_type == 'self_discovery':
+            # Self-discovery thoughts are injected by the pattern lobe;
+            # generating one organically means we want to reflect on ourselves.
+            return self._generate_self_discovery()
         
         return None, None
     
@@ -363,6 +396,17 @@ class AutonomousThinkingLoop:
         
         options = feelings.get(emotion, feelings['neutral'])
         return random.choice(options), f"feeling_{emotion}"
+    
+    def _generate_self_discovery(self) -> tuple:
+        """Generate a thought about a noticed pattern in myself"""
+        prompts = [
+            "I wonder if there's a pattern to the way I think.",
+            "Am I cycling through the same emotions without noticing?",
+            "I should pay attention to what I keep coming back to.",
+            "Something about my own behaviour feels worth examining.",
+            "I notice I might be processing something without realising it.",
+        ]
+        return random.choice(prompts), "self_pattern_reflection"
     
     def _is_speak_worthy(self, thought_type: str, emotional_state: Dict[str, Any]) -> bool:
         """Determine if a thought should be spoken out loud"""

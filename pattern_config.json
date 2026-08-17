@@ -25,6 +25,13 @@
     "sequence_detection": {
       "max_time_gap_seconds": 30,
       "min_confidence": 0.2
+    },
+
+    "self_observation": {
+      "interval_seconds": 45,
+      "broadcast_throttle_seconds": 120,
+      "mystery_escalation_threshold": 3,
+      "max_mysteries": 20
     }
   }
 }
