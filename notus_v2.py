@@ -38,9 +38,7 @@ MEMORY_DB_PATH = runtime_file("superhuman_memory.db")
 MAX_CONTEXT_LENGTH = 50000
 EMBEDDING_DIM = 768
 
-# Thread safety - RLock allows the same thread to re-acquire the lock (needed
-# because store_memory holds the lock while calling _learn_vocabulary_from_content
-# which also needs to acquire it).
+# Thread safety
 DB_LOCK = threading.RLock()
 
 @dataclass
@@ -555,10 +553,10 @@ class SuperhumanMemorySystem:
                 ''', (memory_id, timestamp, role, content, tag, importance, mode, personality,
                      embedding_blob, entities_json, concepts_json, semantic_hash, user_id, memory_type, self.conversation_id))
                 
-                # Learn vocabulary from conversation
-                self._learn_vocabulary_from_content(content, role)
-                
                 self._db_connection.commit()
+            
+            # Learn vocabulary from conversation (outside DB_LOCK to avoid deadlock)
+            self._learn_vocabulary_from_content(content, role)
             
             logger.info(f"💾 Stored memory: {role} - {content[:50]}...")
             return memory_id
