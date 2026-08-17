@@ -11,6 +11,7 @@ from conversation import ConversationSystem
 from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
 from direct_notus import DirectNotusProcess
+from learning_system import LearningSystem
 from output import OutputLobe
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
@@ -27,9 +28,11 @@ def create_core_systems(
     """
     directory = Path(runtime_directory) if runtime_directory else runtime_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    thalamus = Thalamus()
+    learning = LearningSystem(storage_path=str(directory / "learning_memory.sqlite3"))
+    thalamus = Thalamus(learning_system=learning)
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
+        "learning": learning,
         "conversation": ConversationSystem(thalamus=thalamus),
         "notus": DirectNotusProcess(
             storage_path=str(directory / "notus_memory.sqlite3"), thalamus=thalamus
@@ -52,7 +55,7 @@ def create_core_systems(
 
 
 def shutdown_core_systems(systems: Dict[str, Any]) -> None:
-    for name in ("output", "language", "reasoning", "emotion", "notus", "conversation"):
+    for name in ("output", "language", "reasoning", "emotion", "notus", "conversation", "learning"):
         shutdown = getattr(systems.get(name), "shutdown", None)
         if callable(shutdown):
             shutdown()

@@ -18,17 +18,23 @@ import uuid
 from typing import Any, Dict, Iterable, Optional
 
 from direct_response import DeterministicResponseProvider, ResponseProvider
+from learning_system import LearningSystem
 
 class Thalamus:
     """Synchronously route direct calls between registered lobes."""
 
-    def __init__(self, response_provider: Optional[ResponseProvider] = None) -> None:
+    def __init__(
+        self,
+        response_provider: Optional[ResponseProvider] = None,
+        learning_system: Optional[LearningSystem] = None,
+    ) -> None:
         self.running = True
         self.lobe_handlers: Dict[str, Any] = {}
         self.lobe_handlers_lock = threading.RLock()
         self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=100)
         self.response_provider = response_provider or DeterministicResponseProvider()
+        self.learning_system = learning_system
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -151,8 +157,18 @@ class Thalamus:
         if not isinstance(user_input, str) or not user_input.strip():
             return "Please send a message."
 
+        learning_context = {}
+        if self.learning_system is not None:
+            learning_context = self.learning_system.get_adaptation_context(user_id)
+
         conversation = self.send_and_wait(
-            "conversation", "understand", {"user_input": user_input, "user_id": user_id}
+            "conversation",
+            "understand",
+            {
+                "user_input": user_input,
+                "user_id": user_id,
+                "context": {"learning_context": learning_context},
+            },
         )
         if conversation["status"] != "success":
             return "I'm having trouble understanding right now."
@@ -207,6 +223,9 @@ class Thalamus:
         semantic_input.setdefault(
             "intent", understanding.get("intent", "conversation")
         )
+        style_preference = learning_context.get("preferences", {}).get("response_style")
+        if isinstance(style_preference, str) and style_preference.strip():
+            semantic_input.setdefault("style_preference", style_preference.strip())
         semantic_input.setdefault("answer", reasoning_answer)
         semantic_input.setdefault("propositions", [reasoning_answer])
 
@@ -227,7 +246,16 @@ class Thalamus:
                 "preserve_text": True,
             },
         )
-        return self._content(output).get("text", response_text)
+        final_text = self._content(output).get("text", response_text)
+        if self.learning_system is not None:
+            self.learning_system.record_interaction(
+                user_id=user_id,
+                user_input=user_input,
+                response_text=final_text,
+                intent=understanding.get("intent", "conversation"),
+                confidence=understanding.get("confidence", 0.5),
+            )
+        return final_text
 
     def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Small compatibility entry point for direct callers."""
@@ -241,6 +269,34 @@ class Thalamus:
                 "status": "success",
                 "content": {"thalamus_healthy": True, "lobes": self.lobe_status.copy()},
             }
+        if msg_type == "learning_feedback":
+            if self.learning_system is None:
+                return {"status": "error", "message": "Learning system not enabled", "content": {}}
+            result = self.learning_system.record_feedback(
+                payload.get("user_id", "default"),
+                payload.get("feedback_score", 0.0),
+                payload.get("reason", ""),
+            )
+            return result
+        if msg_type == "learning_override":
+            if self.learning_system is None:
+                return {"status": "error", "message": "Learning system not enabled", "content": {}}
+            result = self.learning_system.set_preference_override(
+                payload.get("user_id", "default"),
+                payload.get("pref_key", ""),
+                payload.get("pref_value", ""),
+                payload.get("confidence", 0.9),
+            )
+            return result
+        if msg_type == "learning_forget_user":
+            if self.learning_system is None:
+                return {"status": "error", "message": "Learning system not enabled", "content": {}}
+            result = self.learning_system.forget_user_data(payload.get("user_id", "default"))
+            return result
+        if msg_type == "learning_status":
+            if self.learning_system is None:
+                return {"status": "error", "message": "Learning system not enabled", "content": {}}
+            return self.learning_system.get_status(payload.get("user_id", "default"))
         return {"status": "error", "message": f"Unknown type: {msg_type}", "content": {}}
 
     def start(self) -> "Thalamus":
