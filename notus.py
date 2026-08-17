@@ -13,7 +13,6 @@ import uuid
 import re
 import pickle
 import numpy as np
-import torch
 import sys
 import traceback
 from datetime import datetime, timedelta, timezone
