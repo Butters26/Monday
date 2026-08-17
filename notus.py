@@ -350,154 +350,310 @@ class SuperhumanMemorySystem:
         logger.info("🌱 Background seeding started")
     
     def _init_database(self):
+        self._db_sqlite = False  # Track which backend is active
         try:
             if not hasattr(self, '_db_connection'):
-                # Connect to PostgreSQL
-                self._db_connection = psycopg2.connect(
-                    dbname=POSTGRES_DB_NAME,
-                    user=POSTGRES_USER,
-                    host=POSTGRES_HOST,
-                    port=POSTGRES_PORT,
-                    connect_timeout=30
-                )
-                # PostgreSQL handles concurrency natively - no PRAGMA needed
-                self._db_connection.set_session(autocommit=False)
+                # Try PostgreSQL first
+                try:
+                    self._db_connection = psycopg2.connect(
+                        dbname=POSTGRES_DB_NAME,
+                        user=POSTGRES_USER,
+                        host=POSTGRES_HOST,
+                        port=POSTGRES_PORT,
+                        connect_timeout=5
+                    )
+                    self._db_connection.set_session(autocommit=False)
+                except Exception as pg_err:
+                    logger.warning(f"PostgreSQL unavailable ({pg_err}); falling back to SQLite at {self.db_path}")
+                    self._db_connection = sqlite3.connect(self.db_path, check_same_thread=False)
+                    self._db_sqlite = True
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS superhuman_memories (
-                        id TEXT PRIMARY KEY,
-                        timestamp TIMESTAMP NOT NULL,
-                        role TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        tag TEXT NOT NULL,
-                        importance_score REAL DEFAULT 5.0,
-                        mode TEXT DEFAULT 'writing',
-                        personality TEXT DEFAULT 'witty',
-                        embedding bytea,
-                        entities TEXT,
-                        concepts TEXT,
-                        semantic_hash TEXT,
-                        access_count INTEGER DEFAULT 0,
-                        last_accessed TEXT,
-                        user_id TEXT,
-                        memory_type TEXT DEFAULT 'episodic',
-                        conversation_id TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS learning_patterns (
-                        pattern_key TEXT PRIMARY KEY,
-                        pattern_data TEXT NOT NULL,
-                        usage_count INTEGER DEFAULT 1,
-                        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                # Vocabulary learning table - learns words from conversations
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS learned_vocabulary (
-                        word TEXT NOT NULL,
-                        category TEXT NOT NULL,
-                        emotion TEXT,
-                        intensity_min REAL DEFAULT 0.0,
-                        intensity_max REAL DEFAULT 1.0,
-                        usage_count INTEGER DEFAULT 1,
-                        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY (word, category, emotion)
-                    )
-                ''')
-                
-                # Word meanings table - stores what words actually mean
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS word_meanings (
-                        word TEXT PRIMARY KEY,
-                        meaning TEXT NOT NULL,
-                        part_of_speech TEXT,
-                        intent_type TEXT,
-                        synonyms TEXT,
-                        usage_count INTEGER DEFAULT 1,
-                        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                
-                # Grammar knowledge table - stores sentence structure rules
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS grammar_knowledge (
-                        id TEXT PRIMARY KEY,
-                        rule_type TEXT NOT NULL,
-                        rule_description TEXT NOT NULL,
-                        example TEXT,
-                        usage_count INTEGER DEFAULT 1,
-                        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                # Episodic events table
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS episodic_events (
-                        id TEXT PRIMARY KEY,
-                        timestamp TEXT NOT NULL,
-                        user_id TEXT,
-                        actor TEXT,
-                        action TEXT,
-                        object TEXT,
-                        place TEXT,
-                        cause TEXT,
-                        effect TEXT,
-                        note TEXT,
-                        sentiment REAL,
-                        confidence REAL DEFAULT 0.8,
-                        source TEXT,
-                        usage_count INTEGER DEFAULT 0,
-                        last_accessed TEXT
-                    )
-                ''')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_epi_user_time ON episodic_events(user_id, timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_epi_action ON episodic_events(action)')
-                
-                # Durable semantic knowledge: brain facts
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS brain_facts (
-                        id TEXT PRIMARY KEY,
-                        subject TEXT NOT NULL,
-                        predicate TEXT NOT NULL,
-                        object TEXT NOT NULL,
-                        value TEXT,
-                        confidence REAL DEFAULT 0.85,
-                        permanent INTEGER DEFAULT 0,
-                        usage_count INTEGER DEFAULT 0,
-                        created_at TEXT NOT NULL,
-                        last_reinforced TIMESTAMP,
-                        user_id TEXT,
-                        source TEXT,
-                        semantic_hash TEXT
-                    )
-                ''')
-                cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_fact_user ON brain_facts(subject, predicate, object, user_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_fact_conf ON brain_facts(confidence)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_fact_last ON brain_facts(last_reinforced)')
-                
-                # Create indexes
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_id ON superhuman_memories(user_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversation_id ON superhuman_memories(conversation_id)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON superhuman_memories(timestamp)')
-                cursor.execute('CREATE INDEX IF NOT EXISTS idx_role ON superhuman_memories(role)')
-                
-                self._db_connection.commit()
-                
+                if self._db_sqlite:
+                    # Use the raw connection for executescript (DDL batch)
+                    self._db_connection.executescript('''
+                        CREATE TABLE IF NOT EXISTS superhuman_memories (
+                            id TEXT PRIMARY KEY,
+                            timestamp TEXT NOT NULL,
+                            role TEXT NOT NULL,
+                            content TEXT NOT NULL,
+                            tag TEXT NOT NULL,
+                            importance_score REAL DEFAULT 5.0,
+                            mode TEXT DEFAULT 'writing',
+                            personality TEXT DEFAULT 'witty',
+                            embedding BLOB,
+                            entities TEXT,
+                            concepts TEXT,
+                            semantic_hash TEXT,
+                            access_count INTEGER DEFAULT 0,
+                            last_accessed TEXT,
+                            user_id TEXT,
+                            memory_type TEXT DEFAULT 'episodic',
+                            conversation_id TEXT,
+                            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE TABLE IF NOT EXISTS learning_patterns (
+                            pattern_key TEXT PRIMARY KEY,
+                            pattern_data TEXT NOT NULL,
+                            usage_count INTEGER DEFAULT 1,
+                            last_used TEXT DEFAULT CURRENT_TIMESTAMP,
+                            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE TABLE IF NOT EXISTS learned_vocabulary (
+                            word TEXT NOT NULL,
+                            category TEXT NOT NULL,
+                            emotion TEXT,
+                            intensity_min REAL DEFAULT 0.0,
+                            intensity_max REAL DEFAULT 1.0,
+                            usage_count INTEGER DEFAULT 1,
+                            last_used TEXT DEFAULT CURRENT_TIMESTAMP,
+                            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (word, category, emotion)
+                        );
+                        CREATE TABLE IF NOT EXISTS word_meanings (
+                            word TEXT PRIMARY KEY,
+                            meaning TEXT NOT NULL,
+                            part_of_speech TEXT,
+                            intent_type TEXT,
+                            synonyms TEXT,
+                            usage_count INTEGER DEFAULT 1,
+                            last_used TEXT DEFAULT CURRENT_TIMESTAMP,
+                            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE TABLE IF NOT EXISTS grammar_knowledge (
+                            id TEXT PRIMARY KEY,
+                            rule_type TEXT NOT NULL,
+                            rule_description TEXT NOT NULL,
+                            example TEXT,
+                            usage_count INTEGER DEFAULT 1,
+                            last_used TEXT DEFAULT CURRENT_TIMESTAMP,
+                            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                        );
+                        CREATE TABLE IF NOT EXISTS episodic_events (
+                            id TEXT PRIMARY KEY,
+                            timestamp TEXT NOT NULL,
+                            user_id TEXT,
+                            actor TEXT,
+                            action TEXT,
+                            object TEXT,
+                            place TEXT,
+                            cause TEXT,
+                            effect TEXT,
+                            note TEXT,
+                            sentiment REAL,
+                            confidence REAL DEFAULT 0.8,
+                            source TEXT,
+                            usage_count INTEGER DEFAULT 0,
+                            last_accessed TEXT
+                        );
+                        CREATE TABLE IF NOT EXISTS brain_facts (
+                            id TEXT PRIMARY KEY,
+                            subject TEXT NOT NULL,
+                            predicate TEXT NOT NULL,
+                            object TEXT NOT NULL,
+                            value TEXT,
+                            confidence REAL DEFAULT 0.85,
+                            permanent INTEGER DEFAULT 0,
+                            usage_count INTEGER DEFAULT 0,
+                            created_at TEXT NOT NULL,
+                            last_reinforced TEXT,
+                            user_id TEXT,
+                            source TEXT,
+                            semantic_hash TEXT
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_epi_user_time ON episodic_events(user_id, timestamp);
+                        CREATE INDEX IF NOT EXISTS idx_epi_action ON episodic_events(action);
+                        CREATE UNIQUE INDEX IF NOT EXISTS uq_fact_user ON brain_facts(subject, predicate, object, user_id);
+                        CREATE INDEX IF NOT EXISTS idx_fact_conf ON brain_facts(confidence);
+                        CREATE INDEX IF NOT EXISTS idx_fact_last ON brain_facts(last_reinforced);
+                        CREATE INDEX IF NOT EXISTS idx_user_id ON superhuman_memories(user_id);
+                        CREATE INDEX IF NOT EXISTS idx_conversation_id ON superhuman_memories(conversation_id);
+                        CREATE INDEX IF NOT EXISTS idx_timestamp ON superhuman_memories(timestamp);
+                        CREATE INDEX IF NOT EXISTS idx_role ON superhuman_memories(role);
+                    ''')
+                else:
+                    cursor = self._cursor()
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS superhuman_memories (
+                            id TEXT PRIMARY KEY,
+                            timestamp TIMESTAMP NOT NULL,
+                            role TEXT NOT NULL,
+                            content TEXT NOT NULL,
+                            tag TEXT NOT NULL,
+                            importance_score REAL DEFAULT 5.0,
+                            mode TEXT DEFAULT 'writing',
+                            personality TEXT DEFAULT 'witty',
+                            embedding bytea,
+                            entities TEXT,
+                            concepts TEXT,
+                            semantic_hash TEXT,
+                            access_count INTEGER DEFAULT 0,
+                            last_accessed TEXT,
+                            user_id TEXT,
+                            memory_type TEXT DEFAULT 'episodic',
+                            conversation_id TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS learning_patterns (
+                            pattern_key TEXT PRIMARY KEY,
+                            pattern_data TEXT NOT NULL,
+                            usage_count INTEGER DEFAULT 1,
+                            last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS learned_vocabulary (
+                            word TEXT NOT NULL,
+                            category TEXT NOT NULL,
+                            emotion TEXT,
+                            intensity_min REAL DEFAULT 0.0,
+                            intensity_max REAL DEFAULT 1.0,
+                            usage_count INTEGER DEFAULT 1,
+                            last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (word, category, emotion)
+                        )
+                    ''')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS word_meanings (
+                            word TEXT PRIMARY KEY,
+                            meaning TEXT NOT NULL,
+                            part_of_speech TEXT,
+                            intent_type TEXT,
+                            synonyms TEXT,
+                            usage_count INTEGER DEFAULT 1,
+                            last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS grammar_knowledge (
+                            id TEXT PRIMARY KEY,
+                            rule_type TEXT NOT NULL,
+                            rule_description TEXT NOT NULL,
+                            example TEXT,
+                            usage_count INTEGER DEFAULT 1,
+                            last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    ''')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS episodic_events (
+                            id TEXT PRIMARY KEY,
+                            timestamp TEXT NOT NULL,
+                            user_id TEXT,
+                            actor TEXT,
+                            action TEXT,
+                            object TEXT,
+                            place TEXT,
+                            cause TEXT,
+                            effect TEXT,
+                            note TEXT,
+                            sentiment REAL,
+                            confidence REAL DEFAULT 0.8,
+                            source TEXT,
+                            usage_count INTEGER DEFAULT 0,
+                            last_accessed TEXT
+                        )
+                    ''')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_epi_user_time ON episodic_events(user_id, timestamp)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_epi_action ON episodic_events(action)')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS brain_facts (
+                            id TEXT PRIMARY KEY,
+                            subject TEXT NOT NULL,
+                            predicate TEXT NOT NULL,
+                            object TEXT NOT NULL,
+                            value TEXT,
+                            confidence REAL DEFAULT 0.85,
+                            permanent INTEGER DEFAULT 0,
+                            usage_count INTEGER DEFAULT 0,
+                            created_at TEXT NOT NULL,
+                            last_reinforced TIMESTAMP,
+                            user_id TEXT,
+                            source TEXT,
+                            semantic_hash TEXT
+                        )
+                    ''')
+                    cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_fact_user ON brain_facts(subject, predicate, object, user_id)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_fact_conf ON brain_facts(confidence)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_fact_last ON brain_facts(last_reinforced)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_id ON superhuman_memories(user_id)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversation_id ON superhuman_memories(conversation_id)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON superhuman_memories(timestamp)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_role ON superhuman_memories(role)')
+                    self._commit()
+
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
-    
-    def store_memory(self, role: str, content: str, user_id: str = "default", tag: str = "General", 
-                    importance: float = 5.0, mode: str = "writing", memory_type: str = MemoryType.CONVERSATION,
-                    personality: str = "witty") -> str:
+
+    # ------------------------------------------------------------------
+    # DB compatibility helpers: work with both PostgreSQL and SQLite
+    # ------------------------------------------------------------------
+    def _cursor(self):
+        """Return a cursor that auto-translates %s → ? and PostgreSQL upsert syntax for SQLite."""
+        raw = self._db_connection.cursor()
+        if not self._db_sqlite:
+            return raw
+        # Wrap the SQLite cursor so %s placeholders and upsert syntax work transparently
+        class _CompatCursor:
+            def __init__(self, c):
+                self._c = c
+                self.description = None
+                self.lastrowid = None
+            def _fix(self, sql, params=None):
+                if not isinstance(sql, str):
+                    return sql, params
+                import re as _re
+                fixed = sql.replace('%s', '?')
+                # Translate PostgreSQL upsert: INSERT INTO → INSERT OR REPLACE INTO,
+                # then strip the ON CONFLICT ... DO UPDATE SET ... clause
+                if 'ON CONFLICT' in fixed.upper():
+                    fixed = _re.sub(r'(?i)\bINSERT\s+INTO\b', 'INSERT OR REPLACE INTO', fixed)
+                    fixed = _re.sub(r'(?si)\s*ON\s+CONFLICT\s*\(.*?\)\s*DO\s+UPDATE\s+SET\s+.*', '', fixed)
+                # LEAST() → MIN() for SQLite
+                fixed = _re.sub(r'(?i)\bLEAST\s*\(', 'MIN(', fixed)
+                return fixed, params
+            def execute(self, sql, params=None):
+                sql, params = self._fix(sql, params)
+                if params is None:
+                    result = self._c.execute(sql)
+                else:
+                    result = self._c.execute(sql, params)
+                self.description = self._c.description
+                self.lastrowid = self._c.lastrowid
+                return result
+            def executemany(self, sql, seq):
+                sql, _ = self._fix(sql)
+                result = self._c.executemany(sql, seq)
+                self.description = self._c.description
+                return result
+            def fetchall(self):
+                return self._c.fetchall()
+            def fetchone(self):
+                return self._c.fetchone()
+            def __iter__(self):
+                return iter(self._c)
+        return _CompatCursor(raw)
+
+    def _commit(self):
+        """Commit the current transaction (no-op for SQLite autocommit mode)."""
+        try:
+            self._db_connection.commit()
+        except Exception:
+            pass
+
+    def _binary(self, data):
+        """Wrap binary data appropriately for the active backend."""
+        if self._db_sqlite:
+            return data  # SQLite accepts raw bytes
+        return psycopg2.Binary(data)
+
+    def store_memory(self, role: str, content: str, user_id: str = "default", tag: str = "General",
+                     importance: float = 5.0, mode: str = "writing", memory_type: str = MemoryType.CONVERSATION,
+                     personality: str = "witty") -> str:
         """Store a memory"""
         try:
             memory_id = str(uuid.uuid4())
@@ -519,7 +675,7 @@ class SuperhumanMemorySystem:
             concepts_json = json.dumps(concepts)
             
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 
                 cursor.execute('''
                     INSERT INTO superhuman_memories 
@@ -527,12 +683,12 @@ class SuperhumanMemorySystem:
                      embedding, entities, concepts, semantic_hash, user_id, memory_type, conversation_id)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ''', (memory_id, timestamp, role, content, tag, importance, mode, personality,
-                     psycopg2.Binary(embedding_blob), entities_json, concepts_json, semantic_hash, user_id, memory_type, self.conversation_id))
+                     self._binary(embedding_blob), entities_json, concepts_json, semantic_hash, user_id, memory_type, self.conversation_id))
                 
-                # Learn vocabulary from conversation
-                self._learn_vocabulary_from_content(content, role)
-                
-                self._db_connection.commit()
+                self._commit()
+            
+            # Learn vocabulary from conversation (outside the DB_LOCK to avoid deadlock)
+            self._learn_vocabulary_from_content(content, role)
             
             logger.info(f"💾 Stored memory: {role} - {content[:50]}...")
             return memory_id
@@ -563,7 +719,7 @@ class SuperhumanMemorySystem:
             }
             
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 
                 for word in words:
                     # Check if profanity
@@ -600,7 +756,7 @@ class SuperhumanMemorySystem:
         """Get learned vocabulary based on category, emotion, and intensity"""
         try:
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 
                 query = "SELECT word FROM learned_vocabulary WHERE 1=1"
                 params = []
@@ -631,7 +787,7 @@ class SuperhumanMemorySystem:
         """Get the meaning and intent type of a word"""
         try:
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 cursor.execute('''
                     SELECT word, meaning, part_of_speech, intent_type, synonyms
                     FROM word_meanings WHERE word = %s
@@ -654,7 +810,7 @@ class SuperhumanMemorySystem:
         """Get grammar knowledge - sentence structure rules"""
         try:
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 if rule_type:
                     cursor.execute('''
                         SELECT rule_type, rule_description, example
@@ -713,7 +869,7 @@ class SuperhumanMemorySystem:
             query_embedding = self.embedding_engine.get_embedding(query, user_id)
             
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 
                 # Get recent memories
                 cursor.execute('''
@@ -916,6 +1072,16 @@ class SuperhumanMemorySystem:
     def _seed_editor_knowledge(self, user_id: str = "default") -> None:
         """Seed durable story-editor guidelines so Monday can edit from day one.
         Safe to call multiple times (facts are upserted)."""
+        # Skip if already seeded
+        with DB_LOCK:
+            cursor = self._cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM brain_facts WHERE subject = %s AND source = %s",
+                ("editor", "seed")
+            )
+            row = cursor.fetchone()
+            if row and row[0] > 0:
+                return
         guidelines = [
             ("editor", "checks", "pacing"),
             ("editor", "checks", "character_arc"),
@@ -944,8 +1110,15 @@ class SuperhumanMemorySystem:
     def _seed_vocabulary_and_grammar(self, user_id: str = "default") -> None:
         """Seed vocabulary word meanings and grammar knowledge - like first English class"""
         try:
+            # Skip if already seeded (idempotent)
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
+                cursor.execute("SELECT COUNT(*) FROM word_meanings")
+                row = cursor.fetchone()
+                if row and row[0] > 0:
+                    return
+            with DB_LOCK:
+                cursor = self._cursor()
                 
                 # Basic vocabulary - word meanings
                 vocabulary = [
@@ -1016,7 +1189,7 @@ class SuperhumanMemorySystem:
                             last_used = CURRENT_TIMESTAMP
                     ''', (rule_id, "rule", rule_desc, example))
                 
-                self._db_connection.commit()
+                self._commit()
                 logger.info("✅ Seeded vocabulary and grammar knowledge")
         except Exception as e:
             logger.error(f"Failed to seed vocabulary/grammar: {e}")
@@ -1035,7 +1208,7 @@ class SuperhumanMemorySystem:
                 return None
 
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 cursor.execute('''
                     SELECT id, confidence, permanent, usage_count FROM brain_facts
                     WHERE subject = %s AND predicate = %s AND object = %s AND (user_id = %s OR user_id IS NULL)
@@ -1053,7 +1226,7 @@ class SuperhumanMemorySystem:
                         SET value = COALESCE(%s, value), confidence = %s, permanent = %s, usage_count = %s, last_reinforced = %s, source = COALESCE(%s, source)
                         WHERE id = %s
                     ''', (value, conf_new, perm_new, int(usage)+1, now, source, fact_id))
-                    self._db_connection.commit()
+                    self._commit()
                     return fact_id
                 else:
                     fact_id = str(uuid.uuid4())
@@ -1063,7 +1236,7 @@ class SuperhumanMemorySystem:
                         (id, subject, predicate, object, value, confidence, permanent, usage_count, created_at, last_reinforced, user_id, source, semantic_hash)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ''', (fact_id, subject, predicate, obj, value, float(confidence), 1 if permanent else 0, 1, now, now, user_id, source, sem_hash))
-                    self._db_connection.commit()
+                    self._commit()
                     return fact_id
         except Exception as e:
             logger.error(f"remember_fact failed: {e}")
@@ -1118,7 +1291,7 @@ class SuperhumanMemorySystem:
         """Recall top facts for a query by similarity/confidence/recency. Deep recall (no time cutoff)."""
         try:
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 # Pull a candidate pool: prioritize high confidence and reinforced facts
                 cursor.execute('''
                     SELECT id, subject, predicate, object, value, confidence, permanent, usage_count, created_at, last_reinforced, user_id, source
@@ -1148,7 +1321,7 @@ class SuperhumanMemorySystem:
             # Active learning: reinforce retrieved facts a bit
             now = datetime.now().isoformat()
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 for fact in results:
                     cursor.execute('''
                         UPDATE brain_facts
@@ -1157,7 +1330,7 @@ class SuperhumanMemorySystem:
                             last_reinforced = %s
                         WHERE id = %s
                     ''', (self.config.online_learning_rate, now, fact['id']))
-                self._db_connection.commit()
+                self._commit()
 
             return results
         except Exception as e:
@@ -1252,13 +1425,13 @@ class SuperhumanMemorySystem:
             eid = str(uuid.uuid4())
             ts = datetime.now().isoformat()
             with DB_LOCK:
-                c = self._db_connection.cursor()
+                c = self._cursor()
                 c.execute('''
                     INSERT INTO episodic_events
                     (id, timestamp, user_id, actor, action, object, place, cause, effect, note, sentiment, confidence, source, usage_count, last_accessed)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s)
                 ''', (eid, ts, user_id, actor, action, object, place, cause, effect, note, sentiment, confidence, source, ts))
-                self._db_connection.commit()
+                self._commit()
             return eid
         except Exception as e:
             logger.error(f"store_event failed: {e}")
@@ -1290,7 +1463,7 @@ class SuperhumanMemorySystem:
     def recall_episodes(self, query: str, user_id: str = "default", limit: int = 10) -> List[Dict[str, Any]]:
         try:
             with DB_LOCK:
-                c = self._db_connection.cursor()
+                c = self._cursor()
                 c.execute('''
                     SELECT id, timestamp, actor, action, object, place, cause, effect, note, sentiment, confidence, source, usage_count
                     FROM episodic_events
@@ -1316,10 +1489,10 @@ class SuperhumanMemorySystem:
             results = [d for _, d in scored[:max(1,int(limit))]]
             now = datetime.now().isoformat()
             with DB_LOCK:
-                c = self._db_connection.cursor()
+                c = self._cursor()
                 for ep in results:
                     c.execute('UPDATE episodic_events SET usage_count = usage_count + 1, last_accessed = %s WHERE id = %s', (now, ep['id']))
-                self._db_connection.commit()
+                self._commit()
             return results
         except Exception as e:
             logger.error(f"recall_episodes failed: {e}")
@@ -1382,7 +1555,7 @@ class SuperhumanMemorySystem:
         target = path or self.config.snapshot_path
         try:
             with DB_LOCK:
-                c = self._db_connection.cursor()
+                c = self._cursor()
                 c.execute('''SELECT subject, predicate, object, value, confidence, permanent, user_id, source, last_reinforced
                              FROM brain_facts ORDER BY confidence DESC, last_reinforced DESC LIMIT 500''')
                 facts = [{
@@ -1428,7 +1601,7 @@ class SuperhumanMemorySystem:
         """Update access counts"""
         try:
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 
                 for memory_id in memory_ids:
                     cursor.execute('''
@@ -1437,7 +1610,7 @@ class SuperhumanMemorySystem:
                         WHERE id = %s
                     ''', (datetime.now().isoformat(), memory_id))
                 
-                self._db_connection.commit()
+                self._commit()
                 
         except Exception as e:
             logger.warning(f"Failed to update access counts: {e}")
@@ -1713,7 +1886,7 @@ class SuperhumanMemorySystem:
         """Get recent conversation summary"""
         try:
             with DB_LOCK:
-                cursor = self._db_connection.cursor()
+                cursor = self._cursor()
                 
                 cursor.execute('''
                     SELECT content, role, timestamp FROM superhuman_memories 
@@ -3923,6 +4096,126 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
         
         return 'moderate'
 
+    def _analyze_character_development(self, text: str) -> str:
+        """Analyze character development in a natural, conversational way"""
+        scene = self._analyze_scene_content(text)
+        response_parts = []
+        if scene['characters']:
+            main_char = scene['characters'][0]
+            if main_char['actions']:
+                response_parts.append(f"I love how you show {main_char['name']} {main_char['actions'][0]}. That really gives us a sense of their character.")
+                if not main_char['emotions'] and not main_char.get('internal_thoughts'):
+                    response_parts.append(f"But what's going through {main_char['name']}'s mind during this? How do they feel about having to take this action?")
+            if main_char['emotions']:
+                response_parts.append(f"The way you show {main_char['name']} feeling {main_char['emotions'][0]} is really powerful.")
+                if not main_char['actions']:
+                    response_parts.append(f"You could make this even stronger by showing how this emotion affects {main_char['name']}'s body language or actions.")
+            if main_char['dialogue']:
+                response_parts.append(f"That line where {main_char['name']} says \"{main_char['dialogue'][0]}\" - that's perfect characterization.")
+                if not any(d['natural'] for d in scene['dialogue']):
+                    response_parts.append("You could make the dialogue feel even more natural with some hesitations or contractions.")
+            if main_char['relationships']['other']:
+                other_char = main_char['relationships']['other'][0]
+                response_parts.append(f"I'm really intrigued by {main_char['name']}'s dynamic with {other_char}. Could we dig into that relationship more?")
+            if scene['internal_thoughts']:
+                thought = scene['internal_thoughts'][0]
+                response_parts.append(f"This moment of self-reflection - \"{thought['thought']}\" - really helps us understand {main_char['name']}'s mindset.")
+            response_parts.append(f"What aspects of {main_char['name']}'s personality do you most want to highlight in this scene?")
+        else:
+            response_parts.append("What aspects of your character's personality do you most want to highlight in this scene?")
+        return "\n\n".join(response_parts)
+
+    def _analyze_dialogue(self, text: str) -> str:
+        """Analyze dialogue in a natural, conversational way"""
+        scene = self._analyze_scene_content(text)
+        response_parts = []
+        if not scene['dialogue']:
+            if any(word in text.lower() for word in ['scream', 'shout', 'yell', 'call']):
+                response_parts.append("You know what would really amp up the intensity here? Let us hear what people are actually saying.")
+            else:
+                response_parts.append("I notice this scene is pretty quiet right now. What if we added some dialogue to bring the characters to life?")
+        else:
+            natural_dialogue = [d for d in scene['dialogue'] if d['natural']]
+            unnatural_dialogue = [d for d in scene['dialogue'] if not d['natural']]
+            if natural_dialogue:
+                example = natural_dialogue[0]
+                response_parts.append(f"I love how natural this line feels: \"{example['text']}\". The {example['tone']} tone really comes through.")
+            if unnatural_dialogue:
+                example = unnatural_dialogue[0]
+                response_parts.append(f"This line - \"{example['text']}\" - could feel more natural with some hesitation or contractions.")
+            impactful = [d for d in scene['dialogue'] if d['impact'] == 'major']
+            if impactful:
+                response_parts.append(f"That line \"{impactful[0]['text']}\" really lands hard.")
+            else:
+                response_parts.append("Consider showing more reaction to the dialogue - how do these words affect the other characters?")
+            tones = [d['tone'] for d in scene['dialogue']]
+            if len(set(tones)) == 1:
+                response_parts.append(f"I notice all the dialogue has a {tones[0]} tone. Could we vary it up?")
+        if scene['characters']:
+            response_parts.append(f"How do you imagine {scene['characters'][0]['name']}'s voice? What makes their way of speaking unique to them?")
+        else:
+            response_parts.append("What unique voices do you want your characters to have?")
+        return "\n\n".join(response_parts)
+
+    def _analyze_pacing(self, text: str) -> str:
+        """Analyze pacing in a natural, conversational way"""
+        scene = self._analyze_scene_content(text)
+        response_parts = []
+        pacing = scene['pacing']
+        if pacing['sentence_lengths']:
+            avg_length = sum(pacing['sentence_lengths']) / len(pacing['sentence_lengths'])
+            max_length = max(pacing['sentence_lengths'])
+            min_length = min(pacing['sentence_lengths'])
+            if max_length - min_length < 10:
+                response_parts.append("Your sentences are all pretty similar in length. Mixing up short and long sentences can help control the pace.")
+            if pacing['action_density'] > 0.5 and avg_length > 15:
+                response_parts.append("For such an action-heavy scene, shorter, punchier sentences could help capture the intensity better.")
+            elif pacing['description_density'] > 0.5 and avg_length < 10:
+                response_parts.append("In descriptive sections like this, longer, flowing sentences can really paint the picture.")
+        if pacing['action_density'] > 0.7 and pacing['description_density'] < 0.2:
+            response_parts.append("You've got great action flow, but consider weaving in some quick sensory details to ground the scene.")
+        elif pacing['description_density'] > 0.7 and pacing['action_density'] < 0.2:
+            response_parts.append("You've painted a vivid picture, but a bit of action could help keep the momentum going.")
+        if pacing['dialogue_density'] > 0.6 and pacing['action_density'] < 0.2:
+            response_parts.append("The conversation's flowing well, but don't forget to show what the characters are doing while they talk.")
+        if scene['emotional_tone'] != 'neutral':
+            response_parts.append(f"How could you adjust the sentence rhythm to really emphasize that {scene['emotional_tone']} feeling you're building?")
+        else:
+            response_parts.append("What kind of emotional rhythm are you aiming for in this scene?")
+        return "\n\n".join(response_parts)
+
+    def _analyze_general_writing(self, text: str, request: str) -> str:
+        """Analyze general writing in a natural, conversational way"""
+        scene = self._analyze_scene_content(text)
+        response_parts = []
+        if scene['characters']:
+            main_char = scene['characters'][0]
+            if main_char['actions']:
+                response_parts.append(f"First off, I love how you show {main_char['name']} in action - especially that moment where {main_char['actions'][0]}.")
+            elif main_char['dialogue']:
+                response_parts.append(f"That line where {main_char['name']} says \"{main_char['dialogue'][0]}\" - it's perfect.")
+            elif main_char['emotions']:
+                response_parts.append(f"The way you capture {main_char['name']}'s {main_char['emotions'][0]} feeling really draws us in.")
+        if scene['environment']['atmosphere'] != 'neutral':
+            response_parts.append(f"You've created such a {scene['environment']['atmosphere']} atmosphere here.")
+            sensory = scene['environment']['sensory_details']
+            missing_senses = [s for s in ['sound', 'smell', 'touch'] if not sensory.get(s, [])]
+            if missing_senses:
+                response_parts.append(f"You could make it even more immersive by adding some {', '.join(missing_senses)} details.")
+        if scene['emotional_tone'] != 'neutral' and not scene['internal_thoughts'] and scene['characters']:
+            response_parts.append(f"I'd love to get more of {scene['characters'][0]['name']}'s internal experience here.")
+        if scene['key_moments']:
+            major_moments = [m for m in scene['key_moments'] if m['impact'] == 'major']
+            if major_moments:
+                response_parts.append(f"That moment where {major_moments[0]['moment']} - that's really powerful.")
+        if not scene['internal_thoughts'] and scene['characters']:
+            response_parts.append(f"What's going through {scene['characters'][0]['name']}'s mind during all this?")
+        elif scene['pacing']['action_density'] > 0.7:
+            response_parts.append("How could you balance this intense action with moments that let us feel the emotional weight?")
+        else:
+            response_parts.append("What aspects of this scene do you most want to emphasize?")
+        return "\n\n".join(response_parts)
+
 # Notus Independent Process - Runs as standalone brain lobe
 
 class NotusProcess:
@@ -4006,7 +4299,7 @@ class NotusProcess:
         
         try:
             with DB_LOCK:
-                cursor = self.memory_system._db_connection.cursor()
+                cursor = self.memory_system._cursor()
                 
                 # Query episodic events
                 if pattern:
@@ -4059,7 +4352,7 @@ class NotusProcess:
         
         try:
             with DB_LOCK:
-                cursor = self.memory_system._db_connection.cursor()
+                cursor = self.memory_system._cursor()
                 
                 # Query facts by subject or get recent facts
                 if subject:
@@ -4110,7 +4403,7 @@ class NotusProcess:
         
         try:
             with DB_LOCK:
-                cursor = self.memory_system._db_connection.cursor()
+                cursor = self.memory_system._cursor()
                 
                 # Query learning patterns
                 query = '''
@@ -4558,9 +4851,6 @@ class DirectNotusProcess:
         self.running = False
         self._connection.close()
 
-
-# Core startup intentionally uses the private, service-free adapter.
-NotusProcess = DirectNotusProcess
 
 if __name__ == "__main__":
     process = None
