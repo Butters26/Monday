@@ -224,18 +224,20 @@ class AdvancedEmbeddingEngine:
             return self._get_basic_embedding(text)
 
     def _get_basic_embedding(self, text: str) -> np.ndarray:
-        """Basic word frequency embedding"""
+        """Token-hash embedding: each unique word maps to a fixed dimension via its hash,
+        so unrelated texts get distinct vectors instead of colliding on frequency rank."""
         try:
             words = re.findall(r'\b\w+\b', text.lower())
+            if not words:
+                return np.zeros(EMBEDDING_DIM)
             word_freq = Counter(words)
-            
             embedding = np.zeros(EMBEDDING_DIM)
-            for i, (word, freq) in enumerate(word_freq.most_common(min(EMBEDDING_DIM, len(word_freq)))):
-                if i < EMBEDDING_DIM:
-                    embedding[i] = freq / len(words)
-                    
+            for word, freq in word_freq.items():
+                # Stable bucket: hash the word to a fixed dimension index
+                bucket = int(hashlib.md5(word.encode('utf-8', errors='ignore')).hexdigest(), 16) % EMBEDDING_DIM
+                embedding[bucket] += freq / len(words)
             return embedding
-            
+
         except Exception:
             return np.zeros(EMBEDDING_DIM)
 
@@ -4363,9 +4365,9 @@ class NotusProcess:
             return False
         
     def start(self):
-        """Start Notus - register with Thalamus (NO SOCKETS)"""
+        """Start Notus - register with Thalamus and listen on /tmp/notus.sock"""
         print(f"🧠 Notus Memory Lobe: Registering with Thalamus...")
-        
+
         # Initialize memory system in background thread (non-blocking)
         def init_memory_background():
             try:
@@ -4378,18 +4380,59 @@ class NotusProcess:
                 import traceback
                 traceback.print_exc()
                 # Don't set ready flag - memory operations will return "not ready"
-        
+
         memory_thread = threading.Thread(target=init_memory_background, daemon=True)
         memory_thread.start()
-        
+
         # Register with Thalamus
         if not self._register_with_thalamus():
             print("❌ Failed to register with Thalamus")
             return
-        
-        print("   Communication: Direct function calls (NO SOCKETS)")
-        
-        # Keep running (Thalamus calls us directly, no listening loop needed)
+
+        # Start Unix socket listener so launch_abin.py can detect /tmp/notus.sock
+        import socket as _socket
+        self._sock_path = "/tmp/notus.sock"
+        if os.path.exists(self._sock_path):
+            os.unlink(self._sock_path)
+        self._server_sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        self._server_sock.bind(self._sock_path)
+        self._server_sock.listen(16)
+        self._server_sock.settimeout(1.0)
+
+        def _socket_listener():
+            while self.running:
+                try:
+                    conn, _ = self._server_sock.accept()
+                except _socket.timeout:
+                    continue
+                except OSError:
+                    break
+                try:
+                    data = b""
+                    while True:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                        if b"\n" in data:
+                            break
+                    if data:
+                        message = json.loads(data.decode("utf-8").strip())
+                        response = self.process_message(message)
+                        conn.sendall((json.dumps(response) + "\n").encode("utf-8"))
+                except Exception as e:
+                    logger.warning(f"Socket handler error: {e}")
+                finally:
+                    try:
+                        conn.close()
+                    except OSError:
+                        pass
+
+        sock_thread = threading.Thread(target=_socket_listener, daemon=True, name="notus-sock")
+        sock_thread.start()
+        print(f"   Communication: Direct function calls + Unix socket ({self._sock_path})")
+
+        # Keep running (Thalamus calls us directly; socket thread handles IPC)
         while self.running:
             time.sleep(0.1)
     
@@ -4862,7 +4905,16 @@ class NotusProcess:
     def shutdown(self):
         """Graceful shutdown"""
         self.running = False
-        # No sockets to close
+        # Close Unix socket if it was opened
+        try:
+            self._server_sock.close()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(getattr(self, '_sock_path', '')):
+                os.unlink(self._sock_path)
+        except Exception:
+            pass
 
 
 class DirectNotusProcess:
@@ -4878,18 +4930,20 @@ class DirectNotusProcess:
         self.thalamus = thalamus or get_thalamus()
         self.storage_path = storage_path or runtime_file("notus_memory.sqlite3")
         os.makedirs(os.path.dirname(os.path.abspath(self.storage_path)), exist_ok=True)
+        self._conn_lock = threading.RLock()
         self._connection = sqlite3.connect(self.storage_path, check_same_thread=False)
-        self._connection.execute(
-            """CREATE TABLE IF NOT EXISTS memories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                memory_type TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )"""
-        )
-        self._connection.commit()
+        with self._conn_lock:
+            self._connection.execute(
+                """CREATE TABLE IF NOT EXISTS memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    memory_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )"""
+            )
+            self._connection.commit()
         self.memory_ready = threading.Event()
         self.memory_ready.set()
 
@@ -4909,7 +4963,8 @@ class DirectNotusProcess:
             params.extend(f"%{term}%" for term in terms)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
-        rows = self._connection.execute(sql, params).fetchall()
+        with self._conn_lock:
+            rows = self._connection.execute(sql, params).fetchall()
         return [
             {
                 "role": role,
@@ -4926,17 +4981,18 @@ class DirectNotusProcess:
         if not isinstance(content, str) or not content.strip():
             return {"status": "error", "message": "Memory content must be a non-empty string"}
         user_id = payload.get("user_id", "default")
-        self._connection.execute(
-            "INSERT INTO memories(role, content, user_id, memory_type, created_at) VALUES (?, ?, ?, ?, ?)",
-            (
-                payload.get("role", "system"),
-                content,
-                user_id,
-                payload.get("memory_type", "conversation"),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        self._connection.commit()
+        with self._conn_lock:
+            self._connection.execute(
+                "INSERT INTO memories(role, content, user_id, memory_type, created_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    payload.get("role", "system"),
+                    content,
+                    user_id,
+                    payload.get("memory_type", "conversation"),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            self._connection.commit()
         return {"status": "success", "content": {"stored": True, "content": content}}
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -4970,7 +5026,8 @@ class DirectNotusProcess:
 
     def shutdown(self):
         self.running = False
-        self._connection.close()
+        with self._conn_lock:
+            self._connection.close()
 
 
 if __name__ == "__main__":
