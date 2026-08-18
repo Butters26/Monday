@@ -157,6 +157,308 @@ class EmotionalBlend:
     created_at: float
 
 # ------------------------------
+# Appraisal System
+# ------------------------------
+
+# Meaning categories that drive emotion
+EVENT_TYPES = [
+    'harm', 'betrayal', 'rejection', 'threat', 'unfairness', 'loss',
+    'success', 'affection', 'gift', 'conflict', 'criticism', 'abandonment',
+    'support', 'celebration', 'neutral',
+]
+
+@dataclass
+class AppraisalResult:
+    """Structured meaning of an event, derived from understanding, not keywords."""
+    event_type: str          # one of EVENT_TYPES
+    severity: float          # 0..1 – how significant is this
+    directed_at_monday: bool # is Monday the target / subject?
+    directed_at_user: bool   # is the user the target / subject?
+    third_party: bool        # about someone else entirely
+    negated: bool            # the event was negated ("I'm not upset")
+    sarcasm_likely: bool     # sarcasm detected
+    raw_text: str            # original message
+    # What Monday's own emotion should lean toward, given this appraisal
+    monday_pad_delta: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # (Δv, Δa, Δd)
+    # What the user is inferred to be feeling
+    user_inferred_emotion: str = 'neutral'
+    user_confidence: float = 0.0
+
+@dataclass
+class UserAffectModel:
+    """Monday's model of what the user is feeling, kept separate from Monday's own emotion."""
+    inferred_emotion: str = 'neutral'
+    confidence: float = 0.0
+    inferred_need: str = 'neutral'   # 'validation','help','celebration','space','neutral'
+    last_updated: float = 0.0
+
+class AppraisalEngine:
+    """
+    Classifies the *meaning* of a message rather than counting keywords.
+    Produces an AppraisalResult that feeds the PAD pipeline.
+    Keywords are used only as weak evidence inside the classifiers.
+    """
+
+    # --------------- Event-type pattern tables ---------------
+    # Each entry: (pattern_phrases, event_type, Δvalence, Δarousal, Δdominance)
+    # These represent Monday's emotional response to each event type.
+    _EVENT_PAD: Dict[str, Tuple[float, float, float]] = {
+        'harm':        (-0.70,  0.50, -0.20),
+        'betrayal':    (-0.80,  0.40, -0.30),
+        'rejection':   (-0.60,  0.30, -0.40),
+        'threat':      (-0.60,  0.70, -0.30),
+        'unfairness':  (-0.50,  0.60,  0.10),
+        'loss':        (-0.70, -0.10, -0.30),
+        'success':     ( 0.60,  0.40,  0.30),
+        'affection':   ( 0.70,  0.20,  0.20),
+        'gift':        ( 0.50,  0.30,  0.10),
+        'conflict':    (-0.40,  0.60,  0.20),
+        'criticism':   (-0.30,  0.40, -0.10),
+        'abandonment': (-0.70,  0.20, -0.50),
+        'support':     ( 0.60,  0.10,  0.30),
+        'celebration': ( 0.80,  0.50,  0.30),
+        'neutral':     ( 0.00,  0.00,  0.00),
+    }
+
+    # User emotion implied by each event type when user is the subject
+    _USER_EMOTION_BY_EVENT: Dict[str, str] = {
+        'harm':        'hurt',
+        'betrayal':    'angry',
+        'rejection':   'sad',
+        'threat':      'scared',
+        'unfairness':  'angry',
+        'loss':        'sad',
+        'success':     'proud',
+        'affection':   'happy',
+        'gift':        'happy',
+        'conflict':    'angry',
+        'criticism':   'worried',
+        'abandonment': 'sad',
+        'support':     'grateful',
+        'celebration': 'excited',
+        'neutral':     'neutral',
+    }
+
+    # Phrase-to-event-type classifiers (ordered, first match wins per category).
+    # Each tuple: (list_of_phrase_fragments, event_type, base_severity)
+    _CLASSIFIERS: List[Tuple[List[str], str, float]] = [
+        # Betrayal
+        (['lied to me', 'went behind my back', 'stabbed me', 'betrayed', 'cheated on', 'cheated me',
+          'went behind', 'talking behind', 'broke my trust', 'used me', 'manipulated me'], 'betrayal', 0.8),
+        # Abandonment
+        (['left me', 'walked out', 'ghosted', 'abandoned', 'ditched me', 'stopped talking to me',
+          'never there for me', 'cut me off', 'blocked me'], 'abandonment', 0.75),
+        # Rejection
+        (['rejected', 'turned me down', 'said no', 'not interested', 'dumped', 'broke up with me',
+          'fired me', 'not good enough', "didn't pick me", "wasn't chosen"], 'rejection', 0.65),
+        # Loss
+        (['died', 'passed away', 'lost my', 'grief', 'mourning', 'funeral', 'gone forever',
+          'will never see', 'lost everything', 'miscarriage', 'accident killed'], 'loss', 0.85),
+        # Harm / hurt
+        (['hurt me', 'hit me', 'attacked', 'abused', 'mistreated', 'treated me like garbage',
+          'treated me like trash', 'treated me like dirt', 'made me feel worthless',
+          'made me feel stupid', 'humiliated', 'degraded', 'screamed at me', 'yelled at me'], 'harm', 0.80),
+        # Threat
+        (['threatened', 'going to hurt', 'going to kill', 'warned me', 'scared of',
+          "don't feel safe", 'feel unsafe', 'in danger'], 'threat', 0.75),
+        # Unfairness
+        (['not fair', "isn't fair", 'unfair', 'should not have', 'got away with',
+          'blamed me for', 'scapegoated', 'punished for something', 'wrong person',
+          "didn't do anything wrong", 'not my fault'], 'unfairness', 0.60),
+        # Conflict
+        (['fight with', 'argument with', 'argued with', 'yelling at each other',
+          'screaming at each other', 'falling out', 'clash with', 'tension with',
+          'not speaking to', 'on bad terms'], 'conflict', 0.55),
+        # Criticism
+        (['criticized', 'told me i was wrong', 'called me out', 'said i did it wrong',
+          'pointed out my mistake', 'embarrassed me', "doesn't think i'm good",
+          'talked down to me', 'condescending'], 'criticism', 0.45),
+        # Success
+        (['got the job', 'got promoted', 'passed the exam', 'finished it', 'won',
+          'succeeded', 'accomplished', 'completed', 'finally did it', 'pulled it off',
+          'graduated', 'accepted', 'got in', 'landed the'], 'success', 0.65),
+        # Celebration
+        (['birthday', 'anniversary', 'graduated', 'wedding', 'baby', 'promotion',
+          'celebrating', 'party for', 'good news'], 'celebration', 0.60),
+        # Affection
+        (['i love you', 'i care about you', 'you mean so much', 'grateful for you',
+          'appreciate you', 'you matter', 'you make me happy', 'i like you',
+          'miss you', 'thinking of you'], 'affection', 0.65),
+        # Support
+        (['helped me', 'supported me', 'there for me', 'picked me up',
+          'listened to me', 'had my back', 'stood up for me'], 'support', 0.55),
+        # Gift
+        (['gave me', 'bought me', 'got me a', 'sent me', 'surprised me with'], 'gift', 0.45),
+    ]
+
+    # Negation phrase patterns
+    _NEGATION_PHRASES: List[str] = [
+        "not ", "n't ", "never ", "no longer ", "don't ", "didn't ", "won't ",
+        "wasn't ", "isn't ", "haven't ", "can't ", "couldn't ",
+    ]
+
+    # Sarcasm markers
+    _SARCASM_MARKERS: List[str] = [
+        'great, thanks', 'oh great', 'oh wonderful', 'yeah right', 'sure thing',
+        'totally fine', 'absolutely fine', 'oh sure', 'oh wow', 'how lovely',
+        'how wonderful', 'how nice', 'how great', 'oh perfect', 'just perfect',
+        'just great', 'just wonderful', 'oh fantastic', '/s',
+    ]
+
+    # Patterns indicating Monday is the target
+    _MONDAY_TARGET: List[str] = [
+        'you ', 'your ', "you're", "you've", "you'll", "you'd", "you are",
+        'monday ', "monday's",
+    ]
+
+    # Patterns indicating the user is the subject/speaker
+    _USER_SUBJECT: List[str] = [
+        'i ', "i'm", "i've", "i've", "i'd", "i'll", 'my ', 'me ', 'myself',
+    ]
+
+    def appraise(self, text: str, relationship_history: Optional[List[str]] = None,
+                 sensitivity_map: Optional[Dict[str, float]] = None) -> AppraisalResult:
+        """
+        Main entry point. Returns a full AppraisalResult for `text`.
+        relationship_history: list of recent event_type strings for escalation
+        sensitivity_map: event_type → learned sensitivity multiplier
+        """
+        tl = text.lower()
+
+        negated = self._detect_negation(tl)
+        sarcasm = self._detect_sarcasm(tl)
+
+        # If sarcasm, flip positive surface signals to negative
+        effective_text = tl
+        if sarcasm:
+            # Replace surface positive words to avoid false positive classification
+            for pos in ['great', 'wonderful', 'fantastic', 'perfect', 'lovely', 'fine']:
+                effective_text = effective_text.replace(pos, '_sarcasm_')
+
+        directed_at_monday = self._directed_at_monday(tl)
+        directed_at_user = self._directed_at_user(tl)
+        third_party = not directed_at_monday and not directed_at_user
+
+        event_type, base_severity = self._classify_event(effective_text)
+
+        # If negated, drop severity and shift event_type toward neutral
+        if negated and event_type not in ('loss',):  # can't negate a death
+            base_severity *= 0.25
+            if base_severity < 0.15:
+                event_type = 'neutral'
+
+        # Severity modifiers: intensifiers, repetition in history
+        severity = self._adjust_severity(base_severity, tl, event_type, relationship_history, sensitivity_map)
+
+        # PAD delta for Monday based on who is affected
+        pad_delta = self._compute_monday_pad(event_type, severity, directed_at_monday, directed_at_user)
+
+        # User inferred emotion
+        user_emotion, user_conf = self._infer_user_emotion(event_type, directed_at_user, severity, negated)
+
+        return AppraisalResult(
+            event_type=event_type,
+            severity=severity,
+            directed_at_monday=directed_at_monday,
+            directed_at_user=directed_at_user,
+            third_party=third_party,
+            negated=negated,
+            sarcasm_likely=sarcasm,
+            raw_text=text,
+            monday_pad_delta=pad_delta,
+            user_inferred_emotion=user_emotion,
+            user_confidence=user_conf,
+        )
+
+    # --------------- Private classifiers ---------------
+
+    def _detect_negation(self, tl: str) -> bool:
+        return any(neg in tl for neg in self._NEGATION_PHRASES)
+
+    def _detect_sarcasm(self, tl: str) -> bool:
+        # Punctuation-based: positive word followed by '?' or ending '...'
+        for marker in self._SARCASM_MARKERS:
+            if marker in tl:
+                return True
+        # Polite positive words after clear negative framing
+        if re.search(r'\b(terrible|awful|horrible|worst)\b.{0,30}\b(great|fine|okay|wonderful)\b', tl):
+            return True
+        return False
+
+    def _directed_at_monday(self, tl: str) -> bool:
+        return any(p in tl for p in self._MONDAY_TARGET)
+
+    def _directed_at_user(self, tl: str) -> bool:
+        return any(p in tl for p in self._USER_SUBJECT)
+
+    def _classify_event(self, tl: str) -> Tuple[str, float]:
+        for phrases, event_type, severity in self._CLASSIFIERS:
+            for phrase in phrases:
+                if phrase in tl:
+                    return event_type, severity
+        return 'neutral', 0.1
+
+    def _adjust_severity(self, base: float, tl: str, event_type: str,
+                          history: Optional[List[str]], sensitivity_map: Optional[Dict[str, float]]) -> float:
+        severity = base
+        # Intensifiers
+        intensifiers = ['so ', 'really ', 'very ', 'extremely ', 'absolutely ', 'completely ',
+                        'totally ', 'deeply ', 'badly ', 'terribly ']
+        hits = sum(1 for w in intensifiers if w in tl)
+        severity = min(1.0, severity + hits * 0.08)
+
+        # Diminishers
+        diminishers = ['a bit ', 'slightly ', 'kind of ', 'sort of ', 'a little ']
+        d_hits = sum(1 for w in diminishers if w in tl)
+        severity = max(0.0, severity - d_hits * 0.08)
+
+        # Learned sensitivity for this event type
+        if sensitivity_map and event_type in sensitivity_map:
+            severity = min(1.0, severity * sensitivity_map[event_type])
+
+        # Escalation: repeated same event type in recent history raises severity
+        if history:
+            repeat_count = history.count(event_type)
+            severity = min(1.0, severity + repeat_count * 0.10)
+
+        return round(severity, 3)
+
+    def _compute_monday_pad(self, event_type: str, severity: float,
+                             directed_at_monday: bool, directed_at_user: bool) -> Tuple[float, float, float]:
+        base_v, base_a, base_d = self._EVENT_PAD.get(event_type, (0.0, 0.0, 0.0))
+
+        # Scale by severity
+        v = base_v * severity
+        a = base_a * severity
+        d = base_d * severity
+
+        # If directed at Monday directly, amplify emotional impact
+        if directed_at_monday:
+            v *= 1.4
+            a *= 1.2
+            d *= 1.1
+
+        # If harm/rejection aimed at the user, Monday feels protectiveness:
+        # boost concern/protectiveness flavour (lower valence, raise arousal slightly)
+        elif directed_at_user and event_type in ('harm', 'betrayal', 'rejection', 'abandonment', 'threat'):
+            v = max(-1.0, v * 0.9)   # concern but slightly less intense than direct hit
+            a = min(1.0, a * 1.1)    # slightly more alert
+
+        def clamp(x: float) -> float:
+            return max(-1.0, min(1.0, x))
+
+        return (clamp(v), clamp(a), clamp(d))
+
+    def _infer_user_emotion(self, event_type: str, directed_at_user: bool,
+                             severity: float, negated: bool) -> Tuple[str, float]:
+        if negated or severity < 0.15:
+            return 'neutral', 0.2
+        base_emotion = self._USER_EMOTION_BY_EVENT.get(event_type, 'neutral')
+        confidence = min(0.95, 0.4 + severity * 0.6) if directed_at_user else min(0.6, 0.2 + severity * 0.4)
+        return base_emotion, confidence
+
+
+# ------------------------------
 # Engine
 # ------------------------------
 
@@ -215,6 +517,17 @@ class AdvancedEmotionalEngine:
         self.internal = InternalState()
         self.expression = ExpressionState()
         self._time_on_task: float = 0.0
+        # Appraisal system
+        self._appraisal_engine = AppraisalEngine()
+        self._user_affect = UserAffectModel()
+        # event_type → sensitivity multiplier (learned, starts at 1.0 for all)
+        self._event_sensitivity: Dict[str, float] = {et: 1.0 for et in EVENT_TYPES}
+        # recent event-type history for escalation detection (last 20)
+        self._event_history: List[str] = []
+        # unresolved negative appraisal tracking: list of (event_type, severity, timestamp)
+        self._unresolved_appraisals: List[Tuple[str, float, float]] = []
+        # attention bias: negative emotion biases ambiguous messages (set to event_type or None)
+        self._attention_bias: Optional[str] = None
 
     # --------------- Public API ---------------
     def _query_lobe(self, lobe_name: str, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -270,16 +583,25 @@ class AdvancedEmotionalEngine:
                 # Add to local memories if not already present
         except Exception:
             pass
-        
-        predicted = self.predict_user_emotion(user_input)
-        context = self.assess_emotional_context(user_input)
+
+        # --- Appraisal-first pipeline ---
+        appraisal = self._appraisal_engine.appraise(
+            user_input,
+            relationship_history=self._event_history[-20:],
+            sensitivity_map=self._event_sensitivity,
+        )
+        self._apply_appraisal(appraisal)
+
+        # Legacy keyword cues (weak secondary signal only)
         cues = self._analyze_emotional_cues(user_input)
         self._calculate_emotional_resonance(cues)
-        self._process_emotional_input_advanced(cues, user_input)
+        context = self.assess_emotional_context(user_input)
         if self.emotional_memories:
             self.process_trauma_memory(self.emotional_memories[-1])
         memory_influence = self._get_memory_influence(user_input)
         base = self._generate_advanced_emotional_response(user_input, memory_influence)
+        # Use appraisal-derived user affect for response enhancement
+        predicted = {appraisal.user_inferred_emotion: appraisal.user_confidence}
         enhanced = self._enhance_response_with_advanced_features(base, user_input, predicted, context)
         self.calculate_emotional_intelligence()
         # Persist the response so future queries can return learned responses
@@ -336,6 +658,20 @@ class AdvancedEmotionalEngine:
             ],
             'emotional_patterns': {k: [e.value for e in v] for k, v in self.emotional_patterns.items()},
             'emotional_intelligence_score': self.emotional_intelligence_score,
+            # Appraisal system state
+            'event_sensitivity': self._event_sensitivity,
+            'event_history': self._event_history[-50:],
+            'unresolved_appraisals': [
+                {'event_type': et, 'severity': sev, 'timestamp': ts}
+                for (et, sev, ts) in self._unresolved_appraisals
+            ],
+            'attention_bias': self._attention_bias,
+            'user_affect': {
+                'inferred_emotion': self._user_affect.inferred_emotion,
+                'confidence': self._user_affect.confidence,
+                'inferred_need': self._user_affect.inferred_need,
+                'last_updated': self._user_affect.last_updated,
+            },
             'updated_at': time.time(),
         }
         data.setdefault('created_at', time.time())
@@ -364,6 +700,25 @@ class AdvancedEmotionalEngine:
         ]
         self.emotional_patterns = {k: [EmotionalState(e) for e in v] for k, v in obj.get('emotional_patterns', {}).items()}
         self.emotional_intelligence_score = float(obj.get('emotional_intelligence_score', 0.5))
+        # Appraisal system state (additive — defaults gracefully if missing)
+        saved_sensitivity = obj.get('event_sensitivity', {})
+        for et in EVENT_TYPES:
+            self._event_sensitivity[et] = float(saved_sensitivity.get(et, 1.0))
+        self._event_history = list(obj.get('event_history', []))
+        raw_unresolved = obj.get('unresolved_appraisals', [])
+        self._unresolved_appraisals = [
+            (u['event_type'], float(u['severity']), float(u['timestamp']))
+            for u in raw_unresolved if isinstance(u, dict)
+        ]
+        self._attention_bias = obj.get('attention_bias', None)
+        ua = obj.get('user_affect', {})
+        if ua:
+            self._user_affect = UserAffectModel(
+                inferred_emotion=ua.get('inferred_emotion', 'neutral'),
+                confidence=float(ua.get('confidence', 0.0)),
+                inferred_need=ua.get('inferred_need', 'neutral'),
+                last_updated=float(ua.get('last_updated', 0.0)),
+            )
 
     # --------------- Internals ---------------
     def _check_emotional_blending(self, new_emotion: EmotionalState, intensity: float) -> Optional[EmotionalBlend]:
@@ -414,10 +769,139 @@ class AdvancedEmotionalEngine:
         self._log(f"{self.name} complex emotion: {blend.primary_emotion.value} from {[e.value for e, _ in blend.secondary_emotions]}")
 
     def _update_emotional_patterns(self, emotion: EmotionalState, trigger: str) -> None:
+        # Legacy word→emotion map kept for backward compatibility but no longer drives decisions.
         for word in re.findall(r"\b[a-zA-Z]{4,}\b", trigger.lower()):
             self.emotional_patterns.setdefault(word, []).append(emotion)
             if len(self.emotional_patterns[word]) > 10:
                 self.emotional_patterns[word] = self.emotional_patterns[word][-10:]
+
+    # --------------- Appraisal-driven core ---------------
+
+    def _apply_appraisal(self, appraisal: AppraisalResult) -> None:
+        """
+        Central method: takes an AppraisalResult and drives Monday's emotion through the
+        PAD pipeline. Also updates user affect model, event history, learning, and persistence.
+        """
+        self._update_internal_from_time(dt=1.0)
+        self._update_attachment_from_input(appraisal.raw_text)
+
+        # 1. Update user affect model
+        self._user_affect = UserAffectModel(
+            inferred_emotion=appraisal.user_inferred_emotion,
+            confidence=appraisal.user_confidence,
+            inferred_need=self._infer_user_need(appraisal),
+            last_updated=time.time(),
+        )
+
+        # 2. Update event history for escalation tracking
+        self._event_history.append(appraisal.event_type)
+        if len(self._event_history) > 50:
+            self._event_history = self._event_history[-50:]
+
+        # 3. Compute PAD: appraisal is the primary signal; keyword cues are a weak nudge.
+        dv, da, dd = appraisal.monday_pad_delta
+        # Apply attention bias: if Monday is already in a negative state and event is ambiguous,
+        # lean toward concern
+        if self._attention_bias and appraisal.event_type == 'neutral' and appraisal.severity < 0.2:
+            bias_pad = self._appraisal_engine._EVENT_PAD.get(self._attention_bias, (0.0, 0.0, 0.0))
+            dv += bias_pad[0] * 0.2
+            da += bias_pad[1] * 0.2
+            dd += bias_pad[2] * 0.2
+
+        appraisal_pad = PAD(
+            v=max(-1.0, min(1.0, dv)),
+            a=max(-1.0, min(1.0, da)),
+            d=max(-1.0, min(1.0, dd)),
+        )
+
+        # 4. Blend appraisal PAD with internal state PAD
+        internal_pad = self._pad_from_internal()
+        # Weight: appraisal 70%, internal 30%
+        blended_pad = PAD(
+            v=0.70 * appraisal_pad.v + 0.30 * internal_pad.v,
+            a=0.70 * appraisal_pad.a + 0.30 * internal_pad.a,
+            d=0.70 * appraisal_pad.d + 0.30 * internal_pad.d,
+        )
+        self._update_pad_state(blended_pad)
+
+        # 5. Map PAD to emotion (existing pipeline, unchanged)
+        choice = self._pad_to_emotion_choice(self.pad)
+        if choice and self._pad_margin_ok(choice[0]):
+            self._switch_to_emotion(choice[0], appraisal.raw_text[:80])
+        else:
+            self._update_emotion_persistence()
+
+        self._update_expression_flags()
+
+        # 6. Unresolved appraisal tracking (persistence hooks)
+        _NEGATIVE_EVENTS = {'harm', 'betrayal', 'rejection', 'threat', 'loss', 'abandonment'}
+        if appraisal.event_type in _NEGATIVE_EVENTS and appraisal.severity >= 0.4:
+            self._unresolved_appraisals.append(
+                (appraisal.event_type, appraisal.severity, time.time())
+            )
+            if len(self._unresolved_appraisals) > 20:
+                self._unresolved_appraisals = self._unresolved_appraisals[-20:]
+
+        # Set attention bias when in a sustained negative state
+        if self.current_emotion in (EmotionalState.WORRIED, EmotionalState.SAD,
+                                     EmotionalState.SCARED, EmotionalState.ANXIOUS):
+            self._attention_bias = appraisal.event_type if appraisal.event_type != 'neutral' else self._attention_bias
+        else:
+            self._attention_bias = None
+
+        # 7. Learn: update event-type sensitivity
+        self._update_event_sensitivity(appraisal)
+
+        # 8. Store event to Notus for cross-session memory
+        try:
+            self._query_lobe('notus', {
+                'type': 'store_appraisal_event',
+                'event_type': appraisal.event_type,
+                'severity': appraisal.severity,
+                'directed_at_monday': appraisal.directed_at_monday,
+                'monday_emotion': self.current_emotion.value,
+                'user_inferred_emotion': appraisal.user_inferred_emotion,
+                'trigger': appraisal.raw_text[:200],
+            })
+        except Exception:
+            pass
+
+    def _infer_user_need(self, appraisal: AppraisalResult) -> str:
+        """Infer what kind of response the user likely wants."""
+        if appraisal.event_type in ('harm', 'betrayal', 'rejection', 'loss', 'abandonment'):
+            return 'validation'
+        if appraisal.event_type in ('threat', 'conflict', 'unfairness'):
+            return 'help'
+        if appraisal.event_type in ('success', 'celebration', 'affection', 'gift'):
+            return 'celebration'
+        if appraisal.event_type == 'support':
+            return 'space'
+        if appraisal.event_type == 'criticism' and appraisal.directed_at_monday:
+            return 'feedback'
+        return 'neutral'
+
+    def _update_event_sensitivity(self, appraisal: AppraisalResult) -> None:
+        """
+        Sensitivity drift: if an event type repeatedly produces strong emotion, her
+        sensitivity to that type increases (up to 1.5×). Recovery toward 1.0 for absent types.
+        """
+        et = appraisal.event_type
+        if et == 'neutral':
+            # Slow recovery for all types not triggered recently
+            for key in list(self._event_sensitivity.keys()):
+                if key not in self._event_history[-5:]:
+                    self._event_sensitivity[key] = max(1.0, self._event_sensitivity[key] - 0.01)
+            return
+
+        current = self._event_sensitivity.get(et, 1.0)
+        # How emotionally intense did this appraisal make Monday?
+        emotion_intensity = self.emotional_intensity
+        if emotion_intensity > 0.6 and appraisal.severity > 0.4:
+            # Drift upward: she becomes more sensitive
+            self._event_sensitivity[et] = min(1.5, current + 0.03)
+        elif emotion_intensity < 0.3:
+            # Low impact → slight desensitization
+            self._event_sensitivity[et] = max(0.7, current - 0.01)
 
     def _calculate_emotional_resonance(self, cues: Dict[str, float]) -> None:
         base = self.personality.empathy_level * 0.5
@@ -488,6 +972,11 @@ class AdvancedEmotionalEngine:
         return influence
 
     def _analyze_emotional_cues(self, text: str) -> Dict[str, float]:
+        """
+        Keyword cue scorer — retained as a WEAK secondary signal only.
+        All values are capped at 0.2 so they nudge PAD but never cause a direct emotion switch.
+        The appraisal engine is the primary driver.
+        """
         t = text.lower()
         cues = {k: 0.0 for k in ['positive','negative','excitement','concern','anger','sadness','pride']}
         def bump(words: List[str], key: str, val: float):
@@ -500,38 +989,37 @@ class AdvancedEmotionalEngine:
         excitement = ['wow','excited','incredible','omg','unbelievable','mind-blowing','spectacular','thrilled','eager','pumped','hyped']
         concern = ['worried','concerned','problem','issue','help','trouble','difficult','scared','afraid','nervous','terrified','overwhelmed','confused','anxious','panic']
         pride = ['proud','accomplished','achievement','success','victory','triumph','myself','earned','deserve']
-        # crisis / trauma (keep as signal only)
         crisis = ['suicide','kill','die','death','hopeless','worthless','nobody','alone','abandoned','betrayed','trauma','abuse']
         trauma = ['died','loss','grief','mourning','funeral','buried','gone','missing','abandoned','betrayed','hurt','pain']
-        # insults / threats (removed to revert to original behavior)
-        # false positives ("kill time" etc.)
         innocent = ['kill time','kill two birds','kill the lights','dying to see','die of laughter','die laughing']
         if any(ph in t for ph in innocent):
             crisis_detected = False
         else:
             crisis_detected = any(re.search(rf"\b{re.escape(w)}\b", t) for w in crisis)
         trauma_detected = any(re.search(rf"\b{re.escape(w)}\b", t) for w in trauma)
-        # no separate insult/threat detection in original
         if crisis_detected:
-            cues['concern'] += 2.0; cues['sadness'] += 1.5
+            cues['concern'] += 0.2; cues['sadness'] += 0.15
         if trauma_detected:
-            cues['sadness'] += 1.8; cues['concern'] += 1.2
+            cues['sadness'] += 0.18; cues['concern'] += 0.12
         if not (crisis_detected or trauma_detected):
-            bump(positive, 'positive', 0.5)
-            bump(negative, 'negative', 0.8); cues['sadness'] += cues['negative'] * 0.75
-            bump(anger, 'anger', 0.8)
-            bump(excitement, 'excitement', 0.5)
-            bump(concern, 'concern', 0.6)
-            bump(pride, 'pride', 0.7)
+            bump(positive, 'positive', 0.05)
+            bump(negative, 'negative', 0.08); cues['sadness'] += cues['negative'] * 0.075
+            bump(anger, 'anger', 0.08)
+            bump(excitement, 'excitement', 0.05)
+            bump(concern, 'concern', 0.06)
+            bump(pride, 'pride', 0.07)
         for w in re.findall(r"\b\w+\b", t):
             if w in self.emotional_patterns:
                 for emo in self.emotional_patterns[w][-3:]:
-                    if emo == EmotionalState.HAPPY: cues['positive'] += 0.2
-                    elif emo == EmotionalState.SAD: cues['sadness'] += 0.2
-                    elif emo == EmotionalState.ANGRY: cues['anger'] += 0.2
-                    elif emo == EmotionalState.EXCITED: cues['excitement'] += 0.2
-                    elif emo == EmotionalState.WORRIED: cues['concern'] += 0.2
-                    elif emo == EmotionalState.PROUD: cues['pride'] += 0.2
+                    if emo == EmotionalState.HAPPY: cues['positive'] += 0.02
+                    elif emo == EmotionalState.SAD: cues['sadness'] += 0.02
+                    elif emo == EmotionalState.ANGRY: cues['anger'] += 0.02
+                    elif emo == EmotionalState.EXCITED: cues['excitement'] += 0.02
+                    elif emo == EmotionalState.WORRIED: cues['concern'] += 0.02
+                    elif emo == EmotionalState.PROUD: cues['pride'] += 0.02
+        # Hard cap: keywords are weak nudges, not causes
+        for k in cues:
+            cues[k] = min(cues[k], 0.2)
         return cues
 
     def _generate_advanced_emotional_response(self, user_input: str, mi: Dict[str, float]) -> str:
@@ -805,46 +1293,10 @@ class AdvancedEmotionalEngine:
         return (cur_dist - new_dist) > margin
 
     def _get_direct_emotion_trigger(self, cues: Dict[str, float], user_input: str) -> Optional[EmotionalState]:
-        # Direct emotion triggers based on cue strength
-        # Yelling/insult heuristic takes precedence
-        text_lower = user_input.lower()
-        caps_ratio = sum(1 for ch in user_input if ch.isupper()) / max(1, sum(1 for ch in user_input if ch.isalpha()))
-        if (user_input.count('!') >= 2 or caps_ratio > 0.35) and any(w in text_lower for w in ['stupid','idiot','dumb','worthless','hate']):
-            return EmotionalState.ANGRY
-        if cues.get('positive', 0.0) > 0.6:
-            return EmotionalState.HAPPY
-        if cues.get('anger', 0.0) > 0.6:
-            return EmotionalState.ANGRY
-        if cues.get('sadness', 0.0) > 0.6:
-            return EmotionalState.SAD
-        if cues.get('excitement', 0.0) > 0.6:
-            return EmotionalState.EXCITED
-        if cues.get('concern', 0.0) > 0.6:
-            return EmotionalState.WORRIED
-        if cues.get('pride', 0.0) > 0.6:
-            return EmotionalState.PROUD
-        
-        # Check for specific word triggers - ordered by specificity
-        # (specific phrases)
-
-        # Most specific first to avoid overlap
-        if any(word in text_lower for word in ['excited', 'thrilled', 'amazing', 'incredible', 'exciting']):
-            return EmotionalState.EXCITED
-        if any(word in text_lower for word in ['angry', 'mad', 'furious', 'hate', 'rage']):
-            return EmotionalState.ANGRY
-        if any(word in text_lower for word in ['sad', 'depressed', 'lonely', 'hurt', 'cry']):
-            return EmotionalState.SAD
-        if any(word in text_lower for word in ['worried', 'anxious', 'scared', 'afraid']):
-            return EmotionalState.WORRIED
-        if any(word in text_lower for word in ['proud', 'accomplished', 'success', 'achievement']):
-            return EmotionalState.PROUD
-        if any(word in text_lower for word in ['curious', 'wonder', 'question', 'interesting']):
-            return EmotionalState.CURIOUS
-        if any(word in text_lower for word in ['calm', 'peaceful', 'relaxed', 'serene']):
-            return EmotionalState.CALM
-        if any(word in text_lower for word in ['happy', 'joy', 'great', 'wonderful']):
-            return EmotionalState.HAPPY
-            
+        """
+        Deprecated as primary driver — appraisal engine now owns emotion selection.
+        This method is retained for legacy call sites but always returns None.
+        """
         return None
 
     def _switch_to_emotion(self, emotion: EmotionalState, trigger: str) -> None:
@@ -868,30 +1320,67 @@ class AdvancedEmotionalEngine:
         self._last_switch_time = time.time()
 
     def _update_emotion_persistence(self) -> None:
-        # Emotion persistence - current emotion decays over time
-        decay_rate = 0.05
+        """
+        Emotion persistence with unresolved-appraisal tracking.
+        Negative emotions from unacknowledged events persist at higher intensity;
+        simple time-based decay is used for resolved or neutral states.
+        """
+        _NEGATIVE_EVENTS = {'harm', 'betrayal', 'rejection', 'threat', 'loss', 'abandonment'}
+        now = time.time()
+
+        # Expire unresolved appraisals older than 5 minutes
+        self._unresolved_appraisals = [
+            (et, sev, ts) for (et, sev, ts) in self._unresolved_appraisals
+            if now - ts < 300
+        ]
+
+        # If there are active unresolved negative appraisals, slow decay significantly
+        unresolved_weight = sum(sev for (et, sev, _) in self._unresolved_appraisals
+                                if et in _NEGATIVE_EVENTS)
+        if unresolved_weight > 0.0:
+            # Decay is reduced proportionally — the emotion lingers
+            decay_rate = max(0.005, 0.05 - unresolved_weight * 0.03)
+        else:
+            decay_rate = 0.05
+
         self.emotional_intensity = max(0.1, self.emotional_intensity - decay_rate)
-        
-        # If intensity gets too low, switch to calm
         if self.emotional_intensity <= 0.1:
             self.current_emotion = EmotionalState.CALM
             self.emotional_intensity = 0.1
 
     # --------------- Higher‑level helpers ---------------
     def predict_user_emotion(self, user_input: str) -> Dict[str, float]:
+        """
+        Returns Monday's model of what the user is feeling.
+        Now driven by appraisal (meaning of the event) rather than keyword mirroring.
+        Falls back to Notus historical patterns, then to a weak keyword fallback.
+        """
+        # Prefer the live UserAffectModel if it was just updated for this input
+        if self._user_affect.last_updated > 0 and self._user_affect.inferred_emotion != 'neutral':
+            pred = {self._user_affect.inferred_emotion: self._user_affect.confidence}
+            self.emotional_predictions[user_input[:50]] = pred
+            return pred
+
         # Query Notus for past user emotional patterns
         try:
             notus_patterns = self._query_lobe('notus', {'type': 'get_user_emotion_patterns', 'input': user_input})
             if notus_patterns and notus_patterns.get('status') == 'success':
                 patterns = notus_patterns.get('patterns', {})
                 if patterns:
-                    # Use learned patterns to inform prediction
                     pred = patterns.copy()
                     self.emotional_predictions[user_input[:50]] = pred
                     return pred
         except Exception:
             pass
-        
+
+        # Appraise the message directly
+        appraisal = self._appraisal_engine.appraise(user_input)
+        if appraisal.user_inferred_emotion != 'neutral' and appraisal.user_confidence > 0.2:
+            pred = {appraisal.user_inferred_emotion: appraisal.user_confidence}
+            self.emotional_predictions[user_input[:50]] = pred
+            return pred
+
+        # Minimal keyword fallback (weak)
         cues = self._analyze_emotional_cues(user_input)
         pred = {
             'happy': cues.get('positive', 0.0),
