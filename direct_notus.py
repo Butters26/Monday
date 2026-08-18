@@ -42,6 +42,17 @@ class DirectNotusProcess:
                 created_at TEXT NOT NULL
             )"""
         )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS emotional_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                emotion TEXT NOT NULL,
+                intensity REAL NOT NULL,
+                trigger TEXT NOT NULL,
+                context TEXT NOT NULL DEFAULT '',
+                response TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )"""
+        )
         self._connection.commit()
         self.memory_ready = threading.Event()
         self.memory_ready.set()
@@ -111,6 +122,112 @@ class DirectNotusProcess:
             if self._is_safe_memory(role, content)
         ][:normalized_limit]
 
+    def _store_emotional_memory(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        emotion = payload.get("emotion", "")
+        trigger = payload.get("trigger", "")
+        if not emotion or not trigger:
+            return {"status": "error", "message": "emotion and trigger are required"}
+        intensity = float(payload.get("intensity", 0.5))
+        context = str(payload.get("context", ""))
+        response = str(payload.get("response", ""))
+        with self._lock:
+            self._require_connection().execute(
+                "INSERT INTO emotional_memories(emotion, intensity, trigger, context, response, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (emotion, intensity, trigger, context, response,
+                 datetime.now(timezone.utc).isoformat()),
+            )
+            self._require_connection().commit()
+        return {"status": "success", "content": {"stored": True}}
+
+    def _retrieve_emotional_memories(
+        self, trigger: str = "", limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Return emotional memories whose trigger shares keywords with *trigger*."""
+        terms = [t.lower() for t in re.split(r"\W+", trigger) if len(t) > 2]
+        with self._lock:
+            if terms:
+                sql = (
+                    "SELECT emotion, intensity, trigger, context, response, created_at"
+                    " FROM emotional_memories"
+                    " WHERE " + " OR ".join("lower(trigger) LIKE ?" for _ in terms) +
+                    " ORDER BY id DESC LIMIT ?"
+                )
+                rows = self._require_connection().execute(
+                    sql, [f"%{t}%" for t in terms] + [limit]
+                ).fetchall()
+            else:
+                rows = self._require_connection().execute(
+                    "SELECT emotion, intensity, trigger, context, response, created_at"
+                    " FROM emotional_memories ORDER BY id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [
+            {
+                "emotion": r[0],
+                "intensity": r[1],
+                "trigger": r[2],
+                "context": r[3],
+                "response": r[4],
+                "timestamp": r[5],
+            }
+            for r in rows
+        ]
+
+    def _get_all_emotional_memories(self, limit: int = 50) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT emotion, intensity, trigger, context, response, created_at"
+                " FROM emotional_memories ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "emotion": r[0],
+                "intensity": r[1],
+                "trigger": r[2],
+                "influence_strength": r[1],
+                "context": r[3],
+                "response": r[4],
+                "timestamp": r[5],
+            }
+            for r in rows
+        ]
+
+    def _get_past_emotional_responses(
+        self, input_text: str = "", limit: int = 3
+    ) -> List[Dict[str, Any]]:
+        """Return stored responses for triggers similar to *input_text*."""
+        mems = self._retrieve_emotional_memories(input_text, limit * 3)
+        # Only return entries that actually have a stored response
+        with_response = [m for m in mems if m.get("response")]
+        return with_response[:limit]
+
+    def _get_user_emotion_patterns(
+        self, input_text: str = "", limit: int = 20
+    ) -> Dict[str, float]:
+        """Return per-emotion average intensities observed across all stored memories."""
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT emotion, AVG(intensity) FROM emotional_memories GROUP BY emotion",
+            ).fetchall()
+        if not rows:
+            return {}
+        total = sum(avg for _, avg in rows)
+        return {emotion: (avg / total if total else 0.0) for emotion, avg in rows}
+
+    def _get_emotional_context(self, input_text: str = "") -> Dict[str, Any]:
+        """Return a summary context dict for a given input."""
+        recent = self._get_all_emotional_memories(20)
+        patterns = self._get_user_emotion_patterns(input_text)
+        trigger_related = self._retrieve_emotional_memories(input_text, 5)
+        return {
+            "recent_emotions": recent,
+            "patterns": patterns,
+            "related": trigger_related,
+            "dominant_emotion": max(patterns, key=patterns.get) if patterns else None,
+        }
+
     def _store(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         content = payload.get("content")
         role = payload.get("role", "user")
@@ -167,6 +284,26 @@ class DirectNotusProcess:
         if msg_type in {"query_episodic", "query_facts", "query_patterns"}:
             key = {"query_episodic": "events", "query_facts": "facts", "query_patterns": "patterns"}[msg_type]
             return {"status": "success", "content": {key: []}}
+        if msg_type == "store_emotional_memory":
+            return self._store_emotional_memory(payload)
+        if msg_type == "get_emotional_memories":
+            trigger = payload.get("trigger", payload.get("input", ""))
+            memories = self._retrieve_emotional_memories(trigger, payload.get("limit", 10))
+            return {"status": "success", "memories": memories, "content": {"memories": memories}}
+        if msg_type == "get_all_emotional_memories":
+            memories = self._get_all_emotional_memories(payload.get("limit", 50))
+            return {"status": "success", "memories": memories, "content": {"memories": memories}}
+        if msg_type == "get_past_emotional_responses":
+            responses = self._get_past_emotional_responses(
+                payload.get("input", ""), payload.get("limit", 3)
+            )
+            return {"status": "success", "responses": responses, "content": {"responses": responses}}
+        if msg_type == "get_user_emotion_patterns":
+            patterns = self._get_user_emotion_patterns(payload.get("input", ""))
+            return {"status": "success", "patterns": patterns, "content": {"patterns": patterns}}
+        if msg_type == "get_emotional_context":
+            context = self._get_emotional_context(payload.get("input", ""))
+            return {"status": "success", "context": context, "content": {"context": context}}
         return {"status": "error", "message": f"Unknown message type: {msg_type}"}
 
     def shutdown(self) -> None:

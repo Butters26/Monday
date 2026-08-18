@@ -249,6 +249,17 @@ class AdvancedEmotionalEngine:
         if len(self.mood_history) > 200:
             self.mood_history = self.mood_history[-200:]
         self._log(f"{self.name} feels {emotion.value} (int {self.emotional_intensity:.2f}) due to: {trigger}")
+        # Persist to Notus so queries across sessions have data
+        try:
+            self._query_lobe('notus', {
+                'type': 'store_emotional_memory',
+                'emotion': emotion.value,
+                'intensity': float(max(0.0, min(1.0, intensity))),
+                'trigger': trigger,
+                'context': context,
+            })
+        except Exception:
+            pass
 
     def get_emotional_response(self, user_input: str) -> str:
         # Query Notus for emotional memories
@@ -271,6 +282,18 @@ class AdvancedEmotionalEngine:
         base = self._generate_advanced_emotional_response(user_input, memory_influence)
         enhanced = self._enhance_response_with_advanced_features(base, user_input, predicted, context)
         self.calculate_emotional_intelligence()
+        # Persist the response so future queries can return learned responses
+        try:
+            self._query_lobe('notus', {
+                'type': 'store_emotional_memory',
+                'emotion': self.current_emotion.value,
+                'intensity': self.emotional_intensity,
+                'trigger': user_input,
+                'context': '',
+                'response': enhanced,
+            })
+        except Exception:
+            pass
         return enhanced
 
     def get_emotional_summary(self) -> str:
@@ -886,18 +909,6 @@ class AdvancedEmotionalEngine:
         return heal.get(predicted_emotion, ["I'm here to listen and support you."])[0]
 
     def assess_emotional_context(self, user_input: str) -> Dict[str, Any]:
-        # Query Notus for emotional context history
-        try:
-            notus_context = self._query_lobe('notus', {'type': 'get_emotional_context', 'input': user_input})
-            if notus_context and notus_context.get('status') == 'success':
-                historical = notus_context.get('context', {})
-                if historical:
-                    # Use historical context to inform assessment
-                    ctx = historical.copy()
-                    return ctx
-        except Exception:
-            pass
-        
         ctx = {
             'urgency_level': 'normal',
             'support_needed': False,
@@ -920,6 +931,15 @@ class AdvancedEmotionalEngine:
         markers = ['!','really','so','very','extremely','incredibly']
         n = sum(1 for m in markers if m in txt)
         ctx['emotional_intensity'] = 'high' if n >= 3 else ('low' if n == 0 else 'medium')
+        # Enrich with historical data from Notus (does not overwrite required fields)
+        try:
+            notus_context = self._query_lobe('notus', {'type': 'get_emotional_context', 'input': user_input})
+            if notus_context and notus_context.get('status') == 'success':
+                historical = notus_context.get('context', {})
+                if historical:
+                    ctx['historical'] = historical
+        except Exception:
+            pass
         return ctx
 
     def process_trauma_memory(self, memory: EmotionalMemory) -> bool:
