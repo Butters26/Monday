@@ -471,6 +471,14 @@ class SuperhumanMemorySystem:
                             source TEXT,
                             semantic_hash TEXT
                         );
+                        CREATE TABLE IF NOT EXISTS memory_associations (
+                            memory_id_a TEXT NOT NULL,
+                            memory_id_b TEXT NOT NULL,
+                            shared_concepts TEXT NOT NULL,
+                            strength REAL DEFAULT 1.0,
+                            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (memory_id_a, memory_id_b)
+                        );
                         CREATE INDEX IF NOT EXISTS idx_epi_user_time ON episodic_events(user_id, timestamp);
                         CREATE INDEX IF NOT EXISTS idx_epi_action ON episodic_events(action);
                         CREATE UNIQUE INDEX IF NOT EXISTS uq_fact_user ON brain_facts(subject, predicate, object, user_id);
@@ -480,6 +488,8 @@ class SuperhumanMemorySystem:
                         CREATE INDEX IF NOT EXISTS idx_conversation_id ON superhuman_memories(conversation_id);
                         CREATE INDEX IF NOT EXISTS idx_timestamp ON superhuman_memories(timestamp);
                         CREATE INDEX IF NOT EXISTS idx_role ON superhuman_memories(role);
+                        CREATE INDEX IF NOT EXISTS idx_assoc_a ON memory_associations(memory_id_a);
+                        CREATE INDEX IF NOT EXISTS idx_assoc_b ON memory_associations(memory_id_b);
                     ''')
                 else:
                     cursor = self._cursor()
@@ -595,6 +605,18 @@ class SuperhumanMemorySystem:
                     cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversation_id ON superhuman_memories(conversation_id)')
                     cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON superhuman_memories(timestamp)')
                     cursor.execute('CREATE INDEX IF NOT EXISTS idx_role ON superhuman_memories(role)')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS memory_associations (
+                            memory_id_a TEXT NOT NULL,
+                            memory_id_b TEXT NOT NULL,
+                            shared_concepts TEXT NOT NULL,
+                            strength REAL DEFAULT 1.0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (memory_id_a, memory_id_b)
+                        )
+                    ''')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_assoc_a ON memory_associations(memory_id_a)')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_assoc_b ON memory_associations(memory_id_b)')
                     self._commit()
 
         except Exception as e:
@@ -700,7 +722,10 @@ class SuperhumanMemorySystem:
             
             # Learn vocabulary from conversation (outside the DB_LOCK to avoid deadlock)
             self._learn_vocabulary_from_content(content, role)
-            
+
+            # Link this memory to others that share concepts (silent fail)
+            self._link_associated_memories(memory_id, concepts, user_id)
+
             logger.info(f"💾 Stored memory: {role} - {content[:50]}...")
             return memory_id
             
@@ -1626,7 +1651,92 @@ class SuperhumanMemorySystem:
         except Exception as e:
             logger.warning(f"Failed to update access counts: {e}")
 
-    def generate_reflective_reply(self, user_text: str, user_id: str = "default") -> str:
+    def _link_associated_memories(self, memory_id: str, concepts: List[str], user_id: str = "default"):
+        """Find recent memories that share concepts with this one and create association links."""
+        try:
+            if not concepts:
+                return
+            with DB_LOCK:
+                cursor = self._cursor()
+                # Pull recent memories (last 100) that have stored concepts
+                cursor.execute('''
+                    SELECT id, concepts FROM superhuman_memories
+                    WHERE (user_id = %s OR user_id IS NULL)
+                      AND id != %s
+                      AND concepts IS NOT NULL
+                    ORDER BY timestamp DESC
+                    LIMIT 100
+                ''', (user_id, memory_id))
+                rows = cursor.fetchall()
+
+            new_concepts = set(concepts)
+            for row in rows:
+                try:
+                    other_id = row[0]
+                    other_concepts = set(json.loads(row[1])) if row[1] else set()
+                    shared = new_concepts & other_concepts
+                    if not shared:
+                        continue
+                    # Order IDs so (a,b) and (b,a) produce the same primary key
+                    id_a, id_b = sorted([memory_id, other_id])
+                    shared_json = json.dumps(sorted(shared))
+                    strength = float(len(shared))
+                    with DB_LOCK:
+                        cursor2 = self._cursor()
+                        cursor2.execute('''
+                            INSERT INTO memory_associations
+                                (memory_id_a, memory_id_b, shared_concepts, strength)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (memory_id_a, memory_id_b) DO UPDATE SET
+                                strength = memory_associations.strength + %s,
+                                shared_concepts = %s
+                        ''', (id_a, id_b, shared_json, strength, strength, shared_json))
+                        self._commit()
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Memory association linking failed: {e}")
+
+    def get_associated_memories(self, memory_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Return memories associated with the given memory_id, ordered by link strength."""
+        try:
+            with DB_LOCK:
+                cursor = self._cursor()
+                cursor.execute('''
+                    SELECT m.id, m.timestamp, m.role, m.content, m.tag,
+                           m.importance_score, m.entities, m.concepts,
+                           a.shared_concepts, a.strength
+                    FROM memory_associations a
+                    JOIN superhuman_memories m
+                      ON m.id = CASE
+                            WHEN a.memory_id_a = %s THEN a.memory_id_b
+                            ELSE a.memory_id_a
+                         END
+                    WHERE a.memory_id_a = %s OR a.memory_id_b = %s
+                    ORDER BY a.strength DESC
+                    LIMIT %s
+                ''', (memory_id, memory_id, memory_id, limit))
+                rows = cursor.fetchall()
+            return [
+                {
+                    'id': row[0],
+                    'timestamp': row[1],
+                    'role': row[2],
+                    'content': row[3],
+                    'tag': row[4],
+                    'importance_score': row[5],
+                    'entities': json.loads(row[6]) if row[6] else {},
+                    'concepts': json.loads(row[7]) if row[7] else [],
+                    'shared_concepts': json.loads(row[8]) if row[8] else [],
+                    'association_strength': row[9],
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get associated memories: {e}")
+            return []
+
+
         """Dynamic, non-templated reply built from the user's words and recalled memory.
         Avoids canned sentences by composing from input keywords and retrieved facts/episodes."""
         try:
