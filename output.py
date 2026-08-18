@@ -130,7 +130,7 @@ class OutputLobe:
         
         # Voice configuration
         self.voice_config = {
-            'enabled': False,
+            'enabled': bool(enable_tts),
             'rate': 150,
             'volume': 1.0,
             'voice_id': None,
@@ -246,16 +246,17 @@ class OutputLobe:
                 },
                 source='output'
             )
-            return result.get('status') == 'success'
+            if isinstance(result, dict) and result.get('status') == 'success':
+                return True
         except Exception as e:
             print(f"❌ TTS error: {e}")
-            # Fallback: try local TTS
-            try:
-                self.tts_engine.say(text)
-                self.tts_engine.runAndWait()
-                return True
-            except Exception:
-                return False
+        # Fallback: try local TTS
+        try:
+            self.tts_engine.say(text)
+            self.tts_engine.runAndWait()
+            return True
+        except Exception:
+            return False
     
     def generate_text_output(self, content: Dict[str, Any]) -> str:
         """Generate formatted text output"""

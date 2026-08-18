@@ -27,8 +27,8 @@ All lobes now use:
 
 ## Direct-call core
 
-`run_abin.create_core_systems()` creates only the prompted path:
-conversation → Notus → emotion → reasoning → language → output.  Each lobe
+`run_abin.create_core_systems()` creates the prompted path plus direct perception:
+perception → conversation → Notus → emotion → reasoning → language → output.  Each lobe
 receives `{"type", "content", "source", "message_id"}`; `content` is the
 message payload.  Runtime memory is private SQLite state, so core startup does
 not require PostgreSQL, API keys, sockets, a GUI, or background loops.
@@ -48,6 +48,5 @@ usable conclusion.
 ✅ `run_abin.py` is the active direct-core launcher. It uses the lightweight
 `direct_notus.py` SQLite adapter plus the legacy full reasoning engine through
 a direct adapter; it does not start sockets, PostgreSQL, a GUI, or background
-loops. The legacy engine's broader optional Notus queries return no data under
-the direct adapter, so direct reliability is limited to supplied SQLite context
-and its local baseline facts.
+loops. Voice output is enabled through local TTS in Output, and Perception is
+available through direct-call commands (`/ears`, `/eyes`) in the CLI.

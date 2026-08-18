@@ -16,8 +16,9 @@ from thalamus import get_thalamus
 class PerceptionLobe:
     """Perception system - processes all sensory input"""
     
-    def __init__(self):
+    def __init__(self, thalamus=None, autonomous: bool = True):
         self.running = True
+        self.autonomous = autonomous
         
         # Input queues
         self.text_queue = queue.Queue()
@@ -35,7 +36,7 @@ class PerceptionLobe:
         self.visual_thread = None
         
         # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
+        self.thalamus = thalamus or get_thalamus()
         
         # Track concepts we've seen before (for novelty detection)
         self.seen_concepts = set()
@@ -45,8 +46,10 @@ class PerceptionLobe:
         self._register_with_thalamus()
         
         self._initialize_stt()
-        self._start_autonomous_vision()
-        self._start_autonomous_hearing()
+        self._initialize_vision()
+        if self.autonomous:
+            self._start_autonomous_vision()
+            self._start_autonomous_hearing()
         
     def _initialize_stt(self):
         """Initialize speech-to-text engine"""
@@ -60,18 +63,14 @@ class PerceptionLobe:
             print("   Install with: pip install SpeechRecognition pyaudio")
             self.stt_available = False
     
-    def _start_autonomous_vision(self):
-        """Start autonomous vision processing - runs constantly"""
+    def _initialize_vision(self):
+        """Initialize webcam availability."""
         try:
             import cv2
             self.camera = cv2.VideoCapture(0)
             if self.camera.isOpened():
                 self.vision_available = True
-                print("✅ Webcam initialized - autonomous vision active")
-                
-                # Start vision processing thread
-                self.visual_thread = threading.Thread(target=self._vision_loop, daemon=True)
-                self.visual_thread.start()
+                print("✅ Webcam initialized")
             else:
                 print("⚠️  Webcam not available")
                 self.vision_available = False
@@ -79,6 +78,14 @@ class PerceptionLobe:
             print("⚠️  opencv-python not available - vision disabled")
             print("   Install with: pip install opencv-python")
             self.vision_available = False
+
+    def _start_autonomous_vision(self):
+        """Start autonomous vision processing - runs constantly"""
+        if not self.vision_available:
+            return
+        print("👁️  Autonomous vision active")
+        self.visual_thread = threading.Thread(target=self._vision_loop, daemon=True)
+        self.visual_thread.start()
     
     def _vision_loop(self):
         """Continuously process visual input"""
@@ -371,6 +378,8 @@ class PerceptionLobe:
     def process_visual_input(self) -> Optional[Dict[str, Any]]:
         """Process visual input from webcam"""
         if not self.vision_available:
+            self._initialize_vision()
+        if not self.vision_available:
             return None
         
         try:
@@ -627,4 +636,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n🛑 Perception lobe shutting down...")
         lobe.shutdown()
-
