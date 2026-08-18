@@ -1798,7 +1798,7 @@ class MaximumSophisticationReasoning:
         is_question = False
         if understanding:
             intent = understanding.get('intent', '')
-            is_question = intent == 'question' or '?' in user_input
+            is_question = intent in {'question', 'request'} or '?' in user_input
         else:
             # Fallback: detect manually
             is_question = '?' in user_input or any(q in user_input.lower() for q in ['why', 'how', 'what'])
@@ -2011,13 +2011,23 @@ class MaximumSophisticationReasoning:
                 conclusion = semantic_input.get('answer')
                 if isinstance(conclusion, str) and conclusion.strip():
                     return conclusion.strip()
-                language_result = self._generate_language(
-                    semantic_input,
-                    user_input,
-                    is_main_response=False,
-                )
-                if language_result and isinstance(language_result, str) and len(language_result.strip()) > 0:
-                    return language_result
+                try:
+                    language_result = self.thalamus.send_message(
+                        'language',
+                        'generate',
+                        {
+                            'user_input': user_input,
+                            'semantic_input': semantic_input,
+                            'is_main_response': False,
+                        },
+                        source='reasoning'
+                    )
+                    if language_result.get('status') == 'success':
+                        response = language_result.get('response') or language_result.get('sentence')
+                        if isinstance(response, str) and response.strip():
+                            return response.strip()
+                except Exception:
+                    pass
                 return None
             # This is the main response - mark it so language generation sends it to Output
             language_result = self._generate_language(

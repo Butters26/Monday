@@ -24,6 +24,11 @@ _BASELINE_EVIDENCE = (
     "Photosynthesis is the process by which plants use light energy to turn water and carbon dioxide into glucose, releasing oxygen.",
     "Memory is information retained so it can be retrieved and used later.",
 )
+_BASELINE_KEYWORDS = {
+    "gravity": _BASELINE_EVIDENCE[0],
+    "photosynthesis": _BASELINE_EVIDENCE[1],
+    "memory": _BASELINE_EVIDENCE[2],
+}
 
 
 class DirectMaximumSophisticationAdapter:
@@ -81,6 +86,15 @@ class DirectMaximumSophisticationAdapter:
                 evidence.append({"role": "fact", "content": normalized})
             else:
                 evidence.append(memory)
+        lower_input = user_input.lower()
+        existing = {
+            memory.get("content", "")
+            for memory in evidence
+            if isinstance(memory, dict) and isinstance(memory.get("content"), str)
+        }
+        for keyword, fact in _BASELINE_KEYWORDS.items():
+            if keyword in lower_input and fact not in existing:
+                evidence.append({"role": "fact", "content": fact})
         fact = cls._normalise_favorite_fact(user_input)
         if fact:
             evidence.append({"role": "fact", "content": fact})
@@ -155,6 +169,7 @@ class DirectMaximumSophisticationAdapter:
             "intent": understanding.get("intent", "conversation"),
             "certainty": understanding.get("confidence", 0.5),
             "emotion": emotional_state.get("current_emotion", "neutral"),
+            "concepts": thinking.get("key_concepts", []),
             "memory_context": evidence,
         }
         if answer is not None:

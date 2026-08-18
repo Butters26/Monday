@@ -140,6 +140,8 @@ class Thalamus:
             semantic_input.get("answer"),
             semantic_input.get("conclusion"),
             semantic_input.get("propositions"),
+            content.get("composed_response"),
+            reasoning.get("composed_response"),
         )
         return semantic_input, answer
 

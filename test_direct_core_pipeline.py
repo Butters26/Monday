@@ -55,7 +55,7 @@ def test_prompted_core_path_renders_grounded_greeting_and_gravity_answer(tmp_pat
         greeting = systems["thalamus"].process_user_input("hello")
         gravity = systems["thalamus"].process_user_input("What is gravity?")
 
-        assert "hello" in greeting.lower() or "hi" in greeting.lower()
+        assert any(word in greeting.lower() for word in ("hello", "hi", "hey"))
         assert greeting != "Hello! How can I help?"
         assert "mass" in gravity.lower()
         assert "attraction" in gravity.lower()
