@@ -17,6 +17,32 @@ from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
 
+def _startup_activation_status(systems: Dict[str, Any]) -> Dict[str, bool]:
+    """Probe sensory/speech lobe readiness at startup."""
+    perception = systems["thalamus"].send_message(
+        "perception", "get_status", {}, source="startup"
+    )
+    output = systems["thalamus"].send_message("output", "get_status", {}, source="startup")
+    perception_content = (
+        perception.get("content", {}) if isinstance(perception.get("content"), dict) else {}
+    )
+    output_content = output.get("content", {}) if isinstance(output.get("content"), dict) else {}
+    return {
+        "ears_ready": bool(perception_content.get("stt_available")),
+        "eyes_ready": bool(perception_content.get("vision_available")),
+        "speech_ready": bool(output_content.get("tts_available"))
+        and bool(output_content.get("voice_enabled")),
+    }
+
+
+def _print_startup_activation_status(systems: Dict[str, Any]) -> None:
+    status = _startup_activation_status(systems)
+    print("Startup activation:")
+    print(f"  ears  (/ears): {'ready' if status['ears_ready'] else 'unavailable'}")
+    print(f"  eyes  (/eyes): {'ready' if status['eyes_ready'] else 'unavailable'}")
+    print(f"  speech (TTS): {'ready' if status['speech_ready'] else 'unavailable'}")
+
+
 def create_core_systems(
     runtime_directory: Optional[str] = None,
     reasoning_factory: Optional[Any] = None,
@@ -65,6 +91,7 @@ def main() -> int:
     systems = create_core_systems()
     print("Monday direct-call core ready. Type a message, or press Ctrl-D to exit.")
     print("Commands: /ears (listen once), /eyes (capture once)")
+    _print_startup_activation_status(systems)
     try:
         while True:
             try:

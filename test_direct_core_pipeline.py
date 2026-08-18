@@ -3,7 +3,7 @@
 import random
 
 from reasoning import MaximumSophisticationReasoning
-from run_abin import create_core_systems, shutdown_core_systems
+from run_abin import create_core_systems, shutdown_core_systems, _startup_activation_status
 
 
 def test_prompted_core_path_persists_memory_and_delivers_output(tmp_path):
@@ -44,6 +44,16 @@ def test_prompted_core_path_keeps_user_memory_isolated(tmp_path):
 
         assert alice_memories
         assert not default_memories
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_startup_activation_status_is_available(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        status = _startup_activation_status(systems)
+        assert set(status) == {"ears_ready", "eyes_ready", "speech_ready"}
+        assert all(isinstance(value, bool) for value in status.values())
     finally:
         shutdown_core_systems(systems)
 
