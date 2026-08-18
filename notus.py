@@ -4465,6 +4465,7 @@ class DirectNotusProcess:
         self.thalamus = thalamus or get_thalamus()
         self.storage_path = storage_path or runtime_file("notus_memory.sqlite3")
         os.makedirs(os.path.dirname(os.path.abspath(self.storage_path)), exist_ok=True)
+        self._lock = threading.RLock()
         self._connection = sqlite3.connect(self.storage_path, check_same_thread=False)
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS memories (
@@ -4480,51 +4481,89 @@ class DirectNotusProcess:
         self.memory_ready = threading.Event()
         self.memory_ready.set()
 
+    @staticmethod
+    def _is_safe_memory(role: Any, content: Any) -> bool:
+        return (
+            isinstance(role, str)
+            and role in {"user", "fact", "note"}
+            and isinstance(content, str)
+            and bool(content.strip())
+            and not re.match(r"^\s*(?:user|abin)\s*:", content, re.IGNORECASE)
+        )
+
+    def _require_connection(self) -> sqlite3.Connection:
+        if self._connection is None:
+            raise RuntimeError("Notus is closed")
+        return self._connection
+
     def start(self):
+        if not self.running:
+            raise RuntimeError("Cannot restart a closed Notus adapter")
         self.thalamus.register_lobe("notus", self)
         return self
 
     def retrieve_memories(self, query: str = "", user_id: str = "default", limit: int = 15):
-        terms = [term.lower() for term in query.split() if len(term) > 2]
+        if not isinstance(user_id, str):
+            return []
+        terms = [
+            term.lower()
+            for term in query.split()
+            if len(term) > 2 and not re.match(r"^\s*(?:user|abin)\s*:", term, re.IGNORECASE)
+        ]
         sql = (
             "SELECT role, content, user_id, memory_type, created_at FROM memories "
-            "WHERE user_id = ?"
+            "WHERE user_id = ? "
+            "AND role IN ('user', 'fact', 'note') "
+            "AND lower(trim(content)) NOT LIKE 'user:%' "
+            "AND lower(trim(content)) NOT LIKE 'abin:%'"
         )
         params = [user_id]
         if terms:
             sql += " AND (" + " OR ".join("lower(content) LIKE ?" for _ in terms) + ")"
             params.extend(f"%{term}%" for term in terms)
+        try:
+            normalized_limit = int(limit)
+        except (TypeError, ValueError):
+            normalized_limit = 15
+        normalized_limit = max(1, min(normalized_limit, 100))
         sql += " ORDER BY id DESC LIMIT ?"
-        params.append(limit)
-        rows = self._connection.execute(sql, params).fetchall()
+        params.append(normalized_limit)
+        with self._lock:
+            rows = self._require_connection().execute(sql, params).fetchall()
         return [
             {
                 "role": role,
-                "content": content,
+                "content": content.strip(),
                 "user_id": stored_user,
                 "memory_type": memory_type,
                 "timestamp": created_at,
             }
             for role, content, stored_user, memory_type, created_at in rows
-        ]
+            if self._is_safe_memory(role, content)
+        ][:normalized_limit]
 
     def _store(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         content = payload.get("content")
-        if not isinstance(content, str) or not content.strip():
-            return {"status": "error", "message": "Memory content must be a non-empty string"}
         user_id = payload.get("user_id", "default")
-        self._connection.execute(
-            "INSERT INTO memories(role, content, user_id, memory_type, created_at) VALUES (?, ?, ?, ?, ?)",
-            (
-                payload.get("role", "system"),
-                content,
-                user_id,
-                payload.get("memory_type", "conversation"),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        self._connection.commit()
-        return {"status": "success", "content": {"stored": True, "content": content}}
+        role = payload.get("role", "user")
+        if not self._is_safe_memory(role, content):
+            return {"status": "error", "message": "Memory must be clean structured content"}
+        if not isinstance(user_id, str) or not user_id:
+            return {"status": "error", "message": "Memory user_id must be a non-empty string"}
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute(
+                "INSERT INTO memories(role, content, user_id, memory_type, created_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    role,
+                    content.strip(),
+                    user_id,
+                    payload.get("memory_type", "conversation"),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            connection.commit()
+        return {"status": "success", "content": {"stored": True, "content": content.strip()}}
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
@@ -4556,8 +4595,11 @@ class DirectNotusProcess:
         return {"status": "error", "message": f"Unknown message type: {msg_type}"}
 
     def shutdown(self):
-        self.running = False
-        self._connection.close()
+        with self._lock:
+            self.running = False
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
 
 
 # Core startup intentionally uses the private, service-free adapter.
