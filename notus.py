@@ -6,8 +6,14 @@ Instead of trying to BE the AI, this helps your cheap AI be smarter
 
 import json
 import sqlite3
-import psycopg2
-from psycopg2.extras import RealDictCursor
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    PSYCOPG2_AVAILABLE = True
+except ImportError:
+    psycopg2 = None
+    RealDictCursor = None
+    PSYCOPG2_AVAILABLE = False
 import time
 import uuid
 import re
@@ -353,18 +359,23 @@ class SuperhumanMemorySystem:
         self._db_sqlite = False  # Track which backend is active
         try:
             if not hasattr(self, '_db_connection'):
-                # Try PostgreSQL first
-                try:
-                    self._db_connection = psycopg2.connect(
-                        dbname=POSTGRES_DB_NAME,
-                        user=POSTGRES_USER,
-                        host=POSTGRES_HOST,
-                        port=POSTGRES_PORT,
-                        connect_timeout=5
-                    )
-                    self._db_connection.set_session(autocommit=False)
-                except Exception as pg_err:
-                    logger.warning(f"PostgreSQL unavailable ({pg_err}); falling back to SQLite at {self.db_path}")
+                # Try PostgreSQL first (only if psycopg2 is installed)
+                if PSYCOPG2_AVAILABLE:
+                    try:
+                        self._db_connection = psycopg2.connect(
+                            dbname=POSTGRES_DB_NAME,
+                            user=POSTGRES_USER,
+                            host=POSTGRES_HOST,
+                            port=POSTGRES_PORT,
+                            connect_timeout=5
+                        )
+                        self._db_connection.set_session(autocommit=False)
+                    except Exception as pg_err:
+                        logger.warning(f"PostgreSQL unavailable ({pg_err}); falling back to SQLite at {self.db_path}")
+                        self._db_connection = sqlite3.connect(self.db_path, check_same_thread=False)
+                        self._db_sqlite = True
+                else:
+                    logger.info(f"psycopg2 not installed; using SQLite at {self.db_path}")
                     self._db_connection = sqlite3.connect(self.db_path, check_same_thread=False)
                     self._db_sqlite = True
             with DB_LOCK:
