@@ -1421,9 +1421,9 @@ class SuperhumanMemorySystem:
                 analysis_block = analysis_block[:budget2]
                 prompt = head2 + analysis_block + tail2
 
-            # Fallback: hard truncate preserving the tail
+            # Fallback: hard truncate preserving the tail (tail capped to max_len)
             if len(prompt) > max_len:
-                keep_tail = prompt[-600:]
+                keep_tail = prompt[-min(600, max_len):]
                 head_budget = max_len - len(keep_tail)
                 prompt = prompt[:max(0, head_budget)] + keep_tail
             return prompt
@@ -1441,11 +1441,13 @@ class SuperhumanMemorySystem:
         while start < n:
             end = min(n, start + size)
             newline = text.rfind("\n", start, end)
-            cut = newline if newline != -1 and newline > start else end
+            # Include the newline in the chunk so reassembly is lossless
+            if newline != -1 and newline > start:
+                cut = newline + 1
+            else:
+                cut = end
             chunks.append(text[start:cut])
             start = cut
-            if start < n and text[start:start+1] == "\n":
-                start += 1
         return chunks
 
     def generate_smart_prompt_chunks_for_ai(self, user_input: str, user_id: str = "default", story_text: str = None,
