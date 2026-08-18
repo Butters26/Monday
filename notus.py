@@ -414,22 +414,39 @@ class SuperhumanMemorySystem:
                     )
                 ''')
                 
-                # Word meanings table - stores what words actually mean (multi-sense)
+                # Word meanings table - stores what words actually mean (multi-sense).
+                # Each sense has its own identity; intent associations are in intent_associations.
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS word_meanings (
                         sense_id SERIAL PRIMARY KEY,
                         word TEXT NOT NULL,
-                        meaning TEXT NOT NULL,
+                        meaning TEXT,
+                        meaning_hash TEXT NOT NULL DEFAULT '',
                         part_of_speech TEXT,
-                        intent_type TEXT,
                         synonyms TEXT,
                         confidence REAL DEFAULT 1.0,
                         usage_count INTEGER DEFAULT 1,
                         last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE (word, intent_type)
+                        quarantined BOOLEAN DEFAULT FALSE,
+                        UNIQUE (word, meaning_hash)
                     )
                 ''')
+
+                # Intent associations — many-to-many between senses and intents.
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS intent_associations (
+                        id SERIAL PRIMARY KEY,
+                        sense_id INTEGER NOT NULL REFERENCES word_meanings(sense_id) ON DELETE CASCADE,
+                        intent_type TEXT NOT NULL,
+                        weight REAL DEFAULT 1.0,
+                        UNIQUE (sense_id, intent_type)
+                    )
+                ''')
+                cursor.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_ia_sense ON intent_associations(sense_id)')
+                cursor.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_ia_intent ON intent_associations(intent_type)')
 
                 # Candidate staging table — infer-and-verify before promoting to word_meanings
                 cursor.execute('''
@@ -452,7 +469,21 @@ class SuperhumanMemorySystem:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_wc_word ON word_candidates(word)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_wc_confirmed ON word_candidates(confirmed)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_wm_word ON word_meanings(word)')
-                
+
+                # Distinct-context evidence table (Fix 5).
+                # Tracks one row per (candidate, unique normalised sentence hash).
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS candidate_contexts (
+                        id SERIAL PRIMARY KEY,
+                        candidate_id INTEGER NOT NULL
+                            REFERENCES word_candidates(id) ON DELETE CASCADE,
+                        context_hash TEXT NOT NULL,
+                        UNIQUE (candidate_id, context_hash)
+                    )
+                ''')
+                cursor.execute(
+                    'CREATE INDEX IF NOT EXISTS idx_cc_candidate ON candidate_contexts(candidate_id)')
+
                 # Grammar knowledge table - stores sentence structure rules
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS grammar_knowledge (
@@ -517,10 +548,41 @@ class SuperhumanMemorySystem:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_role ON superhuman_memories(role)')
                 
                 self._db_connection.commit()
-                
+
+                # ── Schema migrations for existing databases ──────────────────────────
+                # These are all idempotent; errors are caught individually so a partial
+                # migration does not block startup.
+                _migrations = [
+                    # Fix 3: add meaning_hash column if absent (old schema had intent_type instead)
+                    "ALTER TABLE word_meanings ADD COLUMN IF NOT EXISTS meaning_hash TEXT NOT NULL DEFAULT ''",
+                    # Fix 3: add quarantined column
+                    "ALTER TABLE word_meanings ADD COLUMN IF NOT EXISTS quarantined BOOLEAN DEFAULT FALSE",
+                    # Fix 3: unique index on (word, meaning_hash) — non-destructive if index already exists
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_wm_word_hash ON word_meanings(word, meaning_hash)",
+                    # Fix 5: add context_hash column to word_candidates
+                    "ALTER TABLE word_candidates ADD COLUMN IF NOT EXISTS context_hash TEXT",
+                    # Fix 6: quarantine any rows whose meaning was set by the old neighbour-voting path
+                    "UPDATE word_meanings SET quarantined = TRUE WHERE meaning LIKE 'Inferred from context:%'",
+                    # Fix 3: migrate old intent_type column into intent_associations (best-effort)
+                    """
+                    INSERT INTO intent_associations (sense_id, intent_type, weight)
+                    SELECT sense_id, intent_type, confidence
+                    FROM word_meanings
+                    WHERE intent_type IS NOT NULL AND quarantined = FALSE
+                    ON CONFLICT (sense_id, intent_type) DO NOTHING
+                    """,
+                ]
+                for _sql in _migrations:
+                    try:
+                        cursor.execute(_sql)
+                        self._db_connection.commit()
+                    except Exception as _me:
+                        logger.debug(f"Schema migration skipped ({_me})")
+                        self._db_connection.rollback()
+
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
-    
+
     def store_memory(self, role: str, content: str, user_id: str = "default", tag: str = "General", 
                     importance: float = 5.0, mode: str = "writing", memory_type: str = MemoryType.CONVERSATION,
                     personality: str = "witty") -> str:
@@ -568,11 +630,11 @@ class SuperhumanMemorySystem:
             return None
     
     # ── Learning constants ─────────────────────────────────────────────────────
-    _CANDIDATE_PROMOTE_ENCOUNTERS = 3   # how many encounters before auto-promotion
-    _CANDIDATE_PROMOTE_CONFIDENCE = 0.65  # confidence threshold for auto-promotion
+    _CANDIDATE_PROMOTE_ENCOUNTERS = 3   # kept for display/logging; promotion now uses distinct-context count
+    _CANDIDATE_PROMOTE_CONFIDENCE = 0.65  # retained for reference; contextual auto-promotion is disabled
     _CANDIDATE_CONFIDENCE_BUMP = 0.08   # bump per additional encounter
     _CANDIDATE_MAX_EXAMPLES = 5         # max saved example sentences per candidate
-    _CLARIFY_THRESHOLD = 0.52           # ask for clarification below this intent confidence
+    _CLARIFY_THRESHOLD = 0.40           # raw (unclamped) confidence below which clarification is considered
 
     def _learn_vocabulary_from_content(self, content: str, role: str):
         """Observe content: update learned_vocabulary counts AND feed the infer-and-verify pipeline."""
@@ -636,16 +698,23 @@ class SuperhumanMemorySystem:
                             ''', (word, emotion, word, emotion))
 
                 # ── New: infer-and-verify pipeline ───────────────────────────
+                import hashlib as _hashlib
                 for sentence in sentences:
                     sentence = sentence.strip()
                     if not sentence:
                         continue
 
+                    # Stable hash of the normalised sentence for distinct-context counting.
+                    ctx_hash = _hashlib.sha256(
+                        ' '.join(sentence.lower().split()).encode()
+                    ).hexdigest()[:16]
+
                     sentence_words = re.findall(r'\b[a-zA-Z]{3,}\b', sentence.lower())
                     for word in sentence_words:
                         # Skip words already in confirmed word_meanings
                         cursor.execute(
-                            'SELECT 1 FROM word_meanings WHERE word = %s LIMIT 1', (word,))
+                            'SELECT 1 FROM word_meanings WHERE word = %s AND quarantined = FALSE LIMIT 1',
+                            (word,))
                         if cursor.fetchone():
                             continue
 
@@ -682,11 +751,16 @@ class SuperhumanMemorySystem:
                                     encounter_count = encounter_count + 1,
                                     context_examples = %s,
                                     source = CASE WHEN %s = 'user_explicit' THEN 'user_explicit'
-                                                  WHEN encounter_count + 1 >= 3 THEN 'repeated'
                                                   ELSE source END,
                                     last_seen = CURRENT_TIMESTAMP
                                 WHERE id = %s
                             ''', (new_conf, json.dumps(ex_examples), candidate['source'], ex_id))
+                            # Record distinct context (INSERT OR IGNORE semantics).
+                            cursor.execute('''
+                                INSERT INTO candidate_contexts (candidate_id, context_hash)
+                                VALUES (%s, %s)
+                                ON CONFLICT (candidate_id, context_hash) DO NOTHING
+                            ''', (ex_id, ctx_hash))
                         else:
                             cursor.execute('''
                                 INSERT INTO word_candidates
@@ -699,6 +773,7 @@ class SuperhumanMemorySystem:
                                     encounter_count = word_candidates.encounter_count + 1,
                                     confidence = LEAST(1.0, word_candidates.confidence + %s),
                                     last_seen = CURRENT_TIMESTAMP
+                                RETURNING id
                             ''', (
                                 word,
                                 candidate['candidate_meaning'],
@@ -709,6 +784,13 @@ class SuperhumanMemorySystem:
                                 json.dumps([sentence]),
                                 self._CANDIDATE_CONFIDENCE_BUMP,
                             ))
+                            inserted = cursor.fetchone()
+                            if inserted:
+                                cursor.execute('''
+                                    INSERT INTO candidate_contexts (candidate_id, context_hash)
+                                    VALUES (%s, %s)
+                                    ON CONFLICT (candidate_id, context_hash) DO NOTHING
+                                ''', (inserted[0], ctx_hash))
 
                 self._db_connection.commit()
 
@@ -813,60 +895,104 @@ class SuperhumanMemorySystem:
         else:
             candidate_pos = None
 
-        candidate_meaning = (
-            f"Inferred from context: appears in sentence with "
-            f"{', '.join(set(pos_hints)) if pos_hints else 'unknown'} words"
-        )
-
+        # Neighbour voting infers intent association and POS only — not word meaning.
+        # candidate_meaning is intentionally left None; only user_explicit paths may set it.
         return {
-            'candidate_meaning': candidate_meaning,
+            'candidate_meaning': None,
             'candidate_pos': candidate_pos,
             'candidate_intent_type': winning_intent,
             'confidence': round(confidence, 3),
             'source': source,
         }
 
+    # Regex patterns that constitute a genuine definition (must match the stored meaning text).
+    _DEFINITION_PATTERNS = [
+        r"^explicitly taught:\s*'.+'",          # from _infer_word_meaning user_explicit branch
+        r'\bmeans?\s+\S',                        # "X means Y"
+        r'\bis\s+(?:a|an)\s+\w',                # "X is a Y"
+        r'\bby\s+\w+\s+i\s+mean\s+\S',          # "by X I mean Y"
+        r',\s*which\s+means?\s+\S',             # "X, which means Y"
+    ]
+
+    def _is_genuine_definition(self, meaning: str) -> bool:
+        """Return True only when *meaning* contains a verifiable definition."""
+        import re
+        if not meaning:
+            return False
+        meaning_lower = meaning.lower()
+        return any(re.search(p, meaning_lower) for p in self._DEFINITION_PATTERNS)
+
     def _promote_word_candidates(self):
         """
-        Promote mature candidates from word_candidates into word_meanings.
-        A candidate is promoted when:
-          - source == 'user_explicit', OR
-          - encounter_count >= threshold AND confidence >= threshold
-        Separate senses (different candidate_intent_type) become separate rows in word_meanings.
+        Promote candidates from word_candidates into word_meanings.
+
+        Contextual auto-promotion (encounter_count/confidence gate) is DISABLED.
+        Only user_explicit candidates are eligible, and only when the stored
+        candidate_meaning passes the genuine-definition check.  All other
+        candidates accumulate evidence until they are explicitly taught.
         """
-        import json
+        import hashlib
         try:
             with DB_LOCK:
                 cursor = self._db_connection.cursor()
 
+                # Only user_explicit candidates are considered for promotion.
                 cursor.execute('''
                     SELECT id, word, candidate_meaning, candidate_pos, candidate_intent_type,
                            confidence, source, encounter_count
                     FROM word_candidates
                     WHERE confirmed = FALSE
-                      AND (
-                          source = 'user_explicit'
-                          OR (encounter_count >= %s AND confidence >= %s)
-                      )
-                ''', (self._CANDIDATE_PROMOTE_ENCOUNTERS, self._CANDIDATE_PROMOTE_CONFIDENCE))
+                      AND source = 'user_explicit'
+                ''')
 
                 rows = cursor.fetchall()
                 promoted = 0
                 for row in rows:
                     cid, word, meaning, pos, intent_type, conf, source, enc_count = row
+
+                    # Re-validate: the stored meaning must be a genuine definition.
+                    if not self._is_genuine_definition(meaning):
+                        logger.warning(
+                            f"Candidate {word!r} rejected for promotion: "
+                            f"meaning does not contain a recognisable definition ({meaning!r})"
+                        )
+                        # Leave confirmed=FALSE so the candidate stays in staging.
+                        continue
+
                     try:
+                        # Stable de-duplication key: (word, SHA-256 of the normalised meaning).
+                        meaning_hash = hashlib.sha256(
+                            (meaning or '').strip().lower().encode()
+                        ).hexdigest()[:16]
+
                         cursor.execute('''
                             INSERT INTO word_meanings
-                            (word, meaning, part_of_speech, intent_type, synonyms,
+                            (word, meaning, meaning_hash, part_of_speech, synonyms,
                              confidence, usage_count, last_used, created_at)
-                            VALUES (%s, %s, %s, %s, NULL, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                            ON CONFLICT (word, intent_type) DO UPDATE SET
-                                meaning = EXCLUDED.meaning,
-                                part_of_speech = COALESCE(EXCLUDED.part_of_speech, word_meanings.part_of_speech),
-                                confidence = GREATEST(word_meanings.confidence, EXCLUDED.confidence),
+                            VALUES (%s, %s, %s, %s, NULL, %s, %s,
+                                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            ON CONFLICT (word, meaning_hash) DO UPDATE SET
+                                part_of_speech = COALESCE(EXCLUDED.part_of_speech,
+                                                          word_meanings.part_of_speech),
+                                confidence = GREATEST(word_meanings.confidence,
+                                                      EXCLUDED.confidence),
                                 usage_count = word_meanings.usage_count + 1,
-                                last_used = CURRENT_TIMESTAMP
-                        ''', (word, meaning, pos, intent_type, round(conf, 3), enc_count))
+                                last_used   = CURRENT_TIMESTAMP
+                        ''', (word, meaning, meaning_hash, pos, round(conf, 3), enc_count))
+
+                        # Record the intent association if one was inferred.
+                        if intent_type:
+                            cursor.execute(
+                                'SELECT sense_id FROM word_meanings WHERE word = %s AND meaning_hash = %s',
+                                (word, meaning_hash))
+                            sense_row = cursor.fetchone()
+                            if sense_row:
+                                cursor.execute('''
+                                    INSERT INTO intent_associations (sense_id, intent_type, weight)
+                                    VALUES (%s, %s, %s)
+                                    ON CONFLICT (sense_id, intent_type) DO UPDATE SET
+                                        weight = GREATEST(intent_associations.weight, EXCLUDED.weight)
+                                ''', (sense_row[0], intent_type, round(conf, 3)))
 
                         cursor.execute(
                             'UPDATE word_candidates SET confirmed = TRUE WHERE id = %s', (cid,))
@@ -881,7 +1007,6 @@ class SuperhumanMemorySystem:
         except Exception as e:
             logger.warning(f"Word candidate promotion failed: {e}")
 
-    
     def get_vocabulary(self, category: str = None, emotion: str = None, intensity: float = None) -> List[str]:
         """Get learned vocabulary based on category, emotion, and intensity"""
         try:
@@ -919,24 +1044,38 @@ class SuperhumanMemorySystem:
         return senses[0] if senses else None
 
     def get_word_senses(self, word: str) -> List[Dict[str, Any]]:
-        """Get all known senses for a word, ordered by confidence descending"""
+        """Get all known senses for a word, ordered by confidence descending.
+
+        Quarantined rows (meaning set by the old neighbour-voting path) are
+        excluded.  Intent associations are fetched from intent_associations so
+        each sense can carry multiple intents; the first/highest-weight one is
+        returned as intent_type for backward compatibility.
+        """
         try:
             with DB_LOCK:
                 cursor = self._db_connection.cursor()
                 cursor.execute('''
-                    SELECT word, meaning, part_of_speech, intent_type, synonyms, confidence
-                    FROM word_meanings WHERE word = %s
-                    ORDER BY confidence DESC, usage_count DESC
+                    SELECT wm.sense_id, wm.word, wm.meaning, wm.part_of_speech, wm.synonyms,
+                           wm.confidence,
+                           (SELECT ia.intent_type
+                            FROM intent_associations ia
+                            WHERE ia.sense_id = wm.sense_id
+                            ORDER BY ia.weight DESC
+                            LIMIT 1) AS top_intent
+                    FROM word_meanings wm
+                    WHERE wm.word = %s AND wm.quarantined = FALSE
+                    ORDER BY wm.confidence DESC, wm.usage_count DESC
                 ''', (word.lower(),))
                 rows = cursor.fetchall()
                 return [
                     {
-                        'word': r[0],
-                        'meaning': r[1],
-                        'part_of_speech': r[2],
-                        'intent_type': r[3],
+                        'sense_id': r[0],
+                        'word': r[1],
+                        'meaning': r[2],
+                        'part_of_speech': r[3],
                         'synonyms': r[4].split(', ') if r[4] else [],
-                        'confidence': r[5]
+                        'confidence': r[5],
+                        'intent_type': r[6],
                     }
                     for r in rows
                 ]
@@ -976,33 +1115,55 @@ class SuperhumanMemorySystem:
             return []
     
     def detect_intent_from_vocabulary(self, message: str) -> Dict[str, Any]:
-        """Detect intent by voting across all known senses of every word in the message."""
-        message_lower = message.lower().strip()
-        words = message_lower.split()
+        """Detect intent by voting across all known senses of every word in the message.
 
-        # Collect votes: intent_type -> cumulative confidence
+        Returns raw (unclamped) confidence, the margin between first and second
+        place, and the number of unknown words so callers can make informed
+        decisions about clarification thresholds.
+        """
+        import re as _re
+        message_lower = message.lower().strip()
+        words = _re.findall(r'\b[a-zA-Z]{3,}\b', message_lower)
+
+        # Count words with no known sense (Fix 4: surface uncertainty).
+        unknown_word_count = 0
+
+        # Collect votes: intent_type -> cumulative weight.
         votes: Dict[str, float] = {}
         for word in words:
-            for sense in self.get_word_senses(word):
+            senses = self.get_word_senses(word)
+            if not senses:
+                unknown_word_count += 1
+                continue
+            for sense in senses:
                 it = sense.get('intent_type')
                 if it:
                     votes[it] = votes.get(it, 0.0) + sense.get('confidence', 1.0)
 
-        # Punctuation fallback: a bare '?' strongly signals a question
+        # Punctuation fallback: a bare '?' strongly signals a question.
         if '?' in message:
             votes['question'] = votes.get('question', 0.0) + 0.8
 
         if not votes:
-            return {'intent': 'statement', 'confidence': 0.5, 'method': 'default'}
+            return {
+                'intent': 'statement',
+                'confidence': 0.0,
+                'margin': 0.0,
+                'unknown_word_count': unknown_word_count,
+                'method': 'default',
+            }
 
-        # Winning intent is whichever has the highest cumulative vote weight
-        winning_intent = max(votes, key=lambda k: votes[k])
+        # Winning intent.
+        sorted_intents = sorted(votes.items(), key=lambda kv: kv[1], reverse=True)
+        winning_intent, winning_score = sorted_intents[0]
         total_weight = sum(votes.values())
-        raw_confidence = votes[winning_intent] / total_weight if total_weight > 0 else 0.5
-        # Scale to [0.5, 0.95] so we never claim certainty we don't have
-        confidence = 0.5 + raw_confidence * 0.45
+        raw_confidence = winning_score / total_weight if total_weight > 0 else 0.0
 
-        # Map internal intent types to the names the rest of the system expects
+        # Margin between first and second place (0.0 when only one intent voted).
+        second_score = sorted_intents[1][1] if len(sorted_intents) > 1 else 0.0
+        margin = (winning_score - second_score) / total_weight if total_weight > 0 else 0.0
+
+        # Map internal intent types to the names the rest of the system expects.
         intent_map = {
             'emotion': 'emotional_sharing',
         }
@@ -1010,7 +1171,9 @@ class SuperhumanMemorySystem:
 
         return {
             'intent': mapped_intent,
-            'confidence': round(confidence, 3),
+            'confidence': round(raw_confidence, 3),
+            'margin': round(margin, 3),
+            'unknown_word_count': unknown_word_count,
             'method': 'vocabulary_vote',
             'vote_breakdown': {k: round(v, 3) for k, v in votes.items()},
         }
@@ -4582,10 +4745,18 @@ class NotusProcess:
                 # AUTOMATIC PUSH: Automatically give context/intent/concepts to reasoning WITHOUT being asked
                 self._automatically_push_to_reasoning(user_input, user_id)
 
-                # ── Clarification check: if intent confidence is low, ask about the most uncertain word ──
+                # ── Clarification check: ask when confidence is weak or margin is narrow ──
                 import re as _re
                 intent_result = self.memory_system.detect_intent_from_vocabulary(user_input)
-                if intent_result.get('confidence', 1.0) < self.memory_system._CLARIFY_THRESHOLD:
+                _conf    = intent_result.get('confidence', 1.0)
+                _margin  = intent_result.get('margin', 1.0)
+                _unknown = intent_result.get('unknown_word_count', 0)
+                _should_clarify = (
+                    _conf < self.memory_system._CLARIFY_THRESHOLD
+                    or _margin < 0.15
+                    or _unknown >= 2
+                )
+                if _should_clarify:
                     words_in_msg = _re.findall(r'\b[a-zA-Z]{3,}\b', user_input.lower())
                     uncertain_word = None
                     try:
