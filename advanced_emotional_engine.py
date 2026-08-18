@@ -21,6 +21,7 @@ import sys
 import threading
 from dataclasses import dataclass, asdict, field
 from enum import Enum
+from collections import deque
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from threading import Lock
 from thalamus import get_thalamus
@@ -155,6 +156,17 @@ class EmotionalBlend:
     secondary_emotions: List[Tuple[EmotionalState, float]]
     intensity: float
     created_at: float
+
+@dataclass
+class InternalEventAppraisal:
+    """Metadata for an autonomously recalled memory or thought passed to the appraisal pipeline."""
+    source: str                            # "memory", "thought", "rumination", "association"
+    content: str                           # Text passed to AppraisalEngine.appraise()
+    memory_age_seconds: float              # How old the memory is (0 = fresh thought)
+    resolved: bool                         # Was the underlying situation resolved?
+    prior_appraisal_event_type: Optional[str]  # event_type from first appraisal, or None
+    relevance: float                       # 0..1 caller's estimate of present relevance
+
 
 # ------------------------------
 # Appraisal System
@@ -528,6 +540,10 @@ class AdvancedEmotionalEngine:
         self._unresolved_appraisals: List[Tuple[str, float, float]] = []
         # attention bias: negative emotion biases ambiguous messages (set to event_type or None)
         self._attention_bias: Optional[str] = None
+        # Internal-event deduplication / loop-guard
+        self.INTERNAL_COOLDOWN_SEC: float = 120.0
+        self._internal_event_cooldowns: Dict[str, float] = {}   # fingerprint → last-appraised timestamp
+        self._internal_event_history: deque = deque(maxlen=20)  # rolling fingerprint log
 
     # --------------- Public API ---------------
     def _query_lobe(self, lobe_name: str, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -618,6 +634,77 @@ class AdvancedEmotionalEngine:
             pass
         return enhanced
 
+    def appraise_internal_event(self, event: InternalEventAppraisal) -> None:
+        """
+        Appraise an autonomously recalled memory or thought through the existing PAD pipeline.
+
+        Safety guarantees:
+        - Cooldown: the same content fingerprint cannot be appraised more than once per
+          INTERNAL_COOLDOWN_SEC (default 120 s).
+        - Loop guard: if the same fingerprint appears more than once in the last-20 history,
+          the call is silently dropped to break any self-reinforcing chain.
+        - Intensity cap: internal events are dampened to at most 60 % of the PAD delta a
+          live message of the same type would produce. Resolved memories are further halved.
+        - All actual PAD / emotion-switch logic runs through the unchanged _apply_appraisal.
+        """
+        fingerprint = event.content[:80].lower().strip()
+
+        # --- Loop guard ---
+        history_list = list(self._internal_event_history)
+        if history_list.count(fingerprint) >= 2:
+            self._log(f"[internal_appraisal] loop-guard suppressed: {fingerprint[:40]!r}")
+            return
+
+        # --- Cooldown ---
+        last_appraised = self._internal_event_cooldowns.get(fingerprint, 0.0)
+        if time.time() - last_appraised < self.INTERNAL_COOLDOWN_SEC:
+            return
+
+        # --- Run appraisal through the existing engine ---
+        appraisal = self._appraisal_engine.appraise(
+            event.content,
+            relationship_history=self._event_history[-20:],
+            sensitivity_map=self._event_sensitivity,
+        )
+
+        # --- Dampening factor ---
+        # Age: decays toward 0.2 over 1 hour; floors at 0.2 so old memories still colour mood.
+        age_factor = max(0.2, 1.0 - (event.memory_age_seconds / 3600.0) * 0.8)
+        # Relevance: caller's 0-1 estimate.
+        relevance_factor = max(0.1, min(1.0, event.relevance))
+        # Resolved memories are much less impactful.
+        resolved_factor = 0.5 if event.resolved else 1.0
+        # If prior appraisal matches and it was resolved, reduce further to near-neutral.
+        if (event.resolved
+                and event.prior_appraisal_event_type is not None
+                and event.prior_appraisal_event_type == appraisal.event_type):
+            resolved_factor = 0.25
+
+        dampening = age_factor * relevance_factor * resolved_factor
+        # Hard cap: internal events ≤ 60 % of a live message's PAD delta.
+        dampening = min(dampening, 0.60)
+
+        # Apply dampening to the PAD delta and severity on the appraisal result.
+        dv, da, dd = appraisal.monday_pad_delta
+        appraisal.monday_pad_delta = (dv * dampening, da * dampening, dd * dampening)
+        appraisal.severity = round(appraisal.severity * dampening, 3)
+
+        # --- Push through the unchanged appraisal pipeline ---
+        self._apply_appraisal(appraisal)
+
+        # --- Record cooldown and history ---
+        self._internal_event_cooldowns[fingerprint] = time.time()
+        self._internal_event_history.append(fingerprint)
+        # Prune stale cooldown entries (older than 2× the cooldown window) to avoid unbounded growth.
+        cutoff = time.time() - self.INTERNAL_COOLDOWN_SEC * 2
+        self._internal_event_cooldowns = {
+            fp: ts for fp, ts in self._internal_event_cooldowns.items() if ts > cutoff
+        }
+        self._log(
+            f"[internal_appraisal] source={event.source} event={appraisal.event_type} "
+            f"sev={appraisal.severity:.3f} damp={dampening:.2f} → {self.current_emotion.value}"
+        )
+
     def get_emotional_summary(self) -> str:
         recent = [m.emotion.value for m in self.emotional_memories[-10:]]
         counts: Dict[str, int] = {}
@@ -666,6 +753,7 @@ class AdvancedEmotionalEngine:
                 for (et, sev, ts) in self._unresolved_appraisals
             ],
             'attention_bias': self._attention_bias,
+            'internal_event_cooldowns': self._internal_event_cooldowns,
             'user_affect': {
                 'inferred_emotion': self._user_affect.inferred_emotion,
                 'confidence': self._user_affect.confidence,
@@ -711,6 +799,14 @@ class AdvancedEmotionalEngine:
             for u in raw_unresolved if isinstance(u, dict)
         ]
         self._attention_bias = obj.get('attention_bias', None)
+        raw_cooldowns = obj.get('internal_event_cooldowns', {})
+        if isinstance(raw_cooldowns, dict):
+            # Prune already-expired entries on load so stale data doesn't linger.
+            cutoff = time.time() - self.INTERNAL_COOLDOWN_SEC * 2
+            self._internal_event_cooldowns = {
+                fp: float(ts) for fp, ts in raw_cooldowns.items()
+                if isinstance(ts, (int, float)) and float(ts) > cutoff
+            }
         ua = obj.get('user_affect', {})
         if ua:
             self._user_affect = UserAffectModel(

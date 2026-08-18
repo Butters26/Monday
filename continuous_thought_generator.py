@@ -8,7 +8,10 @@ import time
 import random
 from collections import deque
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from advanced_emotional_engine import AdvancedEmotionalEngine, InternalEventAppraisal
 
 
 @dataclass
@@ -36,9 +39,10 @@ class ThoughtTrigger:
 class ContinuousThoughtGenerator:
     """Generates continuous stream of thoughts - not scheduled"""
     
-    def __init__(self):
+    def __init__(self, emotional_engine: Optional['AdvancedEmotionalEngine'] = None):
         self.running = True
         self.state = ThoughtState()
+        self._emotional_engine = emotional_engine
         
         # Track recent thoughts to avoid loops
         self.recent_thoughts = deque(maxlen=10)
@@ -132,8 +136,8 @@ class ContinuousThoughtGenerator:
         
         return random.choices(triggers, weights=trigger_weights)[0]
     
-    def _memory_triggered_thought(self) -> str:
-        """Random memory surfaces"""
+    def _memory_triggered_thought(self) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """Random memory surfaces; returns (thought_text, memory_dict)."""
         # Prefer high-emotion memories
         memory_weights = [m["emotion"] for m in self.memories]
         memory = random.choices(self.memories, weights=memory_weights)[0]
@@ -144,7 +148,7 @@ class ContinuousThoughtGenerator:
             f"{memory['content']} - why does that matter to me?",
         ]
         
-        return random.choice(thoughts)
+        return random.choice(thoughts), memory
     
     def _association_triggered_thought(self) -> str:
         """Previous thought leads to new concept"""
@@ -313,14 +317,54 @@ class ContinuousThoughtGenerator:
         """Adjust thinking speed based on arousal"""
         self.state.emotional_intensity = max(0, min(1, level))
     
+    def _feed_to_emotional_engine(
+        self,
+        thought_text: str,
+        trigger: str,
+        memory_ref: Optional[Dict[str, Any]],
+    ) -> None:
+        """Send a generated thought to the emotional engine for internal appraisal."""
+        try:
+            from advanced_emotional_engine import InternalEventAppraisal  # local import avoids circular deps
+
+            # Map thought trigger type to InternalEventAppraisal source label.
+            source_map = {
+                ThoughtTrigger.MEMORY: "memory",
+                ThoughtTrigger.RUMINATION: "rumination",
+                ThoughtTrigger.ASSOCIATION: "association",
+            }
+            source = source_map.get(trigger, "thought")
+
+            # For memory-triggered thoughts, use the stored emotion weight as relevance
+            # and flag unresolved for high-emotion memories.
+            if trigger == ThoughtTrigger.MEMORY and memory_ref is not None:
+                relevance = float(memory_ref.get("emotion", 0.5))
+                resolved = relevance < 0.7  # high-emotion memories treated as unresolved
+            else:
+                relevance = self.state.emotional_intensity
+                resolved = trigger != ThoughtTrigger.RUMINATION  # rumination = unresolved
+
+            event = InternalEventAppraisal(
+                source=source,
+                content=thought_text,
+                memory_age_seconds=0.0,   # fresh thought; real age unknown at this level
+                resolved=resolved,
+                prior_appraisal_event_type=None,
+                relevance=relevance,
+            )
+            self._emotional_engine.appraise_internal_event(event)
+        except Exception:
+            pass  # never crash the thought loop because of the engine
+
     def generate_thought(self) -> Dict[str, Any]:
         """Generate a single spontaneous thought"""
         # Choose trigger based on state
         trigger = self._choose_trigger()
-        
+        memory_ref: Optional[Dict[str, Any]] = None
+
         # Generate thought based on trigger
         if trigger == ThoughtTrigger.MEMORY:
-            thought_text = self._memory_triggered_thought()
+            thought_text, memory_ref = self._memory_triggered_thought()
         elif trigger == ThoughtTrigger.ASSOCIATION: 
             thought_text = self._association_triggered_thought()
         elif trigger == ThoughtTrigger.CURIOSITY:
@@ -351,7 +395,11 @@ class ContinuousThoughtGenerator:
         self.last_thought = thought_text
         if concepts:
             self.last_concepts = concepts
-        
+
+        # Feed thought into emotional engine if connected
+        if self._emotional_engine is not None:
+            self._feed_to_emotional_engine(thought_text, trigger, memory_ref)
+
         return {
             "text": thought_text,
             "trigger": trigger,
