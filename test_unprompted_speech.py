@@ -71,7 +71,7 @@ def test_unprompted_speech():
     print("   - Speech appears with 💭 emoji prefix")
     print("   - Natural timing based on emotional state\n")
     
-    return True
+    assert True
 
 
 if __name__ == "__main__":

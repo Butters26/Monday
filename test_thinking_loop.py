@@ -44,9 +44,7 @@ def test_thinking_loop():
         print(f"\n❌ Test FAILED: {e}")
         import traceback
         traceback.print_exc()
-        return False
-    
-    return True
+        assert False, str(e)
 
 
 if __name__ == "__main__":
