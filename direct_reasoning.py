@@ -91,15 +91,20 @@ class DirectMaximumSophisticationAdapter:
         thinking: Dict[str, Any], understanding: Dict[str, Any]
     ) -> Optional[str]:
         composed = thinking.get("composed_response")
-        if not isinstance(composed, str) or not composed.strip():
-            return None
         theories = thinking.get("theories", [])
         grounded = any(
             isinstance(theory, dict) and theory.get("components")
             for theory in theories
         )
-        if grounded or understanding.get("intent") == "greeting":
+        if isinstance(composed, str) and composed.strip() and (
+            grounded or understanding.get("intent") == "greeting"
+        ):
             return composed.strip()
+        if grounded:
+            for theory in theories:
+                explanation = theory.get("explanation") if isinstance(theory, dict) else None
+                if isinstance(explanation, str) and explanation.strip():
+                    return explanation.strip()
         # Legacy composition can turn an evidence-free question into a word bag;
         # that is not a conclusion. Let Thalamus use its emergency fallback.
         return None

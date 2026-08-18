@@ -493,6 +493,31 @@ class MaximumSophisticationReasoning:
         except Exception:
             pass
         return None
+
+    def _has_registered_lobe(self, lobe_name: str) -> bool:
+        """Check whether a lobe is available before using legacy cross-lobe paths."""
+        try:
+            handlers = getattr(self.thalamus, 'lobe_handlers', {})
+            return isinstance(handlers, dict) and lobe_name in handlers
+        except Exception:
+            return False
+
+    @staticmethod
+    def _normalize_concepts(concepts: Any) -> List[str]:
+        """Accept concepts from either direct-core or legacy payload shapes."""
+        if not isinstance(concepts, list):
+            return []
+        normalized = []
+        for concept in concepts:
+            if isinstance(concept, dict):
+                value = concept.get('word') or concept.get('name') or concept.get('concept')
+            else:
+                value = concept
+            if isinstance(value, str):
+                value = value.strip()
+                if value:
+                    normalized.append(value)
+        return normalized
     
     def query_context_from_notus(self, text: str, user_id: str = 'default') -> Dict[str, Any]:
         """Query comprehensive context from Notus for decision-making"""
@@ -1532,30 +1557,31 @@ class MaximumSophisticationReasoning:
         
         # CRITICAL FIX: Check if Novelty Lobe has pending questions
         # If so, this user input might be an answer to a novelty question
-        try:
-            novelty_check = self.thalamus.send_message(
-                'novelty',
-                'get_pending_questions',
-                {},
-                source='reasoning'
-            )
-            if novelty_check.get('status') == 'success':
-                pending = novelty_check.get('pending', {})
-                if pending:
-                    print(f"🧠 Reasoning: Found {len(pending)} pending novelty questions, routing response")
-                    for stimulus, context in pending.items():
-                        self.thalamus.send_message(
-                            'novelty',
-                            'user_response',
-                            {
-                                'type': 'user_response',
-                                'stimulus': stimulus,
-                                'answer': user_input
-                            },
-                            source='reasoning'
-                        )
-        except Exception as e:
-            print(f"⚠️  Novelty check failed: {e}")
+        if self._has_registered_lobe('novelty'):
+            try:
+                novelty_check = self.thalamus.send_message(
+                    'novelty',
+                    'get_pending_questions',
+                    {},
+                    source='reasoning'
+                )
+                if novelty_check.get('status') == 'success':
+                    pending = novelty_check.get('pending', {})
+                    if pending:
+                        print(f"🧠 Reasoning: Found {len(pending)} pending novelty questions, routing response")
+                        for stimulus, context in pending.items():
+                            self.thalamus.send_message(
+                                'novelty',
+                                'user_response',
+                                {
+                                    'type': 'user_response',
+                                    'stimulus': stimulus,
+                                    'answer': user_input
+                                },
+                                source='reasoning'
+                            )
+            except Exception as e:
+                print(f"⚠️  Novelty check failed: {e}")
         
         # Extract data from full lobe responses (Thalamus passes everything through)
         perception_result = input_data.get('perception_result', {})
@@ -1564,6 +1590,14 @@ class MaximumSophisticationReasoning:
         representation_result = input_data.get('representation_result', {})
         pattern_result = input_data.get('pattern_result', {})
         beliefs_from_thalamus = input_data.get('beliefs', [])
+        direct_memories = [
+            memory for memory in input_data.get('memories', [])
+            if isinstance(memory, dict) and isinstance(memory.get('content', ''), str)
+        ]
+        direct_concepts = self._normalize_concepts(input_data.get('concepts', []))
+        direct_understanding = input_data.get('understanding', {})
+        if not isinstance(direct_understanding, dict):
+            direct_understanding = {}
         
         # CRITICAL FIX: QUERY NOTUS FOR CONTEXT BEFORE THINKING
         # This is where Reasoning pulls what it knows to inform decision-making
@@ -1573,11 +1607,19 @@ class MaximumSophisticationReasoning:
             if not isinstance(memory, dict)
             or memory.get('content', '').strip().casefold() != user_input.strip().casefold()
         ]
+        if direct_memories:
+            semantic_knowledge = [
+                memory for memory in direct_memories
+                if memory.get('content', '').strip().casefold() != user_input.strip().casefold()
+            ] + semantic_knowledge
         if getattr(self, '_direct_core', False):
             # The adapter has already retrieved, scoped, and normalized this
             # context.  Keep that evidence authoritative while still exercising
             # the legacy Notus context query above.
-            semantic_knowledge = []
+            semantic_knowledge = [
+                memory for memory in direct_memories
+                if memory.get('content', '').strip().casefold() != user_input.strip().casefold()
+            ]
         episodic_events = notus_context.get('episodic', [])
         known_facts = notus_context.get('facts', [])
         
@@ -1635,9 +1677,11 @@ class MaximumSophisticationReasoning:
             patterns = pattern_result.get('significant_patterns', {})
         
         # Extract understanding from Perception if available
-        understanding = {}
+        understanding = direct_understanding.copy() if direct_understanding else {}
         if perception_result.get('status') == 'success':
-            understanding = perception_result.get('understanding', {})
+            perceived_understanding = perception_result.get('understanding', {})
+            if isinstance(perceived_understanding, dict):
+                understanding.update(perceived_understanding)
         
         # Update beliefs from Thalamus if provided
         if beliefs_from_thalamus:
@@ -1661,6 +1705,8 @@ class MaximumSophisticationReasoning:
                 else:
                     # If it's a string ID, try to get the name
                     key_concepts.append(str(concept_obj))
+        elif direct_concepts:
+            key_concepts = direct_concepts[:]
         elif concepts_from_thalamus:
             # Fall back to raw words from Perception
             key_concepts = [c for c in concepts_from_thalamus if isinstance(c, str) and len(c) > 2]
@@ -1783,7 +1829,7 @@ class MaximumSophisticationReasoning:
         
         # Detect belief contradictions and signal them as well
         contradictions = self._detect_belief_contradictions(user_input, key_concepts, memory_result)
-        if contradictions:
+        if contradictions and self._has_registered_lobe('novelty'):
             # Send contradiction signals to Novelty Lobe (triggers learning/reflection)
             for contradiction in contradictions:
                 self.thalamus.send_message(
@@ -1802,7 +1848,8 @@ class MaximumSophisticationReasoning:
                 )
         
         # Detect and signal any novel ideas to Novelty Lobe
-        self._detect_and_signal_reasoning_novelty(user_input, response, key_concepts)
+        if self._has_registered_lobe('novelty'):
+            self._detect_and_signal_reasoning_novelty(user_input, response, key_concepts)
         
         # Compose response with subjective perspective - pass understanding
         try:
@@ -1889,10 +1936,6 @@ class MaximumSophisticationReasoning:
                     meaning = self._get_word_meaning(word_clean)
                     if meaning:
                         concepts.append(word_clean)
-            
-            # Skip Notus query - use concepts from input_data if available
-            if not concepts and input_data.get('concepts'):
-                concepts = input_data['concepts'][:10]
             
             # Last resort: use basic word extraction without pattern matching
             if not concepts:
@@ -2384,18 +2427,25 @@ class MaximumSophisticationReasoning:
             explanation = explanation_parts[0]
         else:
             # Generate explanation using language generation
-            semantic_input = {
-                'intent': 'express_uncertainty',
-                'concepts': concepts[:3] if concepts else ['information'],
-                'relations': {},
-                'certainty': 0.3,
-                'emotion': 'uncertain',
-                'personal_perspective': True,
-                'tense': 'present'
-            }
-            explanation = self._generate_language(semantic_input, f"I need more information about {concepts[0] if concepts else 'this'}")
-            if not explanation:
-                explanation = f"I need more information about {concepts[0] if concepts else 'this'}"
+            if getattr(self, '_direct_core', False):
+                topic = concepts[0] if concepts else 'that'
+                explanation = (
+                    f"I do not have enough grounded information about {topic} yet. "
+                    "Please provide more context or a fact I can reason from."
+                )
+            else:
+                semantic_input = {
+                    'intent': 'express_uncertainty',
+                    'concepts': concepts[:3] if concepts else ['information'],
+                    'relations': {},
+                    'certainty': 0.3,
+                    'emotion': 'uncertain',
+                    'personal_perspective': True,
+                    'tense': 'present'
+                }
+                explanation = self._generate_language(semantic_input, f"I need more information about {concepts[0] if concepts else 'this'}")
+                if not explanation:
+                    explanation = f"I need more information about {concepts[0] if concepts else 'this'}"
         
         # Generate predictions
         predictions = []
@@ -2559,7 +2609,11 @@ class MaximumSophisticationReasoning:
     def _process_perception_input(self, perception_data: Dict[str, Any]):
         """Process perception input and trigger thinking"""
         # FIX: Prevent duplicate processing
-        user_input = perception_data.get('raw_text', '')
+        user_input = (
+            perception_data.get('user_input', '')
+            or perception_data.get('raw_text', '')
+            or perception_data.get('text', '')
+        )
         
         # FIX: Skip empty input (from typing detection, not actual messages)
         if not user_input or not user_input.strip():
@@ -2592,12 +2646,13 @@ class MaximumSophisticationReasoning:
         # Query other lobes for their processed data
         input_data = {
             'user_input': user_input,
-            'concepts': perception_data.get('concepts', []),
-            'memory_context': {},
+            'concepts': self._normalize_concepts(perception_data.get('concepts', [])),
+            'memory_context': perception_data.get('memory_context', {}),
             'beliefs': [],
-            'understanding': {},
+            'understanding': perception_data.get('understanding', {}),
             'emotion': {},
-            'memories': []
+            'memories': perception_data.get('memories', []),
+            'user_id': perception_data.get('user_id', 'default')
         }
         
         # Query emotion lobe
@@ -2628,32 +2683,7 @@ class MaximumSophisticationReasoning:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming messages - handles automatic updates from Notus"""
         msg_type = message.get('type')
-        
-        # AUTOMATIC UPDATE from Notus - no query needed, it just pushes
-        if msg_type == 'notus_automatic_update':
-            # Notus automatically gave us context/intent/concepts - use it immediately
-            user_input = message.get('user_input', '')
-            memory_context = message.get('memory_context', {})
-            intent = message.get('intent', 'statement')
-            concepts = message.get('concepts', [])
-            understanding = message.get('understanding', {})
-            memories = message.get('memories', [])
-            
-            # Build input_data from automatic Notus update
-            input_data = {
-                'user_input': user_input,
-                'memory_context': memory_context,
-                'intent': intent,
-                'concepts': [c.get('word', '') if isinstance(c, dict) else c for c in concepts],
-                'understanding': understanding,
-                'memories': memories
-            }
-            
-            # Process it immediately - no need to query Notus, it already gave us everything
-            self._process_perception_input(input_data)
-            
-            return {'status': 'success', 'processed': True}
-        
+
         # Handle other message types...
         """Process messages"""
         msg_type = message.get('type')
@@ -2665,21 +2695,25 @@ class MaximumSophisticationReasoning:
         # AUTOMATIC UPDATE from Notus - no query needed, it just pushes
         if msg_type == 'notus_automatic_update':
             # Notus automatically gave us context/intent/concepts - use it immediately
-            user_input = message.get('user_input', '')
-            memory_context = message.get('memory_context', {})
-            intent = message.get('intent', 'statement')
-            concepts = message.get('concepts', [])
-            understanding = message.get('understanding', {})
-            memories = message.get('memories', [])
+            payload = message.get('content', {})
+            if not isinstance(payload, dict):
+                payload = {}
+            user_input = payload.get('user_input', '')
+            memory_context = payload.get('memory_context', {})
+            intent = payload.get('intent', 'statement')
+            concepts = payload.get('concepts', [])
+            understanding = payload.get('understanding', {})
+            memories = payload.get('memories', [])
             
             # Build input_data from automatic Notus update
             input_data = {
                 'user_input': user_input,
                 'memory_context': memory_context,
                 'intent': intent,
-                'concepts': [c.get('word', '') if isinstance(c, dict) else c for c in concepts],
+                'concepts': self._normalize_concepts(concepts),
                 'understanding': understanding,
-                'memories': memories
+                'memories': memories,
+                'user_id': payload.get('user_id', 'default')
             }
             
             # Process it immediately - no need to query Notus, it already gave us everything
