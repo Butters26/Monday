@@ -16,7 +16,7 @@ def test_prompted_core_path_persists_memory_and_delivers_output(tmp_path):
         assert response
         assert systems["output"].last_output == response
         assert list(systems["thalamus"].lobe_handlers) == [
-            "conversation", "notus", "emotion", "reasoning", "language", "output"
+            "perception", "conversation", "notus", "emotion", "reasoning", "language", "output"
         ]
         route_names = [route["to"] for route in systems["thalamus"].message_routes]
         prompted_path = ["conversation", "notus", "emotion", "reasoning", "language", "output"]
