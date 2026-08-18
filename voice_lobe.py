@@ -310,7 +310,7 @@ class VoiceSynthesizer:
 class VoiceLobe:
     """Voice synthesis and audio output lobe"""
     
-    def __init__(self, socket_path="/tmp/voice.sock", voice_name: str = "monday"):
+    def __init__(self, socket_path="/tmp/voice.sock", voice_name: str = "shadowheart"):
         self.socket_path = socket_path
         self.running = True
         self.user = "Butters26"
@@ -483,4 +483,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n🛑 Voice lobe shutting down...")
         lobe.shutdown()
-

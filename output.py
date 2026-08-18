@@ -134,7 +134,7 @@ class OutputLobe:
             'rate': 150,
             'volume': 1.0,
             'voice_id': None,
-            'profile': 'monday'  # Default to Monday's voice
+            'profile': 'shadowheart'  # Default to Shadowheart voice
         }
         
         # Voice profiles
@@ -145,13 +145,13 @@ class OutputLobe:
         if enable_tts:
             self._initialize_tts()
         
-    def _apply_voice_profile(self, profile_name: str = 'monday'):
+    def _apply_voice_profile(self, profile_name: str = 'shadowheart'):
         """Apply voice profile settings to TTS engine"""
         if not self.tts_engine or not self.tts_available:
             return
         
         if profile_name not in self.voice_profiles:
-            profile_name = 'monday'  # Default fallback
+            profile_name = 'shadowheart'  # Default fallback
         
         profile = self.voice_profiles[profile_name]
         
@@ -194,15 +194,15 @@ class OutputLobe:
             self.tts_engine.setProperty('rate', self.voice_config['rate'])
             self.tts_engine.setProperty('volume', self.voice_config['volume'])
             
-            # Apply default voice profile (Monday)
-            self._apply_voice_profile(self.voice_config.get('profile', 'monday'))
+            # Apply default voice profile (Shadowheart)
+            self._apply_voice_profile(self.voice_config.get('profile', 'shadowheart'))
             
             print("✅ Text-to-speech engine initialized")
             
             # List available voices
             voices = self.tts_engine.getProperty('voices')
             print(f"   Available voices: {len(voices)}")
-            print(f"   Active profile: {self.voice_config.get('profile', 'monday')}")
+            print(f"   Active profile: {self.voice_config.get('profile', 'shadowheart')}")
             
         except ImportError:
             print("⚠️  pyttsx3 not available - voice output disabled")
