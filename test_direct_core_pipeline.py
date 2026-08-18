@@ -56,6 +56,7 @@ def test_prompted_core_path_renders_grounded_greeting_and_gravity_answer(tmp_pat
         gravity = systems["thalamus"].process_user_input("What is gravity?")
 
         assert "hello" in greeting.lower() or "hi" in greeting.lower()
+        assert greeting != "Hello! How can I help?"
         assert "mass" in gravity.lower()
         assert "attraction" in gravity.lower()
     finally:
@@ -242,13 +243,8 @@ def test_direct_notus_close_is_idempotent_and_uses_sqlite_only(tmp_path):
     assert "numpy" not in source
 
 
-def test_response_provider_failure_uses_safe_fallback(tmp_path):
-    class FailingProvider:
-        def render(self, user_input, understanding, memories):
-            raise RuntimeError("provider unavailable")
-
+def test_empty_reasoning_result_uses_safe_failure_message(tmp_path):
     systems = create_core_systems(str(tmp_path / "runtime"))
-    systems["thalamus"].response_provider = FailingProvider()
     class NoAnswerReasoning:
         def process_message(self, message):
             return {"status": "success", "content": {"semantic_input": {}}}

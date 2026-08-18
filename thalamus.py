@@ -17,18 +17,15 @@ import threading
 import uuid
 from typing import Any, Dict, Iterable, Optional
 
-from direct_response import DeterministicResponseProvider, ResponseProvider
-
 class Thalamus:
     """Synchronously route direct calls between registered lobes."""
 
-    def __init__(self, response_provider: Optional[ResponseProvider] = None) -> None:
+    def __init__(self) -> None:
         self.running = True
         self.lobe_handlers: Dict[str, Any] = {}
         self.lobe_handlers_lock = threading.RLock()
         self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=100)
-        self.response_provider = response_provider or DeterministicResponseProvider()
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -193,22 +190,31 @@ class Thalamus:
         if reasoning["status"] != "success":
             return "I'm having trouble thinking right now."
         semantic_input, reasoning_answer = self._reasoning_answer(reasoning)
-        memories = self._content(memory_context).get("memories", [])
-        if reasoning_answer is None:
-            try:
-                reasoning_answer = self.response_provider.render(
-                    user_input, understanding, memories
+        has_reasoning_content = any(
+            (
+                isinstance(semantic_input.get("concepts"), list)
+                and any(
+                    isinstance(concept, str) and concept.strip()
+                    for concept in semantic_input.get("concepts", [])
                 )
-            except Exception:
-                reasoning_answer = None
-            reasoning_answer = self._first_usable_text(reasoning_answer)
-            if reasoning_answer is None:
-                reasoning_answer = "I am unable to formulate a response right now."
+            ,
+                isinstance(semantic_input.get("relations"), dict)
+                and bool(semantic_input.get("relations")),
+                isinstance(semantic_input.get("propositions"), list)
+                and any(
+                    isinstance(proposition, str) and proposition.strip()
+                    for proposition in semantic_input.get("propositions", [])
+                ),
+            )
+        )
+        if reasoning_answer is None and not has_reasoning_content:
+            return "I am unable to formulate a response right now."
         semantic_input.setdefault(
             "intent", understanding.get("intent", "conversation")
         )
-        semantic_input.setdefault("answer", reasoning_answer)
-        semantic_input.setdefault("propositions", [reasoning_answer])
+        if reasoning_answer is not None:
+            semantic_input.setdefault("answer", reasoning_answer)
+            semantic_input.setdefault("propositions", [reasoning_answer])
 
         language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
         if language["status"] != "success":

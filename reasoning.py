@@ -1983,7 +1983,7 @@ class MaximumSophisticationReasoning:
         theories = thinking.get('theories', [])
         if getattr(self, '_direct_core', False) and theories and isinstance(theories[0], dict):
             conclusion = theories[0].get('explanation')
-            if isinstance(conclusion, str) and conclusion.strip() and theories[0].get('components'):
+            if isinstance(conclusion, str) and conclusion.strip():
                 semantic_input.update({
                     'answer': conclusion.strip(),
                     'conclusion': conclusion.strip(),
@@ -2009,7 +2009,16 @@ class MaximumSophisticationReasoning:
         if semantic_input:
             if getattr(self, '_direct_core', False):
                 conclusion = semantic_input.get('answer')
-                return conclusion.strip() if isinstance(conclusion, str) and conclusion.strip() else None
+                if isinstance(conclusion, str) and conclusion.strip():
+                    return conclusion.strip()
+                language_result = self._generate_language(
+                    semantic_input,
+                    user_input,
+                    is_main_response=False,
+                )
+                if language_result and isinstance(language_result, str) and len(language_result.strip()) > 0:
+                    return language_result
+                return None
             # This is the main response - mark it so language generation sends it to Output
             language_result = self._generate_language(
                 semantic_input,
