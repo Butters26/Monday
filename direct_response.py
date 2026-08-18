@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Dict, Iterable, Protocol
+from typing import Any, Dict, Iterable, Optional, Protocol
 
 
 class ResponseProvider(Protocol):
@@ -31,6 +31,40 @@ class DeterministicResponseProvider:
     _gravity: re.Pattern[str] = re.compile(r"\bgravity\b", re.IGNORECASE)
     _memory: re.Pattern[str] = re.compile(r"\bmemory\b", re.IGNORECASE)
     _transcript: re.Pattern[str] = re.compile(r"^\s*(?:user|abin)\s*:", re.IGNORECASE)
+    # Teaching patterns: "X equals Y", "X means Y", "X is (a/an) Y", "by X I mean Y"
+    _teaching: re.Pattern[str] = re.compile(
+        r"^\s*(.+?)\s+(?:equals?|means?|is\s+(?:a|an|the)?\s*)\s+(.+?)\s*[.!?]?\s*$"
+        r"|^\s*by\s+(.+?)\s+i\s+mean\s+(.+?)\s*[.!?]?\s*$",
+        re.IGNORECASE,
+    )
+
+    @staticmethod
+    def _extract_teaching(user_input: str) -> Optional[str]:
+        """Return a compact echo of a teaching statement, or None if not a teaching."""
+        # "by X I mean Y"
+        by_pattern = re.compile(
+            r"^\s*by\s+(?P<word>.+?)\s+i\s+mean\s+(?P<val>.+?)\s*[.!?]?\s*$",
+            re.IGNORECASE,
+        )
+        m = by_pattern.match(user_input.strip())
+        if m:
+            return f"Got it — {m.group('word').strip()} means {m.group('val').strip()}."
+
+        # "X equals Y", "X means Y", "X is (a/an/the) Y", "X is Y"
+        eq_pattern = re.compile(
+            r"^\s*(?P<subj>.+?)\s+(?P<verb>equals?|means?|is\s+(?:a|an|the)?\s*|is)\s+(?P<pred>.+?)\s*[.!?]?\s*$",
+            re.IGNORECASE,
+        )
+        m = eq_pattern.match(user_input.strip())
+        if not m:
+            return None
+        subj = m.group("subj").strip()
+        verb = re.sub(r"\s+", " ", m.group("verb").strip())
+        pred = m.group("pred").strip()
+        # Skip if subject is a long sentence fragment — probably not a teaching statement
+        if len(subj.split()) > 6 or not pred:
+            return None
+        return f"Got it — {subj} {verb} {pred}."
 
     def render(
         self,
@@ -58,6 +92,11 @@ class DeterministicResponseProvider:
             )
         if self._memory.search(user_input):
             return "Memory is information retained so it can be retrieved and used later."
+
+        # Detect teaching statements before falling through to the generic response
+        teaching_ack = self._extract_teaching(user_input)
+        if teaching_ack:
+            return teaching_ack
 
         intent = understanding.get("intent") if isinstance(understanding, dict) else None
         if intent in {"question", "request"} or re.search(
