@@ -414,19 +414,44 @@ class SuperhumanMemorySystem:
                     )
                 ''')
                 
-                # Word meanings table - stores what words actually mean
+                # Word meanings table - stores what words actually mean (multi-sense)
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS word_meanings (
-                        word TEXT PRIMARY KEY,
+                        sense_id SERIAL PRIMARY KEY,
+                        word TEXT NOT NULL,
                         meaning TEXT NOT NULL,
                         part_of_speech TEXT,
                         intent_type TEXT,
                         synonyms TEXT,
+                        confidence REAL DEFAULT 1.0,
                         usage_count INTEGER DEFAULT 1,
                         last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (word, intent_type)
                     )
                 ''')
+
+                # Candidate staging table — infer-and-verify before promoting to word_meanings
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS word_candidates (
+                        id SERIAL PRIMARY KEY,
+                        word TEXT NOT NULL,
+                        candidate_meaning TEXT,
+                        candidate_pos TEXT,
+                        candidate_intent_type TEXT,
+                        confidence REAL DEFAULT 0.3,
+                        source TEXT DEFAULT 'context',
+                        context_examples TEXT DEFAULT '[]',
+                        encounter_count INTEGER DEFAULT 1,
+                        confirmed BOOLEAN DEFAULT FALSE,
+                        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (word, candidate_intent_type)
+                    )
+                ''')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_wc_word ON word_candidates(word)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_wc_confirmed ON word_candidates(confirmed)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_wm_word ON word_meanings(word)')
                 
                 # Grammar knowledge table - stores sentence structure rules
                 cursor.execute('''
@@ -542,60 +567,320 @@ class SuperhumanMemorySystem:
             logger.error(f"Failed to store memory: {e}")
             return None
     
+    # ── Learning constants ─────────────────────────────────────────────────────
+    _CANDIDATE_PROMOTE_ENCOUNTERS = 3   # how many encounters before auto-promotion
+    _CANDIDATE_PROMOTE_CONFIDENCE = 0.65  # confidence threshold for auto-promotion
+    _CANDIDATE_CONFIDENCE_BUMP = 0.08   # bump per additional encounter
+    _CANDIDATE_MAX_EXAMPLES = 5         # max saved example sentences per candidate
+    _CLARIFY_THRESHOLD = 0.52           # ask for clarification below this intent confidence
+
     def _learn_vocabulary_from_content(self, content: str, role: str):
-        """Extract and learn vocabulary from conversation content"""
+        """Observe content: update learned_vocabulary counts AND feed the infer-and-verify pipeline."""
         try:
             import re
-            # Extract words (3+ characters, alphanumeric)
+            import json
+
+            # ── Sentence segmentation ─────────────────────────────────────────
+            sentences = re.split(r'(?<=[.!?])\s+', content.strip()) or [content]
+
+            # Extract words (3+ chars) from the whole content for the legacy table
             words = re.findall(r'\b[a-zA-Z]{3,}\b', content.lower())
-            
-            # Categorize words based on common patterns
-            profanity_words = ['fuck', 'shit', 'damn', 'hell', 'goddamn', 'bullshit', 'ass', 'bitch', 'asshole', 'crap']
+
+            profanity_words = {'fuck', 'shit', 'damn', 'hell', 'goddamn', 'bullshit',
+                               'ass', 'bitch', 'asshole', 'crap'}
             emotional_words = {
-                'positive': ['good', 'great', 'cool', 'nice', 'sweet', 'amazing', 'awesome', 'fantastic', 'wonderful', 'happy', 'glad', 'excited'],
-                'negative': ['bad', 'rough', 'hard', 'weird', 'messy', 'exhausting', 'heavy', 'awful', 'terrible', 'horrible', 'sad', 'angry', 'frustrated'],
-                'excited': ['hyped', 'thrilling', 'crazy', 'wild', 'fantastic', 'incredible', 'insane', 'unreal'],
+                'positive': ['good', 'great', 'cool', 'nice', 'sweet', 'amazing', 'awesome',
+                             'fantastic', 'wonderful', 'happy', 'glad', 'excited'],
+                'negative': ['bad', 'rough', 'hard', 'weird', 'messy', 'exhausting', 'heavy',
+                             'awful', 'terrible', 'horrible', 'sad', 'angry', 'frustrated'],
+                'excited': ['hyped', 'thrilling', 'crazy', 'wild', 'fantastic', 'incredible',
+                            'insane', 'unreal'],
                 'calm': ['chill', 'relaxed', 'easy', 'quiet', 'peaceful', 'mellow', 'serene'],
-                'curious': ['interesting', 'strange', 'curious', 'fascinating', 'intriguing', 'odd', 'bizarre'],
+                'curious': ['interesting', 'strange', 'curious', 'fascinating', 'intriguing',
+                            'odd', 'bizarre'],
                 'empathetic': ['understand', 'know', 'see', 'recognize', 'appreciate', 'relate', 'feel'],
                 'awkward': ['awkward', 'uncomfortable', 'off', 'unsettling', 'cringy'],
                 'angry': ['pissed', 'furious', 'livid', 'raging', 'fuming', 'mad', 'annoyed'],
-                'frustrated': ['frustrated', 'annoyed', 'irritated', 'aggravated', 'bothered']
+                'frustrated': ['frustrated', 'annoyed', 'irritated', 'aggravated', 'bothered'],
             }
-            
+
             with DB_LOCK:
                 cursor = self._db_connection.cursor()
-                
+
+                # ── Legacy: update learned_vocabulary counts (unchanged behaviour) ──
                 for word in words:
-                    # Check if profanity
                     if word in profanity_words:
                         cursor.execute('''
-                            INSERT INTO learned_vocabulary 
+                            INSERT INTO learned_vocabulary
                             (word, category, emotion, intensity_min, intensity_max, usage_count, last_used)
-                            VALUES (%s, 'profanity', NULL, 0.6, 1.0, 
-                                COALESCE((SELECT usage_count FROM learned_vocabulary WHERE word = %s AND category = 'profanity'), 0) + 1,
+                            VALUES (%s, 'profanity', NULL, 0.6, 1.0,
+                                COALESCE((SELECT usage_count FROM learned_vocabulary
+                                          WHERE word = %s AND category = 'profanity'), 0) + 1,
                                 CURRENT_TIMESTAMP)
                             ON CONFLICT (word, category, emotion) DO UPDATE SET
                                 usage_count = EXCLUDED.usage_count,
                                 last_used = CURRENT_TIMESTAMP
                         ''', (word, word))
-                    
-                    # Check emotional categories
-                    for emotion, emotion_words in emotional_words.items():
-                        if word in emotion_words:
+                    for emotion, emo_words in emotional_words.items():
+                        if word in emo_words:
                             cursor.execute('''
-                                INSERT INTO learned_vocabulary 
+                                INSERT INTO learned_vocabulary
                                 (word, category, emotion, intensity_min, intensity_max, usage_count, last_used)
                                 VALUES (%s, 'emotional', %s, 0.0, 1.0,
-                                    COALESCE((SELECT usage_count FROM learned_vocabulary WHERE word = %s AND category = 'emotional' AND emotion = %s), 0) + 1,
+                                    COALESCE((SELECT usage_count FROM learned_vocabulary
+                                              WHERE word = %s AND category = 'emotional' AND emotion = %s), 0) + 1,
                                     CURRENT_TIMESTAMP)
                                 ON CONFLICT (word, category, emotion) DO UPDATE SET
                                     usage_count = EXCLUDED.usage_count,
                                     last_used = CURRENT_TIMESTAMP
                             ''', (word, emotion, word, emotion))
-                            
+
+                # ── New: infer-and-verify pipeline ───────────────────────────
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+
+                    sentence_words = re.findall(r'\b[a-zA-Z]{3,}\b', sentence.lower())
+                    for word in sentence_words:
+                        # Skip words already in confirmed word_meanings
+                        cursor.execute(
+                            'SELECT 1 FROM word_meanings WHERE word = %s LIMIT 1', (word,))
+                        if cursor.fetchone():
+                            continue
+
+                        # Infer a candidate
+                        candidate = self._infer_word_meaning(word, sentence, cursor)
+
+                        # Fetch existing candidate row (if any) for this word+intent_type
+                        existing = None
+                        if candidate['candidate_intent_type']:
+                            cursor.execute('''
+                                SELECT id, confidence, encounter_count, context_examples
+                                FROM word_candidates
+                                WHERE word = %s AND candidate_intent_type = %s
+                            ''', (word, candidate['candidate_intent_type']))
+                            existing = cursor.fetchone()
+                        else:
+                            cursor.execute('''
+                                SELECT id, confidence, encounter_count, context_examples
+                                FROM word_candidates
+                                WHERE word = %s AND candidate_intent_type IS NULL
+                            ''', (word,))
+                            existing = cursor.fetchone()
+
+                        if existing:
+                            ex_id, ex_conf, ex_count, ex_examples_json = existing
+                            ex_examples = json.loads(ex_examples_json or '[]')
+                            if sentence not in ex_examples:
+                                ex_examples.append(sentence)
+                            ex_examples = ex_examples[-self._CANDIDATE_MAX_EXAMPLES:]
+                            new_conf = min(1.0, ex_conf + self._CANDIDATE_CONFIDENCE_BUMP)
+                            cursor.execute('''
+                                UPDATE word_candidates
+                                SET confidence = %s,
+                                    encounter_count = encounter_count + 1,
+                                    context_examples = %s,
+                                    source = CASE WHEN %s = 'user_explicit' THEN 'user_explicit'
+                                                  WHEN encounter_count + 1 >= 3 THEN 'repeated'
+                                                  ELSE source END,
+                                    last_seen = CURRENT_TIMESTAMP
+                                WHERE id = %s
+                            ''', (new_conf, json.dumps(ex_examples), candidate['source'], ex_id))
+                        else:
+                            cursor.execute('''
+                                INSERT INTO word_candidates
+                                (word, candidate_meaning, candidate_pos, candidate_intent_type,
+                                 confidence, source, context_examples, encounter_count,
+                                 confirmed, last_seen, created_at)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, 1, FALSE,
+                                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                                ON CONFLICT (word, candidate_intent_type) DO UPDATE SET
+                                    encounter_count = word_candidates.encounter_count + 1,
+                                    confidence = LEAST(1.0, word_candidates.confidence + %s),
+                                    last_seen = CURRENT_TIMESTAMP
+                            ''', (
+                                word,
+                                candidate['candidate_meaning'],
+                                candidate['candidate_pos'],
+                                candidate['candidate_intent_type'],
+                                candidate['confidence'],
+                                candidate['source'],
+                                json.dumps([sentence]),
+                                self._CANDIDATE_CONFIDENCE_BUMP,
+                            ))
+
+                self._db_connection.commit()
+
+            # After updating candidates, run promotion (outside the lock for clarity)
+            self._promote_word_candidates()
+
         except Exception as e:
             logger.warning(f"Vocabulary learning failed: {e}")
+
+    def _infer_word_meaning(self, word: str, sentence: str, cursor) -> Dict[str, Any]:
+        """
+        Infer a candidate meaning for *word* from its sentence context.
+        Uses only structural signals and words already known in word_meanings.
+        Returns a dict suitable for inserting into word_candidates.
+        """
+        import re
+
+        sentence_lower = sentence.lower()
+        s_words = re.findall(r'\b[a-zA-Z]{3,}\b', sentence_lower)
+
+        # ── 1. Explicit teaching patterns (highest weight) ────────────────────
+        explicit_patterns = [
+            # "X means Y"
+            (r'\b' + re.escape(word) + r'\s+means?\s+(.+)', 0.95),
+            # "X is a Y" / "X is an Y"
+            (r'\b' + re.escape(word) + r'\s+is\s+(?:a|an)\s+(\w+)', 0.90),
+            # "by X I mean Y"
+            (r'by\s+' + re.escape(word) + r'\s+i\s+mean\s+(.+)', 0.95),
+            # "X, which means Y"
+            (r'\b' + re.escape(word) + r',\s+which\s+means?\s+(.+)', 0.90),
+        ]
+        for pattern, conf in explicit_patterns:
+            m = re.search(pattern, sentence_lower)
+            if m:
+                inferred_meaning = m.group(1).strip().rstrip('.,!?')
+                return {
+                    'candidate_meaning': f"Explicitly taught: '{inferred_meaning}'",
+                    'candidate_pos': None,
+                    'candidate_intent_type': None,
+                    'confidence': conf,
+                    'source': 'user_explicit',
+                }
+
+        # ── 2. Vote from neighbouring known words ─────────────────────────────
+        intent_votes: Dict[str, float] = {}
+        pos_hints = []
+        try:
+            word_idx = s_words.index(word) if word in s_words else -1
+        except ValueError:
+            word_idx = -1
+
+        for neighbour in s_words:
+            if neighbour == word:
+                continue
+            cursor.execute(
+                'SELECT intent_type, part_of_speech FROM word_meanings WHERE word = %s LIMIT 1',
+                (neighbour,))
+            row = cursor.fetchone()
+            if row:
+                if row[0]:
+                    intent_votes[row[0]] = intent_votes.get(row[0], 0.0) + 1.0
+                if row[1]:
+                    pos_hints.append(row[1])
+
+        # ── 3. Positional / structural heuristics ─────────────────────────────
+        # Sentence ends with '?' → question intent more likely
+        if '?' in sentence:
+            intent_votes['question'] = intent_votes.get('question', 0.0) + 1.5
+
+        # Word appears at start of sentence before a known noun/pronoun → likely verb
+        if word_idx == 0 and len(s_words) > 1:
+            pos_hints.append('verb')
+
+        # Word appears directly before a known verb → likely adjective or noun (subject)
+        if word_idx >= 0 and word_idx < len(s_words) - 1:
+            next_w = s_words[word_idx + 1]
+            cursor.execute(
+                "SELECT part_of_speech FROM word_meanings WHERE word = %s LIMIT 1", (next_w,))
+            nr = cursor.fetchone()
+            if nr and nr[0] == 'verb':
+                pos_hints.append('noun')
+            elif nr and nr[0] in ('noun', 'pronoun'):
+                pos_hints.append('adjective')
+
+        # ── 4. Assemble result ────────────────────────────────────────────────
+        if intent_votes:
+            winning_intent = max(intent_votes, key=lambda k: intent_votes[k])
+            total = sum(intent_votes.values())
+            raw_conf = intent_votes[winning_intent] / total
+            # Scale: 1 vote → 0.3, 3 votes → 0.5, many votes → up to 0.7
+            confidence = min(0.7, 0.25 + raw_conf * 0.45)
+            source = 'repeated' if sum(intent_votes.values()) >= 3 else 'context'
+        else:
+            winning_intent = None
+            confidence = 0.3
+            source = 'context'
+
+        # Best pos guess
+        if pos_hints:
+            from collections import Counter
+            candidate_pos = Counter(pos_hints).most_common(1)[0][0]
+        else:
+            candidate_pos = None
+
+        candidate_meaning = (
+            f"Inferred from context: appears in sentence with "
+            f"{', '.join(set(pos_hints)) if pos_hints else 'unknown'} words"
+        )
+
+        return {
+            'candidate_meaning': candidate_meaning,
+            'candidate_pos': candidate_pos,
+            'candidate_intent_type': winning_intent,
+            'confidence': round(confidence, 3),
+            'source': source,
+        }
+
+    def _promote_word_candidates(self):
+        """
+        Promote mature candidates from word_candidates into word_meanings.
+        A candidate is promoted when:
+          - source == 'user_explicit', OR
+          - encounter_count >= threshold AND confidence >= threshold
+        Separate senses (different candidate_intent_type) become separate rows in word_meanings.
+        """
+        import json
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+
+                cursor.execute('''
+                    SELECT id, word, candidate_meaning, candidate_pos, candidate_intent_type,
+                           confidence, source, encounter_count
+                    FROM word_candidates
+                    WHERE confirmed = FALSE
+                      AND (
+                          source = 'user_explicit'
+                          OR (encounter_count >= %s AND confidence >= %s)
+                      )
+                ''', (self._CANDIDATE_PROMOTE_ENCOUNTERS, self._CANDIDATE_PROMOTE_CONFIDENCE))
+
+                rows = cursor.fetchall()
+                promoted = 0
+                for row in rows:
+                    cid, word, meaning, pos, intent_type, conf, source, enc_count = row
+                    try:
+                        cursor.execute('''
+                            INSERT INTO word_meanings
+                            (word, meaning, part_of_speech, intent_type, synonyms,
+                             confidence, usage_count, last_used, created_at)
+                            VALUES (%s, %s, %s, %s, NULL, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            ON CONFLICT (word, intent_type) DO UPDATE SET
+                                meaning = EXCLUDED.meaning,
+                                part_of_speech = COALESCE(EXCLUDED.part_of_speech, word_meanings.part_of_speech),
+                                confidence = GREATEST(word_meanings.confidence, EXCLUDED.confidence),
+                                usage_count = word_meanings.usage_count + 1,
+                                last_used = CURRENT_TIMESTAMP
+                        ''', (word, meaning, pos, intent_type, round(conf, 3), enc_count))
+
+                        cursor.execute(
+                            'UPDATE word_candidates SET confirmed = TRUE WHERE id = %s', (cid,))
+                        promoted += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to promote candidate {word}/{intent_type}: {e}")
+
+                if promoted:
+                    self._db_connection.commit()
+                    logger.info(f"📚 Promoted {promoted} word candidate(s) to active vocabulary")
+
+        except Exception as e:
+            logger.warning(f"Word candidate promotion failed: {e}")
+
     
     def get_vocabulary(self, category: str = None, emotion: str = None, intensity: float = None) -> List[str]:
         """Get learned vocabulary based on category, emotion, and intensity"""
@@ -629,27 +914,36 @@ class SuperhumanMemorySystem:
             return []
     
     def get_word_meaning(self, word: str) -> Optional[Dict[str, Any]]:
-        """Get the meaning and intent type of a word"""
+        """Get the highest-confidence meaning of a word (returns first/best sense for backward compat)"""
+        senses = self.get_word_senses(word)
+        return senses[0] if senses else None
+
+    def get_word_senses(self, word: str) -> List[Dict[str, Any]]:
+        """Get all known senses for a word, ordered by confidence descending"""
         try:
             with DB_LOCK:
                 cursor = self._db_connection.cursor()
                 cursor.execute('''
-                    SELECT word, meaning, part_of_speech, intent_type, synonyms
+                    SELECT word, meaning, part_of_speech, intent_type, synonyms, confidence
                     FROM word_meanings WHERE word = %s
+                    ORDER BY confidence DESC, usage_count DESC
                 ''', (word.lower(),))
-                row = cursor.fetchone()
-                if row:
-                    return {
-                        'word': row[0],
-                        'meaning': row[1],
-                        'part_of_speech': row[2],
-                        'intent_type': row[3],
-                        'synonyms': row[4].split(', ') if row[4] else []
+                rows = cursor.fetchall()
+                return [
+                    {
+                        'word': r[0],
+                        'meaning': r[1],
+                        'part_of_speech': r[2],
+                        'intent_type': r[3],
+                        'synonyms': r[4].split(', ') if r[4] else [],
+                        'confidence': r[5]
                     }
-                return None
+                    for r in rows
+                ]
         except Exception as e:
-            logger.error(f"Failed to get word meaning: {e}")
-            return None
+            logger.error(f"Failed to get word senses: {e}")
+            return []
+
     
     def get_grammar_knowledge(self, rule_type: str = None) -> List[Dict[str, Any]]:
         """Get grammar knowledge - sentence structure rules"""
@@ -682,30 +976,44 @@ class SuperhumanMemorySystem:
             return []
     
     def detect_intent_from_vocabulary(self, message: str) -> Dict[str, Any]:
-        """Detect intent using vocabulary knowledge instead of hardcoded pattern matching"""
+        """Detect intent by voting across all known senses of every word in the message."""
         message_lower = message.lower().strip()
         words = message_lower.split()
-        
-        # Query word meanings to understand what words mean
-        detected_intents = []
+
+        # Collect votes: intent_type -> cumulative confidence
+        votes: Dict[str, float] = {}
         for word in words:
-            meaning = self.get_word_meaning(word)
-            if meaning and meaning.get('intent_type'):
-                detected_intents.append(meaning['intent_type'])
-        
-        # Determine primary intent
-        if 'greeting' in detected_intents:
-            return {'intent': 'greeting', 'confidence': 0.9, 'method': 'vocabulary'}
-        elif 'question' in detected_intents:
-            return {'intent': 'question', 'confidence': 0.9, 'method': 'vocabulary'}
-        elif '?' in message:
-            return {'intent': 'question', 'confidence': 0.8, 'method': 'punctuation'}
-        elif 'gratitude' in detected_intents:
-            return {'intent': 'gratitude', 'confidence': 0.8, 'method': 'vocabulary'}
-        elif 'emotion' in detected_intents:
-            return {'intent': 'emotional_sharing', 'confidence': 0.7, 'method': 'vocabulary'}
-        else:
+            for sense in self.get_word_senses(word):
+                it = sense.get('intent_type')
+                if it:
+                    votes[it] = votes.get(it, 0.0) + sense.get('confidence', 1.0)
+
+        # Punctuation fallback: a bare '?' strongly signals a question
+        if '?' in message:
+            votes['question'] = votes.get('question', 0.0) + 0.8
+
+        if not votes:
             return {'intent': 'statement', 'confidence': 0.5, 'method': 'default'}
+
+        # Winning intent is whichever has the highest cumulative vote weight
+        winning_intent = max(votes, key=lambda k: votes[k])
+        total_weight = sum(votes.values())
+        raw_confidence = votes[winning_intent] / total_weight if total_weight > 0 else 0.5
+        # Scale to [0.5, 0.95] so we never claim certainty we don't have
+        confidence = 0.5 + raw_confidence * 0.45
+
+        # Map internal intent types to the names the rest of the system expects
+        intent_map = {
+            'emotion': 'emotional_sharing',
+        }
+        mapped_intent = intent_map.get(winning_intent, winning_intent)
+
+        return {
+            'intent': mapped_intent,
+            'confidence': round(confidence, 3),
+            'method': 'vocabulary_vote',
+            'vote_breakdown': {k: round(v, 3) for k, v in votes.items()},
+        }
     
     def retrieve_memories(self, query: str, user_id: str = "default", limit: int = None) -> List[Dict[str, Any]]:
         """Retrieve relevant memories"""
@@ -980,12 +1288,11 @@ class SuperhumanMemorySystem:
                 for word, meaning, pos, intent_type, synonyms in vocabulary:
                     cursor.execute('''
                         INSERT INTO word_meanings 
-                        (word, meaning, part_of_speech, intent_type, synonyms, usage_count, last_used, created_at)
-                        VALUES (%s, %s, %s, %s, %s, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                        ON CONFLICT (word) DO UPDATE SET
+                        (word, meaning, part_of_speech, intent_type, synonyms, confidence, usage_count, last_used, created_at)
+                        VALUES (%s, %s, %s, %s, %s, 1.0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ON CONFLICT (word, intent_type) DO UPDATE SET
                             meaning = EXCLUDED.meaning,
                             part_of_speech = EXCLUDED.part_of_speech,
-                            intent_type = EXCLUDED.intent_type,
                             synonyms = EXCLUDED.synonyms,
                             usage_count = word_meanings.usage_count + 1,
                             last_used = CURRENT_TIMESTAMP
@@ -3933,7 +4240,9 @@ class NotusProcess:
         self.running = True
         self.memory_system = None  # Initialize in background thread
         self.memory_ready = threading.Event()  # Signal when memory is ready
-        
+        # Tracks words Monday is waiting for clarification on: {user_id: {word: str}}
+        self._pending_clarification: Dict[str, Dict[str, str]] = {}
+
         # Direct reference to Thalamus (NO SOCKETS)
         self.thalamus = get_thalamus()
     
@@ -4248,21 +4557,62 @@ class NotusProcess:
             perception_data = message.get('perception_data', {})
             user_input = perception_data.get('raw_text', '') or perception_data.get('text', '')
             user_id = perception_data.get('user_id', 'default')
-            
+
             if user_input:
+                # ── Clarification resolution: if we were waiting on a word, treat this as teaching ──
+                pending = self._pending_clarification.get(user_id, {})
+                if pending:
+                    ambiguous_word = pending.get('word')
+                    if ambiguous_word:
+                        # User's reply is treated as a user_explicit teaching signal
+                        teaching_sentence = f"{ambiguous_word} means {user_input}"
+                        self.memory_system._learn_vocabulary_from_content(teaching_sentence, "user")
+                    self._pending_clarification.pop(user_id, None)
+
                 # AUTOMATIC STORAGE: Store the memory automatically
                 self.memory_system.store_memory("user", user_input, user_id=user_id)
-                
+
                 # AUTOMATIC LEARNING: Learn vocabulary and facts automatically
                 self.memory_system._learn_vocabulary_from_content(user_input, "user")
                 self.memory_system.learn_facts_from_text(user_input, user_id=user_id)
-                
+
                 # AUTOMATIC ANALYSIS: Extract events automatically
                 self.memory_system._extract_events_from_text(user_input, user_id=user_id)
-                
+
                 # AUTOMATIC PUSH: Automatically give context/intent/concepts to reasoning WITHOUT being asked
                 self._automatically_push_to_reasoning(user_input, user_id)
-            
+
+                # ── Clarification check: if intent confidence is low, ask about the most uncertain word ──
+                import re as _re
+                intent_result = self.memory_system.detect_intent_from_vocabulary(user_input)
+                if intent_result.get('confidence', 1.0) < self.memory_system._CLARIFY_THRESHOLD:
+                    words_in_msg = _re.findall(r'\b[a-zA-Z]{3,}\b', user_input.lower())
+                    uncertain_word = None
+                    try:
+                        with DB_LOCK:
+                            cursor = self.memory_system._db_connection.cursor()
+                            for w in words_in_msg:
+                                cursor.execute(
+                                    'SELECT word FROM word_meanings WHERE word = %s LIMIT 1', (w,))
+                                if not cursor.fetchone():
+                                    uncertain_word = w
+                                    break
+                    except Exception:
+                        pass
+                    if uncertain_word:
+                        self._pending_clarification[user_id] = {'word': uncertain_word}
+                        return {
+                            'status': 'success',
+                            'stored': True,
+                            'analyzed': True,
+                            'pushed': True,
+                            'clarification_needed': True,
+                            'clarification_word': uncertain_word,
+                            'clarification_question': (
+                                f"I'm not sure what you mean by '{uncertain_word}' — could you tell me?"
+                            ),
+                        }
+
             # Return acknowledgment (one-way communication, but return ack)
             return {'status': 'success', 'stored': True, 'analyzed': True, 'pushed': True}
         
