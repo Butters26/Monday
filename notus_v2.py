@@ -134,7 +134,7 @@ class AdvancedEmbeddingEngine:
             
         # Simple caching
         cache_key = f"{user_id}:{text}" if user_id else text
-        text_hash = hashlib.md5(cache_key.encode('utf-8', errors='ignore')).hexdigest()
+        text_hash = hashlib.sha256(cache_key.encode('utf-8', errors='ignore')).hexdigest()
         
         with self.cache_lock:
             if text_hash in self.embedding_cache:
@@ -1033,7 +1033,7 @@ class SuperhumanMemorySystem:
                     return fact_id
                 else:
                     fact_id = str(uuid.uuid4())
-                    sem_hash = hashlib.md5(f"{subject}|{predicate}|{obj}|{user_id}".encode('utf-8')).hexdigest()
+                    sem_hash = hashlib.sha256(f"{subject}|{predicate}|{obj}|{user_id}".encode('utf-8')).hexdigest()
                     cursor.execute('''
                         INSERT INTO brain_facts
                         (id, subject, predicate, object, value, confidence, permanent, usage_count, created_at, last_reinforced, user_id, source, semantic_hash, conflicts_with, is_contradicted)
