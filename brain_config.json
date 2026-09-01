@@ -38,7 +38,7 @@
       "socket": "/tmp/notus.sock",
       "enabled": true,
       "auto_start": true,
-      "database": "superhuman_memory.db"
+      "database": "${MONDAY_RUNTIME_DIR}/superhuman_memory.db"
     },
     "emotion": {
       "name": "Emotional Engine",
@@ -46,7 +46,7 @@
       "socket": "/tmp/emotion.sock",
       "enabled": true,
       "auto_start": true,
-      "state_file": "monday_emotional_state.json"
+      "state_file": "${MONDAY_RUNTIME_DIR}/monday_emotional_state.json"
     },
     "perception": {
       "name": "Perception",
@@ -78,10 +78,10 @@
   
   "paths": {
     "sockets": "/tmp",
-    "data": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here",
-    "memory_db": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here/superhuman_memory.db",
-    "emotional_state": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here/monday_emotional_state.json",
-    "logs": "/Users/matthew/Desktop/Hey I'm trying to build a Brain here/logs"
+    "runtime_dir": "${MONDAY_RUNTIME_DIR:-~/.local/state/monday}",
+    "memory_db": "${MONDAY_RUNTIME_DIR}/superhuman_memory.db",
+    "emotional_state": "${MONDAY_RUNTIME_DIR}/monday_emotional_state.json",
+    "logs": "${MONDAY_RUNTIME_DIR}/logs"
   },
   
   "startup": {
@@ -95,4 +95,3 @@
     "max_message_size_bytes": 10485760
   }
 }
-

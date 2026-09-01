@@ -150,19 +150,6 @@ class GrammarEngine:
         emotion = semantic_input.get('emotion', 'neutral')
         perspective = semantic_input.get('personal_perspective', True)
         tense = semantic_input.get('tense', 'present')
-        answer = semantic_input.get('answer', '')
-        propositions = semantic_input.get('propositions', [])
-
-        if isinstance(answer, str) and answer.strip():
-            return answer.strip()
-        if isinstance(propositions, list):
-            grounded = [
-                proposition.strip()
-                for proposition in propositions
-                if isinstance(proposition, str) and proposition.strip()
-            ]
-            if grounded:
-                return ' '.join(grounded)
         
         # Query Notus for past language patterns
         try:
@@ -180,7 +167,7 @@ class GrammarEngine:
         except Exception:
             pass
         
-        if intent == 'greeting':
+        if intent == 'greet':
             return self._compose_greeting(emotion)
         elif intent == 'introduce':
             return self._compose_introduction()
@@ -263,18 +250,12 @@ class GrammarEngine:
         return ". ".join(parts) + "."
     
     def _compose_uncertainty(self, concepts: List[str], certainty: float) -> str:
-        """Generate uncertainty statement compositionally - NO TEMPLATES"""
         if not concepts:
-            # Build: pronoun + verb + adj + prep + demonstrative
-            pronoun = random.choice(self.vocabulary['pronouns']['first_singular'])
-            verb = random.choice(self.vocabulary['verbs']['cognitive']['think'])
-            adj = random.choice(self.vocabulary['adjectives']['certainty_low'])
-            return f"{pronoun} {verb} {adj} about that"
+            return "I'm not sure about that"
         
         topic = concepts[0]
-        pronoun = random.choice(self.vocabulary['pronouns']['first_singular'])
         
-        # Query Notus for knowledge status
+        # Query Notus for what it knows/doesn't know about topic
         knowledge_status = None
         try:
             notus_knowledge = self._send_to_thalamus({
@@ -288,23 +269,26 @@ class GrammarEngine:
         except Exception:
             pass
         
-        # Build uncertainty expression based on certainty level
         if certainty < 0.3:
-            # Very uncertain
-            verb = random.choice(self.vocabulary['verbs']['cognitive']['know'])
-            adj = random.choice(self.vocabulary['adjectives']['certainty_low'])
-            adv = random.choice(self.vocabulary['adverbs']['certainty'])
-            return f"{pronoun} {adv} {verb} about {topic}"
+            patterns = [
+                f"I'm not sure about {topic}",
+                f"I don't know enough about {topic} yet",
+                f"{topic} - that's something I'm still learning about",
+                f"I haven't figured out {topic} yet"
+            ]
         elif certainty < 0.6:
-            # Moderately uncertain
-            verb = random.choice(self.vocabulary['verbs']['cognitive']['think'])
-            connector = random.choice(self.vocabulary['connectors']['contrast'])
-            return f"{pronoun} {verb} about {topic}, {connector} {pronoun} could be wrong"
+            patterns = [
+                f"I think {topic} might be related to something, but I'm not certain",
+                f"Possibly {topic} connects to other concepts, though I could be wrong",
+                f"I'm exploring {topic} but don't have a clear answer yet"
+            ]
         else:
-            # Mostly certain but acknowledging doubt
-            verb = random.choice(self.vocabulary['verbs']['cognitive']['understand'])
-            adj = random.choice(self.vocabulary['adjectives']['certainty_low'])
-            return f"{pronoun} {verb} {topic}, though {pronoun} {verb} {adj}"
+            patterns = [
+                f"I think I understand {topic}, but I'm not completely certain",
+                f"{topic} seems to work a certain way, though I could be wrong"
+            ]
+        
+        return random.choice(patterns)
     
     def _compose_statement(self, concepts: List[str], relations: Dict[str, str], 
                           certainty: float, perspective: bool, tense: str) -> str:
@@ -502,120 +486,20 @@ class GrammarEngine:
 class LanguageGenerator:
     """Builds sentences from meaning - Monday's voice"""
     
-    def __init__(self, thalamus=None):
+    def __init__(self):
         self.running = True
         self.grammar = GrammarEngine()
         
         # Persistent connection to Thalamus (created once at startup, reused forever)
         # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = thalamus or get_thalamus()
+        self.thalamus = get_thalamus()
         
-        # Cache for emotional state (avoid repeated queries)
-        self.current_emotional_state = None
-        self.emotion_cache_time = 0
-    
-    def _query_emotional_state(self) -> Dict[str, Any]:
-        """Query current emotional state from Emotional Engine"""
-        try:
-            # Only query every 1 second to avoid overhead
-            current_time = time.time()
-            if self.current_emotional_state and (current_time - self.emotion_cache_time) < 1.0:
-                return self.current_emotional_state
-            
-            result = self.thalamus.send_message(
-                destination='emotion',
-                msg_type='get_emotional_state',
-                content={},
-                source='language'
-            )
-            
-            if result and result.get('status') == 'success':
-                self.current_emotional_state = result.get('content', {})
-                self.emotion_cache_time = current_time
-                return self.current_emotional_state
-            
-            return {}
-        except Exception as e:
-            print(f"⚠️  Failed to query emotional state: {e}")
-            return {}
-    
-    def _adjust_words_for_emotion(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Adjust word selection based on current emotional state"""
-        emotional_state = self._query_emotional_state()
-        
-        if not emotional_state:
-            return semantic_input  # No emotion data, use defaults
-        
-        emotion_tone = emotional_state.get('emotional_tone', 'neutral')
-        intensity = emotional_state.get('intensity', 0.5)
-        
-        # Modify vocabulary based on emotion
-        adjusted_input = semantic_input.copy()
-        
-        # Adjust verb choices based on emotion
-        if 'verb' in semantic_input:
-            original_verb = semantic_input['verb']
-            
-            # Happy/excited - use more positive verbs
-            if emotion_tone in ['cheerful', 'enthusiastic', 'ecstatic']:
-                happy_replacements = {
-                    'think': 'realize', 'believe': 'know', 'see': 'observe',
-                    'want': 'desire', 'try': 'attempt', 'do': 'accomplish',
-                    'say': 'express', 'ask': 'inquire about'
-                }
-                adjusted_input['verb'] = happy_replacements.get(original_verb, original_verb)
-            
-            # Sad/melancholic - use softer verbs
-            elif emotion_tone in ['melancholic', 'somber', 'reflective']:
-                sad_replacements = {
-                    'think': 'consider', 'try': 'attempt', 'do': 'manage',
-                    'want': 'hope', 'say': 'murmur', 'ask': 'wonder'
-                }
-                adjusted_input['verb'] = sad_replacements.get(original_verb, original_verb)
-            
-            # Angry/frustrated - use assertive verbs
-            elif emotion_tone in ['irritated', 'exasperated']:
-                angry_replacements = {
-                    'think': 'insist', 'believe': 'know for certain', 'ask': 'demand',
-                    'say': 'declare', 'want': 'need', 'try': 'push'
-                }
-                adjusted_input['verb'] = angry_replacements.get(original_verb, original_verb)
-        
-        # Adjust adjectives based on emotion
-        if 'adjectives' in semantic_input:
-            adjs = semantic_input['adjectives']
-            intensity_level = 'high' if intensity > 0.7 else 'medium' if intensity > 0.4 else 'low'
-            
-            # Amplify or soften adjectives based on emotion intensity
-            if emotion_tone in ['cheerful', 'enthusiastic', 'ecstatic'] and intensity_level == 'high':
-                # Use strong positive adjectives
-                adjusted_input['adjectives'] = [adj + ' really' for adj in adjs]
-            elif emotion_tone in ['melancholic', 'somber'] and intensity_level == 'high':
-                # Use softened adjectives
-                adjusted_input['adjectives'] = ['somewhat ' + adj for adj in adjs]
-        
-        # Add emotional emphasis markers
-        adjusted_input['emotional_intensity'] = intensity
-        adjusted_input['emotional_tone'] = emotion_tone
-        
-        return adjusted_input
-    
     def generate(self, semantic_input: Dict[str, Any]) -> str:
-        """Generate sentence from semantic input with emotional awareness"""
+        """Generate sentence from semantic input with defensive checks (FIX)"""
         if not isinstance(semantic_input, dict):
             return "I couldn't understand that."
-        
-        # CRITICAL FIX: Check if this is a novelty question
-        # If Novelty Lobe sent a question, use it directly instead of composing
-        if semantic_input.get('is_novelty_question') and semantic_input.get('question_to_ask'):
-            print(f"🆕 Language: Using novelty question directly")
-            return semantic_input.get('question_to_ask')
-        
         try:
-            # CRITICAL: Adjust word choice based on current emotion
-            adjusted_input = self._adjust_words_for_emotion(semantic_input)
-            
-            sentence = self.grammar.compose_sentence(adjusted_input)
+            sentence = self.grammar.compose_sentence(semantic_input)
             # Ensure we never return None or empty string
             if not sentence or not isinstance(sentence, str) or not sentence.strip():
                 return "I'm thinking about that."
@@ -635,25 +519,6 @@ class LanguageGenerator:
         except Exception as e:
             print(f"⚠️  Failed to register with Thalamus: {e}")
             return False
-
-    def _send_to_thalamus(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Send message to Thalamus - DIRECT FUNCTION CALL (helper for Language Generator)"""
-        try:
-            msg_type = message.get('type')
-            if msg_type == 'route_message':
-                destination = message.get('destination')
-                route_msg_type = message.get('msg_type')
-                content = message.get('content', {})
-                return self.thalamus.send_message(destination, route_msg_type, content)
-            elif msg_type == 'broadcast_message':
-                destinations = message.get('destinations', [])
-                broadcast_msg_type = message.get('msg_type')
-                broadcast_content = message.get('content', {})
-                return self.thalamus.broadcast_message(destinations, broadcast_msg_type, broadcast_content)
-            else:
-                return self.thalamus.handle_request(message)
-        except Exception:
-            return None
     
     def _send_to_output(self, sentence: str, user_input: str = None):
         """Send generated sentence to Output through Thalamus - DIRECT FUNCTION CALL"""
@@ -685,17 +550,16 @@ class LanguageGenerator:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message - DIRECT FUNCTION CALL"""
         msg_type = message.get('type')
-        payload = message.get('content', message)
         
-        if msg_type in {'generate', 'generate_grounded'}:
-            semantic_input = payload.get('semantic_input', payload)
+        if msg_type == 'generate':
+            semantic_input = message.get('semantic_input', {})
             sentence = self.generate(semantic_input)
             
             # Only send to Output if reasoning explicitly says this is the main response
-            is_main_response = payload.get('is_main_response', False)
+            is_main_response = message.get('is_main_response', False)
             if is_main_response:
                 # Pass user_input so Output can store the full conversation
-                user_input = payload.get('user_input', '')
+                user_input = message.get('user_input', '')
                 self._send_to_output(sentence, user_input)
             
             return {'status': 'success', 'response': sentence, 'sentence': sentence, 'sent_to_output': is_main_response}
