@@ -1,0 +1,48 @@
+{
+  "representation": {
+    "socket_path": "/tmp/representation.sock",
+    
+    "activation": {
+      "decay_rate": 0.1,
+      "threshold": 0.3,
+      "spread_strength": 0.7,
+      "max_activation": 1.0
+    },
+    
+    "concepts": {
+      "max_concepts": 100000,
+      "max_active_concepts": 100,
+      "initial_activation": 1.0
+    },
+    
+    "relationships": {
+      "default_strength": 1.0,
+      "min_strength": 0.1,
+      "max_strength": 1.0,
+      "bidirectional_by_default": false
+    },
+    
+    "concept_types": [
+      "object",
+      "action",
+      "emotion",
+      "abstract",
+      "relation",
+      "unknown"
+    ],
+    
+    "relation_types": [
+      "is_a",
+      "has_property",
+      "causes",
+      "similar_to",
+      "opposite_of"
+    ],
+    
+    "network": {
+      "max_exploration_depth": 3,
+      "cache_size": 1000
+    }
+  }
+}
+

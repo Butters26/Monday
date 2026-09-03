@@ -1,0 +1,12 @@
+numpy
+psycopg2-binary
+pytest
+sentence-transformers
+torch
+pyttsx3
+SpeechRecognition
+opencv-python
+transformers
+scikit-learn
+joblib
+PyQt5

@@ -1,0 +1,44 @@
+{
+  "config_index": {
+    "version": "1.0.0",
+    "description": "Index of all configuration files for the Brain System",
+    
+    "main_config": "brain_config.json",
+    
+    "lobe_configs": {
+      "representation": "representation_config.json",
+      "pattern_recognition": "pattern_config.json",
+      "reasoning": "reasoning_config.json",
+      "perception": "perception_config.json",
+      "output": "output_config.json",
+      "thalamus": "thalamus_config.json"
+    },
+    
+    "system_configs": {
+      "interface": "interface_config.json",
+      "brain_system": "brain_config.json"
+    },
+    
+    "runtime_data": {
+      "directory": "${MONDAY_RUNTIME_DIR:-~/.local/state/monday}",
+      "memory_database": "${MONDAY_RUNTIME_DIR}/superhuman_memory.db",
+      "emotional_state": "${MONDAY_RUNTIME_DIR}/monday_emotional_state.json"
+    },
+    
+    "config_locations": {
+      "base_path": ".",
+      "all_configs_in_root": true
+    },
+    
+    "load_order": [
+      "brain_config.json",
+      "representation_config.json",
+      "pattern_config.json",
+      "reasoning_config.json",
+      "perception_config.json",
+      "output_config.json",
+      "thalamus_config.json",
+      "interface_config.json"
+    ]
+  }
+}

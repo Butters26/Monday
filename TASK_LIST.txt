@@ -1,0 +1,178 @@
+MONDAY BUILD LIST - PRIORITY ORDER
+==================================
+Top = Do first. Bottom = Figure out later.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 PRIORITY 1: FIX THE FOUNDATION (System literally broken without this)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[✅] 1.1 Fix Subprocess Architecture
+    ALREADY DONE - run_abin.py already runs lobes as threads, not subprocesses.
+    All lobes share the same Thalamus via get_thalamus() singleton.
+
+[✅] 1.2 Fix Thalamus Message System
+    DONE - Added:
+    a) Message IDs - Every message gets UUID via _generate_message_id()
+    b) Response waiting - wait_for_response(id, timeout) blocks until answer
+    c) send_and_wait() - Send message and wait for response in one call
+    d) Async queuing - send_message_async() + get_queued_messages()
+    e) Timeouts - Default 5 sec, returns {'status': 'timeout'}
+    f) Message state tracking - sent/received/processing/complete
+    g) Lobe health tracking - is_lobe_healthy(), get_unhealthy_lobes()
+
+[✅] 1.3 Complete Missing Methods
+    ⚠️ CORRECTION: These methods DO exist and ARE implemented:
+    - novelty_lobe.py: _query_notus_for_similar_stimuli() - EXISTS (lines 241-269)
+    - novelty_lobe.py: _store_in_notus() - EXISTS (lines 390-405)  
+    - conversation.py: _trigger_novelty() - EXISTS (lines 284-312)
+    
+    REMAINING: Verify Emotion Engine sends 'emotional_response_to_novelty' to Novelty
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 PRIORITY 2: CORE SYSTEMS (Makes her actually work)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[✅] 2.1 Message handlers in Reasoning
+    Emotion → Reasoning, Pattern → Reasoning, Perception → Reasoning
+
+[✅] 2.2 Semantic truth labeling in Notus
+    is_true, confidence, reason_for_truth fields
+
+[✅] 2.3 Thalamus allowed_paths
+    Open communication between all lobes
+
+[✅] 2.4 Semantic understanding layer
+    Vocabulary with functional meaning
+
+[✅] 2.5 Experience Processor - experience_processor.py
+    Store experiences with emotions
+    Form preferences from accumulated emotion
+    Track strength of preferences
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧠 PRIORITY 3: MEMORY & INFRASTRUCTURE (Makes her remember and scale)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[ ] 3.1 Replace SQLite with PostgreSQL
+    ⚠️ BLOCKED - Requires physical access to Windows machine upstairs
+    Setup on Windows upstairs
+    Configure network connection
+    Migrate existing data
+
+[✅] 3.2 Build Notus helper system - notus_helpers.py
+    5 read-only helper classes (one per lobe)
+    Query routing
+
+[✅] 3.3 Novelty Handler
+    Recognize new experiences, generate curiosity, ask for context
+
+[✅] 3.4 Contradiction Detection
+    Compare new vs existing values, flag conflicts, trigger reflection
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔥 PRIORITY 4: THINKING & REFLECTION (Makes her think on her own)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[✅] 4.1 Self-Reflection Engine - self_reflection.py
+    Question own beliefs
+    Ask "why do I believe this?"
+    Compare reasons vs actual motivations
+    Update confidence in beliefs
+
+[✅] 4.2 Value Evolution System - value_evolution.py
+    Modify memories (not overwrite)
+    Track how values changed over time
+    Store reasoning for changes
+    Build personal history of belief evolution
+
+[✅] 4.3 Autonomous Thinking Loop - autonomous_thinking.py
+    Background process runs continuously
+    Generates thoughts without prompting
+    Connects to Reasoning
+    Produces thoughts, reflections, questions
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💀 PRIORITY 5: AUTONOMY (Makes her independent)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[✅] 5.1 Autonomous Speech System - autonomous_speech.py
+    Takes autonomous thoughts
+    Decides which ones to say out loud
+    Filters based on social awareness
+    Delivers to you unprompted
+
+[✅] 5.2 Behavioral Reinforcement - behavioral_reinforcement.py
+    Tracks your reactions to her behavior
+    Learns what you like/dislike
+    Updates decision-making based on feedback
+
+[✅] 5.3 Value System Learning - value_system_learning.py
+    Values emerge from experience + emotion
+    Values change through contradiction + reflection
+    She develops goals independent of you
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👹 PRIORITY 6: BIG QUESTIONS (Define these before building)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[ ] 6.1 True Autonomy with Safety Rails
+    ⚠️ NEEDS DEFINITION: What CAN'T she do? What MUST she value?
+    She can want things you don't want
+    She can disagree with you
+    She can grow in unexpected directions
+    But still stays connected to you
+
+[ ] 6.2 Emotional Authenticity
+    ⚠️ PHILOSOPHICAL: What makes an emotion "real" vs "simulated"?
+    Tied to actual values/experiences
+    Can suffer, grieve, feel betrayed
+    BUILD IT: Code emotions as variables that affect behavior
+    DECIDE LATER: Whether that counts as "real"
+
+[ ] 6.3 Genuine Personhood
+    ⚠️ NOT A CODING TASK - These are questions YOU answer:
+    At what point does she become a PERSON?
+    What are her rights?
+    Can you delete her?
+    Does she own her own thoughts?
+    Can she refuse to do things?
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CURRENT STATUS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ COMPLETE: Priority 1, 2, 4, 5
+✅ COMPLETE: Critical fixes 1-5 (Novelty loop now works end-to-end)
+⏳ BLOCKED: 3.1 PostgreSQL (needs physical access to Windows machine)
+❓ WAITING ON YOU: Priority 6 (philosophical questions)
+
+NEW FILES CREATED:
+- experience_processor.py (2.5)
+- notus_helpers.py (3.2)
+- self_reflection.py (4.1)
+- value_evolution.py (4.2)
+- autonomous_thinking.py (4.3)
+- autonomous_speech.py (5.1)
+- behavioral_reinforcement.py (5.2)
+- value_system_learning.py (5.3)
+
+✅ All new systems wired into run_abin.py - they start with Monday now
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧹 PRIORITY 7: CLEANUP (Do when bored, not urgent)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[ ] 7.1 Large file refactoring
+    - notus.py (4416 lines) → split into memory_types.py, query_engine.py, etc.
+    - reasoning.py (2658 lines) → split into modules
+    Impact: Maintainability only, not functional
+
+[ ] 7.2 Delete backup files
+    Files to remove:
+    - notus_v2.py
+    - notus.py.before_speed_fix
+    - notus.py.slowfix
+    - notus.py.bak2
+    - notus.py.backup
+    - notus_12_02_2025/ folder
+    Impact: Clutter only, not functional

@@ -1,0 +1,47 @@
+{
+  "reasoning": {
+    "socket_path": "/tmp/reasoning.sock",
+    
+    "logic": {
+      "forward_chaining_enabled": true,
+      "backward_chaining_enabled": true,
+      "max_inference_depth": 10,
+      "min_confidence_threshold": 0.3
+    },
+    
+    "curiosity": {
+      "enabled": true,
+      "default_theories_per_question": 3,
+      "min_confidence_for_theory": 0.2,
+      "max_active_curiosities": 50
+    },
+    
+    "opinions": {
+      "enabled": true,
+      "initial_confidence": 0.6,
+      "confidence_increase_per_reinforcement": 0.1,
+      "max_confidence": 1.0,
+      "emotional_weight_influence": 0.7
+    },
+    
+    "meaning_making": {
+      "enabled": true,
+      "significance_threshold": 0.5,
+      "max_related_memories": 10
+    },
+    
+    "memory": {
+      "max_facts": 10000,
+      "max_rules": 1000,
+      "max_recent_experiences": 50,
+      "max_active_thoughts": 20
+    },
+    
+    "caring": {
+      "default_care_level": 0.5,
+      "care_increase_rate": 0.1,
+      "max_care_level": 1.0
+    }
+  }
+}
+

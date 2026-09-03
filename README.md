@@ -1,9 +1,46 @@
-# Monday 3D Model Generator
+# Monday
 
-This repository currently contains a standalone procedural 3D model generator
-built from scratch with traditional geometry code.
+This repository currently contains two separate systems built with traditional
+programming rather than AI/ML frameworks:
 
-## Files in this repository
+- a direct-call brain/reasoning system
+- a standalone procedural 3D model generator
+
+## Runtime data
+
+Monday stores mutable data outside the repository. By default, the directory is
+`~/.local/state/monday`; set `MONDAY_RUNTIME_DIR` to use another private
+directory. This includes learned memory, emotional state, snapshots, logs, and
+local recovery files. Do not add runtime data to Git.
+
+## Direct-call core
+
+All socket code has been removed. Lobes communicate through direct function
+calls via Thalamus.
+
+`run_abin.create_core_systems()` creates the prompted path:
+conversation → Notus → emotion → reasoning → language → output. Each lobe
+receives `{"type", "content", "source", "message_id"}` and `content` holds the
+message payload.
+
+The direct core intentionally excludes the legacy/experimental launcher,
+PostgreSQL-backed `notus.py`, GUI, socket integrations, and autonomous loops.
+They remain in the repository for compatibility work but are not imported by
+`run_abin.py`.
+
+## 3D model generator
+
+The standalone 3D generator is independent from the brain system and provides:
+
+- basic shapes: cube, sphere, cylinder, torus, pyramid
+- complex model building by combining transformed shapes
+- OBJ and STL export
+- face-center and edge-midpoint subdivision
+- mesh sculpting tools such as bulge, twist, and taper
+- detailed humanoid and armored character generators
+- a custom Monday character base mesh
+
+### 3D generator files
 
 - `model_3d.py` - core mesh types, primitive generators, model composition, OBJ/STL export
 - `advanced_modeling.py` - subdivision, mesh sculpting, procedural detail, and humanoid generators
@@ -11,17 +48,7 @@ built from scratch with traditional geometry code.
 - `demo_3d.py` - basic shape and combined-model demo
 - `demo_advanced.py` - advanced modeling demo
 
-## Features
-
-- Basic shapes: cube, sphere, cylinder, torus, pyramid
-- Complex model building by combining transformed shapes
-- OBJ and STL export
-- Face-center and edge-midpoint subdivision
-- Mesh sculpting tools such as bulge, twist, and taper
-- Detailed humanoid and armored character generators
-- A custom Monday character base mesh
-
-## Usage
+### 3D usage
 
 ```python
 from model_3d import ModelGenerator, ComplexModelBuilder
@@ -51,7 +78,7 @@ hero = DetailedHumanoidGenerator.create_armored_character(height=7.5)
 monday = create_monday_character(height=5.6)
 ```
 
-## Demos
+### 3D demos
 
 - `python demo_3d.py`
 - `python demo_advanced.py`
