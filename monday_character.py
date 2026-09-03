@@ -9,10 +9,10 @@ texture mapping and detail sculpting beyond procedural geometry.
 """
 
 from model_3d import ModelGenerator, ComplexModelBuilder
-from advanced_modeling import MeshSculpting, SubdivisionSurface
+from advanced_modeling import MeshSculpting
 import os
 
-def create_monday_character(height=5.6, output_dir="models_output"):
+def create_monday_character(height=5.6):
     """
     Create the Monday character - a female humanoid figure.
     
@@ -21,7 +21,6 @@ def create_monday_character(height=5.6, output_dir="models_output"):
     
     Args:
         height: Character height in units (5.6 for average female)
-        output_dir: Directory to save the model
     
     Returns:
         Model3D object
@@ -203,7 +202,7 @@ def main():
         os.makedirs(output_dir)
     
     # Generate the Monday character
-    monday = create_monday_character(height=5.6, output_dir=output_dir)
+    monday = create_monday_character(height=5.6)
     
     # Export to files
     obj_file = os.path.join(output_dir, "monday_character.obj")

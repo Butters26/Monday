@@ -18,7 +18,7 @@ A standalone 3D model generation system for creating physical structures/bodies.
 - Export to OBJ and STL formats for 3D printing or visualization
 
 **Advanced Features** ⭐:
-- **Subdivision Surfaces**: Smooth meshes with Catmull-Clark subdivision
+- **Subdivision Surfaces**: Smooth meshes with face-center and edge-midpoint subdivision
 - **Mesh Sculpting**: Bulge, twist, taper effects for organic shapes
 - **Detailed Humanoids**: Generate anatomically proportioned characters
 - **Armored Characters**: Create game character-style models with armor

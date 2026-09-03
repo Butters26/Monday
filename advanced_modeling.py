@@ -5,18 +5,18 @@ Built from scratch without AI/ML components.
 """
 
 import math
-from model_3d import Model3D, Vertex, Face, ModelGenerator
+from model_3d import Model3D, ModelGenerator
 
 class SubdivisionSurface:
     """
-    Implements Catmull-Clark subdivision for smooth surfaces.
+    Implements face-center and edge-midpoint subdivision for smooth surfaces.
     Subdivides mesh to create smoother, more detailed models.
     """
     
     @staticmethod
     def subdivide(model, iterations=1):
         """
-        Apply Catmull-Clark subdivision to smooth the mesh.
+        Apply face-center and edge-midpoint subdivision to smooth the mesh.
         Each iteration quadruples the face count.
         """
         result = Model3D(f"{model.name}_subdivided")

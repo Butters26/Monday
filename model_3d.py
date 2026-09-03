@@ -116,17 +116,22 @@ class Model3D:
             for i, face in enumerate(self.faces):
                 if len(face.indices) < 3:
                     continue
-                    
+
+                # Triangulate polygon faces using a fan from the first vertex
                 normal = self.normals[i] if i < len(self.normals) else (0, 0, 1)
-                f.write(f"  facet normal {normal[0]} {normal[1]} {normal[2]}\n")
-                f.write(f"    outer loop\n")
-                
-                for idx in face.indices[:3]:  # STL only supports triangles
-                    v = self.vertices[idx]
-                    f.write(f"      vertex {v.x} {v.y} {v.z}\n")
-                    
-                f.write(f"    endloop\n")
-                f.write(f"  endfacet\n")
+                for tri_start in range(1, len(face.indices) - 1):
+                    triangle = [
+                        face.indices[0],
+                        face.indices[tri_start],
+                        face.indices[tri_start + 1],
+                    ]
+                    f.write(f"  facet normal {normal[0]} {normal[1]} {normal[2]}\n")
+                    f.write(f"    outer loop\n")
+                    for idx in triangle:
+                        v = self.vertices[idx]
+                        f.write(f"      vertex {v.x} {v.y} {v.z}\n")
+                    f.write(f"    endloop\n")
+                    f.write(f"  endfacet\n")
                 
             f.write(f"endsolid {self.name}\n")
             
