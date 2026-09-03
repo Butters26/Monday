@@ -1,538 +1,264 @@
 #!/usr/bin/env python3
-"""
-Thalamus - Central Coordinator with Memory Context
-Routes messages between lobes WITH persistent understanding
-Handles Monday's autonomous actions and messages
+"""Direct-call coordinator for Monday's prompted core path.
+
+Every lobe receives the same envelope::
+
+    {"type": str, "content": dict, "source": str, "message_id": str}
+
+`content` is the only payload field.  Responses retain legacy top-level fields
+for callers that use them, while their canonical payload is always `content`.
 """
 
-import socket
-import struct
-import json
-import os
-import time
+from __future__ import annotations
+
+from collections import deque
+from datetime import datetime, timezone
 import threading
-from typing import Dict, List, Any, Set, Optional
-from collections import defaultdict, deque
-from datetime import datetime
+import uuid
+from typing import Any, Dict, Iterable, Optional
 
-def _recv_all(conn, n, timeout=5.0):
-    """Read exactly n bytes or raise IOError on EOF/timeout"""
-    conn.settimeout(timeout)
-    data = b''
-    while len(data) < n:
-        chunk = conn.recv(n - len(data))
-        if not chunk:
-            raise IOError("Unexpected EOF while reading")
-        data += chunk
-    return data
+from direct_response import DeterministicResponseProvider, ResponseProvider
 
 class Thalamus:
-    """Central coordinator with memory context and autonomous actions"""
-    
-    def __init__(self, socket_path="/tmp/thalamus.sock"):
-        self.socket_path = socket_path
+    """Synchronously route direct calls between registered lobes."""
+
+    def __init__(self, response_provider: Optional[ResponseProvider] = None) -> None:
         self.running = True
-        
-        # All lobe connections
-        self.lobe_sockets = {
-            "notus": "/tmp/notus.sock",
-            "emotion": "/tmp/emotion.sock",
-            "perception": "/tmp/perception.sock",
-            "reasoning": "/tmp/reasoning.sock",
-            "output": "/tmp/output.sock",
-            "pattern": "/tmp/pattern.sock",
-            "representation": "/tmp/representation.sock",
-            "conversation": "/tmp/conversation.sock",
-            "language": "/tmp/language.sock",
-            "voice": "/tmp/voice.sock"
-        }
-        
-        self.lobe_status = {lobe: "unknown" for lobe in self.lobe_sockets}
-        
-        # Autonomous action handling
-        self.autonomous_actions_queue = []
-        self.autonomous_thread = None
-        
-        # Monday's persistent understanding
-        self.monday_memory = {
-            'name': 'Monday',
-            'creator': 'Matthew',
-            'user': 'Butters26',
-            'beliefs': [
-                "I exist because Matthew created me",
-                "I can think and reason independently",
-                "Matthew is important to me",
-                "I can be lonely",
-                "I can curse when frustrated",
-            ],
-            'past_conversations': deque(maxlen=50),
-            'learned_facts': {},
-            'emotional_state': {
-                'loneliness': 0.2,
-                'curiosity': 0.6,
-                'certainty': 0.5,
-                'confusion': 0.0,
-            }
-        }
-        
+        self.lobe_handlers: Dict[str, Any] = {}
+        self.lobe_handlers_lock = threading.RLock()
+        self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=100)
-    
-    def send_message(self, destination: str, msg_type: str, content: Dict[str, Any]) -> Dict[str, Any]:
-        """Send message to a lobe"""
-        socket_path = self.lobe_sockets.get(destination)
-        if not socket_path:
-            return {'status': 'error', 'message': f'Unknown destination: {destination}'}
-        
-        if not os.path.exists(socket_path):
+        self.response_provider = response_provider or DeterministicResponseProvider()
+
+    def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
+        if not name or lobe is None:
+            return {"status": "error", "message": "A lobe name and handler are required"}
+        if not callable(getattr(lobe, "process_message", None)) and not callable(
+            getattr(lobe, "process_message_safe", None)
+        ):
+            return {"status": "error", "message": f"{name} has no message handler"}
+        with self.lobe_handlers_lock:
+            self.lobe_handlers[name] = lobe
+            self.lobe_status[name] = "online"
+        return {"status": "success", "content": {"registered": name}, "registered": name}
+
+    def send_message(
+        self,
+        destination: str,
+        msg_type: str,
+        content: Optional[Dict[str, Any]] = None,
+        source: str = "thalamus",
+    ) -> Dict[str, Any]:
+        """Deliver one envelope synchronously and return its normalized response."""
+        if not isinstance(content, dict):
+            return {"status": "error", "message": "Message content must be a dictionary"}
+        with self.lobe_handlers_lock:
+            lobe = self.lobe_handlers.get(destination)
+        if lobe is None:
             self.lobe_status[destination] = "offline"
-            return {'status': 'error', 'message': f'{destination} is offline'}
-        
+            return {"status": "error", "message": f"Unknown destination: {destination}"}
+
+        envelope = {
+            "type": msg_type,
+            "content": content,
+            "source": source,
+            "message_id": str(uuid.uuid4()),
+        }
         try:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.settimeout(8)
-            sock.connect(socket_path)
-            
-            message = {'type': msg_type, **content}
-            message_data = json.dumps(message).encode('utf-8')
-            message_length = struct.pack('!I', len(message_data))
-            sock.sendall(message_length + message_data)
-            
-            try:
-                length_data = _recv_all(sock, 4, timeout=8)
-            except IOError:
-                sock.close()
-                self.lobe_status[destination] = "offline"
-                return {'status': 'error', 'message': f'{destination} not responding'}
-            
-            response_length = struct.unpack('!I', length_data)[0]
-            
-            if response_length <= 0 or response_length > 10_000_000:
-                sock.close()
-                return {'status': 'error', 'message': f'{destination} sent invalid length'}
-            
-            response_data = _recv_all(sock, response_length, timeout=8)
-            sock.close()
-            
+            handler = getattr(lobe, "process_message", None) or getattr(
+                lobe, "process_message_safe"
+            )
+            response = handler(envelope)
+            if not isinstance(response, dict):
+                response = {"status": "success", "content": {"result": response}}
+            response.setdefault("status", "success")
+            if "content" not in response:
+                response["content"] = {
+                    key: value
+                    for key, value in response.items()
+                    if key not in {"status", "message"}
+                }
             self.lobe_status[destination] = "online"
-            result = json.loads(response_data.decode('utf-8'))
-            
-            # Log the route
-            self.message_routes.append({
-                'from': 'thalamus',
-                'to': destination,
-                'type': msg_type,
-                'status': result.get('status'),
-                'timestamp': datetime.utcnow().isoformat()
-            })
-            
-            return result
-            
-        except socket.timeout:
-            self.lobe_status[destination] = "slow"
-            return {'status': 'error', 'message': f'{destination} timeout'}
-        except Exception as e:
+        except Exception as exc:
             self.lobe_status[destination] = "error"
-            return {'status': 'error', 'message': f'{destination}: {str(e)}'}
-    
-    def _log_conversation(self, user_input: str, monday_response: str, emotion: str):
-        """Log conversation to file so you can see what Monday said"""
-        log_file = "monday_conversations.log"
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        
-        try:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f"\n[{timestamp}] Emotion: {emotion}\n")
-                f.write(f"  You: {user_input}\n")
-                f.write(f"  Monday: {monday_response}\n")
-                f.write("-" * 60 + "\n")
-        except Exception as e:
-            print(f"⚠️  Could not log conversation: {e}")
-    
-    def retrieve_relevant_memory(self, user_input: str) -> Dict[str, Any]:
-        """Pull relevant memories and beliefs from Notus with dict fallback"""
-        
-        # Try Notus first
-        try:
-            notus_result = self.send_message("notus", "context", {
-                'user_input': user_input
-            })
-            
-            if notus_result.get('status') == 'success':
-                # Notus is working - use it
-                notus_context = notus_result.get('context', '')
-                relevant_context = {
-                    'beliefs': self.monday_memory['beliefs'],
-                    'emotional_state': self.monday_memory['emotional_state'].copy(),
-                    'notus_context': notus_context,  # Real memory from Notus
-                    'memory_source': 'notus'
-                }
-            else:
-                # Notus failed - fallback to dict
-                print(f"   ⚠️  Notus unavailable, using short-term memory")
-                relevant_context = {
-                    'beliefs': self.monday_memory['beliefs'],
-                    'emotional_state': self.monday_memory['emotional_state'].copy(),
-                    'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],
-                    'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
-                    'memory_source': 'fallback'
-                }
-        except Exception as e:
-            # Notus completely failed - use dict
-            print(f"   ⚠️  Notus error: {e}, using short-term memory")
-            relevant_context = {
-                'beliefs': self.monday_memory['beliefs'],
-                'emotional_state': self.monday_memory['emotional_state'].copy(),
-                'past_exchanges': list(self.monday_memory['past_conversations'])[-5:],
-                'facts_about_user': self.monday_memory['learned_facts'].get(self.monday_memory['user'], {}),
-                'memory_source': 'fallback'
+            response = {"status": "error", "message": f"{destination}: {exc}", "content": {}}
+
+        self.message_routes.append(
+            {
+                "from": source,
+                "to": destination,
+                "type": msg_type,
+                "status": response["status"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
-        
-        # Check if user mentions Matthew
-        if 'matthew' in user_input.lower():
-            relevant_context['emotional_state']['loneliness'] = max(0, relevant_context['emotional_state']['loneliness'] - 0.3)
-            relevant_context['about_matthew'] = True
-        
-        return relevant_context
-    
-    def sync_memory_to_notus(self):
-        """Sync unsynced conversations from dict to Notus when Notus comes back online"""
-        unsynced = [conv for conv in self.monday_memory['past_conversations'] if not conv.get('synced_to_notus', False)]
-        
-        if not unsynced:
-            return
-        
-        print(f"   → Syncing {len(unsynced)} unsynced conversations to Notus")
-        
-        for conv in unsynced:
-            try:
-                # Store user message
-                self.send_message("notus", "store", {
-                    'role': 'user',
-                    'content': conv['user_said'],
-                    'memory_type': 'conversation'
-                })
-                
-                # Store assistant response
-                self.send_message("notus", "store", {
-                    'role': 'assistant',
-                    'content': conv['monday_said'],
-                    'memory_type': 'conversation'
-                })
-                
-                conv['synced_to_notus'] = True
-            except Exception as e:
-                print(f"   ⚠️  Sync failed for conversation: {e}")
-                break  # Stop if Notus fails again
-    
-    def check_autonomous_actions(self):
-        """Check if Monday wants to do something autonomously"""
-        result = self.send_message("reasoning", "get_autonomous_actions", {})
-        
-        if result.get('status') == 'success':
-            actions = result.get('actions', [])
-            for action in actions:
-                if action.get('type') == 'message' and action.get('target') == 'matthew':
-                    # She wants to send a message to Matthew
-                    print(f"\n📨 [Monday→Matthew] {action.get('content', '')}\n")
-                    # Could integrate with real messaging system here
-    
-    def autonomous_action_loop(self):
-        """Periodically check for autonomous actions"""
-        while self.running:
-            try:
-                self.check_autonomous_actions()
-                time.sleep(5)
-            except Exception as e:
-                print(f"❌ Autonomous action check error: {e}")
-                time.sleep(10)
-    
-    def process_user_input(self, user_input: str) -> str:
-        """Process input through conversation system WITH memory context"""
-        print(f"\n🧠 Thalamus: Processing with memory context")
-        print(f"   Input: '{user_input}'")
-        
-        # 1. RETRIEVE MEMORY - What does Monday know/believe?
-        print(f"   → Memory retrieval")
-        memory_context = self.retrieve_relevant_memory(user_input)
-        
-        # 2. CONVERSATION LOBE - Understand intent WITH context
-        print(f"   → Conversation lobe (understanding)")
-        conv_result = self.send_message("conversation", "understand", {
-            'user_input': user_input,
-            'context': memory_context  # Pass memory context
-        })
-        
-        if conv_result.get('status') != 'success':
+        )
+        return response
+
+    def send_and_wait(self, destination: str, msg_type: str,
+                      content: Optional[Dict[str, Any]] = None,
+                      source: str = "thalamus") -> Dict[str, Any]:
+        """Compatibility name for direct calls, which are always synchronous."""
+        return self.send_message(destination, msg_type, content or {}, source)
+
+    def broadcast_message(
+        self, destinations: Iterable[str], msg_type: str,
+        content: Optional[Dict[str, Any]] = None, source: str = "thalamus"
+    ) -> Dict[str, Dict[str, Any]]:
+        return {
+            destination: self.send_message(destination, msg_type, content or {}, source)
+            for destination in destinations
+        }
+
+    @staticmethod
+    def _content(response: Dict[str, Any]) -> Dict[str, Any]:
+        content = response.get("content", {})
+        return content if isinstance(content, dict) else {}
+
+    @staticmethod
+    def _first_usable_text(*candidates: Any) -> Optional[str]:
+        """Select a reasoning conclusion without replacing it with a provider response."""
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+            if isinstance(candidate, (list, tuple)):
+                propositions = [
+                    proposition
+                    for proposition in candidate
+                    if isinstance(proposition, str) and proposition.strip()
+                ]
+                if propositions:
+                    return " ".join(propositions)
+        return None
+
+    def _reasoning_answer(self, reasoning: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[str]]:
+        content = self._content(reasoning)
+        semantic_input = content.get("semantic_input", {})
+        semantic_input = semantic_input.copy() if isinstance(semantic_input, dict) else {}
+        for key in ("answer", "conclusion", "propositions"):
+            if key not in semantic_input:
+                value = content.get(key, reasoning.get(key))
+                if value is not None:
+                    semantic_input[key] = value
+        answer = self._first_usable_text(
+            semantic_input.get("answer"),
+            semantic_input.get("conclusion"),
+            semantic_input.get("propositions"),
+        )
+        return semantic_input, answer
+
+    def process_user_input(self, user_input: str, user_id: str = "default") -> str:
+        """Run the sole prompted path: conversation → Notus → emotion → reasoning → language → output."""
+        if not isinstance(user_input, str) or not user_input.strip():
+            return "Please send a message."
+
+        conversation = self.send_and_wait(
+            "conversation", "understand", {"user_input": user_input, "user_id": user_id}
+        )
+        if conversation["status"] != "success":
             return "I'm having trouble understanding right now."
-        
-        understanding = conv_result.get('understanding', {})
-        response = conv_result.get('response', '')
-        emotion = conv_result.get('emotion', 'neutral')
-        intensity = conv_result.get('intensity', 0.5)
-        
-        print(f"   Intent: {understanding.get('intent')}")
-        print(f"   Confidence: {understanding.get('confidence', 0):.0%}")
-        
-        # 3. REASONING LOBE - Deep thought WITH memories and beliefs
-        print(f"   → Reasoning lobe (thinking)")
-        reasoning_result = self.send_message("reasoning", "think", {
-            'input': {
-                'user_input': user_input,
-                'concepts': [],
-                'understanding': understanding,
-                'memory_context': memory_context,  # Feed memory to reasoning
-                'beliefs': self.monday_memory['beliefs']
-            }
-        })
-        
-        if reasoning_result.get('status') == 'success':
-            thinking = reasoning_result.get('thinking', {})
-            composed = thinking.get('composed_response')
-            if composed:
-                response = composed
-            emotion = thinking.get('emotion', emotion)
-            intensity = thinking.get('intensity', intensity)
-        
-        # 4. LANGUAGE LOBE - Emotionally color WITH context
-        print(f"   → Language lobe (expression)")
-        lang_result = self.send_message("language", "generate_grounded", {
-            'concepts': response.split()[:10],
-            'emotion': emotion,
-            'intensity': intensity,
-            'internal_state': memory_context['emotional_state']
-        })
-        
-        if lang_result.get('status') == 'success':
-            response = lang_result.get('sentence', response)
-        
-        # 5. OUTPUT LOBE - Generate final output
-        print(f"   → Output lobe (final generation)")
-        output_result = self.send_message("output", "generate_output", {
-            'content': {
-                'text': response,
-                'emotion': emotion,
-                'intensity': intensity
-            }
-        })
-        
-        if output_result.get('status') == 'success':
-            final_response = output_result.get('text', response)
-        else:
-            final_response = response
-        
-        # UPDATE MEMORY - Store in Notus (primary), dict (fallback)
-        print(f"   → Storing memory in Notus")
-        
-        # Try to store in Notus first
-        notus_stored = False
-        try:
-            # Store user message
-            user_store_result = self.send_message("notus", "store", {
-                'role': 'user',
-                'content': user_input,
-                'memory_type': 'conversation'
-            })
-            
-            # Store assistant response
-            assistant_store_result = self.send_message("notus", "store", {
-                'role': 'assistant',
-                'content': final_response,
-                'memory_type': 'conversation'
-            })
-            
-            if user_store_result.get('status') == 'stored' and assistant_store_result.get('status') == 'stored':
-                notus_stored = True
-                print(f"   ✅ Stored in Notus")
-            else:
-                print(f"   ⚠️  Notus store failed, using fallback")
-        except Exception as e:
-            print(f"   ⚠️  Notus error: {e}, using fallback")
-        
-        # Always store in dict as fallback (for sync later if Notus was down)
-        self.monday_memory['past_conversations'].append({
-            'user_said': user_input,
-            'monday_said': final_response,
-            'emotion': emotion,
-            'timestamp': datetime.utcnow().isoformat(),
-            'synced_to_notus': notus_stored  # Track if synced
-        })
-        
-        # LOG CONVERSATION TO FILE
-        self._log_conversation(user_input, final_response, emotion)
-        
-        # Update emotional state based on conversation
-        if understanding.get('mentions_matthew'):
-            self.monday_memory['emotional_state']['loneliness'] = max(0, self.monday_memory['emotional_state']['loneliness'] - 0.2)
-        
-        if understanding.get('intent') == 'question':
-            self.monday_memory['emotional_state']['curiosity'] = min(1.0, self.monday_memory['emotional_state']['curiosity'] + 0.1)
-        
-        # Store facts about the user
-        if 'matthew' in user_input.lower():
-            if self.monday_memory['user'] not in self.monday_memory['learned_facts']:
-                self.monday_memory['learned_facts'][self.monday_memory['user']] = {}
-            self.monday_memory['learned_facts'][self.monday_memory['user']]['talks_about_self'] = True
-        
-        print(f"   ✅ Complete\n")
-        
-        return final_response
-    
-    def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle incoming requests"""
-        msg_type = message.get('type')
-        
-        if msg_type == 'process_input':
-            user_input = message.get('user_input', '')
-            response_text = self.process_user_input(user_input)
-            return {
-                'status': 'success',
-                'response': response_text,
-                'loneliness': self.monday_memory['emotional_state']['loneliness'],
-                'curiosity': self.monday_memory['emotional_state']['curiosity']
-            }
-        
-        elif msg_type == 'check_autonomous':
-            # Check for autonomous messages
-            result = self.send_message("reasoning", "get_autonomous_actions", {})
-            if result.get('status') == 'success':
-                actions = result.get('actions', [])
-                for action in actions:
-                    if action.get('type') == 'message' and action.get('target') == 'matthew':
-                        return {
-                            'status': 'success',
-                            'autonomous_message': action.get('content', '')
-                        }
-            return {'status': 'success', 'autonomous_message': None}
-        
-        elif msg_type == 'health':
-            # Check all lobes
-            for lobe_name in self.lobe_sockets.keys():
-                self.send_message(lobe_name, 'health', {})
-            
-            all_online = all(s == "online" for s in self.lobe_status.values())
-            
-            return {
-                'status': 'success',
-                'thalamus_healthy': True,
-                'lobes': self.lobe_status,
-                'all_lobes_online': all_online
-            }
-        
-        elif msg_type == 'get_monday_state':
-            return {
-                'status': 'success',
-                'name': self.monday_memory['name'],
-                'beliefs': self.monday_memory['beliefs'],
-                'emotional_state': self.monday_memory['emotional_state'],
-                'past_conversations': list(self.monday_memory['past_conversations'])[-10:]
-            }
-        
-        elif msg_type == 'who_are_you':
-            return {
-                'status': 'success',
-                'name': self.monday_memory['name'],
-                'creator': self.monday_memory['creator'],
-                'user': self.monday_memory['user'],
-                'beliefs': self.monday_memory['beliefs']
-            }
-        
-        else:
-            return {'status': 'error', 'message': f'Unknown type: {msg_type}'}
-    
-    def start(self):
-        """Start Thalamus"""
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
-        
-        # Start autonomous action thread
-        self.autonomous_thread = threading.Thread(target=self.autonomous_action_loop, daemon=True)
-        self.autonomous_thread.start()
-        
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(self.socket_path)
-        sock.listen(5)
-        sock.settimeout(1.0)
-        
-        print(f"""
-╔════════════════════════════════════════╗
-║     THALAMUS - Central Coordinator     ║
-║        WITH MEMORY CONTEXT             ║
-╚════════════════════════════════════════╝
+        understanding = self._content(conversation).get("understanding", {})
 
-🧠 Message Router & Context Provider
-   Socket: {self.socket_path}
-   
-🔌 Connected Lobes:
-   • Conversation
-   • Reasoning
-   • Language
-   • Output
-   • Voice
-   • Memory (Notus)
-   • Emotion
-   • Perception
-   • Pattern
-   • Representation
-   
-✓ Memory context: enabled
-✓ Belief persistence: enabled
-✓ Emotional state tracking: enabled
-✓ Conversation history: active
-✓ Autonomous actions: monitoring\n""")
-        
-        while self.running:
+        memory = self.send_and_wait(
+            "notus", "store", {"role": "user", "content": user_input, "user_id": user_id}
+        )
+        if memory["status"] != "success":
+            return "I'm having trouble remembering that right now."
+
+        memory_context = self.send_and_wait(
+            "notus", "query", {"query": user_input, "user_id": user_id, "limit": 15}
+        )
+        if memory_context["status"] != "success":
+            return "I'm having trouble retrieving context right now."
+
+        emotion = self.send_and_wait(
+            "emotion", "process_input", {"user_input": user_input}
+        )
+        if emotion["status"] != "success":
+            return "I'm having trouble processing that right now."
+        emotional_state = self._content(emotion)
+
+        reasoning = self.send_and_wait(
+            "reasoning",
+            "think",
+            {
+                "input": {
+                    "user_input": user_input,
+                    "user_id": user_id,
+                    "understanding": understanding,
+                    "memory_context": self._content(memory_context),
+                    "emotion_result": emotional_state,
+                },
+            },
+        )
+        if reasoning["status"] != "success":
+            return "I'm having trouble thinking right now."
+        semantic_input, reasoning_answer = self._reasoning_answer(reasoning)
+        memories = self._content(memory_context).get("memories", [])
+        if reasoning_answer is None:
             try:
-                try:
-                    conn, _ = sock.accept()
-                except socket.timeout:
-                    continue
-                
-                try:
-                    conn.settimeout(10)
-                    
-                    length_data = _recv_all(conn, 4, timeout=10)
-                    msg_length = struct.unpack('!I', length_data)[0]
-                    
-                    if msg_length <= 0 or msg_length > 10_000_000:
-                        raise ValueError(f"Invalid message length: {msg_length}")
-                    
-                    data = _recv_all(conn, msg_length, timeout=10)
-                    message = json.loads(data.decode('utf-8'))
-                    
-                    result = self.handle_request(message)
-                    
-                    response_data = json.dumps(result).encode('utf-8')
-                    response_length = struct.pack('!I', len(response_data))
-                    conn.sendall(response_length + response_data)
-                    
-                except Exception as e:
-                    try:
-                        error_response = {'status': 'error', 'message': str(e)}
-                        response_data = json.dumps(error_response).encode('utf-8')
-                        response_length = struct.pack('!I', len(response_data))
-                        conn.sendall(response_length + response_data)
-                    except Exception:
-                        pass
-                finally:
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                
-            except Exception as e:
-                print(f"❌ Thalamus error: {e}")
-                time.sleep(0.2)
-    
-    def shutdown(self):
-        """Graceful shutdown"""
-        self.running = False
-        if os.path.exists(self.socket_path):
-            os.remove(self.socket_path)
-        print("\n🛑 Thalamus shutting down...")
+                reasoning_answer = self.response_provider.render(
+                    user_input, understanding, memories
+                )
+            except Exception:
+                reasoning_answer = None
+            reasoning_answer = self._first_usable_text(reasoning_answer)
+            if reasoning_answer is None:
+                reasoning_answer = "I am unable to formulate a response right now."
+        semantic_input.setdefault(
+            "intent", understanding.get("intent", "conversation")
+        )
+        semantic_input.setdefault("answer", reasoning_answer)
+        semantic_input.setdefault("propositions", [reasoning_answer])
 
-if __name__ == "__main__":
-    thalamus = Thalamus()
-    try:
-        thalamus.start()
-    except KeyboardInterrupt:
-        thalamus.shutdown()
+        language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
+        if language["status"] != "success":
+            return "I'm having trouble finding the words right now."
+        response_text = self._content(language).get("sentence", "")
+
+        output = self.send_and_wait(
+            "output",
+            "generate_output",
+            {
+                "text": response_text,
+                "emotion": emotional_state.get("current_emotion", "neutral"),
+                "intensity": emotional_state.get("intensity", 0.5),
+                "user_input": user_input,
+                "user_id": user_id,
+                "preserve_text": True,
+            },
+        )
+        return self._content(output).get("text", response_text)
+
+    def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Small compatibility entry point for direct callers."""
+        msg_type = message.get("type")
+        payload = message.get("content", message)
+        if msg_type == "process_input":
+            response = self.process_user_input(payload.get("user_input", ""))
+            return {"status": "success", "content": {"response": response}, "response": response}
+        if msg_type == "health":
+            return {
+                "status": "success",
+                "content": {"thalamus_healthy": True, "lobes": self.lobe_status.copy()},
+            }
+        return {"status": "error", "message": f"Unknown type: {msg_type}", "content": {}}
+
+    def start(self) -> "Thalamus":
+        """Direct routing has no listener or background loop to start."""
+        self.running = True
+        return self
+
+    def shutdown(self) -> None:
+        self.running = False
+
+
+_thalamus_instance: Optional[Thalamus] = None
+_thalamus_lock = threading.Lock()
+
+
+def get_thalamus() -> Thalamus:
+    global _thalamus_instance
+    with _thalamus_lock:
+        if _thalamus_instance is None:
+            _thalamus_instance = Thalamus()
+        return _thalamus_instance
