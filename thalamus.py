@@ -59,67 +59,71 @@ class Thalamus:
     ) -> Dict[str, Any]:
         with self.lobe_handlers_lock:
             notus = self.lobe_handlers.get("notus")
+            destination_exists = destination in self.lobe_handlers
+        if not destination_exists:
+            return {"status": "error", "message": f"Unknown destination: {destination}"}
         if notus is None:
             return {"status": "error", "message": "Notus is required for lobe learning"}
 
-        memory_type = self._learning_memory_type(destination)
         user_id = payload.get("user_id", "default")
+        memory_type = self._learning_memory_type(destination)
 
         if msg_type == "learn":
-            text = self._learning_text(payload)
-            if text is None:
-                return {"status": "error", "message": "learn requires non-empty fact/content/text"}
-            stored = self.send_message(
+            learned = self.send_message(
                 "notus",
-                "store",
+                "learn_lobe_fact",
                 {
-                    "role": "fact",
-                    "content": text,
+                    **payload,
+                    "lobe": destination,
                     "user_id": user_id,
-                    "memory_type": memory_type,
+                    "source": f"{source}:{destination}",
                 },
                 source=f"{source}:{destination}",
             )
-            if stored.get("status") != "success":
-                return stored
-            return {
-                "status": "success",
-                "content": {
-                    "destination": destination,
-                    "learned": text,
-                    "memory_type": memory_type,
-                },
-                "learned": text,
+            if learned.get("status") != "success":
+                return learned
+            content = self._content(learned)
+            content.setdefault("destination", destination)
+            content.setdefault("memory_type", memory_type)
+            flattened = {
+                key: value
+                for key, value in content.items()
+                if key not in {"status", "message", "content"}
             }
+            return {"status": "success", "content": content, **flattened}
 
-        query = payload.get("query", payload.get("text", ""))
-        recalled = self.send_message(
+        operation_map = {
+            "recall": "recall_lobe_facts",
+            "reinforce_learning": "reinforce_lobe_fact",
+            "contradict_learning": "contradict_lobe_fact",
+            "forget_learning": "forget_lobe_fact",
+            "learning_stats": "lobe_learning_stats",
+        }
+        target_operation = operation_map.get(msg_type)
+        if target_operation is None:
+            return {"status": "error", "message": f"Unknown learning operation: {msg_type}"}
+
+        outcome = self.send_message(
             "notus",
-            "query",
+            target_operation,
             {
-                "query": query,
+                **payload,
+                "lobe": destination,
                 "user_id": user_id,
-                "limit": payload.get("limit", 15),
-                "memory_type": memory_type,
             },
             source=f"{source}:{destination}",
         )
-        if recalled.get("status") != "success":
-            return recalled
-        recalled_content = self._content(recalled)
-        memories = recalled_content.get("memories", recalled_content.get("results", []))
-        memories = memories if isinstance(memories, list) else []
-        return {
-            "status": "success",
-            "content": {
-                "destination": destination,
-                "memory_type": memory_type,
-                "memories": memories,
-                "count": len(memories),
-            },
-            "memories": memories,
-            "count": len(memories),
+        if outcome.get("status") != "success":
+            return outcome
+        content = self._content(outcome)
+        content.setdefault("destination", destination)
+        content.setdefault("memory_type", memory_type)
+        flattened = {
+            key: value
+            for key, value in content.items()
+            if key not in {"status", "message", "content"}
         }
+        return {"status": "success", "content": content, **flattened}
 
     def send_message(
         self,
@@ -131,7 +135,14 @@ class Thalamus:
         """Deliver one envelope synchronously and return its normalized response."""
         if not isinstance(content, dict):
             return {"status": "error", "message": "Message content must be a dictionary"}
-        if msg_type in {"learn", "recall"}:
+        if msg_type in {
+            "learn",
+            "recall",
+            "reinforce_learning",
+            "contradict_learning",
+            "forget_learning",
+            "learning_stats",
+        }:
             return self._handle_lobe_learning(destination, msg_type, content, source)
         with self.lobe_handlers_lock:
             lobe = self.lobe_handlers.get(destination)

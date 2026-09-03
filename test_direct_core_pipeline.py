@@ -313,3 +313,113 @@ def test_lobe_learning_recall_is_scoped_to_destination(tmp_path):
         assert "SCOPE_TEST: conversation-only" not in language_memories
     finally:
         shutdown_core_systems(systems)
+
+
+def test_lobe_adaptive_learning_conflict_and_reinforcement(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        first = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "planet_status",
+                "fact": "Pluto is a planet.",
+                "user_id": "alice",
+                "confidence": 0.7,
+            },
+        )
+        assert first["status"] == "success"
+        assert first["action"] == "created"
+        initial_confidence = first["confidence"]
+
+        reinforced = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "planet_status",
+                "fact": "Pluto is a planet.",
+                "user_id": "alice",
+                "reinforcement": 1.0,
+            },
+        )
+        assert reinforced["status"] == "success"
+        assert reinforced["action"] == "reinforced"
+        assert reinforced["confidence"] > initial_confidence
+        assert reinforced["evidence_count"] >= 2
+
+        replaced = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "planet_status",
+                "fact": "Pluto is classified as a dwarf planet.",
+                "user_id": "alice",
+                "confidence": 0.8,
+            },
+        )
+        assert replaced["status"] == "success"
+        assert replaced["action"] == "replaced_conflict"
+        assert replaced["contradiction_count"] >= 1
+
+        recalled = systems["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"query": "Pluto", "user_id": "alice", "limit": 5},
+        )
+        assert recalled["status"] == "success"
+        assert any(
+            memory.get("fact") == "Pluto is classified as a dwarf planet."
+            for memory in recalled["memories"]
+        )
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_lobe_adaptive_contradict_forget_and_stats(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        systems["thalamus"].send_message(
+            "emotion",
+            "learn",
+            {
+                "key": "trigger_preference",
+                "fact": "Loud noises increase stress.",
+                "user_id": "alice",
+                "confidence": 0.5,
+            },
+        )
+        contradicted = systems["thalamus"].send_message(
+            "emotion",
+            "contradict_learning",
+            {"key": "trigger_preference", "user_id": "alice", "penalty": 0.4},
+        )
+        assert contradicted["status"] == "success"
+        assert contradicted["action"] == "contradicted"
+        assert contradicted["contradiction_count"] >= 1
+
+        forgotten = systems["thalamus"].send_message(
+            "emotion",
+            "forget_learning",
+            {"key": "trigger_preference", "user_id": "alice"},
+        )
+        assert forgotten["status"] == "success"
+        assert forgotten["action"] == "forgotten"
+
+        recalled = systems["thalamus"].send_message(
+            "emotion",
+            "recall",
+            {"query": "stress", "user_id": "alice", "limit": 10},
+        )
+        assert recalled["status"] == "success"
+        assert all(memory.get("status") == "active" for memory in recalled["memories"])
+
+        stats = systems["thalamus"].send_message(
+            "emotion",
+            "learning_stats",
+            {"user_id": "alice"},
+        )
+        assert stats["status"] == "success"
+        assert stats["total_facts"] >= 1
+        assert stats["deprecated_facts"] >= 1
+    finally:
+        shutdown_core_systems(systems)
