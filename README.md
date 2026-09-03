@@ -1,6 +1,10 @@
-# This is very close to being a brain
+# Monday
 
-All socket code has been removed. All lobes now communicate through direct function calls via Thalamus.
+This repository currently contains two separate systems built with traditional
+programming rather than AI/ML frameworks:
+
+- a direct-call brain/reasoning system
+- a standalone procedural 3D model generator
 
 ## Runtime data
 
@@ -9,45 +13,73 @@ Monday stores mutable data outside the repository. By default, the directory is
 directory. This includes learned memory, emotional state, snapshots, logs, and
 local recovery files. Do not add runtime data to Git.
 
-## Legacy and experimental modules
+## Direct-call core
+
+All socket code has been removed. Lobes communicate through direct function
+calls via Thalamus.
+
+`run_abin.create_core_systems()` creates the prompted path:
+conversation → Notus → emotion → reasoning → language → output. Each lobe
+receives `{"type", "content", "source", "message_id"}` and `content` holds the
+message payload.
 
 The direct core intentionally excludes the legacy/experimental launcher,
 PostgreSQL-backed `notus.py`, GUI, socket integrations, and autonomous loops.
 They remain in the repository for compatibility work but are not imported by
 `run_abin.py`.
 
-## Communication Architecture:
+## 3D model generator
 
-All lobes now use:
-- `from thalamus import get_thalamus`
-- `self.thalamus = get_thalamus()`
-- Direct function calls: `self.thalamus.register_lobe()`, `self.thalamus.send_message()`, etc.
+The standalone 3D generator is independent from the brain system and provides:
 
-**NO SOCKETS. NO SOCKET IMPORTS. NO SOCKET CODE.**
+- basic shapes: cube, sphere, cylinder, torus, pyramid
+- complex model building by combining transformed shapes
+- OBJ and STL export
+- face-center and edge-midpoint subdivision
+- mesh sculpting tools such as bulge, twist, and taper
+- detailed humanoid and armored character generators
+- a custom Monday character base mesh
 
-## Direct-call core
+### 3D generator files
 
-`run_abin.create_core_systems()` creates only the prompted path:
-conversation → Notus → emotion → reasoning → language → output.  Each lobe
-receives `{"type", "content", "source", "message_id"}`; `content` is the
-message payload.  Runtime memory is private SQLite state, so core startup does
-not require PostgreSQL, API keys, sockets, a GUI, or background loops.
+- `model_3d.py` - core mesh types, primitive generators, model composition, OBJ/STL export
+- `advanced_modeling.py` - subdivision, mesh sculpting, procedural detail, and humanoid generators
+- `monday_character.py` - custom Monday character generator
+- `demo_3d.py` - basic shape and combined-model demo
+- `demo_advanced.py` - advanced modeling demo
 
-The direct reasoning lobe is a thin envelope and evidence adapter around the
-existing `MaximumSophisticationReasoning` engine: every prompted request calls
-its `think_about()` method. The adapter presents user-scoped SQLite memories in
-the legacy engine's expected context shape and prevents the current prompt from
-being treated as evidence for itself. Its full-engine conclusion passes through
-Language unchanged. A small favorite-fact normalizer and baseline facts provide
-evidence only; they do not generate final answers. The deterministic response
-provider is an emergency fallback only when the full engine has no grounded,
-usable conclusion.
+### 3D usage
 
-## Status
+```python
+from model_3d import ModelGenerator, ComplexModelBuilder
+from advanced_modeling import SubdivisionSurface, MeshSculpting, DetailedHumanoidGenerator
+from monday_character import create_monday_character
 
-✅ `run_abin.py` is the active direct-core launcher. It uses the lightweight
-`direct_notus.py` SQLite adapter plus the legacy full reasoning engine through
-a direct adapter; it does not start sockets, PostgreSQL, a GUI, or background
-loops. The legacy engine's broader optional Notus queries return no data under
-the direct adapter, so direct reliability is limited to supplied SQLite context
-and its local baseline facts.
+# Basic shape
+sphere = ModelGenerator.create_sphere(radius=1.5, segments=32, rings=32)
+sphere.export_obj("sphere.obj")
+sphere.export_stl("sphere.stl")
+
+# Combined model
+builder = ComplexModelBuilder("MyModel")
+builder.add_model(ModelGenerator.create_cube(size=2.0), offset_y=0)
+builder.add_model(ModelGenerator.create_sphere(radius=1.0), offset_y=2.5)
+model = builder.get_model()
+
+# Subdivision and sculpting
+base = ModelGenerator.create_sphere(radius=1.5, segments=8, rings=8)
+smooth = SubdivisionSurface.subdivide(base, iterations=2)
+
+cylinder = ModelGenerator.create_cylinder(radius=0.5, height=3.0, segments=32)
+twisted = MeshSculpting.twist(cylinder, axis='y', angle=180)
+
+# Character generators
+hero = DetailedHumanoidGenerator.create_armored_character(height=7.5)
+monday = create_monday_character(height=5.6)
+```
+
+### 3D demos
+
+- `python demo_3d.py`
+- `python demo_advanced.py`
+- `python monday_character.py`
