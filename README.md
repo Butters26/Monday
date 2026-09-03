@@ -1,47 +1,53 @@
-# Monday
+# This is very close to being a brain
 
-## Project Structure
+All socket code has been removed. All lobes now communicate through direct function calls via Thalamus.
 
-This repository contains two separate systems:
+## Runtime data
 
-### 1. Brain System (Coming Soon)
-The artificial brain - a computational brain architecture built from scratch without AI/ML components.
+Monday stores mutable data outside the repository. By default, the directory is
+`~/.local/state/monday`; set `MONDAY_RUNTIME_DIR` to use another private
+directory. This includes learned memory, emotional state, snapshots, logs, and
+local recovery files. Do not add runtime data to Git.
 
-### 2. Body System (3D Model Generator)
-**Location**: `model_3d.py`, `demo_3d.py`, `advanced_modeling.py`, `demo_advanced.py`
+## Legacy and experimental modules
 
-A standalone 3D model generation system for creating physical structures/bodies. This system is completely independent and NOT part of the brain - it creates the physical form that could house the brain.
+The direct core intentionally excludes the legacy/experimental launcher,
+PostgreSQL-backed `notus.py`, GUI, socket integrations, and autonomous loops.
+They remain in the repository for compatibility work but are not imported by
+`run_abin.py`.
 
-**Basic Features**:
-- Generate basic shapes: cubes, spheres, cylinders, toruses, pyramids
-- Build complex models by combining shapes
-- Export to OBJ and STL formats for 3D printing or visualization
+## Communication Architecture:
 
-**Advanced Features** ⭐:
-- **Subdivision Surfaces**: Smooth meshes with face-center and edge-midpoint subdivision
-- **Mesh Sculpting**: Bulge, twist, taper effects for organic shapes
-- **Detailed Humanoids**: Generate anatomically proportioned characters
-- **Armored Characters**: Create game character-style models with armor
-- **Procedural Details**: Add surface texture and complexity
-- All procedurally generated - no AI/ML
+All lobes now use:
+- `from thalamus import get_thalamus`
+- `self.thalamus = get_thalamus()`
+- Direct function calls: `self.thalamus.register_lobe()`, `self.thalamus.send_message()`, etc.
 
-**Usage**:
-```bash
-# Basic models
-python demo_3d.py
+**NO SOCKETS. NO SOCKET IMPORTS. NO SOCKET CODE.**
 
-# Advanced models (cool detailed characters!)
-python demo_advanced.py
+## Direct-call core
 
-# Monday character model
-python monday_character.py
-```
+`run_abin.create_core_systems()` creates only the prompted path:
+conversation → Notus → emotion → reasoning → language → output.  Each lobe
+receives `{"type", "content", "source", "message_id"}`; `content` is the
+message payload.  Runtime memory is private SQLite state, so core startup does
+not require PostgreSQL, API keys, sockets, a GUI, or background loops.
 
-This will create various 3D models in the `models_output/` directory.
+The direct reasoning lobe is a thin envelope and evidence adapter around the
+existing `MaximumSophisticationReasoning` engine: every prompted request calls
+its `think_about()` method. The adapter presents user-scoped SQLite memories in
+the legacy engine's expected context shape and prevents the current prompt from
+being treated as evidence for itself. Its full-engine conclusion passes through
+Language unchanged. A small favorite-fact normalizer and baseline facts provide
+evidence only; they do not generate final answers. The deterministic response
+provider is an emergency fallback only when the full engine has no grounded,
+usable conclusion.
 
-**Example Models**:
-- Monday character (2,412 vertices, 4,128 faces) - Female humanoid with feminine proportions, hair, glasses, earrings, and dress
-- Armored hero character (1,737 vertices, 3,133 faces) - Master Chief style
-- Detailed humanoids with proper anatomy
-- Smooth subdivided spheres (2,504 vertices)
-- Sculpted and textured shapes
+## Status
+
+✅ `run_abin.py` is the active direct-core launcher. It uses the lightweight
+`direct_notus.py` SQLite adapter plus the legacy full reasoning engine through
+a direct adapter; it does not start sockets, PostgreSQL, a GUI, or background
+loops. The legacy engine's broader optional Notus queries return no data under
+the direct adapter, so direct reliability is limited to supplied SQLite context
+and its local baseline facts.
