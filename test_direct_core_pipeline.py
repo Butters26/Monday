@@ -239,3 +239,77 @@ def test_response_provider_failure_uses_safe_fallback(tmp_path):
         )
     finally:
         shutdown_core_systems(systems)
+
+
+def test_all_core_lobes_support_learn_and_recall_contract(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    core_lobes = ["conversation", "notus", "emotion", "reasoning", "language", "output"]
+    try:
+        for lobe_name in core_lobes:
+            result = systems["thalamus"].send_message(
+                lobe_name,
+                "learn",
+                {
+                    "fact": f"{lobe_name} can learn direct facts",
+                    "user_id": "alice",
+                },
+            )
+            assert result["status"] == "success"
+
+        for lobe_name in core_lobes:
+            result = systems["thalamus"].send_message(
+                lobe_name,
+                "recall",
+                {
+                    "query": "learn direct facts",
+                    "user_id": "alice",
+                    "limit": 5,
+                },
+            )
+            assert result["status"] == "success"
+            memories = result.get("memories", [])
+            assert any(
+                memory.get("content") == f"{lobe_name} can learn direct facts"
+                for memory in memories
+            )
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_lobe_learning_recall_is_scoped_to_destination(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        systems["thalamus"].send_message(
+            "conversation",
+            "learn",
+            {"fact": "SCOPE_TEST: conversation-only", "user_id": "alice"},
+        )
+        systems["thalamus"].send_message(
+            "language",
+            "learn",
+            {"fact": "SCOPE_TEST: language-only", "user_id": "alice"},
+        )
+
+        conversation = systems["thalamus"].send_message(
+            "conversation",
+            "recall",
+            {"query": "SCOPE_TEST", "user_id": "alice", "limit": 10},
+        )
+        language = systems["thalamus"].send_message(
+            "language",
+            "recall",
+            {"query": "SCOPE_TEST", "user_id": "alice", "limit": 10},
+        )
+
+        assert conversation["status"] == "success"
+        assert language["status"] == "success"
+
+        conversation_memories = [m.get("content") for m in conversation.get("memories", [])]
+        language_memories = [m.get("content") for m in language.get("memories", [])]
+
+        assert "SCOPE_TEST: conversation-only" in conversation_memories
+        assert "SCOPE_TEST: language-only" not in conversation_memories
+        assert "SCOPE_TEST: language-only" in language_memories
+        assert "SCOPE_TEST: conversation-only" not in language_memories
+    finally:
+        shutdown_core_systems(systems)

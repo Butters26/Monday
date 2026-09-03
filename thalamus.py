@@ -42,6 +42,85 @@ class Thalamus:
             self.lobe_status[name] = "online"
         return {"status": "success", "content": {"registered": name}, "registered": name}
 
+    @staticmethod
+    def _learning_memory_type(destination: str) -> str:
+        return f"lobe_learning:{destination}"
+
+    @staticmethod
+    def _learning_text(payload: Dict[str, Any]) -> Optional[str]:
+        for key in ("fact", "content", "text", "value"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    def _handle_lobe_learning(
+        self, destination: str, msg_type: str, payload: Dict[str, Any], source: str
+    ) -> Dict[str, Any]:
+        with self.lobe_handlers_lock:
+            notus = self.lobe_handlers.get("notus")
+        if notus is None:
+            return {"status": "error", "message": "Notus is required for lobe learning"}
+
+        memory_type = self._learning_memory_type(destination)
+        user_id = payload.get("user_id", "default")
+
+        if msg_type == "learn":
+            text = self._learning_text(payload)
+            if text is None:
+                return {"status": "error", "message": "learn requires non-empty fact/content/text"}
+            stored = self.send_message(
+                "notus",
+                "store",
+                {
+                    "role": "fact",
+                    "content": text,
+                    "user_id": user_id,
+                    "memory_type": memory_type,
+                },
+                source=f"{source}:{destination}",
+            )
+            if stored.get("status") != "success":
+                return stored
+            return {
+                "status": "success",
+                "content": {
+                    "destination": destination,
+                    "learned": text,
+                    "memory_type": memory_type,
+                },
+                "learned": text,
+            }
+
+        query = payload.get("query", payload.get("text", ""))
+        recalled = self.send_message(
+            "notus",
+            "query",
+            {
+                "query": query,
+                "user_id": user_id,
+                "limit": payload.get("limit", 15),
+                "memory_type": memory_type,
+            },
+            source=f"{source}:{destination}",
+        )
+        if recalled.get("status") != "success":
+            return recalled
+        recalled_content = self._content(recalled)
+        memories = recalled_content.get("memories", recalled_content.get("results", []))
+        memories = memories if isinstance(memories, list) else []
+        return {
+            "status": "success",
+            "content": {
+                "destination": destination,
+                "memory_type": memory_type,
+                "memories": memories,
+                "count": len(memories),
+            },
+            "memories": memories,
+            "count": len(memories),
+        }
+
     def send_message(
         self,
         destination: str,
@@ -52,6 +131,8 @@ class Thalamus:
         """Deliver one envelope synchronously and return its normalized response."""
         if not isinstance(content, dict):
             return {"status": "error", "message": "Message content must be a dictionary"}
+        if msg_type in {"learn", "recall"}:
+            return self._handle_lobe_learning(destination, msg_type, content, source)
         with self.lobe_handlers_lock:
             lobe = self.lobe_handlers.get(destination)
         if lobe is None:

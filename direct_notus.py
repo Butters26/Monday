@@ -69,7 +69,11 @@ class DirectNotusProcess:
         return self
 
     def retrieve_memories(
-        self, query: str = "", user_id: str = "default", limit: int = 15
+        self,
+        query: str = "",
+        user_id: str = "default",
+        limit: int = 15,
+        memory_type: Any = None,
     ) -> List[Dict[str, Any]]:
         """Return only clean, structured records belonging to ``user_id``."""
         if not isinstance(user_id, str):
@@ -86,6 +90,18 @@ class DirectNotusProcess:
             "AND lower(trim(content)) NOT LIKE 'abin:%'"
         )
         params: List[Any] = [user_id]
+        if isinstance(memory_type, str) and memory_type.strip():
+            sql += " AND memory_type = ?"
+            params.append(memory_type.strip())
+        elif isinstance(memory_type, (list, tuple, set)):
+            memory_types = [
+                item.strip()
+                for item in memory_type
+                if isinstance(item, str) and item.strip()
+            ]
+            if memory_types:
+                sql += " AND (" + " OR ".join("memory_type = ?" for _ in memory_types) + ")"
+                params.extend(memory_types)
         if terms:
             sql += " AND (" + " OR ".join("lower(content) LIKE ?" for _ in terms) + ")"
             params.extend(f"%{term}%" for term in terms)
@@ -146,13 +162,19 @@ class DirectNotusProcess:
         if msg_type in {"query", "query_semantic"}:
             query = payload.get("query", payload.get("text", ""))
             memories = self.retrieve_memories(
-                query, payload.get("user_id", "default"), payload.get("limit", 15)
+                query,
+                payload.get("user_id", "default"),
+                payload.get("limit", 15),
+                payload.get("memory_type"),
             )
             return {"status": "success", "content": {"results": memories, "memories": memories}}
         if msg_type == "query_context":
             query = payload.get("text", "")
             memories = self.retrieve_memories(
-                query, payload.get("user_id", "default"), payload.get("max_results", 15)
+                query,
+                payload.get("user_id", "default"),
+                payload.get("max_results", 15),
+                payload.get("memory_type"),
             )
             return {
                 "status": "success",
