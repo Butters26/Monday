@@ -1,5 +1,6 @@
 """Focused tests for Notus failure handling in the direct core path."""
 
+from direct_notus import DirectNotusProcess
 from run_abin import create_core_systems, shutdown_core_systems
 
 
@@ -63,6 +64,31 @@ class RecoveringNotus:
 
     def shutdown(self):
         return None
+
+
+class CommitThenFailNotus:
+    def __init__(self, storage_path: str):
+        self.inner = DirectNotusProcess(storage_path=storage_path)
+        self._store_calls = 0
+        self.recovered = False
+
+    def process_message(self, message):
+        msg_type = message.get("type")
+        if msg_type == "store":
+            self._store_calls += 1
+            if self._store_calls == 1:
+                self.inner.process_message(message)
+                return {"status": "error", "message": "ack lost after commit", "content": {}}
+            if not self.recovered:
+                return {"status": "error", "message": "still unavailable", "content": {}}
+        if msg_type == "query" and not self.recovered:
+            return {"status": "error", "message": "query unavailable", "content": {}}
+        if msg_type == "health":
+            return {"status": "success", "content": {"healthy": self.recovered}}
+        return self.inner.process_message(message)
+
+    def shutdown(self):
+        return self.inner.shutdown()
 
 
 def test_notus_failures_do_not_abort_response_pipeline(tmp_path):
@@ -211,5 +237,33 @@ def test_pending_notus_sync_respects_user_isolation(tmp_path):
         )
         assert sync_bob["status"] == "success"
         assert any(row["content"] == "bob queued" and row["user_id"] == "bob" for row in recovering_notus.stored)
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_recovery_replay_is_idempotent_when_first_store_committed_but_failed(tmp_path):
+    runtime = tmp_path / "runtime"
+    systems = create_core_systems(str(runtime))
+    flaky_notus = CommitThenFailNotus(str(runtime / "notus_memory.sqlite3"))
+    systems["thalamus"].register_lobe("notus", flaky_notus)
+    try:
+        prompt = "idempotent replay check"
+        systems["thalamus"].process_user_input(prompt, user_id="alice")
+        queued = systems["thalamus"].handle_request({"type": "notus_sync_status"})
+        assert queued["status"] == "success"
+        assert queued["content"]["pending"].get("alice", 0) >= 1
+
+        flaky_notus.recovered = True
+        replayed = systems["thalamus"].handle_request(
+            {"type": "sync_notus_pending", "content": {"user_id": "alice"}}
+        )
+        assert replayed["status"] == "success"
+        assert replayed["content"]["pending"] == 0
+
+        rows = flaky_notus.inner._connection.execute(
+            "SELECT COUNT(*) FROM memories WHERE user_id = ? AND content = ?",
+            ("alice", prompt),
+        ).fetchone()
+        assert rows and rows[0] == 1
     finally:
         shutdown_core_systems(systems)

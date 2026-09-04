@@ -45,7 +45,8 @@ class DirectNotusProcess:
                 content TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 memory_type TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                thalamus_write_id TEXT
             )"""
         )
         self._connection.execute(
@@ -67,7 +68,13 @@ class DirectNotusProcess:
                 UNIQUE(lobe, user_id, learning_key)
             )"""
         )
+        self._ensure_memories_schema()
         self._ensure_lobe_learning_schema()
+        self._connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_thalamus_write_id "
+            "ON memories(thalamus_write_id) "
+            "WHERE thalamus_write_id IS NOT NULL"
+        )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_lobe_learning_scope "
             "ON lobe_learning(lobe, user_id, status, confidence, updated_at)"
@@ -107,6 +114,17 @@ class DirectNotusProcess:
             connection.execute(
                 "ALTER TABLE lobe_learning ADD COLUMN last_applied_at TEXT"
             )
+        connection.commit()
+
+    def _ensure_memories_schema(self) -> None:
+        connection = self._require_connection()
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(memories)").fetchall()
+            if len(row) > 1
+        }
+        if "thalamus_write_id" not in columns:
+            connection.execute("ALTER TABLE memories ADD COLUMN thalamus_write_id TEXT")
         connection.commit()
 
     @staticmethod
@@ -208,26 +226,41 @@ class DirectNotusProcess:
         content = payload.get("content")
         role = payload.get("role", "user")
         user_id = payload.get("user_id", "default")
+        write_id = payload.get("_thalamus_write_id")
         if not self._is_safe_memory(role, content):
             return {"status": "error", "message": "Memory must be clean structured content"}
         if not isinstance(user_id, str) or not user_id:
             return {"status": "error", "message": "Memory user_id must be a non-empty string"}
+        if write_id is not None and (not isinstance(write_id, str) or not write_id.strip()):
+            return {"status": "error", "message": "_thalamus_write_id must be a non-empty string"}
+        write_id = write_id.strip() if isinstance(write_id, str) else None
 
         with self._lock:
             connection = self._require_connection()
-            connection.execute(
-                "INSERT INTO memories(role, content, user_id, memory_type, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO memories("
+                "role, content, user_id, memory_type, created_at, thalamus_write_id"
+                ") VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     role,
                     content.strip(),
                     user_id,
                     payload.get("memory_type", "conversation"),
                     datetime.now(timezone.utc).isoformat(),
+                    write_id,
                 ),
             )
             connection.commit()
-        return {"status": "success", "content": {"stored": True, "content": content.strip()}}
+        stored = cursor.rowcount > 0
+        return {
+            "status": "success",
+            "content": {
+                "stored": stored,
+                "duplicate": not stored,
+                "content": content.strip(),
+                "thalamus_write_id": write_id,
+            },
+        }
 
     def _learn_lobe_fact(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         lobe = self._clean_text(payload.get("lobe"))
