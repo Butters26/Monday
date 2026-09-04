@@ -17,7 +17,7 @@ from pathlib import Path
 import re
 import threading
 import uuid
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Set
 
 from direct_response import DeterministicResponseProvider, ResponseProvider
 from learning.lobe_learning_store import LobeLearningStore
@@ -90,6 +90,9 @@ class Thalamus:
         )
         self._fallback_memory: Dict[str, deque] = {}
         self._fallback_memory_lock = threading.RLock()
+        self._pending_notus_writes: Dict[str, deque] = {}
+        self._synced_notus_write_ids: Dict[str, Set[str]] = {}
+        self._notus_sync_lock = threading.RLock()
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -155,6 +158,79 @@ class Thalamus:
         if not candidates and isinstance(msg_type, str) and msg_type.strip():
             candidates.append(msg_type.strip())
         return candidates
+
+    @staticmethod
+    def _normalise_notus_write(payload: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+        normalised = dict(payload) if isinstance(payload, dict) else {}
+        normalised["user_id"] = (
+            user_id.strip() if isinstance(user_id, str) and user_id.strip() else "default"
+        )
+        existing_id = normalised.get("_thalamus_write_id")
+        if not isinstance(existing_id, str) or not existing_id.strip():
+            normalised["_thalamus_write_id"] = str(uuid.uuid4())
+        return normalised
+
+    def _mark_notus_write_synced(self, payload: Dict[str, Any]) -> None:
+        user_id = payload.get("user_id", "default")
+        write_id = payload.get("_thalamus_write_id")
+        if not isinstance(write_id, str) or not write_id.strip():
+            return
+        safe_user = user_id.strip() if isinstance(user_id, str) and user_id.strip() else "default"
+        with self._notus_sync_lock:
+            bucket = self._synced_notus_write_ids.setdefault(safe_user, set())
+            bucket.add(write_id)
+
+    def _enqueue_notus_write(self, payload: Dict[str, Any]) -> None:
+        write = self._normalise_notus_write(payload, payload.get("user_id", "default"))
+        safe_user = write["user_id"]
+        write_id = write["_thalamus_write_id"]
+        with self._notus_sync_lock:
+            synced = self._synced_notus_write_ids.setdefault(safe_user, set())
+            if write_id in synced:
+                return
+            queue = self._pending_notus_writes.setdefault(safe_user, deque(maxlen=500))
+            if any(item.get("_thalamus_write_id") == write_id for item in queue):
+                return
+            queue.append(write)
+
+    def _sync_pending_notus_writes(self, user_id: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit), 500))
+        attempted = 0
+        synced = 0
+        failed = 0
+        with self._notus_sync_lock:
+            users = [user_id] if isinstance(user_id, str) and user_id.strip() else list(self._pending_notus_writes.keys())
+        for queued_user in users:
+            safe_user = queued_user.strip() if isinstance(queued_user, str) and queued_user.strip() else "default"
+            while attempted < safe_limit:
+                with self._notus_sync_lock:
+                    queue = self._pending_notus_writes.get(safe_user)
+                    item = queue[0] if queue else None
+                if item is None:
+                    break
+                attempted += 1
+                result = self.send_and_wait("notus", "store", item, source="thalamus:notus_sync")
+                if result.get("status") == "success":
+                    with self._notus_sync_lock:
+                        queue = self._pending_notus_writes.get(safe_user)
+                        if queue and queue and queue[0].get("_thalamus_write_id") == item.get("_thalamus_write_id"):
+                            queue.popleft()
+                            if not queue:
+                                self._pending_notus_writes.pop(safe_user, None)
+                    self._mark_notus_write_synced(item)
+                    synced += 1
+                    continue
+                failed += 1
+                break
+        pending = 0
+        with self._notus_sync_lock:
+            pending = sum(len(queue) for queue in self._pending_notus_writes.values())
+        return {
+            "attempted": attempted,
+            "synced": synced,
+            "failed": failed,
+            "pending": pending,
+        }
 
     @staticmethod
     def _learning_memory_type(destination: str) -> str:
@@ -709,6 +785,7 @@ class Thalamus:
             return "Please send a message."
         safe_user_id = user_id if isinstance(user_id, str) and user_id.strip() else "default"
         self._record_fallback_memory(safe_user_id, "user", user_input)
+        self._sync_pending_notus_writes(user_id=safe_user_id, limit=25)
 
         conversation = self.send_and_wait(
             "conversation", "understand", {"user_input": user_input, "user_id": safe_user_id}
@@ -717,15 +794,27 @@ class Thalamus:
             return "I'm having trouble understanding right now."
         understanding = self._content(conversation).get("understanding", {})
 
+        memory_payload = self._normalise_notus_write(
+            {
+                "role": "user",
+                "content": user_input,
+                "user_id": safe_user_id,
+                "memory_type": "conversation",
+            },
+            safe_user_id,
+        )
         memory = {"status": "error"}
         for _ in range(2):
             memory = self.send_and_wait(
                 "notus",
                 "store",
-                {"role": "user", "content": user_input, "user_id": safe_user_id},
+                memory_payload,
             )
             if memory.get("status") == "success":
+                self._mark_notus_write_synced(memory_payload)
                 break
+        if memory.get("status") != "success":
+            self._enqueue_notus_write(memory_payload)
 
         memory_context = {"status": "error", "content": {}}
         for _ in range(2):
@@ -735,6 +824,7 @@ class Thalamus:
                 {"query": user_input, "user_id": safe_user_id, "limit": 15},
             )
             if memory_context.get("status") == "success":
+                self._sync_pending_notus_writes(user_id=safe_user_id, limit=50)
                 break
         if memory_context.get("status") != "success":
             memory_context = {
@@ -820,8 +910,25 @@ class Thalamus:
             return self.teach_monday(payload if isinstance(payload, dict) else {})
         if msg_type == "learning_overview":
             return self.learning_overview(payload if isinstance(payload, dict) else {})
+        if msg_type == "sync_notus_pending":
+            content = payload if isinstance(payload, dict) else {}
+            return {
+                "status": "success",
+                "content": self._sync_pending_notus_writes(
+                    user_id=content.get("user_id"),
+                    limit=content.get("limit", 100),
+                ),
+            }
+        if msg_type == "notus_sync_status":
+            with self._notus_sync_lock:
+                pending = {
+                    user: len(queue) for user, queue in self._pending_notus_writes.items() if queue
+                }
+            return {"status": "success", "content": {"pending": pending, "total_pending": sum(pending.values())}}
         if msg_type == "health":
             lobe_health = self._probe_lobes_health()
+            if lobe_health.get("notus", {}).get("healthy"):
+                self._sync_pending_notus_writes(limit=100)
             return {
                 "status": "success",
                 "content": {
