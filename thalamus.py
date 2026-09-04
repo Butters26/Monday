@@ -23,6 +23,8 @@ from direct_response import DeterministicResponseProvider, ResponseProvider
 _LEARNING_ROUTE_TYPES = {
     "learn",
     "recall",
+    "teach_skill",
+    "list_skills",
     "reinforce_learning",
     "contradict_learning",
     "forget_learning",
@@ -65,6 +67,78 @@ class Thalamus:
                 return value.strip()
         return None
 
+    @staticmethod
+    def _skill_key(payload: Dict[str, Any]) -> str:
+        raw_skill = payload.get("skill", payload.get("name", payload.get("key", "custom")))
+        if not isinstance(raw_skill, str) or not raw_skill.strip():
+            raw_skill = "custom"
+        safe = "".join(
+            char.lower() if char.isalnum() or char in {"_", "-", ":"} else "_"
+            for char in raw_skill.strip()
+        ).strip("_")
+        return f"skill:{safe or 'custom'}"
+
+    @classmethod
+    def _skill_fact(cls, payload: Dict[str, Any]) -> Optional[str]:
+        behavior = payload.get("behavior", payload.get("fact", payload.get("content")))
+        if not isinstance(behavior, str) or not behavior.strip():
+            return None
+        trigger = payload.get("trigger")
+        outcome = payload.get("outcome")
+        parts = [f"Skill behavior: {behavior.strip()}"]
+        if isinstance(trigger, str) and trigger.strip():
+            parts.append(f"Trigger context: {trigger.strip()}")
+        if isinstance(outcome, str) and outcome.strip():
+            parts.append(f"Expected outcome: {outcome.strip()}")
+        return " | ".join(parts)
+
+    def _learned_guidance_for_message(
+        self, destination: str, msg_type: str, content: Dict[str, Any], source: str
+    ) -> list[str]:
+        if destination == "notus" or msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
+            return []
+        user_id = content.get("user_id", "default")
+        if not isinstance(user_id, str) or not user_id.strip():
+            user_id = "default"
+        query_terms = [
+            msg_type,
+            content.get("query", ""),
+            content.get("text", ""),
+            content.get("user_input", ""),
+            content.get("input", ""),
+        ]
+        query = " ".join(term for term in query_terms if isinstance(term, str) and term.strip()).strip()
+        def _recall(query_text: str) -> list[Dict[str, Any]]:
+            recalled = self.send_message(
+                "notus",
+                "recall_lobe_facts",
+                {
+                    "lobe": destination,
+                    "user_id": user_id,
+                    "query": query_text,
+                    "min_confidence": 0.55,
+                    "limit": 5,
+                },
+                source=f"{source}:{destination}:guidance",
+            )
+            if recalled.get("status") != "success":
+                return []
+            memories = self._content(recalled).get("memories", [])
+            return memories if isinstance(memories, list) else []
+
+        memories = _recall(query)
+        if not memories:
+            memories = _recall("")
+        if not isinstance(memories, list):
+            return []
+        return [
+            memory.get("fact", memory.get("content", ""))
+            for memory in memories
+            if isinstance(memory, dict)
+            and isinstance(memory.get("fact", memory.get("content", "")), str)
+            and memory.get("fact", memory.get("content", "")).strip()
+        ]
+
     def _handle_lobe_learning(
         self, destination: str, msg_type: str, payload: Dict[str, Any], source: str
     ) -> Dict[str, Any]:
@@ -79,12 +153,22 @@ class Thalamus:
         user_id = payload.get("user_id", "default")
         memory_type = self._learning_memory_type(destination)
 
-        if msg_type == "learn":
+        if msg_type in {"learn", "teach_skill"}:
+            payload_to_store = dict(payload)
+            if msg_type == "teach_skill":
+                skill_fact = self._skill_fact(payload)
+                if skill_fact is None:
+                    return {
+                        "status": "error",
+                        "message": "teach_skill requires behavior/fact/content",
+                    }
+                payload_to_store["fact"] = skill_fact
+                payload_to_store["key"] = self._skill_key(payload)
             learned = self.send_message(
                 "notus",
                 "learn_lobe_fact",
                 {
-                    **payload,
+                    **payload_to_store,
                     "lobe": destination,
                     "user_id": user_id,
                     "source": f"{source}:{destination}",
@@ -105,6 +189,7 @@ class Thalamus:
 
         operation_map = {
             "recall": "recall_lobe_facts",
+            "list_skills": "recall_lobe_facts",
             "reinforce_learning": "reinforce_lobe_fact",
             "contradict_learning": "contradict_lobe_fact",
             "forget_learning": "forget_lobe_fact",
@@ -121,6 +206,7 @@ class Thalamus:
                 **payload,
                 "lobe": destination,
                 "user_id": user_id,
+                **({"key_prefix": "skill:"} if msg_type == "list_skills" else {}),
             },
             source=f"{source}:{destination}",
         )
@@ -211,9 +297,19 @@ class Thalamus:
             self.lobe_status[destination] = "offline"
             return {"status": "error", "message": f"Unknown destination: {destination}"}
 
+        envelope_content = dict(content)
+        learned_guidance = self._learned_guidance_for_message(
+            destination, msg_type, envelope_content, source
+        )
+        if learned_guidance:
+            envelope_content["learned_guidance"] = learned_guidance
+            envelope_content["applied_learning"] = {
+                "count": len(learned_guidance),
+                "for_message_type": msg_type,
+            }
         envelope = {
             "type": msg_type,
-            "content": content,
+            "content": envelope_content,
             "source": source,
             "message_id": str(uuid.uuid4()),
         }

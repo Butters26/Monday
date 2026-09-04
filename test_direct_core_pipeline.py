@@ -479,3 +479,73 @@ def test_thalamus_auto_adapts_success_and_failure_for_lobe(tmp_path):
         )
     finally:
         shutdown_core_systems(systems)
+
+
+def test_teach_skill_and_list_skills_for_any_lobe(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        taught = systems["thalamus"].send_message(
+            "reasoning",
+            "teach_skill",
+            {
+                "skill": "math_patterns",
+                "behavior": "Detect arithmetic relationships from user text.",
+                "trigger": "numbers and operators in message",
+                "outcome": "return structured math pattern insight",
+                "user_id": "alice",
+                "confidence": 0.8,
+            },
+        )
+        assert taught["status"] == "success"
+        assert taught["key"] == "skill:math_patterns"
+
+        listed = systems["thalamus"].send_message(
+            "reasoning",
+            "list_skills",
+            {"user_id": "alice", "limit": 20},
+        )
+        assert listed["status"] == "success"
+        assert any(
+            memory.get("key") == "skill:math_patterns"
+            for memory in listed.get("memories", [])
+        )
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_learned_skill_guidance_is_applied_to_message_envelope(tmp_path):
+    class EchoLobe:
+        def process_message(self, message):
+            return {"status": "success", "content": {"seen": message.get("content", {})}}
+
+        def shutdown(self):
+            pass
+
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    systems["thalamus"].register_lobe("echo", EchoLobe())
+    try:
+        taught = systems["thalamus"].send_message(
+            "echo",
+            "teach_skill",
+            {
+                "skill": "respectful_reply",
+                "behavior": "Use calm, respectful wording even when the input is intense.",
+                "trigger": "emotionally intense user text",
+                "user_id": "alice",
+                "confidence": 0.9,
+            },
+        )
+        assert taught["status"] == "success"
+
+        response = systems["thalamus"].send_message(
+            "echo",
+            "reply",
+            {"user_input": "I am upset", "user_id": "alice"},
+        )
+        assert response["status"] == "success"
+        seen = response["content"]["seen"]
+        assert "learned_guidance" in seen
+        assert any("Skill behavior:" in item for item in seen["learned_guidance"])
+        assert seen.get("applied_learning", {}).get("count", 0) >= 1
+    finally:
+        shutdown_core_systems(systems)

@@ -294,6 +294,7 @@ class DirectNotusProcess:
             return {"status": "error", "message": "lobe is required"}
         query_text = self._clean_text(payload.get("query", payload.get("text", "")))
         terms = [term.lower() for term in query_text.split() if len(term) > 2]
+        key_prefix = self._clean_text(payload.get("key_prefix")).lower()
         min_confidence = self._clamp_confidence(payload.get("min_confidence"), default=0.0)
         include_deprecated = bool(payload.get("include_deprecated", False))
         try:
@@ -310,6 +311,9 @@ class DirectNotusProcess:
         params: List[Any] = [lobe, user_id, min_confidence]
         if not include_deprecated:
             sql += " AND status = 'active'"
+        if key_prefix:
+            sql += " AND lower(learning_key) LIKE ?"
+            params.append(f"{key_prefix}%")
         if terms:
             sql += " AND (" + " OR ".join("lower(fact) LIKE ?" for _ in terms) + ")"
             params.extend(f"%{term}%" for term in terms)
