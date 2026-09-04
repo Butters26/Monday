@@ -423,3 +423,59 @@ def test_lobe_adaptive_contradict_forget_and_stats(tmp_path):
         assert stats["deprecated_facts"] >= 1
     finally:
         shutdown_core_systems(systems)
+
+
+def test_thalamus_auto_adapts_success_and_failure_for_lobe(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        success = systems["thalamus"].send_message(
+            "conversation",
+            "understand",
+            {"user_input": "Hello there", "user_id": "alice"},
+        )
+        assert success["status"] == "success"
+
+        learned_behavior = systems["thalamus"].send_message(
+            "conversation",
+            "recall",
+            {"query": "status success stable content", "user_id": "alice", "limit": 10},
+        )
+        assert learned_behavior["status"] == "success"
+        assert any(
+            memory.get("key") == "behavior:understand"
+            for memory in learned_behavior.get("memories", [])
+        )
+
+        # Force a lobe-level failure to trigger contradiction and recovery learning.
+        failure = systems["thalamus"].send_message(
+            "conversation",
+            "understand",
+            {"user_input": 123, "user_id": "alice"},
+        )
+        assert failure["status"] == "error"
+
+        behavior_after_failure = systems["thalamus"].send_message(
+            "conversation",
+            "recall",
+            {"query": "status success stable content", "user_id": "alice", "limit": 10},
+        )
+        assert behavior_after_failure["status"] == "success"
+        behavior_entries = [
+            memory for memory in behavior_after_failure.get("memories", [])
+            if memory.get("key") == "behavior:understand"
+        ]
+        assert behavior_entries
+        assert behavior_entries[0].get("contradiction_count", 0) >= 1
+
+        recovery = systems["thalamus"].send_message(
+            "conversation",
+            "recall",
+            {"query": "safe non-crashing fallback", "user_id": "alice", "limit": 10},
+        )
+        assert recovery["status"] == "success"
+        assert any(
+            memory.get("key") == "recovery:understand"
+            for memory in recovery.get("memories", [])
+        )
+    finally:
+        shutdown_core_systems(systems)

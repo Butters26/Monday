@@ -19,6 +19,17 @@ from typing import Any, Dict, Iterable, Optional
 
 from direct_response import DeterministicResponseProvider, ResponseProvider
 
+
+_LEARNING_ROUTE_TYPES = {
+    "learn",
+    "recall",
+    "reinforce_learning",
+    "contradict_learning",
+    "forget_learning",
+    "learning_stats",
+}
+
+
 class Thalamus:
     """Synchronously route direct calls between registered lobes."""
 
@@ -125,6 +136,63 @@ class Thalamus:
         }
         return {"status": "success", "content": content, **flattened}
 
+    def _auto_adapt_from_interaction(
+        self,
+        destination: str,
+        msg_type: str,
+        content: Dict[str, Any],
+        response: Dict[str, Any],
+        source: str,
+    ) -> None:
+        if destination == "notus" or msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
+            return
+        user_id = content.get("user_id", "default")
+        if not isinstance(user_id, str) or not user_id.strip():
+            user_id = "default"
+        behavior_key = f"behavior:{msg_type}"
+        if response.get("status") == "success":
+            self._handle_lobe_learning(
+                destination,
+                "learn",
+                {
+                    "user_id": user_id,
+                    "key": behavior_key,
+                    "fact": (
+                        f"For message type '{msg_type}', keep behavior that returns "
+                        f"status success with stable content."
+                    ),
+                    "confidence": 0.7,
+                    "reinforcement": 0.8,
+                },
+                source=f"{source}:auto_adapt",
+            )
+            return
+
+        self._handle_lobe_learning(
+            destination,
+            "contradict_learning",
+            {
+                "user_id": user_id,
+                "key": behavior_key,
+                "penalty": 0.2,
+            },
+            source=f"{source}:auto_adapt",
+        )
+        self._handle_lobe_learning(
+            destination,
+            "learn",
+            {
+                "user_id": user_id,
+                "key": f"recovery:{msg_type}",
+                "fact": (
+                    f"When '{msg_type}' fails, validate inputs and return a safe, "
+                    "non-crashing fallback response."
+                ),
+                "confidence": 0.6,
+            },
+            source=f"{source}:auto_adapt",
+        )
+
     def send_message(
         self,
         destination: str,
@@ -135,14 +203,7 @@ class Thalamus:
         """Deliver one envelope synchronously and return its normalized response."""
         if not isinstance(content, dict):
             return {"status": "error", "message": "Message content must be a dictionary"}
-        if msg_type in {
-            "learn",
-            "recall",
-            "reinforce_learning",
-            "contradict_learning",
-            "forget_learning",
-            "learning_stats",
-        }:
+        if msg_type in _LEARNING_ROUTE_TYPES:
             return self._handle_lobe_learning(destination, msg_type, content, source)
         with self.lobe_handlers_lock:
             lobe = self.lobe_handlers.get(destination)
@@ -175,6 +236,7 @@ class Thalamus:
             self.lobe_status[destination] = "error"
             response = {"status": "error", "message": f"{destination}: {exc}", "content": {}}
 
+        self._auto_adapt_from_interaction(destination, msg_type, content, response, source)
         self.message_routes.append(
             {
                 "from": source,
