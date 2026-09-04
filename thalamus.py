@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
+import re
 import threading
 import uuid
 from typing import Any, Dict, Iterable, Optional
@@ -29,6 +30,40 @@ _LEARNING_ROUTE_TYPES = {
     "contradict_learning",
     "forget_learning",
     "learning_stats",
+}
+_LESSON_TYPE_PATTERNS = {
+    "correction": re.compile(
+        r"\b(wrong|instead|don't|do not|stop|fix|correct|should not)\b", re.IGNORECASE
+    ),
+    "feedback": re.compile(
+        r"\b(feedback|constructive|tone|rude|respectful|polite|calm|kind)\b", re.IGNORECASE
+    ),
+    "skill": re.compile(
+        r"\b(learn|teach|how to|skill|math|grammar|pattern|piano|music|logic|reason)\b",
+        re.IGNORECASE,
+    ),
+}
+_LOBE_LEARNING_RULES = {
+    "reasoning": {"skill", "correction", "feedback"},
+    "language": {"skill", "correction", "feedback"},
+    "conversation": {"skill", "correction", "feedback"},
+    "output": {"feedback", "correction"},
+    "emotion": {"feedback", "correction"},
+    "pattern": {"skill", "correction"},
+    "perception": {"skill", "correction"},
+    "novelty": {"skill", "feedback"},
+    "attention": {"skill", "feedback"},
+    "meta_cognition": {"correction", "feedback", "skill"},
+    "executive_control": {"skill", "correction"},
+    "social_context": {"feedback", "correction"},
+    "sensory_integration": {"skill"},
+    "motor_action": {"skill"},
+    "speech": {"feedback", "correction"},
+    "autonomous": {"skill", "feedback", "correction"},
+    "representation": {"skill"},
+    "reflection": {"feedback", "correction"},
+    "experience": {"skill", "feedback"},
+    "reinforcement": {"skill", "feedback", "correction"},
 }
 
 
@@ -118,6 +153,7 @@ class Thalamus:
                     "query": query_text,
                     "min_confidence": 0.55,
                     "limit": 5,
+                    "mark_used": True,
                 },
                 source=f"{source}:{destination}:guidance",
             )
@@ -138,6 +174,159 @@ class Thalamus:
             and isinstance(memory.get("fact", memory.get("content", "")), str)
             and memory.get("fact", memory.get("content", "")).strip()
         ]
+
+    @staticmethod
+    def _classify_lesson_type(lesson_text: str) -> str:
+        if _LESSON_TYPE_PATTERNS["correction"].search(lesson_text):
+            return "correction"
+        if _LESSON_TYPE_PATTERNS["feedback"].search(lesson_text):
+            return "feedback"
+        if _LESSON_TYPE_PATTERNS["skill"].search(lesson_text):
+            return "skill"
+        return "skill"
+
+    @staticmethod
+    def _skill_name_from_lesson(lesson_text: str, lesson_type: str) -> str:
+        words = [
+            "".join(ch for ch in token.lower() if ch.isalnum())
+            for token in lesson_text.split()
+        ]
+        words = [word for word in words if word]
+        base = "_".join(words[:4]) if words else lesson_type
+        return f"{lesson_type}_{base}"[:80]
+
+    @staticmethod
+    def _behavior_from_lesson(lesson_text: str, lesson_type: str) -> str:
+        if lesson_type == "correction":
+            return f"Correction to apply: {lesson_text}"
+        if lesson_type == "feedback":
+            return f"Feedback behavior to apply: {lesson_text}"
+        return f"Skill behavior to apply: {lesson_text}"
+
+    def _learning_targets_for_lesson(self, lesson_type: str, lesson_text: str) -> list[str]:
+        with self.lobe_handlers_lock:
+            registered = list(self.lobe_handlers.keys())
+        candidates = [name for name in registered if name not in {"notus"}]
+        if not candidates:
+            return []
+        lesson_lower = lesson_text.lower()
+        matched: list[str] = []
+        for lobe in candidates:
+            allowed_types = _LOBE_LEARNING_RULES.get(
+                lobe, {"skill", "feedback", "correction"}
+            )
+            if lesson_type not in allowed_types:
+                continue
+            if lobe == "pattern" and not any(
+                word in lesson_lower for word in ("pattern", "math", "number", "equation")
+            ):
+                if lesson_type == "skill":
+                    continue
+            if lobe == "language" and not any(
+                word in lesson_lower for word in ("grammar", "word", "tone", "speak", "write")
+            ):
+                if lesson_type in {"skill", "feedback"}:
+                    continue
+            if lobe == "emotion" and lesson_type == "skill":
+                continue
+            matched.append(lobe)
+        if matched:
+            return matched
+        return candidates
+
+    def teach_monday(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        lesson = payload.get("lesson", payload.get("text", payload.get("content", "")))
+        if not isinstance(lesson, str) or not lesson.strip():
+            return {"status": "error", "message": "teach_monday requires lesson text"}
+        lesson_text = lesson.strip()
+        user_id = payload.get("user_id", "default")
+        if not isinstance(user_id, str) or not user_id.strip():
+            user_id = "default"
+        lesson_type = self._classify_lesson_type(lesson_text)
+        skill_name = self._skill_name_from_lesson(lesson_text, lesson_type)
+        behavior = self._behavior_from_lesson(lesson_text, lesson_type)
+        targets = self._learning_targets_for_lesson(lesson_type, lesson_text)
+        taught = []
+        failed = []
+        for destination in targets:
+            result = self._handle_lobe_learning(
+                destination,
+                "teach_skill",
+                {
+                    "skill": skill_name,
+                    "behavior": behavior,
+                    "trigger": payload.get("trigger", lesson_text),
+                    "outcome": payload.get("outcome", "Apply lesson on relevant future tasks."),
+                    "user_id": user_id,
+                    "confidence": payload.get("confidence", 0.75),
+                    "lesson_type": lesson_type,
+                },
+                source="teach_monday",
+            )
+            if result.get("status") == "success":
+                taught.append(
+                    {
+                        "lobe": destination,
+                        "key": result.get("key"),
+                        "confidence": result.get("confidence"),
+                    }
+                )
+            else:
+                failed.append({"lobe": destination, "message": result.get("message", "unknown error")})
+
+        status = "success" if taught else "error"
+        return {
+            "status": status,
+            "content": {
+                "lesson_type": lesson_type,
+                "skill": skill_name,
+                "lesson": lesson_text,
+                "taught": taught,
+                "failed": failed,
+                "target_count": len(targets),
+                "applied_count": len(taught),
+            },
+            "lesson_type": lesson_type,
+            "skill": skill_name,
+            "taught": taught,
+            "failed": failed,
+        }
+
+    def learning_overview(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        user_id = payload.get("user_id", "default")
+        if not isinstance(user_id, str) or not user_id.strip():
+            user_id = "default"
+        try:
+            limit = int(payload.get("limit", 5))
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 50))
+        with self.lobe_handlers_lock:
+            registered = list(self.lobe_handlers.keys())
+        lobes = [name for name in registered if name not in {"notus"}]
+        overview = []
+        for lobe in lobes:
+            stats = self._handle_lobe_learning(
+                lobe, "learning_stats", {"user_id": user_id}, source="learning_overview"
+            )
+            skills = self._handle_lobe_learning(
+                lobe,
+                "list_skills",
+                {"user_id": user_id, "limit": limit},
+                source="learning_overview",
+            )
+            if stats.get("status") != "success":
+                continue
+            stats_content = self._content(stats)
+            skills_content = self._content(skills) if skills.get("status") == "success" else {}
+            overview.append(
+                {
+                    "lobe": lobe,
+                    "stats": stats_content,
+                    "skills": skills_content.get("memories", []),
+                }
+            )
+        return {"status": "success", "content": {"user_id": user_id, "lobes": overview}, "lobes": overview}
 
     def _handle_lobe_learning(
         self, destination: str, msg_type: str, payload: Dict[str, Any], source: str
@@ -486,6 +675,10 @@ class Thalamus:
         if msg_type == "process_input":
             response = self.process_user_input(payload.get("user_input", ""))
             return {"status": "success", "content": {"response": response}, "response": response}
+        if msg_type == "teach_monday":
+            return self.teach_monday(payload if isinstance(payload, dict) else {})
+        if msg_type == "learning_overview":
+            return self.learning_overview(payload if isinstance(payload, dict) else {})
         if msg_type == "health":
             return {
                 "status": "success",

@@ -60,11 +60,14 @@ class DirectNotusProcess:
                 contradiction_count INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
                 source TEXT NOT NULL DEFAULT 'thalamus',
+                use_count INTEGER NOT NULL DEFAULT 0,
+                last_applied_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(lobe, user_id, learning_key)
             )"""
         )
+        self._ensure_lobe_learning_schema()
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_lobe_learning_scope "
             "ON lobe_learning(lobe, user_id, status, confidence, updated_at)"
@@ -88,6 +91,23 @@ class DirectNotusProcess:
         if self._connection is None:
             raise RuntimeError("Notus is closed")
         return self._connection
+
+    def _ensure_lobe_learning_schema(self) -> None:
+        connection = self._require_connection()
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(lobe_learning)").fetchall()
+            if len(row) > 1
+        }
+        if "use_count" not in columns:
+            connection.execute(
+                "ALTER TABLE lobe_learning ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "last_applied_at" not in columns:
+            connection.execute(
+                "ALTER TABLE lobe_learning ADD COLUMN last_applied_at TEXT"
+            )
+        connection.commit()
 
     @staticmethod
     def _clean_text(value: Any) -> str:
@@ -302,10 +322,11 @@ class DirectNotusProcess:
         except (TypeError, ValueError):
             normalized_limit = 15
         normalized_limit = max(1, min(normalized_limit, 100))
+        mark_used = bool(payload.get("mark_used", False))
 
         sql = (
-            "SELECT learning_key, fact, confidence, evidence_count, contradiction_count, "
-            "status, source, created_at, updated_at FROM lobe_learning "
+            "SELECT id, learning_key, fact, confidence, evidence_count, contradiction_count, "
+            "status, source, created_at, updated_at, use_count, last_applied_at FROM lobe_learning "
             "WHERE lobe = ? AND user_id = ? AND confidence >= ?"
         )
         params: List[Any] = [lobe, user_id, min_confidence]
@@ -321,7 +342,18 @@ class DirectNotusProcess:
         params.append(normalized_limit)
 
         with self._lock:
-            rows = self._require_connection().execute(sql, params).fetchall()
+            connection = self._require_connection()
+            rows = connection.execute(sql, params).fetchall()
+            if mark_used and rows:
+                now = datetime.now(timezone.utc).isoformat()
+                connection.executemany(
+                    "UPDATE lobe_learning "
+                    "SET use_count = use_count + 1, last_applied_at = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    [(now, now, row[0]) for row in rows],
+                )
+                connection.commit()
+                rows = connection.execute(sql, params).fetchall()
         memories = [
             {
                 "key": key,
@@ -334,8 +366,11 @@ class DirectNotusProcess:
                 "source": source,
                 "created_at": created_at,
                 "updated_at": updated_at,
+                "use_count": use_count,
+                "last_applied_at": last_applied_at,
             }
             for (
+                _row_id,
                 key,
                 fact,
                 confidence,
@@ -345,6 +380,8 @@ class DirectNotusProcess:
                 source,
                 created_at,
                 updated_at,
+                use_count,
+                last_applied_at,
             ) in rows
         ]
         return {"status": "success", "content": {"lobe": lobe, "memories": memories, "count": len(memories)}}
@@ -420,11 +457,21 @@ class DirectNotusProcess:
                 "SELECT COUNT(*), COALESCE(AVG(confidence), 0.0), "
                 "SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), "
                 "SUM(CASE WHEN status = 'deprecated' THEN 1 ELSE 0 END), "
-                "COALESCE(SUM(evidence_count), 0), COALESCE(SUM(contradiction_count), 0) "
+                "COALESCE(SUM(evidence_count), 0), COALESCE(SUM(contradiction_count), 0), "
+                "COALESCE(SUM(use_count), 0), MAX(last_applied_at) "
                 "FROM lobe_learning WHERE lobe = ? AND user_id = ?",
                 (lobe, user_id),
             ).fetchone()
-        total_count, avg_confidence, active_count, deprecated_count, evidence_sum, contradiction_sum = totals
+        (
+            total_count,
+            avg_confidence,
+            active_count,
+            deprecated_count,
+            evidence_sum,
+            contradiction_sum,
+            use_sum,
+            last_applied_at,
+        ) = totals
         return {
             "status": "success",
             "content": {
@@ -436,6 +483,8 @@ class DirectNotusProcess:
                 "average_confidence": float(avg_confidence),
                 "total_evidence": int(evidence_sum),
                 "total_contradictions": int(contradiction_sum),
+                "total_uses": int(use_sum),
+                "last_applied_at": last_applied_at,
             },
         }
 

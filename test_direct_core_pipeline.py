@@ -549,3 +549,95 @@ def test_learned_skill_guidance_is_applied_to_message_envelope(tmp_path):
         assert seen.get("applied_learning", {}).get("count", 0) >= 1
     finally:
         shutdown_core_systems(systems)
+
+
+def test_teach_monday_routes_one_lesson_to_multiple_lobes(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": "Learn grammar and better sentence structure for clearer responses.",
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert result["status"] == "success"
+        taught_lobes = {entry.get("lobe") for entry in result.get("taught", [])}
+        assert "language" in taught_lobes
+        assert "conversation" in taught_lobes
+        assert len(taught_lobes) >= 2
+
+        language_skills = systems["thalamus"].send_message(
+            "language", "list_skills", {"user_id": "alice", "limit": 10}
+        )
+        assert language_skills["status"] == "success"
+        assert language_skills["memories"]
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_teach_monday_feedback_reaches_behavior_lobes(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": "When tone sounds rude, respond calm, respectful, and kind instead.",
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert result["status"] == "success"
+        taught_lobes = {entry.get("lobe") for entry in result.get("taught", [])}
+        assert "language" in taught_lobes
+        assert "emotion" in taught_lobes
+        assert "reasoning" in taught_lobes
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_learning_overview_shows_per_lobe_skills_and_usage(tmp_path):
+    class EchoLobe:
+        def process_message(self, message):
+            return {"status": "success", "content": {"seen": message.get("content", {})}}
+
+        def shutdown(self):
+            pass
+
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    systems["thalamus"].register_lobe("echo", EchoLobe())
+    try:
+        taught = systems["thalamus"].send_message(
+            "echo",
+            "teach_skill",
+            {
+                "skill": "deescalate",
+                "behavior": "Use calm wording during conflict.",
+                "user_id": "alice",
+                "confidence": 0.9,
+            },
+        )
+        assert taught["status"] == "success"
+
+        used = systems["thalamus"].send_message(
+            "echo",
+            "reply",
+            {"user_input": "I am angry", "user_id": "alice"},
+        )
+        assert used["status"] == "success"
+
+        overview = systems["thalamus"].handle_request(
+            {"type": "learning_overview", "content": {"user_id": "alice", "limit": 10}}
+        )
+        assert overview["status"] == "success"
+        echo_rows = [entry for entry in overview.get("lobes", []) if entry.get("lobe") == "echo"]
+        assert echo_rows
+        echo_row = echo_rows[0]
+        assert echo_row["stats"].get("total_facts", 0) >= 1
+        assert echo_row["stats"].get("total_uses", 0) >= 1
+        assert any(skill.get("key") == "skill:deescalate" for skill in echo_row.get("skills", []))
+    finally:
+        shutdown_core_systems(systems)
