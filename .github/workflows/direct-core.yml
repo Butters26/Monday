@@ -22,4 +22,4 @@ jobs:
           python -m py_compile run_abin.py thalamus.py direct_reasoning.py direct_notus.py
           python -c "import glob,json; [json.load(open(path, encoding='utf-8')) for path in glob.glob('*.json')]"
       - name: Run direct-core tests
-        run: python -m pytest -q test_direct_core_pipeline.py
+        run: python -m pytest -q test_direct_core_pipeline.py test_notus_integration.py

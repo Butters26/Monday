@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 import re
 import threading
 import uuid
@@ -71,13 +72,24 @@ _LOBE_LEARNING_RULES = {
 class Thalamus:
     """Synchronously route direct calls between registered lobes."""
 
-    def __init__(self, response_provider: Optional[ResponseProvider] = None) -> None:
+    def __init__(
+        self,
+        response_provider: Optional[ResponseProvider] = None,
+        runtime_directory: Optional[str | Path] = None,
+    ) -> None:
         self.running = True
         self.lobe_handlers: Dict[str, Any] = {}
         self.lobe_handlers_lock = threading.RLock()
         self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=100)
         self.response_provider = response_provider or DeterministicResponseProvider()
+        self.learning_runtime_directory = (
+            Path(runtime_directory)
+            if isinstance(runtime_directory, (str, Path))
+            else None
+        )
+        self._fallback_memory: Dict[str, deque] = {}
+        self._fallback_memory_lock = threading.RLock()
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -90,8 +102,59 @@ class Thalamus:
             self.lobe_handlers[name] = lobe
             self.lobe_status[name] = "online"
         if name != "notus" and not hasattr(lobe, "_lobe_learning_store"):
-            setattr(lobe, "_lobe_learning_store", LobeLearningStore(name))
+            setattr(
+                lobe,
+                "_lobe_learning_store",
+                LobeLearningStore(name, runtime_directory=self.learning_runtime_directory),
+            )
         return {"status": "success", "content": {"registered": name}, "registered": name}
+
+    @staticmethod
+    def _normalised_user_id(content: Dict[str, Any]) -> str:
+        candidates = []
+        if isinstance(content, dict):
+            candidates.append(content.get("user_id"))
+            nested_input = content.get("input")
+            if isinstance(nested_input, dict):
+                candidates.append(nested_input.get("user_id"))
+            semantic_input = content.get("semantic_input")
+            if isinstance(semantic_input, dict):
+                candidates.append(semantic_input.get("user_id"))
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return "default"
+
+    @staticmethod
+    def _query_candidates(msg_type: str, content: Dict[str, Any]) -> list[str]:
+        candidates: list[str] = []
+
+        def add(value: Any) -> None:
+            if isinstance(value, str):
+                cleaned = value.strip()
+                if cleaned and cleaned not in candidates:
+                    candidates.append(cleaned)
+
+        add(content.get("query"))
+        add(content.get("text"))
+        add(content.get("user_input"))
+
+        nested_input = content.get("input")
+        if isinstance(nested_input, dict):
+            add(nested_input.get("query"))
+            add(nested_input.get("text"))
+            add(nested_input.get("user_input"))
+
+        semantic_input = content.get("semantic_input")
+        if isinstance(semantic_input, dict):
+            add(semantic_input.get("query"))
+            add(semantic_input.get("text"))
+            add(semantic_input.get("user_input"))
+            add(semantic_input.get("answer"))
+
+        if not candidates and isinstance(msg_type, str) and msg_type.strip():
+            candidates.append(msg_type.strip())
+        return candidates
 
     @staticmethod
     def _learning_memory_type(destination: str) -> str:
@@ -133,19 +196,11 @@ class Thalamus:
     def _learned_guidance_for_message(
         self, destination: str, msg_type: str, content: Dict[str, Any], source: str
     ) -> list[str]:
-        if msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
+        if destination == "notus" or msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
             return []
-        user_id = content.get("user_id", "default")
-        if not isinstance(user_id, str) or not user_id.strip():
-            user_id = "default"
-        query_terms = [
-            msg_type,
-            content.get("query", ""),
-            content.get("text", ""),
-            content.get("user_input", ""),
-            content.get("input", ""),
-        ]
-        query = " ".join(term for term in query_terms if isinstance(term, str) and term.strip()).strip()
+        user_id = self._normalised_user_id(content)
+        query_candidates = self._query_candidates(msg_type, content)
+
         def _recall(query_text: str) -> list[Dict[str, Any]]:
             recalled = self._handle_lobe_learning(
                 destination,
@@ -164,9 +219,11 @@ class Thalamus:
             memories = self._content(recalled).get("memories", [])
             return memories if isinstance(memories, list) else []
 
-        memories = _recall(query)
-        if not memories:
-            memories = _recall("")
+        memories: list[Dict[str, Any]] = []
+        for query in query_candidates:
+            memories = _recall(query)
+            if memories:
+                break
         if not isinstance(memories, list):
             return []
         return [
@@ -339,7 +396,9 @@ class Thalamus:
             return {"status": "error", "message": f"Unknown destination: {destination}"}
         store = getattr(lobe, "_lobe_learning_store", None)
         if store is None:
-            store = LobeLearningStore(destination)
+            store = LobeLearningStore(
+                destination, runtime_directory=self.learning_runtime_directory
+            )
             setattr(lobe, "_lobe_learning_store", store)
         if not isinstance(store, LobeLearningStore):
             return {"status": "error", "message": f"{destination} has invalid learning store"}
@@ -426,11 +485,9 @@ class Thalamus:
         response: Dict[str, Any],
         source: str,
     ) -> None:
-        if msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
+        if destination == "notus" or msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
             return
-        user_id = content.get("user_id", "default")
-        if not isinstance(user_id, str) or not user_id.strip():
-            user_id = "default"
+        user_id = self._normalised_user_id(content)
         behavior_key = f"behavior:{msg_type}"
         if response.get("status") == "success":
             self._handle_lobe_learning(
@@ -592,32 +649,101 @@ class Thalamus:
         )
         return semantic_input, answer
 
+    def _record_fallback_memory(self, user_id: str, role: str, content: str) -> None:
+        if not isinstance(content, str) or not content.strip():
+            return
+        safe_user = user_id.strip() if isinstance(user_id, str) and user_id.strip() else "default"
+        with self._fallback_memory_lock:
+            history = self._fallback_memory.setdefault(safe_user, deque(maxlen=100))
+            history.append(
+                {
+                    "role": role,
+                    "content": content.strip(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+    def _fallback_memory_context(self, user_id: str, query: str, limit: int = 15) -> Dict[str, Any]:
+        safe_user = user_id.strip() if isinstance(user_id, str) and user_id.strip() else "default"
+        terms = [term.lower() for term in query.split() if len(term) > 2] if isinstance(query, str) else []
+        with self._fallback_memory_lock:
+            records = list(self._fallback_memory.get(safe_user, []))
+        if terms:
+            matched = [
+                record
+                for record in records
+                if isinstance(record.get("content"), str)
+                and all(term in record["content"].lower() for term in terms)
+            ]
+        else:
+            matched = records
+        selected = matched[-max(1, limit):]
+        return {"memories": selected, "count": len(selected), "source": "fallback"}
+
+    def _probe_lobes_health(self) -> Dict[str, Any]:
+        with self.lobe_handlers_lock:
+            destinations = list(self.lobe_handlers.keys())
+        health_report: Dict[str, Any] = {}
+        for destination in destinations:
+            probe = self.send_and_wait(
+                destination,
+                "health",
+                {"probe": "thalamus_health"},
+                source="thalamus_health",
+            )
+            content = self._content(probe)
+            healthy_value = content.get("healthy", probe.get("healthy", False))
+            healthy = bool(healthy_value) if probe.get("status") == "success" else False
+            status = "online" if healthy else "error"
+            self.lobe_status[destination] = status
+            health_report[destination] = {
+                "status": probe.get("status"),
+                "healthy": healthy,
+                **({"message": probe.get("message")} if probe.get("message") else {}),
+            }
+        return health_report
+
     def process_user_input(self, user_input: str, user_id: str = "default") -> str:
         """Run the sole prompted path: conversation → Notus → emotion → reasoning → language → output."""
         if not isinstance(user_input, str) or not user_input.strip():
             return "Please send a message."
+        safe_user_id = user_id if isinstance(user_id, str) and user_id.strip() else "default"
+        self._record_fallback_memory(safe_user_id, "user", user_input)
 
         conversation = self.send_and_wait(
-            "conversation", "understand", {"user_input": user_input, "user_id": user_id}
+            "conversation", "understand", {"user_input": user_input, "user_id": safe_user_id}
         )
         if conversation["status"] != "success":
             return "I'm having trouble understanding right now."
         understanding = self._content(conversation).get("understanding", {})
 
-        memory = self.send_and_wait(
-            "notus", "store", {"role": "user", "content": user_input, "user_id": user_id}
-        )
-        if memory["status"] != "success":
-            return "I'm having trouble remembering that right now."
+        memory = {"status": "error"}
+        for _ in range(2):
+            memory = self.send_and_wait(
+                "notus",
+                "store",
+                {"role": "user", "content": user_input, "user_id": safe_user_id},
+            )
+            if memory.get("status") == "success":
+                break
 
-        memory_context = self.send_and_wait(
-            "notus", "query", {"query": user_input, "user_id": user_id, "limit": 15}
-        )
-        if memory_context["status"] != "success":
-            return "I'm having trouble retrieving context right now."
+        memory_context = {"status": "error", "content": {}}
+        for _ in range(2):
+            memory_context = self.send_and_wait(
+                "notus",
+                "query",
+                {"query": user_input, "user_id": safe_user_id, "limit": 15},
+            )
+            if memory_context.get("status") == "success":
+                break
+        if memory_context.get("status") != "success":
+            memory_context = {
+                "status": "success",
+                "content": self._fallback_memory_context(safe_user_id, user_input, limit=15),
+            }
 
         emotion = self.send_and_wait(
-            "emotion", "process_input", {"user_input": user_input}
+            "emotion", "process_input", {"user_input": user_input, "user_id": safe_user_id}
         )
         if emotion["status"] != "success":
             return "I'm having trouble processing that right now."
@@ -627,9 +753,11 @@ class Thalamus:
             "reasoning",
             "think",
             {
+                "user_id": safe_user_id,
+                "user_input": user_input,
                 "input": {
                     "user_input": user_input,
-                    "user_id": user_id,
+                    "user_id": safe_user_id,
                     "understanding": understanding,
                     "memory_context": self._content(memory_context),
                     "emotion_result": emotional_state,
@@ -656,7 +784,11 @@ class Thalamus:
         semantic_input.setdefault("answer", reasoning_answer)
         semantic_input.setdefault("propositions", [reasoning_answer])
 
-        language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
+        language = self.send_and_wait(
+            "language",
+            "generate",
+            {"semantic_input": semantic_input, "user_id": safe_user_id, "user_input": user_input},
+        )
         if language["status"] != "success":
             return "I'm having trouble finding the words right now."
         response_text = self._content(language).get("sentence", "")
@@ -669,11 +801,13 @@ class Thalamus:
                 "emotion": emotional_state.get("current_emotion", "neutral"),
                 "intensity": emotional_state.get("intensity", 0.5),
                 "user_input": user_input,
-                "user_id": user_id,
+                "user_id": safe_user_id,
                 "preserve_text": True,
             },
         )
-        return self._content(output).get("text", response_text)
+        final_text = self._content(output).get("text", response_text)
+        self._record_fallback_memory(safe_user_id, "assistant", final_text)
+        return final_text
 
     def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Small compatibility entry point for direct callers."""
@@ -687,9 +821,16 @@ class Thalamus:
         if msg_type == "learning_overview":
             return self.learning_overview(payload if isinstance(payload, dict) else {})
         if msg_type == "health":
+            lobe_health = self._probe_lobes_health()
             return {
                 "status": "success",
-                "content": {"thalamus_healthy": True, "lobes": self.lobe_status.copy()},
+                "content": {
+                    "thalamus_healthy": self.running
+                    and bool(lobe_health)
+                    and all(entry.get("healthy") for entry in lobe_health.values()),
+                    "running": self.running,
+                    "lobes": lobe_health,
+                },
             }
         return {"status": "error", "message": f"Unknown type: {msg_type}", "content": {}}
 

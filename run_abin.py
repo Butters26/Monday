@@ -27,7 +27,7 @@ def create_core_systems(
     """
     directory = Path(runtime_directory) if runtime_directory else runtime_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    thalamus = Thalamus()
+    thalamus = Thalamus(runtime_directory=directory)
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
         "conversation": ConversationSystem(thalamus=thalamus),

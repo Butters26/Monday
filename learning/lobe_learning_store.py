@@ -23,10 +23,11 @@ _UNSAFE_FACT = re.compile(
 class LobeLearningStore:
     """Persistence and adaptation state owned by one lobe."""
 
-    def __init__(self, lobe_name: str) -> None:
+    def __init__(self, lobe_name: str, runtime_directory: Optional[Path] = None) -> None:
         self.lobe_name = lobe_name
         self._lock = threading.RLock()
-        base = runtime_dir() / "lobe_learning"
+        base_root = runtime_directory if isinstance(runtime_directory, Path) else runtime_dir()
+        base = base_root / "lobe_learning"
         base.mkdir(parents=True, exist_ok=True)
         self.path = base / f"{lobe_name}.json"
 

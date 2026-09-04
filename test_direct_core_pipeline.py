@@ -676,7 +676,8 @@ def test_lobe_learning_persists_across_restart_without_notus_learning_backend(tm
 
 
 def test_each_lobe_uses_own_learning_file(tmp_path):
-    systems = create_core_systems(str(tmp_path / "runtime"))
+    runtime = tmp_path / "runtime"
+    systems = create_core_systems(str(runtime))
     try:
         systems["thalamus"].send_message(
             "conversation",
@@ -700,6 +701,8 @@ def test_each_lobe_uses_own_learning_file(tmp_path):
         assert conversation_path != reasoning_path
         assert conversation_path.endswith("conversation.json")
         assert reasoning_path.endswith("reasoning.json")
+        assert str(runtime) in conversation_path
+        assert str(runtime) in reasoning_path
     finally:
         shutdown_core_systems(systems)
 
@@ -791,3 +794,82 @@ def test_teach_process_restart_keeps_changed_behavior_across_two_lobes(tmp_path)
         assert reply_after_restart["content"]["tone"] == "LEARNED_TONE"
     finally:
         shutdown_core_systems(second)
+
+
+def test_production_lobes_consume_learned_guidance(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        for lobe in ("conversation", "reasoning", "language"):
+            taught = systems["thalamus"].send_message(
+                lobe,
+                "teach_skill",
+                {
+                    "skill": f"{lobe}_guidance",
+                    "behavior": "Use respectful calm wording when responding to upset users.",
+                    "user_id": "alice",
+                    "confidence": 0.9,
+                },
+            )
+            assert taught["status"] == "success"
+
+        conversation = systems["thalamus"].send_message(
+            "conversation",
+            "understand",
+            {"user_input": "Please use respectful calm wording now.", "user_id": "alice"},
+        )
+        assert conversation["status"] == "success"
+        assert conversation["content"]["learned_guidance_used"] is True
+
+        reasoning = systems["thalamus"].send_message(
+            "reasoning",
+            "think",
+            {
+                "user_input": "Please use respectful calm wording now.",
+                "user_id": "alice",
+                "input": {
+                    "user_input": "Please use respectful calm wording now.",
+                    "user_id": "alice",
+                    "understanding": {},
+                    "memory_context": {"memories": []},
+                    "emotion_result": {},
+                },
+            },
+        )
+        assert reasoning["status"] == "success"
+        assert reasoning["content"]["learned_guidance_used"] is True
+
+        language = systems["thalamus"].send_message(
+            "language",
+            "generate",
+            {
+                "semantic_input": {"intent": "state_fact"},
+                "user_input": "Please use respectful calm wording now.",
+                "user_id": "alice",
+            },
+        )
+        assert language["status"] == "success"
+        assert language["learned_guidance_used"] is True
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_process_user_input_scopes_learning_to_actual_user(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        systems["thalamus"].process_user_input(
+            "Please answer with respectful calm wording.", user_id="alice"
+        )
+
+        for lobe in ("emotion", "reasoning", "language"):
+            alice_stats = systems["thalamus"].send_message(
+                lobe, "learning_stats", {"user_id": "alice"}
+            )
+            default_stats = systems["thalamus"].send_message(
+                lobe, "learning_stats", {"user_id": "default"}
+            )
+            assert alice_stats["status"] == "success"
+            assert default_stats["status"] == "success"
+            assert alice_stats["total_facts"] >= 1
+            assert default_stats["total_facts"] == 0
+    finally:
+        shutdown_core_systems(systems)

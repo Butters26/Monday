@@ -126,6 +126,14 @@ class DirectMaximumSophisticationAdapter:
         )
         memories = self._clean_memories(raw_memories, user_input)
         evidence = self._evidence(memories, user_input)
+        learned_guidance = payload.get("learned_guidance", []) if isinstance(payload, dict) else []
+        learned_guidance = [
+            item.strip()
+            for item in learned_guidance
+            if isinstance(item, str) and item.strip()
+        ]
+        if learned_guidance:
+            evidence.extend({"role": "fact", "content": item} for item in learned_guidance)
         emotional_state = direct_input.get("emotion_result", {})
         emotional_state = emotional_state if isinstance(emotional_state, dict) else {}
         legacy_input = {
@@ -141,6 +149,7 @@ class DirectMaximumSophisticationAdapter:
             # Retain the direct envelope data for legacy routines that consume it.
             "memory_context": {"memories": evidence},
             "understanding": understanding,
+            "learned_guidance": learned_guidance,
         }
         thinking = self.reasoner.think_about(legacy_input)
         if not isinstance(thinking, dict):
@@ -151,10 +160,18 @@ class DirectMaximumSophisticationAdapter:
             "certainty": understanding.get("confidence", 0.5),
             "emotion": emotional_state.get("current_emotion", "neutral"),
             "memory_context": evidence,
+            "learned_guidance": learned_guidance,
         }
         if answer is not None:
             semantic_input.update(
                 {"answer": answer, "conclusion": answer, "propositions": [answer]}
+            )
+        elif learned_guidance:
+            semantic_input.update(
+                {
+                    "conclusion": learned_guidance[0],
+                    "propositions": learned_guidance,
+                }
             )
         return {
             "status": "success",
@@ -162,6 +179,7 @@ class DirectMaximumSophisticationAdapter:
                 "thinking": thinking,
                 "semantic_input": semantic_input,
                 "composed_response": thinking.get("composed_response"),
+                "learned_guidance_used": bool(learned_guidance),
             },
         }
 

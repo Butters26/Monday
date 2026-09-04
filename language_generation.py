@@ -689,6 +689,23 @@ class LanguageGenerator:
         
         if msg_type in {'generate', 'generate_grounded'}:
             semantic_input = payload.get('semantic_input', payload)
+            if not isinstance(semantic_input, dict):
+                semantic_input = {}
+            learned_guidance = payload.get('learned_guidance', [])
+            learned_guidance = [
+                item.strip()
+                for item in learned_guidance
+                if isinstance(item, str) and item.strip()
+            ] if isinstance(learned_guidance, list) else []
+            if learned_guidance:
+                semantic_input = dict(semantic_input)
+                semantic_input.setdefault('learned_guidance', learned_guidance)
+                has_answer = isinstance(semantic_input.get('answer'), str) and semantic_input.get('answer', '').strip()
+                has_props = isinstance(semantic_input.get('propositions'), list) and any(
+                    isinstance(item, str) and item.strip() for item in semantic_input.get('propositions', [])
+                )
+                if not has_answer and not has_props:
+                    semantic_input['propositions'] = learned_guidance
             sentence = self.generate(semantic_input)
             
             # Only send to Output if reasoning explicitly says this is the main response
@@ -698,7 +715,13 @@ class LanguageGenerator:
                 user_input = payload.get('user_input', '')
                 self._send_to_output(sentence, user_input)
             
-            return {'status': 'success', 'response': sentence, 'sentence': sentence, 'sent_to_output': is_main_response}
+            return {
+                'status': 'success',
+                'response': sentence,
+                'sentence': sentence,
+                'sent_to_output': is_main_response,
+                'learned_guidance_used': bool(learned_guidance),
+            }
         elif msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         else:

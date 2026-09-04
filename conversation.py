@@ -244,8 +244,21 @@ class ConversationSystem:
         elif msg_type == 'understand':
             user_input = payload.get('user_input', '')
             context = payload.get('context', {})
+            learned_guidance = payload.get('learned_guidance', [])
+            learned_guidance = [
+                item.strip()
+                for item in learned_guidance
+                if isinstance(item, str) and item.strip()
+            ] if isinstance(learned_guidance, list) else []
+            if learned_guidance:
+                if not isinstance(context, dict):
+                    context = {}
+                context = dict(context)
+                context['learned_guidance'] = learned_guidance
             
             understanding = self.understand(user_input, context)
+            if learned_guidance:
+                understanding['learned_guidance'] = learned_guidance
             
             return {
                 'status': 'success',
@@ -254,7 +267,8 @@ class ConversationSystem:
                     'intent': understanding.get('intent'),
                     'confidence': understanding.get('confidence'),
                     'sentiment': understanding.get('sentiment'),
-                    'entities': understanding.get('entities', [])
+                    'entities': understanding.get('entities', []),
+                    'learned_guidance_used': bool(learned_guidance),
                 }  # Thalamus will transform this
             }
         
