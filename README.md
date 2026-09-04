@@ -28,6 +28,19 @@ PostgreSQL-backed `notus.py`, GUI, socket integrations, and autonomous loops.
 They remain in the repository for compatibility work but are not imported by
 `run_abin.py`.
 
+## Learning system (easy to find)
+
+- `learning/api.py` — simple entry points (`teach_monday`, `learning_overview`,
+  `teach_lobe_skill`, `list_lobe_skills`)
+- `learning/__init__.py` — exports the learning API helpers
+- `learning/lobe_learning_store.py` — per-lobe adaptive persistence (one file per
+  lobe under runtime data)
+- `thalamus.py` — learning router and global `teach_monday`/`learning_overview`
+  handlers
+- `direct_notus.py` — conversation memory adapter (separate from lobe-local
+  learning state)
+- `test_direct_core_pipeline.py` — learning behavior tests
+
 ## 3D model generator
 
 The standalone 3D generator is independent from the brain system and provides:

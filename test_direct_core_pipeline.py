@@ -239,3 +239,555 @@ def test_response_provider_failure_uses_safe_fallback(tmp_path):
         )
     finally:
         shutdown_core_systems(systems)
+
+
+def test_all_core_lobes_support_learn_and_recall_contract(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    core_lobes = ["conversation", "notus", "emotion", "reasoning", "language", "output"]
+    try:
+        for lobe_name in core_lobes:
+            result = systems["thalamus"].send_message(
+                lobe_name,
+                "learn",
+                {
+                    "fact": f"{lobe_name} can learn direct facts",
+                    "user_id": "alice",
+                },
+            )
+            assert result["status"] == "success"
+
+        for lobe_name in core_lobes:
+            result = systems["thalamus"].send_message(
+                lobe_name,
+                "recall",
+                {
+                    "query": "learn direct facts",
+                    "user_id": "alice",
+                    "limit": 5,
+                },
+            )
+            assert result["status"] == "success"
+            memories = result.get("memories", [])
+            assert any(
+                memory.get("content") == f"{lobe_name} can learn direct facts"
+                for memory in memories
+            )
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_lobe_learning_recall_is_scoped_to_destination(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        systems["thalamus"].send_message(
+            "conversation",
+            "learn",
+            {"fact": "SCOPE_TEST: conversation-only", "user_id": "alice"},
+        )
+        systems["thalamus"].send_message(
+            "language",
+            "learn",
+            {"fact": "SCOPE_TEST: language-only", "user_id": "alice"},
+        )
+
+        conversation = systems["thalamus"].send_message(
+            "conversation",
+            "recall",
+            {"query": "SCOPE_TEST", "user_id": "alice", "limit": 10},
+        )
+        language = systems["thalamus"].send_message(
+            "language",
+            "recall",
+            {"query": "SCOPE_TEST", "user_id": "alice", "limit": 10},
+        )
+
+        assert conversation["status"] == "success"
+        assert language["status"] == "success"
+
+        conversation_memories = [m.get("content") for m in conversation.get("memories", [])]
+        language_memories = [m.get("content") for m in language.get("memories", [])]
+
+        assert "SCOPE_TEST: conversation-only" in conversation_memories
+        assert "SCOPE_TEST: language-only" not in conversation_memories
+        assert "SCOPE_TEST: language-only" in language_memories
+        assert "SCOPE_TEST: conversation-only" not in language_memories
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_lobe_adaptive_learning_conflict_and_reinforcement(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        first = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "planet_status",
+                "fact": "Pluto is a planet.",
+                "user_id": "alice",
+                "confidence": 0.7,
+            },
+        )
+        assert first["status"] == "success"
+        assert first["action"] == "created"
+        initial_confidence = first["confidence"]
+
+        reinforced = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "planet_status",
+                "fact": "Pluto is a planet.",
+                "user_id": "alice",
+                "reinforcement": 1.0,
+            },
+        )
+        assert reinforced["status"] == "success"
+        assert reinforced["action"] == "reinforced"
+        assert reinforced["confidence"] > initial_confidence
+        assert reinforced["evidence_count"] >= 2
+
+        replaced = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "planet_status",
+                "fact": "Pluto is classified as a dwarf planet.",
+                "user_id": "alice",
+                "confidence": 0.8,
+            },
+        )
+        assert replaced["status"] == "success"
+        assert replaced["action"] == "replaced_conflict"
+        assert replaced["contradiction_count"] >= 1
+
+        recalled = systems["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"query": "Pluto", "user_id": "alice", "limit": 5},
+        )
+        assert recalled["status"] == "success"
+        assert any(
+            memory.get("fact") == "Pluto is classified as a dwarf planet."
+            for memory in recalled["memories"]
+        )
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_lobe_adaptive_contradict_forget_and_stats(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        systems["thalamus"].send_message(
+            "emotion",
+            "learn",
+            {
+                "key": "trigger_preference",
+                "fact": "Loud noises increase stress.",
+                "user_id": "alice",
+                "confidence": 0.5,
+            },
+        )
+        contradicted = systems["thalamus"].send_message(
+            "emotion",
+            "contradict_learning",
+            {"key": "trigger_preference", "user_id": "alice", "penalty": 0.4},
+        )
+        assert contradicted["status"] == "success"
+        assert contradicted["action"] == "contradicted"
+        assert contradicted["contradiction_count"] >= 1
+
+        forgotten = systems["thalamus"].send_message(
+            "emotion",
+            "forget_learning",
+            {"key": "trigger_preference", "user_id": "alice"},
+        )
+        assert forgotten["status"] == "success"
+        assert forgotten["action"] == "forgotten"
+
+        recalled = systems["thalamus"].send_message(
+            "emotion",
+            "recall",
+            {"query": "stress", "user_id": "alice", "limit": 10},
+        )
+        assert recalled["status"] == "success"
+        assert all(memory.get("status") == "active" for memory in recalled["memories"])
+
+        stats = systems["thalamus"].send_message(
+            "emotion",
+            "learning_stats",
+            {"user_id": "alice"},
+        )
+        assert stats["status"] == "success"
+        assert stats["total_facts"] >= 1
+        assert stats["deprecated_facts"] >= 1
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_thalamus_auto_adapts_success_and_failure_for_lobe(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        success = systems["thalamus"].send_message(
+            "conversation",
+            "understand",
+            {"user_input": "Hello there", "user_id": "alice"},
+        )
+        assert success["status"] == "success"
+
+        learned_behavior = systems["thalamus"].send_message(
+            "conversation",
+            "recall",
+            {"query": "status success stable content", "user_id": "alice", "limit": 10},
+        )
+        assert learned_behavior["status"] == "success"
+        assert any(
+            memory.get("key") == "behavior:understand"
+            for memory in learned_behavior.get("memories", [])
+        )
+
+        # Force a lobe-level failure to trigger contradiction and recovery learning.
+        failure = systems["thalamus"].send_message(
+            "conversation",
+            "understand",
+            {"user_input": 123, "user_id": "alice"},
+        )
+        assert failure["status"] == "error"
+
+        behavior_after_failure = systems["thalamus"].send_message(
+            "conversation",
+            "recall",
+            {"query": "status success stable content", "user_id": "alice", "limit": 10},
+        )
+        assert behavior_after_failure["status"] == "success"
+        behavior_entries = [
+            memory for memory in behavior_after_failure.get("memories", [])
+            if memory.get("key") == "behavior:understand"
+        ]
+        assert behavior_entries
+        assert behavior_entries[0].get("contradiction_count", 0) >= 1
+
+        recovery = systems["thalamus"].send_message(
+            "conversation",
+            "recall",
+            {"query": "safe non-crashing fallback", "user_id": "alice", "limit": 10},
+        )
+        assert recovery["status"] == "success"
+        assert any(
+            memory.get("key") == "recovery:understand"
+            for memory in recovery.get("memories", [])
+        )
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_teach_skill_and_list_skills_for_any_lobe(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        taught = systems["thalamus"].send_message(
+            "reasoning",
+            "teach_skill",
+            {
+                "skill": "math_patterns",
+                "behavior": "Detect arithmetic relationships from user text.",
+                "trigger": "numbers and operators in message",
+                "outcome": "return structured math pattern insight",
+                "user_id": "alice",
+                "confidence": 0.8,
+            },
+        )
+        assert taught["status"] == "success"
+        assert taught["key"] == "skill:math_patterns"
+
+        listed = systems["thalamus"].send_message(
+            "reasoning",
+            "list_skills",
+            {"user_id": "alice", "limit": 20},
+        )
+        assert listed["status"] == "success"
+        assert any(
+            memory.get("key") == "skill:math_patterns"
+            for memory in listed.get("memories", [])
+        )
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_learned_skill_guidance_is_applied_to_message_envelope(tmp_path):
+    class EchoLobe:
+        def process_message(self, message):
+            return {"status": "success", "content": {"seen": message.get("content", {})}}
+
+        def shutdown(self):
+            pass
+
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    systems["thalamus"].register_lobe("echo", EchoLobe())
+    try:
+        taught = systems["thalamus"].send_message(
+            "echo",
+            "teach_skill",
+            {
+                "skill": "respectful_reply",
+                "behavior": "Use calm, respectful wording even when the input is intense.",
+                "trigger": "emotionally intense user text",
+                "user_id": "alice",
+                "confidence": 0.9,
+            },
+        )
+        assert taught["status"] == "success"
+
+        response = systems["thalamus"].send_message(
+            "echo",
+            "reply",
+            {"user_input": "I am upset", "user_id": "alice"},
+        )
+        assert response["status"] == "success"
+        seen = response["content"]["seen"]
+        assert "learned_guidance" in seen
+        assert any("Skill behavior:" in item for item in seen["learned_guidance"])
+        assert seen.get("applied_learning", {}).get("count", 0) >= 1
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_teach_monday_routes_one_lesson_to_multiple_lobes(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": "Learn grammar and better sentence structure for clearer responses.",
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert result["status"] == "success"
+        taught_lobes = {entry.get("lobe") for entry in result.get("taught", [])}
+        assert "language" in taught_lobes
+        assert "conversation" in taught_lobes
+        assert len(taught_lobes) >= 2
+
+        language_skills = systems["thalamus"].send_message(
+            "language", "list_skills", {"user_id": "alice", "limit": 10}
+        )
+        assert language_skills["status"] == "success"
+        assert language_skills["memories"]
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_teach_monday_feedback_reaches_behavior_lobes(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": "When tone sounds rude, respond calm, respectful, and kind instead.",
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert result["status"] == "success"
+        taught_lobes = {entry.get("lobe") for entry in result.get("taught", [])}
+        assert "language" in taught_lobes
+        assert "emotion" in taught_lobes
+        assert "reasoning" in taught_lobes
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_learning_overview_shows_per_lobe_skills_and_usage(tmp_path):
+    class EchoLobe:
+        def process_message(self, message):
+            return {"status": "success", "content": {"seen": message.get("content", {})}}
+
+        def shutdown(self):
+            pass
+
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    systems["thalamus"].register_lobe("echo", EchoLobe())
+    try:
+        taught = systems["thalamus"].send_message(
+            "echo",
+            "teach_skill",
+            {
+                "skill": "deescalate",
+                "behavior": "Use calm wording during conflict.",
+                "user_id": "alice",
+                "confidence": 0.9,
+            },
+        )
+        assert taught["status"] == "success"
+
+        used = systems["thalamus"].send_message(
+            "echo",
+            "reply",
+            {"user_input": "I am angry", "user_id": "alice"},
+        )
+        assert used["status"] == "success"
+
+        overview = systems["thalamus"].handle_request(
+            {"type": "learning_overview", "content": {"user_id": "alice", "limit": 10}}
+        )
+        assert overview["status"] == "success"
+        echo_rows = [entry for entry in overview.get("lobes", []) if entry.get("lobe") == "echo"]
+        assert echo_rows
+        echo_row = echo_rows[0]
+        assert echo_row["stats"].get("total_facts", 0) >= 1
+        assert echo_row["stats"].get("total_uses", 0) >= 1
+        assert any(skill.get("key") == "skill:deescalate" for skill in echo_row.get("skills", []))
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_lobe_learning_persists_across_restart_without_notus_learning_backend(tmp_path):
+    runtime = tmp_path / "runtime"
+    first = create_core_systems(str(runtime))
+    try:
+        taught = first["thalamus"].send_message(
+            "reasoning",
+            "teach_skill",
+            {
+                "skill": "fraction_math",
+                "behavior": "Reduce and compare fractions correctly.",
+                "user_id": "alice",
+                "confidence": 0.85,
+            },
+        )
+        assert taught["status"] == "success"
+    finally:
+        shutdown_core_systems(first)
+
+    second = create_core_systems(str(runtime))
+    try:
+        recalled = second["thalamus"].send_message(
+            "reasoning", "list_skills", {"user_id": "alice", "limit": 20}
+        )
+        assert recalled["status"] == "success"
+        assert any(
+            memory.get("key") == "skill:fraction_math"
+            for memory in recalled.get("memories", [])
+        )
+    finally:
+        shutdown_core_systems(second)
+
+
+def test_each_lobe_uses_own_learning_file(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        systems["thalamus"].send_message(
+            "conversation",
+            "teach_skill",
+            {"skill": "tone_control", "behavior": "Keep responses calm.", "user_id": "alice"},
+        )
+        systems["thalamus"].send_message(
+            "reasoning",
+            "teach_skill",
+            {"skill": "logic_cleanup", "behavior": "Avoid contradictions.", "user_id": "alice"},
+        )
+
+        overview = systems["thalamus"].handle_request(
+            {"type": "learning_overview", "content": {"user_id": "alice"}}
+        )
+        assert overview["status"] == "success"
+        rows = {row["lobe"]: row for row in overview.get("lobes", [])}
+        conversation_path = rows["conversation"]["stats"].get("storage_path", "")
+        reasoning_path = rows["reasoning"]["stats"].get("storage_path", "")
+        assert conversation_path and reasoning_path
+        assert conversation_path != reasoning_path
+        assert conversation_path.endswith("conversation.json")
+        assert reasoning_path.endswith("reasoning.json")
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_teach_process_restart_keeps_changed_behavior_across_two_lobes(tmp_path):
+    class DecisionLobe:
+        def process_message(self, message):
+            content = message.get("content", {})
+            guidance = content.get("learned_guidance", [])
+            decision = "DEFAULT_DECISION"
+            if any("respectful" in item.lower() for item in guidance if isinstance(item, str)):
+                decision = "LEARNED_DECISION"
+            return {"status": "success", "content": {"decision": decision}}
+
+        def shutdown(self):
+            pass
+
+    class ReplyLobe:
+        def process_message(self, message):
+            content = message.get("content", {})
+            guidance = content.get("learned_guidance", [])
+            tone = "DEFAULT_TONE"
+            if any("respectful" in item.lower() for item in guidance if isinstance(item, str)):
+                tone = "LEARNED_TONE"
+            return {"status": "success", "content": {"tone": tone}}
+
+        def shutdown(self):
+            pass
+
+    runtime = tmp_path / "runtime"
+    first = create_core_systems(str(runtime))
+    first["thalamus"].register_lobe("decision", DecisionLobe())
+    first["thalamus"].register_lobe("reply", ReplyLobe())
+    try:
+        decision_before = first["thalamus"].send_message(
+            "decision",
+            "decide",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        reply_before = first["thalamus"].send_message(
+            "reply",
+            "respond",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        assert decision_before["content"]["decision"] == "DEFAULT_DECISION"
+        assert reply_before["content"]["tone"] == "DEFAULT_TONE"
+
+        taught = first["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": "When users are upset, keep responses respectful and calm.",
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert taught["status"] == "success"
+
+        decision_after = first["thalamus"].send_message(
+            "decision",
+            "decide",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        reply_after = first["thalamus"].send_message(
+            "reply",
+            "respond",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        assert decision_after["content"]["decision"] == "LEARNED_DECISION"
+        assert reply_after["content"]["tone"] == "LEARNED_TONE"
+    finally:
+        shutdown_core_systems(first)
+
+    second = create_core_systems(str(runtime))
+    second["thalamus"].register_lobe("decision", DecisionLobe())
+    second["thalamus"].register_lobe("reply", ReplyLobe())
+    try:
+        decision_after_restart = second["thalamus"].send_message(
+            "decision",
+            "decide",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        reply_after_restart = second["thalamus"].send_message(
+            "reply",
+            "respond",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        assert decision_after_restart["content"]["decision"] == "LEARNED_DECISION"
+        assert reply_after_restart["content"]["tone"] == "LEARNED_TONE"
+    finally:
+        shutdown_core_systems(second)
