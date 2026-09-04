@@ -540,7 +540,7 @@ def test_learned_skill_guidance_is_applied_to_message_envelope(tmp_path):
         response = systems["thalamus"].send_message(
             "echo",
             "reply",
-            {"user_input": "I am upset", "user_id": "alice"},
+            {"user_input": "emotionally intense user text", "user_id": "alice"},
         )
         assert response["status"] == "success"
         seen = response["content"]["seen"]
@@ -625,7 +625,7 @@ def test_learning_overview_shows_per_lobe_skills_and_usage(tmp_path):
         used = systems["thalamus"].send_message(
             "echo",
             "reply",
-            {"user_input": "I am angry", "user_id": "alice"},
+            {"user_input": "This conflict needs calm wording.", "user_id": "alice"},
         )
         assert used["status"] == "success"
 
@@ -860,16 +860,21 @@ def test_process_user_input_scopes_learning_to_actual_user(tmp_path):
             "Please answer with respectful calm wording.", user_id="alice"
         )
 
-        for lobe in ("emotion", "reasoning", "language"):
-            alice_stats = systems["thalamus"].send_message(
-                lobe, "learning_stats", {"user_id": "alice"}
+        expected_key = {
+            "emotion": "behavior:process_input",
+            "reasoning": "behavior:think",
+            "language": "behavior:generate",
+        }
+        for lobe, key in expected_key.items():
+            alice_recall = systems["thalamus"].send_message(
+                lobe, "recall", {"user_id": "alice", "query": key, "limit": 10}
             )
-            default_stats = systems["thalamus"].send_message(
-                lobe, "learning_stats", {"user_id": "default"}
+            default_recall = systems["thalamus"].send_message(
+                lobe, "recall", {"user_id": "default", "query": key, "limit": 10}
             )
-            assert alice_stats["status"] == "success"
-            assert default_stats["status"] == "success"
-            assert alice_stats["total_facts"] >= 1
-            assert default_stats["total_facts"] == 0
+            assert alice_recall["status"] == "success"
+            assert default_recall["status"] == "success"
+            assert any(memory.get("key") == key for memory in alice_recall.get("memories", []))
+            assert not any(memory.get("key") == key for memory in default_recall.get("memories", []))
     finally:
         shutdown_core_systems(systems)

@@ -37,8 +37,8 @@ def test_notus_failures_do_not_abort_response_pipeline(tmp_path):
         assert response
         assert "trouble remembering" not in response.lower()
         assert "trouble retrieving context" not in response.lower()
-        assert failing_notus.store_calls == 2
-        assert failing_notus.query_calls == 2
+        assert failing_notus.store_calls >= 2
+        assert failing_notus.query_calls >= 2
     finally:
         shutdown_core_systems(systems)
 

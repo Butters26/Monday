@@ -175,11 +175,18 @@ class LobeLearningStore:
                 fact = self._clean_text(record.get("fact"))
                 if key_prefix and not key.lower().startswith(key_prefix):
                     continue
-                if terms and not all(term in f"{key} {fact}".lower() for term in terms):
-                    continue
+                relevance = 0.0
+                if terms:
+                    haystack = f"{key} {fact}".lower()
+                    matched_terms = sum(1 for term in terms if term in haystack)
+                    if matched_terms == 0:
+                        continue
+                    relevance = matched_terms / len(terms)
+                record["_relevance"] = relevance
                 filtered.append(record)
             filtered.sort(
                 key=lambda record: (
+                    float(record.get("_relevance", 0.0)),
                     self._clamp_confidence(record.get("confidence"), 0.0),
                     int(record.get("evidence_count", 0)),
                     self._clean_text(record.get("updated_at")),
