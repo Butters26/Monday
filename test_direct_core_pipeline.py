@@ -641,3 +641,64 @@ def test_learning_overview_shows_per_lobe_skills_and_usage(tmp_path):
         assert any(skill.get("key") == "skill:deescalate" for skill in echo_row.get("skills", []))
     finally:
         shutdown_core_systems(systems)
+
+
+def test_lobe_learning_persists_across_restart_without_notus_learning_backend(tmp_path):
+    runtime = tmp_path / "runtime"
+    first = create_core_systems(str(runtime))
+    try:
+        taught = first["thalamus"].send_message(
+            "reasoning",
+            "teach_skill",
+            {
+                "skill": "fraction_math",
+                "behavior": "Reduce and compare fractions correctly.",
+                "user_id": "alice",
+                "confidence": 0.85,
+            },
+        )
+        assert taught["status"] == "success"
+    finally:
+        shutdown_core_systems(first)
+
+    second = create_core_systems(str(runtime))
+    try:
+        recalled = second["thalamus"].send_message(
+            "reasoning", "list_skills", {"user_id": "alice", "limit": 20}
+        )
+        assert recalled["status"] == "success"
+        assert any(
+            memory.get("key") == "skill:fraction_math"
+            for memory in recalled.get("memories", [])
+        )
+    finally:
+        shutdown_core_systems(second)
+
+
+def test_each_lobe_uses_own_learning_file(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        systems["thalamus"].send_message(
+            "conversation",
+            "teach_skill",
+            {"skill": "tone_control", "behavior": "Keep responses calm.", "user_id": "alice"},
+        )
+        systems["thalamus"].send_message(
+            "reasoning",
+            "teach_skill",
+            {"skill": "logic_cleanup", "behavior": "Avoid contradictions.", "user_id": "alice"},
+        )
+
+        overview = systems["thalamus"].handle_request(
+            {"type": "learning_overview", "content": {"user_id": "alice"}}
+        )
+        assert overview["status"] == "success"
+        rows = {row["lobe"]: row for row in overview.get("lobes", [])}
+        conversation_path = rows["conversation"]["stats"].get("storage_path", "")
+        reasoning_path = rows["reasoning"]["stats"].get("storage_path", "")
+        assert conversation_path and reasoning_path
+        assert conversation_path != reasoning_path
+        assert conversation_path.endswith("conversation.json")
+        assert reasoning_path.endswith("reasoning.json")
+    finally:
+        shutdown_core_systems(systems)

@@ -19,6 +19,7 @@ import uuid
 from typing import Any, Dict, Iterable, Optional
 
 from direct_response import DeterministicResponseProvider, ResponseProvider
+from learning.lobe_learning_store import LobeLearningStore
 
 
 _LEARNING_ROUTE_TYPES = {
@@ -88,6 +89,8 @@ class Thalamus:
         with self.lobe_handlers_lock:
             self.lobe_handlers[name] = lobe
             self.lobe_status[name] = "online"
+        if name != "notus" and not hasattr(lobe, "_lobe_learning_store"):
+            setattr(lobe, "_lobe_learning_store", LobeLearningStore(name))
         return {"status": "success", "content": {"registered": name}, "registered": name}
 
     @staticmethod
@@ -130,7 +133,7 @@ class Thalamus:
     def _learned_guidance_for_message(
         self, destination: str, msg_type: str, content: Dict[str, Any], source: str
     ) -> list[str]:
-        if destination == "notus" or msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
+        if msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
             return []
         user_id = content.get("user_id", "default")
         if not isinstance(user_id, str) or not user_id.strip():
@@ -144,11 +147,10 @@ class Thalamus:
         ]
         query = " ".join(term for term in query_terms if isinstance(term, str) and term.strip()).strip()
         def _recall(query_text: str) -> list[Dict[str, Any]]:
-            recalled = self.send_message(
-                "notus",
-                "recall_lobe_facts",
+            recalled = self._handle_lobe_learning(
+                destination,
+                "recall",
                 {
-                    "lobe": destination,
                     "user_id": user_id,
                     "query": query_text,
                     "min_confidence": 0.55,
@@ -332,12 +334,15 @@ class Thalamus:
         self, destination: str, msg_type: str, payload: Dict[str, Any], source: str
     ) -> Dict[str, Any]:
         with self.lobe_handlers_lock:
-            notus = self.lobe_handlers.get("notus")
-            destination_exists = destination in self.lobe_handlers
-        if not destination_exists:
+            lobe = self.lobe_handlers.get(destination)
+        if lobe is None:
             return {"status": "error", "message": f"Unknown destination: {destination}"}
-        if notus is None:
-            return {"status": "error", "message": "Notus is required for lobe learning"}
+        store = getattr(lobe, "_lobe_learning_store", None)
+        if store is None:
+            store = LobeLearningStore(destination)
+            setattr(lobe, "_lobe_learning_store", store)
+        if not isinstance(store, LobeLearningStore):
+            return {"status": "error", "message": f"{destination} has invalid learning store"}
 
         user_id = payload.get("user_id", "default")
         memory_type = self._learning_memory_type(destination)
@@ -353,16 +358,12 @@ class Thalamus:
                     }
                 payload_to_store["fact"] = skill_fact
                 payload_to_store["key"] = self._skill_key(payload)
-            learned = self.send_message(
-                "notus",
-                "learn_lobe_fact",
+            learned = store.learn(
                 {
                     **payload_to_store,
-                    "lobe": destination,
                     "user_id": user_id,
                     "source": f"{source}:{destination}",
-                },
-                source=f"{source}:{destination}",
+                }
             )
             if learned.get("status") != "success":
                 return learned
@@ -388,17 +389,23 @@ class Thalamus:
         if target_operation is None:
             return {"status": "error", "message": f"Unknown learning operation: {msg_type}"}
 
-        outcome = self.send_message(
-            "notus",
-            target_operation,
-            {
-                **payload,
-                "lobe": destination,
-                "user_id": user_id,
-                **({"key_prefix": "skill:"} if msg_type == "list_skills" else {}),
-            },
-            source=f"{source}:{destination}",
-        )
+        routed_payload = {
+            **payload,
+            "user_id": user_id,
+            **({"key_prefix": "skill:"} if msg_type == "list_skills" else {}),
+        }
+        if target_operation == "recall_lobe_facts":
+            outcome = store.recall(routed_payload)
+        elif target_operation == "reinforce_lobe_fact":
+            outcome = store.adjust(routed_payload, "reinforce")
+        elif target_operation == "contradict_lobe_fact":
+            outcome = store.adjust(routed_payload, "contradict")
+        elif target_operation == "forget_lobe_fact":
+            outcome = store.adjust(routed_payload, "forget")
+        elif target_operation == "lobe_learning_stats":
+            outcome = store.stats(routed_payload)
+        else:
+            return {"status": "error", "message": f"Unsupported operation: {target_operation}"}
         if outcome.get("status") != "success":
             return outcome
         content = self._content(outcome)
@@ -419,7 +426,7 @@ class Thalamus:
         response: Dict[str, Any],
         source: str,
     ) -> None:
-        if destination == "notus" or msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
+        if msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
             return
         user_id = content.get("user_id", "default")
         if not isinstance(user_id, str) or not user_id.strip():

@@ -33,10 +33,12 @@ They remain in the repository for compatibility work but are not imported by
 - `learning/api.py` — simple entry points (`teach_monday`, `learning_overview`,
   `teach_lobe_skill`, `list_lobe_skills`)
 - `learning/__init__.py` — exports the learning API helpers
+- `learning/lobe_learning_store.py` — per-lobe adaptive persistence (one file per
+  lobe under runtime data)
 - `thalamus.py` — learning router and global `teach_monday`/`learning_overview`
   handlers
-- `direct_notus.py` — adaptive learning persistence (`lobe_learning` table,
-  confidence, contradictions, use tracking)
+- `direct_notus.py` — conversation memory adapter (separate from lobe-local
+  learning state)
 - `test_direct_core_pipeline.py` — learning behavior tests
 
 ## 3D model generator
