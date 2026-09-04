@@ -702,3 +702,92 @@ def test_each_lobe_uses_own_learning_file(tmp_path):
         assert reasoning_path.endswith("reasoning.json")
     finally:
         shutdown_core_systems(systems)
+
+
+def test_teach_process_restart_keeps_changed_behavior_across_two_lobes(tmp_path):
+    class DecisionLobe:
+        def process_message(self, message):
+            content = message.get("content", {})
+            guidance = content.get("learned_guidance", [])
+            decision = "DEFAULT_DECISION"
+            if any("respectful" in item.lower() for item in guidance if isinstance(item, str)):
+                decision = "LEARNED_DECISION"
+            return {"status": "success", "content": {"decision": decision}}
+
+        def shutdown(self):
+            pass
+
+    class ReplyLobe:
+        def process_message(self, message):
+            content = message.get("content", {})
+            guidance = content.get("learned_guidance", [])
+            tone = "DEFAULT_TONE"
+            if any("respectful" in item.lower() for item in guidance if isinstance(item, str)):
+                tone = "LEARNED_TONE"
+            return {"status": "success", "content": {"tone": tone}}
+
+        def shutdown(self):
+            pass
+
+    runtime = tmp_path / "runtime"
+    first = create_core_systems(str(runtime))
+    first["thalamus"].register_lobe("decision", DecisionLobe())
+    first["thalamus"].register_lobe("reply", ReplyLobe())
+    try:
+        decision_before = first["thalamus"].send_message(
+            "decision",
+            "decide",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        reply_before = first["thalamus"].send_message(
+            "reply",
+            "respond",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        assert decision_before["content"]["decision"] == "DEFAULT_DECISION"
+        assert reply_before["content"]["tone"] == "DEFAULT_TONE"
+
+        taught = first["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": "When users are upset, keep responses respectful and calm.",
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert taught["status"] == "success"
+
+        decision_after = first["thalamus"].send_message(
+            "decision",
+            "decide",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        reply_after = first["thalamus"].send_message(
+            "reply",
+            "respond",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        assert decision_after["content"]["decision"] == "LEARNED_DECISION"
+        assert reply_after["content"]["tone"] == "LEARNED_TONE"
+    finally:
+        shutdown_core_systems(first)
+
+    second = create_core_systems(str(runtime))
+    second["thalamus"].register_lobe("decision", DecisionLobe())
+    second["thalamus"].register_lobe("reply", ReplyLobe())
+    try:
+        decision_after_restart = second["thalamus"].send_message(
+            "decision",
+            "decide",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        reply_after_restart = second["thalamus"].send_message(
+            "reply",
+            "respond",
+            {"user_input": "User sounds upset.", "user_id": "alice"},
+        )
+        assert decision_after_restart["content"]["decision"] == "LEARNED_DECISION"
+        assert reply_after_restart["content"]["tone"] == "LEARNED_TONE"
+    finally:
+        shutdown_core_systems(second)
