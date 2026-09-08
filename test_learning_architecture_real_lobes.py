@@ -36,6 +36,7 @@ def _teach_relation(
     positives: list[str],
     negatives: list[str],
     event_type: str = "explicit_lesson",
+    raw_experience: str | None = None,
 ):
     return systems["thalamus"].handle_request(
         {
@@ -43,7 +44,7 @@ def _teach_relation(
             "content": {
                 "event_type": event_type,
                 "user_id": user_id,
-                "raw_experience": f"{token} is a {concept}.",
+                "raw_experience": raw_experience or f"{token} is a {concept}.",
                 "examples": positives,
                 "counterexamples": negatives,
                 "metadata": {"relation": {"token": token, "concept": concept}},
@@ -92,8 +93,10 @@ def test_generic_real_lobe_learning_random_tokens_generalizes_and_rejects_counte
             positives=[
                 f"{token} starts this first training sentence.",
                 f"{token} starts this second training sentence.",
+                f"{token} starts this third training sentence.",
+                f"{token} starts this fourth training sentence.",
             ],
-            negatives=[held_out_negative],
+            negatives=[],
         )
         assert lesson["status"] == "success"
         assert {"language", "pattern"}.issubset(set(lesson["content"]["targets"]))
@@ -204,6 +207,7 @@ def test_contradictory_evidence_can_lower_confidence_or_retire_generic_relation(
             positives=[],
             negatives=[f"{token} appears but should not be treated as {concept} here."],
             event_type="correction",
+            raw_experience=f"In this context {token} is not a {concept}.",
         )
         after = systems["thalamus"].send_message(
             "language", "get_language_learning_state", {"user_id": "alice", "token": token}
