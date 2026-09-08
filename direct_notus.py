@@ -68,6 +68,8 @@ class DirectNotusProcess:
                 UNIQUE(lobe, user_id, learning_key)
             )"""
         )
+        # Deprecated: lobe-owned adaptive learning is handled by each lobe directly.
+        # This legacy table remains only for backward-compatible reads/migrations.
         self._ensure_memories_schema()
         self._ensure_lobe_learning_schema()
         self._connection.execute(
@@ -538,17 +540,41 @@ class DirectNotusProcess:
             )
             return {"status": "success", "content": {"results": memories, "memories": memories}}
         if msg_type == "learn_lobe_fact":
-            return self._learn_lobe_fact(payload)
+            return {
+                "status": "error",
+                "message": "Deprecated: lobe learning is owned by lobes, not Notus",
+                "content": {"deprecated": True},
+            }
         if msg_type == "recall_lobe_facts":
-            return self._recall_lobe_facts(payload)
+            return {
+                "status": "error",
+                "message": "Deprecated: lobe learning is owned by lobes, not Notus",
+                "content": {"deprecated": True},
+            }
         if msg_type == "reinforce_lobe_fact":
-            return self._adjust_lobe_fact(payload, "reinforce")
+            return {
+                "status": "error",
+                "message": "Deprecated: lobe learning is owned by lobes, not Notus",
+                "content": {"deprecated": True},
+            }
         if msg_type == "contradict_lobe_fact":
-            return self._adjust_lobe_fact(payload, "contradict")
+            return {
+                "status": "error",
+                "message": "Deprecated: lobe learning is owned by lobes, not Notus",
+                "content": {"deprecated": True},
+            }
         if msg_type == "forget_lobe_fact":
-            return self._adjust_lobe_fact(payload, "forget")
+            return {
+                "status": "error",
+                "message": "Deprecated: lobe learning is owned by lobes, not Notus",
+                "content": {"deprecated": True},
+            }
         if msg_type == "lobe_learning_stats":
-            return self._lobe_learning_stats(payload)
+            return {
+                "status": "error",
+                "message": "Deprecated: lobe learning is owned by lobes, not Notus",
+                "content": {"deprecated": True},
+            }
         if msg_type == "query_context":
             query = payload.get("text", "")
             memories = self.retrieve_memories(

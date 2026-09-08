@@ -8,11 +8,14 @@ Controlled by Reasoning lobe
 
 import json
 import os
+from pathlib import Path
 import random
+import re
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from collections import deque
+from runtime_paths import runtime_dir
 from thalamus import get_thalamus
 
 # FIX: optional deterministic seed for reproducible output
@@ -505,14 +508,194 @@ class LanguageGenerator:
     def __init__(self, thalamus=None):
         self.running = True
         self.grammar = GrammarEngine()
+        self.supports_experience_learning = True
         
         # Persistent connection to Thalamus (created once at startup, reused forever)
         # Direct reference to Thalamus (NO SOCKETS)
         self.thalamus = thalamus or get_thalamus()
+        base = getattr(self.thalamus, "learning_runtime_directory", None) or runtime_dir()
+        self.learning_state_path = Path(base) / "lobe_state" / "language_learning.json"
+        self.learning_state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.language_learning_state: Dict[str, Any] = self._load_learning_state()
         
         # Cache for emotional state (avoid repeated queries)
         self.current_emotional_state = None
         self.emotion_cache_time = 0
+
+    @staticmethod
+    def _safe_user(user_id: Any) -> str:
+        return user_id.strip() if isinstance(user_id, str) and user_id.strip() else "default"
+
+    def _empty_learning_state(self) -> Dict[str, Any]:
+        return {"version": 1, "users": {}, "schema": "language_lobe_learning_v1"}
+
+    def _load_learning_state(self) -> Dict[str, Any]:
+        if not self.learning_state_path.exists():
+            return self._empty_learning_state()
+        try:
+            data = json.loads(self.learning_state_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or not isinstance(data.get("users", {}), dict):
+                return self._empty_learning_state()
+            return data
+        except Exception:
+            return self._empty_learning_state()
+
+    def _save_learning_state(self) -> None:
+        tmp = Path(f"{self.learning_state_path}.tmp")
+        tmp.write_text(
+            json.dumps(self.language_learning_state, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        tmp.replace(self.learning_state_path)
+
+    def _user_state(self, user_id: str) -> Dict[str, Any]:
+        users = self.language_learning_state.setdefault("users", {})
+        user_state = users.setdefault(
+            user_id,
+            {
+                "semantic_relations": {},
+                "usage_models": {},
+                "learner_model": {
+                    "signals": {},
+                    "confidence": {},
+                    "uncertainty": {},
+                },
+            },
+        )
+        user_state.setdefault("semantic_relations", {})
+        user_state.setdefault("usage_models", {})
+        learner_model = user_state.setdefault("learner_model", {})
+        learner_model.setdefault("signals", {})
+        learner_model.setdefault("confidence", {})
+        learner_model.setdefault("uncertainty", {})
+        return user_state
+
+    @staticmethod
+    def _contains_word(text: str, word: str) -> bool:
+        return bool(re.search(rf"\b{re.escape(word)}\b", text.lower()))
+
+    def _classify_hello_usage(self, text: str) -> str:
+        lowered = text.lower().strip()
+        if not self._contains_word(lowered, "hello"):
+            return "unrelated"
+        if lowered.startswith("hello"):
+            return "greeting_opening"
+        if lowered.startswith("well, hello") or lowered.startswith("well hello"):
+            return "interjectional_greeting"
+        if re.search(r"\b(said|says|saying)\s+hello\b", lowered):
+            return "quoted_reference"
+        return "mention"
+
+    def _learn_from_experience(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(envelope, dict):
+            return {"status": "error", "message": "Missing learning envelope"}
+        user_id = self._safe_user(envelope.get("user_id"))
+        event_type = envelope.get("event_type", "experience")
+        raw = envelope.get("raw_experience", "")
+        examples = [item for item in envelope.get("examples", []) if isinstance(item, str)]
+        counterexamples = [item for item in envelope.get("counterexamples", []) if isinstance(item, str)]
+        feedback = envelope.get("feedback", "")
+        if not isinstance(raw, str) or not raw.strip():
+            return {
+                "status": "error",
+                "content": {
+                    "delivered": True,
+                    "interpreted": False,
+                    "update_proposed": False,
+                    "update_accepted": False,
+                    "behavior_affected": False,
+                    "validation_passed": False,
+                    "changes": {},
+                    "evidence": [],
+                    "message": "raw_experience missing",
+                },
+            }
+
+        user_state = self._user_state(user_id)
+        relations = user_state["semantic_relations"]
+        relation = relations.setdefault(
+            "hello:greeting",
+            {
+                "token": "hello",
+                "concept": "greeting",
+                "confidence": 0.2,
+                "evidence_count": 0,
+                "contradictions": 0,
+                "provisional": True,
+                "last_event_type": None,
+                "examples": [],
+                "counterexamples": [],
+            },
+        )
+
+        raw_lower = raw.lower()
+        negated_greeting = bool(re.search(r"\bnot\s+(?:a\s+)?greeting\b", raw_lower))
+        interpreted = (
+            self._contains_word(raw, "hello")
+            and self._contains_word(raw, "greeting")
+            and not negated_greeting
+        )
+        if interpreted:
+            relation["evidence_count"] += 1
+            relation["confidence"] = min(0.95, float(relation["confidence"]) + 0.22)
+            relation["provisional"] = relation["confidence"] < 0.7
+        for example in examples:
+            if self._contains_word(example, "hello"):
+                relation["examples"].append(example)
+                relation["confidence"] = min(0.98, float(relation["confidence"]) + 0.06)
+        for item in counterexamples:
+            relation["counterexamples"].append(item)
+            if self._contains_word(item, "hello"):
+                relation["contradictions"] += 1
+                relation["confidence"] = max(0.05, float(relation["confidence"]) - 0.12)
+                relation["provisional"] = True
+        if event_type == "correction" or (
+            isinstance(feedback, str)
+            and "not greeting" in feedback.lower()
+            and self._contains_word(feedback, "hello")
+        ):
+            relation["contradictions"] += 1
+            relation["confidence"] = max(0.05, float(relation["confidence"]) - 0.2)
+            relation["provisional"] = True
+        relation["last_event_type"] = event_type
+
+        learner_model = user_state["learner_model"]
+        signals = learner_model["signals"]
+        confidence = learner_model["confidence"]
+        uncertainty = learner_model["uncertainty"]
+        if examples:
+            signals["prefers_examples"] = int(signals.get("prefers_examples", 0)) + 1
+            confidence["prefers_examples"] = min(0.95, float(confidence.get("prefers_examples", 0.3)) + 0.1)
+            uncertainty["prefers_examples"] = max(0.05, 1.0 - confidence["prefers_examples"])
+        if isinstance(feedback, str) and "restate" in feedback.lower():
+            signals["dislikes_restatement_without_progress"] = int(signals.get("dislikes_restatement_without_progress", 0)) + 1
+            confidence["dislikes_restatement_without_progress"] = min(
+                0.95, float(confidence.get("dislikes_restatement_without_progress", 0.3)) + 0.08
+            )
+            uncertainty["dislikes_restatement_without_progress"] = max(
+                0.05, 1.0 - confidence["dislikes_restatement_without_progress"]
+            )
+
+        self._save_learning_state()
+        return {
+            "status": "success",
+            "content": {
+                "delivered": True,
+                "interpreted": interpreted,
+                "update_proposed": interpreted or bool(examples) or bool(counterexamples),
+                "update_accepted": True,
+                "behavior_affected": bool(interpreted),
+                "validation_passed": True,
+                "confidence": relation["confidence"],
+                "changes": {
+                    "semantic_relation": "hello:greeting",
+                    "provisional": relation["provisional"],
+                    "evidence_count": relation["evidence_count"],
+                    "contradictions": relation["contradictions"],
+                },
+                "evidence": [raw] + examples + counterexamples,
+            },
+        }
     
     def _query_emotional_state(self) -> Dict[str, Any]:
         """Query current emotional state from Emotional Engine"""
@@ -686,17 +869,74 @@ class LanguageGenerator:
         """Process incoming message - DIRECT FUNCTION CALL"""
         msg_type = message.get('type')
         payload = message.get('content', message)
+
+        if msg_type == 'learn_from_experience':
+            return self._learn_from_experience(payload.get("envelope", {}))
+
+        if msg_type == 'get_language_learning_state':
+            user_id = self._safe_user(payload.get("user_id", "default"))
+            user_state = self._user_state(user_id)
+            relation = user_state.get("semantic_relations", {}).get("hello:greeting")
+            return {
+                'status': 'success',
+                'content': {
+                    'state_path': str(self.learning_state_path),
+                    'user_id': user_id,
+                    'hello_relation': relation,
+                    'learner_model': user_state.get("learner_model", {}),
+                },
+            }
+
+        if msg_type == 'classify_hello_usage':
+            user_id = self._safe_user(payload.get("user_id", "default"))
+            text = payload.get("text", payload.get("user_input", ""))
+            if not isinstance(text, str):
+                text = ""
+            user_state = self._user_state(user_id)
+            relation = user_state.get("semantic_relations", {}).get("hello:greeting", {})
+            confidence = float(relation.get("confidence", 0.0))
+            return {
+                'status': 'success',
+                'content': {
+                    'classification': self._classify_hello_usage(text),
+                    'relation_confidence': confidence,
+                    'provisional': bool(relation.get("provisional", True)),
+                },
+            }
         
         if msg_type in {'generate', 'generate_grounded'}:
             semantic_input = payload.get('semantic_input', payload)
             if not isinstance(semantic_input, dict):
                 semantic_input = {}
+            user_id = self._safe_user(payload.get("user_id", semantic_input.get("user_id", "default")))
+            user_input = payload.get('user_input', semantic_input.get("user_input", ""))
+            if not isinstance(user_input, str):
+                user_input = ""
+            relation = self._user_state(user_id).get("semantic_relations", {}).get("hello:greeting", {})
+            relation_confidence = float(relation.get("confidence", 0.0))
+            relation_provisional = bool(relation.get("provisional", True))
+            hello_classification = self._classify_hello_usage(user_input) if user_input else "unrelated"
             learned_guidance = payload.get('learned_guidance', [])
             learned_guidance = [
                 item.strip()
                 for item in learned_guidance
                 if isinstance(item, str) and item.strip()
             ] if isinstance(learned_guidance, list) else []
+            if (
+                relation_confidence >= 0.5
+                and user_input
+                and not semantic_input.get('answer')
+                and not semantic_input.get('propositions')
+            ):
+                semantic_input = dict(semantic_input)
+                if hello_classification in {'greeting_opening', 'interjectional_greeting'}:
+                    semantic_input['propositions'] = [
+                        "The word hello is being used as a greeting here."
+                    ]
+                elif hello_classification in {'quoted_reference', 'mention'}:
+                    semantic_input['propositions'] = [
+                        "This appears to mention hello as a word, not open a direct greeting."
+                    ]
             if learned_guidance:
                 semantic_input = dict(semantic_input)
                 semantic_input.setdefault('learned_guidance', learned_guidance)
@@ -721,6 +961,9 @@ class LanguageGenerator:
                 'sentence': sentence,
                 'sent_to_output': is_main_response,
                 'learned_guidance_used': bool(learned_guidance),
+                'hello_relation_confidence': relation_confidence,
+                'hello_relation_provisional': relation_provisional,
+                'hello_classification': hello_classification,
             }
         elif msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}

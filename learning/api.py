@@ -23,6 +23,25 @@ def learning_overview(thalamus: Any, user_id: str = "default", limit: int = 5) -
     return thalamus.handle_request({"type": "learning_overview", "content": payload})
 
 
+def learn_from_experience(
+    thalamus: Any,
+    raw_experience: str,
+    user_id: str = "default",
+    event_type: str = "experience",
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Broadcast one shared learning envelope to all relevant registered lobes."""
+    if not isinstance(raw_experience, str) or not raw_experience.strip():
+        return {"status": "error", "message": "raw_experience must be a non-empty string", "content": {}}
+    payload = {
+        "raw_experience": raw_experience,
+        "user_id": user_id,
+        "event_type": event_type,
+        **kwargs,
+    }
+    return thalamus.handle_request({"type": "learn_from_experience", "content": payload})
+
+
 def teach_lobe_skill(
     thalamus: Any,
     lobe: str,

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
 import threading
@@ -20,6 +21,8 @@ import uuid
 from typing import Any, Dict, Iterable, Optional, Set
 
 from direct_response import DeterministicResponseProvider, ResponseProvider
+from learning.experience_envelope import ExperienceEnvelope
+from learning.learning_contract import normalize_learning_result
 from learning.lobe_learning_store import LobeLearningStore
 
 
@@ -33,6 +36,7 @@ _LEARNING_ROUTE_TYPES = {
     "forget_learning",
     "learning_stats",
 }
+_NO_GUIDANCE_OR_ADAPT_TYPES = {"health", "learn_from_experience", "sync_notus_pending", "notus_sync_status"}
 _LESSON_TYPE_PATTERNS = {
     "correction": re.compile(
         r"\b(wrong|instead|don't|do not|stop|fix|correct|should not)\b", re.IGNORECASE
@@ -232,6 +236,97 @@ class Thalamus:
             "pending": pending,
         }
 
+    def _learning_targets(self) -> list[str]:
+        with self.lobe_handlers_lock:
+            items = list(self.lobe_handlers.items())
+        targets = []
+        for name, handler in items:
+            if name == "notus":
+                continue
+            if bool(getattr(handler, "supports_experience_learning", False)):
+                targets.append(name)
+        return targets
+
+    def _record_learning_event_in_notus(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
+        payload = self._normalise_notus_write(
+            {
+                "role": "note",
+                "user_id": envelope.get("user_id", "default"),
+                "memory_type": "learning_event",
+                "content": json.dumps(
+                    {
+                        "event_id": envelope.get("event_id"),
+                        "correlation_id": envelope.get("correlation_id"),
+                        "event_type": envelope.get("event_type"),
+                        "raw_experience": envelope.get("raw_experience"),
+                        "examples": envelope.get("examples", []),
+                        "counterexamples": envelope.get("counterexamples", []),
+                        "timestamp": envelope.get("timestamp"),
+                    },
+                    sort_keys=True,
+                ),
+                "_thalamus_write_id": f"learning_event:{envelope.get('event_id', str(uuid.uuid4()))}",
+            },
+            envelope.get("user_id", "default"),
+        )
+        result = self.send_and_wait("notus", "store", payload, source="thalamus:learning_event")
+        if result.get("status") == "success":
+            self._mark_notus_write_synced(payload)
+            return {"status": "success", "queued": False}
+        self._enqueue_notus_write(payload)
+        return {"status": "error", "queued": True, "message": result.get("message")}
+
+    def process_learning_event(self, payload: Dict[str, Any], source: str = "thalamus") -> Dict[str, Any]:
+        envelope = ExperienceEnvelope.from_payload(payload, source=source)
+        validation_error = envelope.validate()
+        if validation_error:
+            return {
+                "status": "error",
+                "message": validation_error,
+                "content": {"delivered": 0, "interpreted": 0, "accepted": 0, "results": []},
+            }
+        envelope_dict = envelope.to_dict()
+        memory_result = self._record_learning_event_in_notus(envelope_dict)
+        targets = self._learning_targets()
+        results = []
+        for destination in targets:
+            response = self.send_and_wait(
+                destination,
+                "learn_from_experience",
+                {"envelope": envelope_dict},
+                source=f"{source}:learning",
+            )
+            results.append(normalize_learning_result(destination, envelope.event_id, response))
+        delivered = sum(1 for item in results if item.get("delivered"))
+        interpreted = sum(1 for item in results if item.get("interpreted"))
+        accepted = sum(1 for item in results if item.get("update_accepted"))
+        behavior_affected = sum(1 for item in results if item.get("behavior_affected"))
+        validation_passed = sum(1 for item in results if item.get("validation_passed"))
+        partial_failures = [
+            {"lobe": item.get("lobe"), "message": item.get("message")}
+            for item in results
+            if not item.get("update_accepted")
+        ]
+        status = "success" if accepted > 0 else "partial" if delivered > 0 else "error"
+        return {
+            "status": status,
+            "content": {
+                "envelope": envelope_dict,
+                "targets": targets,
+                "results": results,
+                "delivery_status": {
+                    "delivered": delivered,
+                    "interpreted": interpreted,
+                    "update_proposed": sum(1 for item in results if item.get("update_proposed")),
+                    "accepted": accepted,
+                    "behavior_affected": behavior_affected,
+                    "validation_passed": validation_passed,
+                },
+                "notus_event_record": memory_result,
+                "partial_failures": partial_failures,
+            },
+        }
+
     @staticmethod
     def _learning_memory_type(destination: str) -> str:
         return f"lobe_learning:{destination}"
@@ -272,7 +367,11 @@ class Thalamus:
     def _learned_guidance_for_message(
         self, destination: str, msg_type: str, content: Dict[str, Any], source: str
     ) -> list[str]:
-        if destination == "notus" or msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
+        if (
+            destination == "notus"
+            or msg_type in _LEARNING_ROUTE_TYPES
+            or msg_type in _NO_GUIDANCE_OR_ADAPT_TYPES
+        ):
             return []
         user_id = self._normalised_user_id(content)
         query_candidates = self._query_candidates(msg_type, content)
@@ -561,7 +660,11 @@ class Thalamus:
         response: Dict[str, Any],
         source: str,
     ) -> None:
-        if destination == "notus" or msg_type in _LEARNING_ROUTE_TYPES or msg_type == "health":
+        if (
+            destination == "notus"
+            or msg_type in _LEARNING_ROUTE_TYPES
+            or msg_type in _NO_GUIDANCE_OR_ADAPT_TYPES
+        ):
             return
         user_id = self._normalised_user_id(content)
         behavior_key = f"behavior:{msg_type}"
@@ -908,6 +1011,8 @@ class Thalamus:
             return {"status": "success", "content": {"response": response}, "response": response}
         if msg_type == "teach_monday":
             return self.teach_monday(payload if isinstance(payload, dict) else {})
+        if msg_type == "learn_from_experience":
+            return self.process_learning_event(payload if isinstance(payload, dict) else {}, source="learn_from_experience")
         if msg_type == "learning_overview":
             return self.learning_overview(payload if isinstance(payload, dict) else {})
         if msg_type == "sync_notus_pending":

@@ -7,12 +7,15 @@ Like how humans see patterns everywhere - including patterns that aren't there
 
 import json
 import os
+from pathlib import Path
 import time
 import random
+import re
 import sys
 from typing import Dict, Any, List, Tuple, Set, Optional
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from runtime_paths import runtime_dir
 from thalamus import get_thalamus
 
 # ============================================================================
@@ -79,10 +82,14 @@ class PareidoliaPattern:
 class AdvancedPatternRecognition:
     """Human-like pattern recognition - sees everything"""
     
-    def __init__(self):
+    def __init__(self, thalamus=None):
         self.running = True
+        self.supports_experience_learning = True
         # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
+        self.thalamus = thalamus or get_thalamus()
+        base = getattr(self.thalamus, "learning_runtime_directory", None) or runtime_dir()
+        self.learning_state_path = Path(base) / "lobe_state" / "pattern_learning.json"
+        self.learning_state_path.parent.mkdir(parents=True, exist_ok=True)
         
         # Basic patterns
         self.co_occurrences: Dict[Tuple[str, str], CoOccurrence] = {}
@@ -117,12 +124,144 @@ class AdvancedPatternRecognition:
         # Learned knowledge from Notus
         self.learned_opposites: Dict[str, List[str]] = {}
         self.learned_behavioral_patterns: Dict[str, Dict] = {}
+        self.pattern_learning_state: Dict[str, Any] = self._load_pattern_learning_state()
         
         # Load learned knowledge from memory
         self._load_learned_knowledge()
         
         # Initialize default templates (can be overridden by learning)
         self._initialize_default_templates()
+
+    @staticmethod
+    def _safe_user(user_id: Any) -> str:
+        return user_id.strip() if isinstance(user_id, str) and user_id.strip() else "default"
+
+    def _empty_pattern_learning_state(self) -> Dict[str, Any]:
+        return {"version": 1, "schema": "pattern_lobe_learning_v1", "users": {}}
+
+    def _load_pattern_learning_state(self) -> Dict[str, Any]:
+        if not self.learning_state_path.exists():
+            return self._empty_pattern_learning_state()
+        try:
+            data = json.loads(self.learning_state_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or not isinstance(data.get("users", {}), dict):
+                return self._empty_pattern_learning_state()
+            return data
+        except Exception:
+            return self._empty_pattern_learning_state()
+
+    def _save_pattern_learning_state(self) -> None:
+        tmp = Path(f"{self.learning_state_path}.tmp")
+        tmp.write_text(json.dumps(self.pattern_learning_state, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.replace(self.learning_state_path)
+
+    def _user_learning_state(self, user_id: str) -> Dict[str, Any]:
+        users = self.pattern_learning_state.setdefault("users", {})
+        state = users.setdefault(
+            user_id,
+            {
+                "greeting_patterns": {
+                    "hello_opening": {
+                        "token": "hello",
+                        "confidence": 0.0,
+                        "evidence_count": 0,
+                        "contradictions": 0,
+                        "provisional": True,
+                        "examples": [],
+                        "counterexamples": [],
+                    }
+                },
+                "observed_unknown_tokens": {},
+            },
+        )
+        state.setdefault("greeting_patterns", {})
+        state.setdefault("observed_unknown_tokens", {})
+        return state
+
+    @staticmethod
+    def _contains_word(text: str, word: str) -> bool:
+        return bool(re.search(rf"\b{re.escape(word)}\b", text.lower()))
+
+    def _classify_hello_pattern(self, text: str) -> str:
+        lowered = text.lower().strip()
+        if not self._contains_word(lowered, "hello"):
+            return "unrelated"
+        if lowered.startswith("hello") or lowered.startswith("well, hello") or lowered.startswith("well hello"):
+            return "opening_greeting_pattern"
+        if re.search(r"\b(said|says|saying)\s+hello\b", lowered):
+            return "reported_utterance_pattern"
+        return "mention_pattern"
+
+    def _learn_from_experience(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(envelope, dict):
+            return {"status": "error", "message": "Missing learning envelope"}
+        user_id = self._safe_user(envelope.get("user_id"))
+        raw = envelope.get("raw_experience", "")
+        if not isinstance(raw, str) or not raw.strip():
+            return {
+                "status": "error",
+                "content": {
+                    "delivered": True,
+                    "interpreted": False,
+                    "update_proposed": False,
+                    "update_accepted": False,
+                    "behavior_affected": False,
+                    "validation_passed": False,
+                },
+            }
+
+        state = self._user_learning_state(user_id)
+        hello_rule = state["greeting_patterns"]["hello_opening"]
+        examples = [item for item in envelope.get("examples", []) if isinstance(item, str)]
+        counterexamples = [item for item in envelope.get("counterexamples", []) if isinstance(item, str)]
+        feedback = envelope.get("feedback", "")
+        raw_lower = raw.lower()
+        negated_greeting = bool(re.search(r"\bnot\s+(?:a\s+)?greeting\b", raw_lower))
+        interpreted = (
+            self._contains_word(raw, "hello")
+            and self._contains_word(raw, "greeting")
+            and not negated_greeting
+        )
+        if interpreted:
+            hello_rule["evidence_count"] += 1
+            hello_rule["confidence"] = min(0.95, float(hello_rule["confidence"]) + 0.2)
+            hello_rule["provisional"] = hello_rule["confidence"] < 0.75
+        for example in examples:
+            if self._classify_hello_pattern(example) == "opening_greeting_pattern":
+                hello_rule["examples"].append(example)
+                hello_rule["confidence"] = min(0.98, float(hello_rule["confidence"]) + 0.06)
+        for item in counterexamples:
+            hello_rule["counterexamples"].append(item)
+            classification = self._classify_hello_pattern(item)
+            if classification != "unrelated" and classification != "reported_utterance_pattern":
+                hello_rule["contradictions"] += 1
+                hello_rule["confidence"] = max(0.05, float(hello_rule["confidence"]) - 0.1)
+                hello_rule["provisional"] = True
+        if isinstance(feedback, str) and "not greeting" in feedback.lower() and self._contains_word(feedback, "hello"):
+            hello_rule["contradictions"] += 1
+            hello_rule["confidence"] = max(0.05, float(hello_rule["confidence"]) - 0.2)
+            hello_rule["provisional"] = True
+
+        self._save_pattern_learning_state()
+        return {
+            "status": "success",
+            "content": {
+                "delivered": True,
+                "interpreted": interpreted,
+                "update_proposed": interpreted or bool(examples) or bool(counterexamples),
+                "update_accepted": True,
+                "behavior_affected": interpreted,
+                "validation_passed": True,
+                "confidence": hello_rule["confidence"],
+                "changes": {
+                    "pattern_rule": "hello_opening",
+                    "evidence_count": hello_rule["evidence_count"],
+                    "contradictions": hello_rule["contradictions"],
+                    "provisional": hello_rule["provisional"],
+                },
+                "evidence": [raw] + examples + counterexamples,
+            },
+        }
         
     def _load_learned_knowledge(self):
         """Load learned pattern definitions from Notus memory"""
@@ -884,18 +1023,78 @@ class AdvancedPatternRecognition:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
         msg_type = message.get('type')
+        payload = message.get('content', message)
         
         # FIX: add health probe
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
+
+        if msg_type == 'learn_from_experience':
+            return self._learn_from_experience(payload.get("envelope", {}))
+
+        if msg_type == 'get_pattern_learning_state':
+            user_id = self._safe_user(payload.get("user_id", "default"))
+            user_state = self._user_learning_state(user_id)
+            return {
+                'status': 'success',
+                'content': {
+                    'state_path': str(self.learning_state_path),
+                    'user_id': user_id,
+                    'hello_rule': user_state.get("greeting_patterns", {}).get("hello_opening"),
+                },
+            }
+
+        if msg_type == 'classify_hello_pattern':
+            user_id = self._safe_user(payload.get("user_id", "default"))
+            text = payload.get("text", payload.get("user_input", ""))
+            if not isinstance(text, str):
+                text = ""
+            rule = self._user_learning_state(user_id).get("greeting_patterns", {}).get("hello_opening", {})
+            return {
+                'status': 'success',
+                'content': {
+                    'classification': self._classify_hello_pattern(text),
+                    'rule_confidence': float(rule.get("confidence", 0.0)),
+                    'provisional': bool(rule.get("provisional", True)),
+                },
+            }
         
         if msg_type == 'observe' or msg_type == 'process_input':
-            data = message.get('data', {})
+            data = payload.get('data', payload if isinstance(payload, dict) else {})
             if not data and msg_type == 'process_input':
                 # If process_input called without data, create empty data dict
                 data = {}
+            if isinstance(data, dict):
+                text = data.get("user_input", data.get("text", ""))
+            else:
+                text = ""
+            text = text if isinstance(text, str) else ""
+            user_id = self._safe_user(payload.get("user_id", "default"))
+            user_state = self._user_learning_state(user_id)
+            rule = user_state.get("greeting_patterns", {}).get("hello_opening", {})
+            learned_classification = self._classify_hello_pattern(text) if text else "unrelated"
+            behavior_match = (
+                float(rule.get("confidence", 0.0)) >= 0.35
+                and learned_classification == "opening_greeting_pattern"
+            )
+            if text and learned_classification == "unrelated":
+                tokens = re.findall(r"[a-zA-Z']+", text.lower())
+                unknowns = user_state.get("observed_unknown_tokens", {})
+                for token in tokens:
+                    if token != "hello":
+                        unknowns[token] = int(unknowns.get(token, 0)) + 1
+                self._save_pattern_learning_state()
             patterns = self.observe(data)
-            return {'status': 'success', 'patterns': patterns}
+            return {
+                'status': 'success',
+                'patterns': patterns,
+                'content': {
+                    'patterns': patterns,
+                    'hello_classification': learned_classification,
+                    'hello_rule_applied': behavior_match,
+                    'hello_rule_confidence': float(rule.get("confidence", 0.0)),
+                },
+            }
             
         elif msg_type == 'get_significant':
             significant = self.get_significant_patterns_only()
