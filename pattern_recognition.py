@@ -160,21 +160,11 @@ class AdvancedPatternRecognition:
         state = users.setdefault(
             user_id,
             {
-                "greeting_patterns": {
-                    "hello_opening": {
-                        "token": "hello",
-                        "confidence": 0.0,
-                        "evidence_count": 0,
-                        "contradictions": 0,
-                        "provisional": True,
-                        "examples": [],
-                        "counterexamples": [],
-                    }
-                },
+                "token_rules": {},
                 "observed_unknown_tokens": {},
             },
         )
-        state.setdefault("greeting_patterns", {})
+        state.setdefault("token_rules", {})
         state.setdefault("observed_unknown_tokens", {})
         return state
 
@@ -182,15 +172,48 @@ class AdvancedPatternRecognition:
     def _contains_word(text: str, word: str) -> bool:
         return bool(re.search(rf"\b{re.escape(word)}\b", text.lower()))
 
-    def _classify_hello_pattern(self, text: str) -> str:
+    @staticmethod
+    def _token_in_text(text: str, token: str) -> bool:
+        return bool(re.search(rf"\b{re.escape(token.lower())}\b", text.lower()))
+
+    @staticmethod
+    def _extract_relations(raw_text: str, metadata: Dict[str, Any]) -> List[Tuple[str, str]]:
+        relations: List[Tuple[str, str]] = []
+        relation_meta = metadata.get("relation", {}) if isinstance(metadata, dict) else {}
+        token_meta = relation_meta.get("token", metadata.get("token")) if isinstance(relation_meta, dict) else metadata.get("token")
+        concept_meta = relation_meta.get("concept", metadata.get("concept")) if isinstance(relation_meta, dict) else metadata.get("concept")
+        if isinstance(token_meta, str) and isinstance(concept_meta, str):
+            token = token_meta.strip().lower()
+            concept = concept_meta.strip().lower()
+            if token and concept:
+                relations.append((token, concept))
+        patterns = [
+            re.compile(r"^\s*([a-zA-Z][a-zA-Z0-9_-]*)\s+is\s+(?:an?\s+)?([a-zA-Z][a-zA-Z0-9_-]*)\b"),
+            re.compile(r"^\s*([a-zA-Z][a-zA-Z0-9_-]*)\s+(?:means|represents|denotes)\s+(?:an?\s+)?([a-zA-Z][a-zA-Z0-9_-]*)\b"),
+        ]
+        for pattern in patterns:
+            match = pattern.search(raw_text.strip())
+            if match:
+                relations.append((match.group(1).lower(), match.group(2).lower()))
+                break
+        deduped: List[Tuple[str, str]] = []
+        seen = set()
+        for relation in relations:
+            if relation in seen:
+                continue
+            seen.add(relation)
+            deduped.append(relation)
+        return deduped
+
+    def _classify_token_pattern(self, text: str, token: str) -> str:
         lowered = text.lower().strip()
-        if not self._contains_word(lowered, "hello"):
+        if not self._token_in_text(lowered, token):
             return "unrelated"
-        if lowered.startswith("hello") or lowered.startswith("well, hello") or lowered.startswith("well hello"):
-            return "opening_greeting_pattern"
-        if re.search(r"\b(said|says|saying)\s+hello\b", lowered):
-            return "reported_utterance_pattern"
-        return "mention_pattern"
+        if re.match(rf"^\s*{re.escape(token.lower())}\b", lowered):
+            return "opening_token"
+        if re.search(rf"\b{re.escape(token.lower())}\b", lowered):
+            return "embedded_token"
+        return "unrelated"
 
     def _learn_from_experience(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(envelope, dict):
@@ -211,53 +234,102 @@ class AdvancedPatternRecognition:
             }
 
         state = self._user_learning_state(user_id)
-        hello_rule = state["greeting_patterns"]["hello_opening"]
         examples = [item for item in envelope.get("examples", []) if isinstance(item, str)]
         counterexamples = [item for item in envelope.get("counterexamples", []) if isinstance(item, str)]
         feedback = envelope.get("feedback", "")
-        raw_lower = raw.lower()
-        negated_greeting = bool(re.search(r"\bnot\s+(?:a\s+)?greeting\b", raw_lower))
-        interpreted = (
-            self._contains_word(raw, "hello")
-            and self._contains_word(raw, "greeting")
-            and not negated_greeting
-        )
-        if interpreted:
-            hello_rule["evidence_count"] += 1
-            hello_rule["confidence"] = min(0.95, float(hello_rule["confidence"]) + 0.2)
-            hello_rule["provisional"] = hello_rule["confidence"] < 0.75
-        for example in examples:
-            if self._classify_hello_pattern(example) == "opening_greeting_pattern":
-                hello_rule["examples"].append(example)
-                hello_rule["confidence"] = min(0.98, float(hello_rule["confidence"]) + 0.06)
-        for item in counterexamples:
-            hello_rule["counterexamples"].append(item)
-            classification = self._classify_hello_pattern(item)
-            if classification != "unrelated" and classification != "reported_utterance_pattern":
-                hello_rule["contradictions"] += 1
-                hello_rule["confidence"] = max(0.05, float(hello_rule["confidence"]) - 0.1)
-                hello_rule["provisional"] = True
-        if isinstance(feedback, str) and "not greeting" in feedback.lower() and self._contains_word(feedback, "hello"):
-            hello_rule["contradictions"] += 1
-            hello_rule["confidence"] = max(0.05, float(hello_rule["confidence"]) - 0.2)
-            hello_rule["provisional"] = True
+        metadata = envelope.get("metadata", {})
+        metadata = metadata if isinstance(metadata, dict) else {}
+        relations = self._extract_relations(raw, metadata)
+        interpreted = bool(relations)
+        if not interpreted:
+            self._save_pattern_learning_state()
+            return {
+                "status": "success",
+                "content": {
+                    "delivered": True,
+                    "interpreted": False,
+                    "update_proposed": False,
+                    "update_accepted": False,
+                    "behavior_affected": False,
+                    "validation_passed": True,
+                    "changes": {},
+                    "evidence": [raw] + examples + counterexamples,
+                },
+            }
+
+        updates = []
+        for token, concept in relations:
+            rule = state["token_rules"].setdefault(
+                token,
+                {
+                    "token": token,
+                    "concept_hint": concept,
+                    "confidence": 0.2,
+                    "evidence_count": 0,
+                    "contradictions": 0,
+                    "opening_hits": 0,
+                    "embedded_hits": 0,
+                    "exceptions": [],
+                    "retired": False,
+                    "provisional": True,
+                },
+            )
+            if event_type := envelope.get("event_type", "experience"):
+                if event_type in {"correction", "outcome"} and (
+                    ("not" in raw.lower() and self._token_in_text(raw, token))
+                    or (isinstance(feedback, str) and "not" in feedback.lower() and self._token_in_text(feedback, token))
+                ):
+                    rule["contradictions"] += 1
+                    rule["confidence"] = max(0.0, float(rule["confidence"]) - 0.2)
+                    rule["provisional"] = True
+                    if float(rule["confidence"]) < 0.12:
+                        rule["retired"] = True
+                        rule["exceptions"].append({"reason": "retired_due_to_contradiction"})
+                else:
+                    rule["evidence_count"] += 1
+                    rule["confidence"] = min(0.98, float(rule["confidence"]) + 0.18)
+                    rule["retired"] = False
+            for example in examples:
+                classification = self._classify_token_pattern(example, token)
+                if classification == "opening_token":
+                    rule["opening_hits"] += 1
+                    rule["confidence"] = min(0.99, float(rule["confidence"]) + 0.05)
+                elif classification == "embedded_token":
+                    rule["embedded_hits"] += 1
+                    rule["confidence"] = min(0.99, float(rule["confidence"]) + 0.02)
+            for example in counterexamples:
+                if self._token_in_text(example, token):
+                    rule["contradictions"] += 1
+                    rule["confidence"] = max(0.0, float(rule["confidence"]) - 0.12)
+                    rule["exceptions"].append({"counterexample": example})
+                    rule["provisional"] = True
+            rule["provisional"] = float(rule["confidence"]) < 0.72 or bool(rule["retired"])
+            updates.append(
+                {
+                    "token": token,
+                    "concept_hint": concept,
+                    "confidence": float(rule["confidence"]),
+                    "provisional": bool(rule["provisional"]),
+                    "retired": bool(rule["retired"]),
+                    "opening_hits": int(rule["opening_hits"]),
+                    "embedded_hits": int(rule["embedded_hits"]),
+                    "contradictions": int(rule["contradictions"]),
+                }
+            )
 
         self._save_pattern_learning_state()
         return {
             "status": "success",
             "content": {
                 "delivered": True,
-                "interpreted": interpreted,
-                "update_proposed": interpreted or bool(examples) or bool(counterexamples),
-                "update_accepted": True,
-                "behavior_affected": interpreted,
+                "interpreted": True,
+                "update_proposed": True,
+                "update_accepted": bool(updates),
+                "behavior_affected": bool(updates),
                 "validation_passed": True,
-                "confidence": hello_rule["confidence"],
+                "confidence": max((item["confidence"] for item in updates), default=0.0),
                 "changes": {
-                    "pattern_rule": "hello_opening",
-                    "evidence_count": hello_rule["evidence_count"],
-                    "contradictions": hello_rule["contradictions"],
-                    "provisional": hello_rule["provisional"],
+                    "token_rule_updates": updates,
                 },
                 "evidence": [raw] + examples + counterexamples,
             },
@@ -1035,25 +1107,33 @@ class AdvancedPatternRecognition:
         if msg_type == 'get_pattern_learning_state':
             user_id = self._safe_user(payload.get("user_id", "default"))
             user_state = self._user_learning_state(user_id)
+            token = payload.get("token")
+            token_rules = user_state.get("token_rules", {})
+            if isinstance(token, str) and token.strip():
+                token_rules = token_rules.get(token.strip().lower(), {})
             return {
                 'status': 'success',
                 'content': {
                     'state_path': str(self.learning_state_path),
                     'user_id': user_id,
-                    'hello_rule': user_state.get("greeting_patterns", {}).get("hello_opening"),
+                    'token_rules': token_rules,
                 },
             }
 
-        if msg_type == 'classify_hello_pattern':
+        if msg_type == 'classify_token_pattern':
             user_id = self._safe_user(payload.get("user_id", "default"))
+            token = payload.get("token")
             text = payload.get("text", payload.get("user_input", ""))
+            if not isinstance(token, str) or not token.strip():
+                return {'status': 'error', 'message': 'token is required'}
             if not isinstance(text, str):
                 text = ""
-            rule = self._user_learning_state(user_id).get("greeting_patterns", {}).get("hello_opening", {})
+            token_key = token.strip().lower()
+            rule = self._user_learning_state(user_id).get("token_rules", {}).get(token_key, {})
             return {
                 'status': 'success',
                 'content': {
-                    'classification': self._classify_hello_pattern(text),
+                    'classification': self._classify_token_pattern(text, token_key),
                     'rule_confidence': float(rule.get("confidence", 0.0)),
                     'provisional': bool(rule.get("provisional", True)),
                 },
@@ -1071,18 +1151,28 @@ class AdvancedPatternRecognition:
             text = text if isinstance(text, str) else ""
             user_id = self._safe_user(payload.get("user_id", "default"))
             user_state = self._user_learning_state(user_id)
-            rule = user_state.get("greeting_patterns", {}).get("hello_opening", {})
-            learned_classification = self._classify_hello_pattern(text) if text else "unrelated"
-            behavior_match = (
-                float(rule.get("confidence", 0.0)) >= 0.35
-                and learned_classification == "opening_greeting_pattern"
-            )
-            if text and learned_classification == "unrelated":
+            token_rules = user_state.get("token_rules", {})
+            rule_matches = []
+            for token, rule in token_rules.items():
+                classification = self._classify_token_pattern(text, token) if text else "unrelated"
+                if classification == "unrelated":
+                    continue
+                if float(rule.get("confidence", 0.0)) < 0.35 or bool(rule.get("retired", False)):
+                    continue
+                rule_matches.append(
+                    {
+                        "token": token,
+                        "concept_hint": rule.get("concept_hint"),
+                        "classification": classification,
+                        "confidence": float(rule.get("confidence", 0.0)),
+                        "provisional": bool(rule.get("provisional", True)),
+                    }
+                )
+            if text and not rule_matches:
                 tokens = re.findall(r"[a-zA-Z']+", text.lower())
                 unknowns = user_state.get("observed_unknown_tokens", {})
                 for token in tokens:
-                    if token != "hello":
-                        unknowns[token] = int(unknowns.get(token, 0)) + 1
+                    unknowns[token] = int(unknowns.get(token, 0)) + 1
                 self._save_pattern_learning_state()
             patterns = self.observe(data)
             return {
@@ -1090,9 +1180,8 @@ class AdvancedPatternRecognition:
                 'patterns': patterns,
                 'content': {
                     'patterns': patterns,
-                    'hello_classification': learned_classification,
-                    'hello_rule_applied': behavior_match,
-                    'hello_rule_confidence': float(rule.get("confidence", 0.0)),
+                    'token_rule_matches': rule_matches,
+                    'token_rule_applied': bool(rule_matches),
                 },
             }
             

@@ -21,11 +21,11 @@ def normalize_learning_result(lobe: str, event_id: str, raw: Dict[str, Any]) -> 
     if not isinstance(content, dict):
         content = {}
     delivered = bool(content.get("delivered", response.get("status") != "error"))
-    interpreted = bool(content.get("interpreted", response.get("status") == "success"))
-    update_proposed = bool(content.get("update_proposed", interpreted))
-    update_accepted = bool(content.get("update_accepted", response.get("status") == "success"))
+    interpreted = bool(content.get("interpreted", False))
+    update_proposed = bool(content.get("update_proposed", False))
+    update_accepted = bool(content.get("update_accepted", False))
     behavior_affected = bool(content.get("behavior_affected", False))
-    validation_passed = bool(content.get("validation_passed", response.get("status") == "success"))
+    validation_passed = bool(content.get("validation_passed", False))
     return {
         "lobe": lobe,
         "event_id": event_id,

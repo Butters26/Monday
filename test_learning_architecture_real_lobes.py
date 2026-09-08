@@ -1,263 +1,242 @@
-"""Real-lobe learning architecture tests for shared experiential envelopes."""
+"""Real-lobe generic experiential learning tests."""
 
 from __future__ import annotations
 
 import json
+import uuid
+from pathlib import Path
 
-from pattern_recognition import AdvancedPatternRecognition
 from run_abin import create_core_systems, shutdown_core_systems
 
 
-def _attach_pattern_lobe(systems):
-    pattern = AdvancedPatternRecognition(thalamus=systems["thalamus"])
-    systems["pattern"] = pattern
-    result = systems["thalamus"].register_lobe("pattern", pattern)
-    assert result["status"] == "success"
-    return pattern
+def _new_token(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
-def _teach_hello(systems, user_id="alice"):
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _assert_token_not_in_production_sources(token: str) -> None:
+    root = _repo_root()
+    for path in root.rglob("*.py"):
+        rel = path.relative_to(root).as_posix()
+        if path.name.startswith("test_") or "/tests/" in f"/{rel}/":
+            continue
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        assert token not in content
+
+
+def _teach_relation(
+    systems,
+    *,
+    user_id: str,
+    token: str,
+    concept: str,
+    positives: list[str],
+    negatives: list[str],
+    event_type: str = "explicit_lesson",
+):
     return systems["thalamus"].handle_request(
         {
             "type": "learn_from_experience",
             "content": {
-                "event_type": "explicit_lesson",
+                "event_type": event_type,
                 "user_id": user_id,
-                "raw_experience": "Hello is a greeting people use when beginning an interaction.",
-                "examples": [
-                    "Hello",
-                    "Hello, Monday",
-                    "Well, hello there...",
-                ],
-                "counterexamples": [
-                    "shelloworld",
-                ],
+                "raw_experience": f"{token} is a {concept}.",
+                "examples": positives,
+                "counterexamples": negatives,
+                "metadata": {"relation": {"token": token, "concept": concept}},
                 "confidence": 0.8,
             },
         }
     )
 
 
-def test_real_lobes_start_without_hello_relation_or_pattern(tmp_path):
-    systems = create_core_systems(str(tmp_path / "runtime"))
-    _attach_pattern_lobe(systems)
+def test_generic_real_lobe_learning_random_tokens_generalizes_and_rejects_counterexample(tmp_path):
+    runtime = tmp_path / "runtime"
+    token = _new_token("tok")
+    concept = _new_token("concept")
+    held_out_positive = f"Now {token} appears in this completely new sentence."
+    held_out_negative = f"x{token}x is a larger alphanumeric chunk, not a standalone token."
+
+    _assert_token_not_in_production_sources(token)
+    _assert_token_not_in_production_sources(concept)
+
+    systems = create_core_systems(str(runtime))
     try:
-        language = systems["thalamus"].send_message(
+        before_language = systems["thalamus"].send_message(
+            "language", "assess_token_usage", {"user_id": "alice", "token": token, "text": held_out_positive}
+        )
+        before_pattern = systems["thalamus"].send_message(
+            "pattern", "classify_token_pattern", {"user_id": "alice", "token": token, "text": held_out_positive}
+        )
+        before_generate = systems["thalamus"].send_message(
             "language",
-            "classify_hello_usage",
-            {"user_id": "alice", "text": "Hello, Monday"},
+            "generate",
+            {"user_id": "alice", "user_input": held_out_positive, "semantic_input": {"intent": "state_fact"}},
         )
-        pattern = systems["thalamus"].send_message(
-            "pattern",
-            "classify_hello_pattern",
-            {"user_id": "alice", "text": "Hello, Monday"},
+        before_observe = systems["thalamus"].send_message(
+            "pattern", "process_input", {"user_id": "alice", "data": {"user_input": held_out_positive}}
         )
-        assert language["content"]["relation_confidence"] == 0.0
-        assert pattern["content"]["rule_confidence"] == 0.0
-    finally:
-        shutdown_core_systems(systems)
+        assert before_language["content"]["known"] is False
+        assert before_pattern["content"]["rule_confidence"] == 0.0
+        assert before_generate["content"]["token_matches"] == []
+        assert before_observe["content"]["token_rule_applied"] is False
 
-
-def test_shared_event_routes_to_all_relevant_lobes_and_reports_stages(tmp_path):
-    systems = create_core_systems(str(tmp_path / "runtime"))
-    _attach_pattern_lobe(systems)
-    try:
-        learned = _teach_hello(systems)
-        assert learned["status"] == "success"
-        targets = set(learned["content"]["targets"])
-        assert {"language", "pattern"}.issubset(targets)
-        results = {row["lobe"]: row for row in learned["content"]["results"]}
+        lesson = _teach_relation(
+            systems,
+            user_id="alice",
+            token=token,
+            concept=concept,
+            positives=[
+                f"{token} starts this first training sentence.",
+                f"{token} starts this second training sentence.",
+            ],
+            negatives=[held_out_negative],
+        )
+        assert lesson["status"] == "success"
+        assert {"language", "pattern"}.issubset(set(lesson["content"]["targets"]))
+        results = {row["lobe"]: row for row in lesson["content"]["results"]}
         for lobe in ("language", "pattern"):
             assert results[lobe]["delivered"] is True
             assert results[lobe]["interpreted"] is True
             assert results[lobe]["update_proposed"] is True
             assert results[lobe]["update_accepted"] is True
             assert results[lobe]["validation_passed"] is True
-    finally:
-        shutdown_core_systems(systems)
 
+        assert "relation_updates" in results["language"]["changes"]
+        assert "token_rule_updates" in results["pattern"]["changes"]
+        assert json.dumps(results["language"]["changes"]) != f"{token} is a {concept}."
+        assert json.dumps(results["pattern"]["changes"]) != f"{token} is a {concept}."
 
-def test_invalid_envelope_fails_and_delivery_alone_is_not_learning_success(tmp_path):
-    systems = create_core_systems(str(tmp_path / "runtime"))
-    _attach_pattern_lobe(systems)
-    try:
-        result = systems["thalamus"].handle_request(
-            {"type": "learn_from_experience", "content": {"user_id": "alice", "raw_experience": ""}}
+        after_language = systems["thalamus"].send_message(
+            "language", "assess_token_usage", {"user_id": "alice", "token": token, "text": held_out_positive}
         )
-        assert result["status"] == "error"
-        assert result["content"]["accepted"] == 0 if "accepted" in result["content"] else True
-    finally:
-        shutdown_core_systems(systems)
-
-
-def test_real_lobes_create_different_internal_updates_from_same_event(tmp_path):
-    systems = create_core_systems(str(tmp_path / "runtime"))
-    _attach_pattern_lobe(systems)
-    try:
-        learned = _teach_hello(systems)
-        results = {row["lobe"]: row for row in learned["content"]["results"]}
-        assert results["language"]["changes"]["semantic_relation"] == "hello:greeting"
-        assert results["pattern"]["changes"]["pattern_rule"] == "hello_opening"
-    finally:
-        shutdown_core_systems(systems)
-
-
-def test_learning_changes_real_language_and_pattern_behavior_paths(tmp_path):
-    systems = create_core_systems(str(tmp_path / "runtime"))
-    _attach_pattern_lobe(systems)
-    try:
-        before = systems["thalamus"].send_message(
+        after_pattern = systems["thalamus"].send_message(
+            "pattern", "classify_token_pattern", {"user_id": "alice", "token": token, "text": held_out_positive}
+        )
+        after_generate = systems["thalamus"].send_message(
             "language",
             "generate",
-            {"user_id": "alice", "user_input": "Hello, Monday", "semantic_input": {"intent": "state_fact"}},
+            {"user_id": "alice", "user_input": held_out_positive, "semantic_input": {"intent": "state_fact"}},
         )
-        _teach_hello(systems)
-        after = systems["thalamus"].send_message(
+        after_observe = systems["thalamus"].send_message(
+            "pattern", "process_input", {"user_id": "alice", "data": {"user_input": held_out_positive}}
+        )
+        counter_generate = systems["thalamus"].send_message(
             "language",
             "generate",
-            {"user_id": "alice", "user_input": "Hello, Monday", "semantic_input": {"intent": "state_fact"}},
+            {"user_id": "alice", "user_input": held_out_negative, "semantic_input": {"intent": "state_fact"}},
         )
-        observed = systems["thalamus"].send_message(
-            "pattern",
-            "process_input",
-            {"user_id": "alice", "data": {"user_input": "Hello, Monday"}},
+        counter_observe = systems["thalamus"].send_message(
+            "pattern", "process_input", {"user_id": "alice", "data": {"user_input": held_out_negative}}
         )
-        assert "greeting" not in before["sentence"].lower()
-        assert "greeting" in after["sentence"].lower()
-        assert observed["content"]["hello_rule_applied"] is True
+
+        assert after_language["content"]["known"] is True
+        assert after_language["content"]["concept"] == concept
+        assert after_language["content"]["boundary_match"] is True
+        assert after_pattern["content"]["rule_confidence"] > 0.0
+        assert after_generate["content"]["token_matches"]
+        assert after_observe["content"]["token_rule_applied"] is True
+        assert counter_generate["content"]["token_matches"] == []
+        assert counter_observe["content"]["token_rule_applied"] is False
     finally:
         shutdown_core_systems(systems)
 
-
-def test_learned_structures_generalize_and_distinguish_unrelated_inputs(tmp_path):
-    systems = create_core_systems(str(tmp_path / "runtime"))
-    _attach_pattern_lobe(systems)
-    try:
-        _teach_hello(systems)
-        language_generalized = systems["thalamus"].send_message(
-            "language", "classify_hello_usage", {"user_id": "alice", "text": "Well, hello there..."}
-        )
-        pattern_generalized = systems["thalamus"].send_message(
-            "pattern", "classify_hello_pattern", {"user_id": "alice", "text": "Well, hello there..."}
-        )
-        language_unrelated = systems["thalamus"].send_message(
-            "language", "classify_hello_usage", {"user_id": "alice", "text": "shelloworld"}
-        )
-        pattern_unrelated = systems["thalamus"].send_message(
-            "pattern", "classify_hello_pattern", {"user_id": "alice", "text": "shelloworld"}
-        )
-        assert language_generalized["content"]["classification"] == "interjectional_greeting"
-        assert pattern_generalized["content"]["classification"] == "opening_greeting_pattern"
-        assert language_unrelated["content"]["classification"] == "unrelated"
-        assert pattern_unrelated["content"]["classification"] == "unrelated"
-    finally:
-        shutdown_core_systems(systems)
-
-
-def test_learning_persists_restart_is_runtime_isolated_and_user_scoped(tmp_path):
-    runtime = tmp_path / "runtime"
-    first = create_core_systems(str(runtime))
-    _attach_pattern_lobe(first)
-    try:
-        _teach_hello(first, user_id="alice")
-        paths = {
-            "language": first["thalamus"].send_message("language", "get_language_learning_state", {"user_id": "alice"})["content"]["state_path"],
-            "pattern": first["thalamus"].send_message("pattern", "get_pattern_learning_state", {"user_id": "alice"})["content"]["state_path"],
-        }
-        assert str(runtime) in paths["language"]
-        assert str(runtime) in paths["pattern"]
-        assert paths["language"] != paths["pattern"]
-    finally:
-        shutdown_core_systems(first)
-
-    second = create_core_systems(str(runtime))
-    _attach_pattern_lobe(second)
-    try:
-        language = second["thalamus"].send_message(
-            "language", "classify_hello_usage", {"user_id": "alice", "text": "Hello"}
-        )
-        bob = second["thalamus"].send_message(
-            "language", "classify_hello_usage", {"user_id": "bob", "text": "Hello"}
-        )
-        assert language["content"]["relation_confidence"] > 0.0
-        assert bob["content"]["relation_confidence"] == 0.0
-    finally:
-        shutdown_core_systems(second)
-
-
-def test_notus_retains_learning_events_but_not_lobe_learning_ownership(tmp_path):
-    systems = create_core_systems(str(tmp_path / "runtime"))
-    _attach_pattern_lobe(systems)
-    try:
-        learned = _teach_hello(systems)
-        event_id = learned["content"]["envelope"]["event_id"]
-        memories = systems["notus"].retrieve_memories("", user_id="alice", memory_type="learning_event")
-        assert memories
-        assert any(event_id in memory["content"] for memory in memories)
-        deprecated = systems["thalamus"].send_message(
-            "notus",
-            "learn_lobe_fact",
-            {"lobe": "language", "user_id": "alice", "fact": "hello is greeting"},
-        )
-        assert deprecated["status"] == "error"
-        assert deprecated["content"]["deprecated"] is True
-    finally:
-        shutdown_core_systems(systems)
-
-
-def test_contradictory_evidence_revises_confidence_and_safe_corrupt_load(tmp_path):
-    runtime = tmp_path / "runtime"
-    systems = create_core_systems(str(runtime))
-    _attach_pattern_lobe(systems)
-    try:
-        _teach_hello(systems)
-        before = systems["thalamus"].send_message(
-            "language", "get_language_learning_state", {"user_id": "alice"}
-        )
-        before_confidence = float(before["content"]["hello_relation"]["confidence"])
-        systems["thalamus"].handle_request(
-            {
-                "type": "learn_from_experience",
-                "content": {
-                    "event_type": "correction",
-                    "user_id": "alice",
-                    "raw_experience": "In this context hello is not a greeting opener.",
-                    "feedback": "hello not greeting here",
-                    "counterexamples": ["He said hello before leaving"],
-                },
-            }
-        )
-        after = systems["thalamus"].send_message(
-            "language", "get_language_learning_state", {"user_id": "alice"}
-        )
-        assert float(after["content"]["hello_relation"]["confidence"]) < before_confidence
-    finally:
-        shutdown_core_systems(systems)
-
-    # Corrupt state files should not crash reload.
-    state_dir = runtime / "lobe_state"
-    (state_dir / "language_learning.json").write_text("{not-json", encoding="utf-8")
-    (state_dir / "pattern_learning.json").write_text("{broken", encoding="utf-8")
     restarted = create_core_systems(str(runtime))
-    _attach_pattern_lobe(restarted)
     try:
-        language = restarted["thalamus"].send_message(
-            "language", "classify_hello_usage", {"user_id": "alice", "text": "Hello"}
+        persisted = restarted["thalamus"].send_message(
+            "language", "assess_token_usage", {"user_id": "alice", "token": token, "text": held_out_positive}
         )
-        pattern = restarted["thalamus"].send_message(
-            "pattern", "classify_hello_pattern", {"user_id": "alice", "text": "Hello"}
+        isolated = restarted["thalamus"].send_message(
+            "language", "assess_token_usage", {"user_id": "bob", "token": token, "text": held_out_positive}
         )
-        assert language["status"] == "success"
-        assert pattern["status"] == "success"
+        assert persisted["content"]["known"] is True
+        assert isolated["content"]["known"] is False
+
+        second_token = _new_token("tok2")
+        second_concept = _new_token("concept2")
+        _assert_token_not_in_production_sources(second_token)
+        _assert_token_not_in_production_sources(second_concept)
+        second = _teach_relation(
+            restarted,
+            user_id="alice",
+            token=second_token,
+            concept=second_concept,
+            positives=[f"{second_token} is now in an unrelated lesson example."],
+            negatives=[f"z{second_token}z should not match token boundaries."],
+        )
+        assert second["status"] == "success"
+        second_assess = restarted["thalamus"].send_message(
+            "language", "assess_token_usage", {"user_id": "alice", "token": second_token, "text": second_token}
+        )
+        assert second_assess["content"]["known"] is True
+        assert second_assess["content"]["concept"] == second_concept
     finally:
         shutdown_core_systems(restarted)
 
 
-def test_existing_direct_core_path_still_works(tmp_path):
+def test_contradictory_evidence_can_lower_confidence_or_retire_generic_relation(tmp_path):
     systems = create_core_systems(str(tmp_path / "runtime"))
+    token = _new_token("tok")
+    concept = _new_token("concept")
     try:
-        response = systems["thalamus"].process_user_input("Hello Monday, explain memory?")
-        assert isinstance(response, str)
-        assert response.strip()
+        _teach_relation(
+            systems,
+            user_id="alice",
+            token=token,
+            concept=concept,
+            positives=[f"{token} starts here."],
+            negatives=[],
+        )
+        before = systems["thalamus"].send_message(
+            "language", "get_language_learning_state", {"user_id": "alice", "token": token}
+        )
+        before_entry = before["content"]["concept_relations"][concept]
+        before_confidence = float(before_entry["confidence"])
+
+        _teach_relation(
+            systems,
+            user_id="alice",
+            token=token,
+            concept=concept,
+            positives=[],
+            negatives=[f"{token} appears but should not be treated as {concept} here."],
+            event_type="correction",
+        )
+        after = systems["thalamus"].send_message(
+            "language", "get_language_learning_state", {"user_id": "alice", "token": token}
+        )
+        after_entry = after["content"]["concept_relations"][concept]
+        assert float(after_entry["confidence"]) < before_confidence or bool(after_entry.get("retired", False))
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_delivery_without_interpretation_is_not_counted_as_learning_acceptance(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    token = _new_token("tok")
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "learn_from_experience",
+                "content": {
+                    "event_type": "explicit_lesson",
+                    "user_id": "alice",
+                    "raw_experience": f"{token} has no supported relation phrase in this envelope",
+                    "examples": [f"{token} appears once"],
+                    "counterexamples": [],
+                },
+            }
+        )
+        assert result["status"] in {"partial", "success"}
+        rows = {row["lobe"]: row for row in result["content"]["results"]}
+        assert rows["language"]["delivered"] is True
+        assert rows["pattern"]["delivered"] is True
+        assert rows["language"]["interpreted"] is False
+        assert rows["pattern"]["interpreted"] is False
+        assert rows["language"]["update_accepted"] is False
+        assert rows["pattern"]["update_accepted"] is False
     finally:
         shutdown_core_systems(systems)

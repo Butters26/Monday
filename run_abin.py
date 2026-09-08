@@ -12,6 +12,7 @@ from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
 from direct_notus import DirectNotusProcess
 from output import OutputLobe
+from pattern_recognition import AdvancedPatternRecognition
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -20,7 +21,7 @@ def create_core_systems(
     runtime_directory: Optional[str] = None,
     reasoning_factory: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Instantiate and register only the six prompted-path systems.
+    """Instantiate and register direct-call systems, including Pattern.
 
     `runtime_directory` is intended for embedding and tests.  It defaults to
     the private directory selected by ``MONDAY_RUNTIME_DIR``.
@@ -41,10 +42,11 @@ def create_core_systems(
             thalamus=thalamus,
             **({"reasoner_factory": reasoning_factory} if reasoning_factory else {}),
         ),
+        "pattern": AdvancedPatternRecognition(thalamus=thalamus),
         "language": LanguageGenerator(thalamus=thalamus),
         "output": OutputLobe(thalamus=thalamus, enable_tts=False),
     }
-    for name in ("conversation", "notus", "emotion", "reasoning", "language", "output"):
+    for name in ("conversation", "notus", "emotion", "reasoning", "pattern", "language", "output"):
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
@@ -52,7 +54,7 @@ def create_core_systems(
 
 
 def shutdown_core_systems(systems: Dict[str, Any]) -> None:
-    for name in ("output", "language", "reasoning", "emotion", "notus", "conversation"):
+    for name in ("output", "language", "pattern", "reasoning", "emotion", "notus", "conversation"):
         shutdown = getattr(systems.get(name), "shutdown", None)
         if callable(shutdown):
             shutdown()
