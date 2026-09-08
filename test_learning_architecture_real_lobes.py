@@ -112,6 +112,11 @@ def test_generic_real_lobe_learning_random_tokens_generalizes_and_rejects_counte
         assert "token_rule_updates" in results["pattern"]["changes"]
         assert json.dumps(results["language"]["changes"]) != f"{token} is a {concept}."
         assert json.dumps(results["pattern"]["changes"]) != f"{token} is a {concept}."
+        learning_event_rows = systems["notus"].retrieve_memories(
+            token, user_id="alice", memory_type="learning_event"
+        )
+        assert learning_event_rows
+        assert any(token in row["content"] and concept in row["content"] for row in learning_event_rows)
 
         after_language = systems["thalamus"].send_message(
             "language", "assess_token_usage", {"user_id": "alice", "token": token, "text": held_out_positive}
@@ -144,6 +149,15 @@ def test_generic_real_lobe_learning_random_tokens_generalizes_and_rejects_counte
         assert after_observe["content"]["token_rule_applied"] is True
         assert counter_generate["content"]["token_matches"] == []
         assert counter_observe["content"]["token_rule_applied"] is False
+        language_state = systems["thalamus"].send_message(
+            "language", "get_language_learning_state", {"user_id": "alice"}
+        )
+        pattern_state = systems["thalamus"].send_message(
+            "pattern", "get_pattern_learning_state", {"user_id": "alice"}
+        )
+        assert str(runtime) in language_state["content"]["state_path"]
+        assert str(runtime) in pattern_state["content"]["state_path"]
+        assert language_state["content"]["state_path"] != pattern_state["content"]["state_path"]
     finally:
         shutdown_core_systems(systems)
 
@@ -244,3 +258,41 @@ def test_delivery_without_interpretation_is_not_counted_as_learning_acceptance(t
         assert rows["pattern"]["update_accepted"] is False
     finally:
         shutdown_core_systems(systems)
+
+
+def test_corrupt_lobe_state_files_fail_safe_and_direct_core_path_still_works(tmp_path):
+    runtime = tmp_path / "runtime"
+    systems = create_core_systems(str(runtime))
+    token = _new_token("tok")
+    concept = _new_token("concept")
+    try:
+        _teach_relation(
+            systems,
+            user_id="alice",
+            token=token,
+            concept=concept,
+            positives=[f"{token} starts here."],
+            negatives=[],
+        )
+    finally:
+        shutdown_core_systems(systems)
+
+    state_dir = runtime / "lobe_state"
+    (state_dir / "language_learning.json").write_text("{not-json", encoding="utf-8")
+    (state_dir / "pattern_learning.json").write_text("{broken", encoding="utf-8")
+
+    restarted = create_core_systems(str(runtime))
+    try:
+        language = restarted["thalamus"].send_message(
+            "language", "assess_token_usage", {"user_id": "alice", "token": token, "text": token}
+        )
+        pattern = restarted["thalamus"].send_message(
+            "pattern", "classify_token_pattern", {"user_id": "alice", "token": token, "text": token}
+        )
+        direct_response = restarted["thalamus"].process_user_input("Explain memory in one sentence.", user_id="alice")
+        assert language["status"] == "success"
+        assert pattern["status"] == "success"
+        assert isinstance(direct_response, str)
+        assert direct_response.strip()
+    finally:
+        shutdown_core_systems(restarted)

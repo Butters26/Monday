@@ -16,7 +16,7 @@ def test_prompted_core_path_persists_memory_and_delivers_output(tmp_path):
         assert response
         assert systems["output"].last_output == response
         assert list(systems["thalamus"].lobe_handlers) == [
-            "conversation", "notus", "emotion", "reasoning", "language", "output"
+            "conversation", "notus", "emotion", "reasoning", "pattern", "language", "output"
         ]
         route_names = [route["to"] for route in systems["thalamus"].message_routes]
         prompted_path = ["conversation", "notus", "emotion", "reasoning", "language", "output"]
@@ -243,7 +243,7 @@ def test_response_provider_failure_uses_safe_fallback(tmp_path):
 
 def test_all_core_lobes_support_learn_and_recall_contract(tmp_path):
     systems = create_core_systems(str(tmp_path / "runtime"))
-    core_lobes = ["conversation", "notus", "emotion", "reasoning", "language", "output"]
+    core_lobes = ["conversation", "notus", "emotion", "reasoning", "pattern", "language", "output"]
     try:
         for lobe_name in core_lobes:
             result = systems["thalamus"].send_message(
