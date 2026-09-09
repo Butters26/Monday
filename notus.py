@@ -89,6 +89,7 @@ class SuperhumanConfig:
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
     snapshot_path: str = runtime_file("monday_notus_snapshot.json")
+    use_sentence_transformer: bool = False
     
     # Advanced retrieval
     attention_heads: int = 4
@@ -128,6 +129,11 @@ class AdvancedEmbeddingEngine:
         self._initialize_model()
         
     def _initialize_model(self):
+        if not self.config.use_sentence_transformer:
+            logger.info("Sentence-transformers disabled; using basic embeddings")
+            self.model = None
+            self.model_type = 'basic'
+            return
         try:
             from sentence_transformers import SentenceTransformer
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -341,17 +347,29 @@ class SuperhumanMemorySystem:
 
         logger.info(f"🧠 Fixed Superhuman Memory System initialized")
 
-        # Seed baseline knowledge immediately so no background thread keeps using
-        # the DB connection after callers begin shutdown/cleanup.
-        try:
-            self._seed_editor_knowledge()
-        except Exception as e:
-            logger.warning(f"Editor knowledge seed failed: {e}")
-        try:
-            self._seed_vocabulary_and_grammar()
-        except Exception as e:
-            logger.warning(f"Vocabulary/grammar seed failed: {e}")
-        logger.info("🌱 Knowledge seeding completed")
+        # Seed baseline editor knowledge (idempotent) in a background thread.
+        self._seed_shutdown = threading.Event()
+        self._seed_thread = None
+        if self.config.autosave_enabled:
+            def _background_seed():
+                if self._seed_shutdown.is_set():
+                    return
+                try:
+                    self._seed_editor_knowledge()
+                except Exception as e:
+                    logger.warning(f"Editor knowledge seed failed: {e}")
+                if self._seed_shutdown.is_set():
+                    return
+                try:
+                    self._seed_vocabulary_and_grammar()
+                except Exception as e:
+                    logger.warning(f"Vocabulary/grammar seed failed: {e}")
+
+            self._seed_thread = threading.Thread(target=_background_seed, daemon=True)
+            self._seed_thread.start()
+            logger.info("🌱 Background seeding started")
+        else:
+            logger.info("🌱 Background seeding disabled for this configuration")
     
     def _init_database(self):
         self._db_sqlite = False  # Track which backend is active
@@ -1227,6 +1245,23 @@ class SuperhumanMemorySystem:
                 logger.info("✅ Seeded vocabulary and grammar knowledge")
         except Exception as e:
             logger.error(f"Failed to seed vocabulary/grammar: {e}")
+
+    def shutdown(self):
+        """Stop background seed activity and close the DB connection safely."""
+        seed_stop = getattr(self, "_seed_shutdown", None)
+        if seed_stop is not None:
+            seed_stop.set()
+        seed_thread = getattr(self, "_seed_thread", None)
+        if seed_thread and seed_thread.is_alive():
+            seed_thread.join(timeout=3)
+        with DB_LOCK:
+            connection = getattr(self, "_db_connection", None)
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+                self._db_connection = None
 
     # ===== Brain: Durable Facts + Active Learning =====
     def remember_fact(self, subject: str, predicate: str, obj: str, value: Optional[str] = None,

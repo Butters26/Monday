@@ -39,7 +39,7 @@ from notus import (
 
 
 # ---------------------------------------------------------------------------
-# Helper: in-memory SuperhumanMemorySystem (SQLite, no seed threads)
+# Helper: in-memory SuperhumanMemorySystem (SQLite backend)
 # ---------------------------------------------------------------------------
 def _make_memory_system(tmp_path: str) -> SuperhumanMemorySystem:
     cfg = SuperhumanConfig(
@@ -145,7 +145,7 @@ class TestSuperhumanMemoryStore(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.mem._db_connection.close()
+            self.mem.shutdown()
         except Exception:
             pass
 
@@ -187,7 +187,7 @@ class TestSuperhumanMemoryStore(unittest.TestCase):
         fresh = _make_memory_system(tmp2)
         results = fresh.retrieve_memories("anything")
         self.assertIsInstance(results, list)
-        fresh._db_connection.close()
+        fresh.shutdown()
 
     def test_store_memory_result_has_required_keys(self):
         self.mem.store_memory("user", "test content for keys")
@@ -210,7 +210,7 @@ class TestBrainFacts(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.mem._db_connection.close()
+            self.mem.shutdown()
         except Exception:
             pass
 
@@ -284,7 +284,7 @@ class TestEpisodicMemory(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.mem._db_connection.close()
+            self.mem.shutdown()
         except Exception:
             pass
 
@@ -322,7 +322,7 @@ class TestMemoryAssociations(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.mem._db_connection.close()
+            self.mem.shutdown()
         except Exception:
             pass
 
@@ -378,7 +378,7 @@ class TestCompatCursor(unittest.TestCase):
         self.conn.commit()
         row = self.conn.execute("SELECT v FROM pct").fetchone()
         self.assertEqual(row[0], "hello")
-        mem._db_connection.close()
+        mem.shutdown()
 
     def test_on_conflict_translated(self):
         c, mem = self._compat()
@@ -394,7 +394,7 @@ class TestCompatCursor(unittest.TestCase):
         self.conn.commit()
         row = self.conn.execute("SELECT b FROM upsert WHERE a = 'k'").fetchone()
         self.assertEqual(row[0], "v2")
-        mem._db_connection.close()
+        mem.shutdown()
 
     def test_least_to_min(self):
         c, mem = self._compat()
@@ -405,7 +405,7 @@ class TestCompatCursor(unittest.TestCase):
         self.conn.commit()
         row = self.conn.execute("SELECT v FROM nums").fetchone()
         self.assertAlmostEqual(row[0], 0.5)
-        mem._db_connection.close()
+        mem.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +557,7 @@ class TestObserve(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.mem._db_connection.close()
+            self.mem.shutdown()
         except Exception:
             pass
 
@@ -591,7 +591,7 @@ class TestPromptUtils(unittest.TestCase):
 
     def tearDown(self):
         try:
-            self.mem._db_connection.close()
+            self.mem.shutdown()
         except Exception:
             pass
 
@@ -640,7 +640,7 @@ class TestConfigEnvOverride(unittest.TestCase):
             # Give the init a moment to apply env overrides
             import time; time.sleep(0.05)
             self.assertEqual(mem.config.max_context_chars, 999)
-            mem._db_connection.close()
+            mem.shutdown()
         finally:
             del os.environ["NOTUS_MAX_CONTEXT_CHARS"]
 
@@ -656,7 +656,7 @@ class TestConfigEnvOverride(unittest.TestCase):
                                          storage_path=os.path.join(tmp, "env2.db"))
             import time; time.sleep(0.05)
             self.assertGreaterEqual(mem.config.max_context_chars, 500)
-            mem._db_connection.close()
+            mem.shutdown()
         finally:
             del os.environ["NOTUS_MAX_CONTEXT_CHARS"]
 
