@@ -341,21 +341,17 @@ class SuperhumanMemorySystem:
 
         logger.info(f"🧠 Fixed Superhuman Memory System initialized")
 
-        # Seed baseline editor knowledge (idempotent) - run in background thread
-        def _background_seed():
-            try:
-                self._seed_editor_knowledge()
-            except Exception as e:
-                logger.warning(f"Editor knowledge seed failed: {e}")
-            try:
-                self._seed_vocabulary_and_grammar()
-            except Exception as e:
-                logger.warning(f"Vocabulary/grammar seed failed: {e}")
-        
-        import threading
-        seed_thread = threading.Thread(target=_background_seed, daemon=True)
-        seed_thread.start()
-        logger.info("🌱 Background seeding started")
+        # Seed baseline knowledge immediately so no background thread keeps using
+        # the DB connection after callers begin shutdown/cleanup.
+        try:
+            self._seed_editor_knowledge()
+        except Exception as e:
+            logger.warning(f"Editor knowledge seed failed: {e}")
+        try:
+            self._seed_vocabulary_and_grammar()
+        except Exception as e:
+            logger.warning(f"Vocabulary/grammar seed failed: {e}")
+        logger.info("🌱 Knowledge seeding completed")
     
     def _init_database(self):
         self._db_sqlite = False  # Track which backend is active

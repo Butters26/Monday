@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+import shutil
 import threading
 from typing import Any, Dict, List, Optional
 
@@ -63,25 +64,53 @@ class LobeLearningStore:
     def _empty_data(self) -> Dict[str, Any]:
         return {"version": 1, "lobe": self.lobe_name, "users": {}}
 
+    def _backup_path(self) -> Path:
+        return Path(f"{self.path}.bak")
+
+    def _normalise_loaded(self, loaded: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(loaded, dict):
+            return None
+        loaded.setdefault("version", 1)
+        loaded.setdefault("lobe", self.lobe_name)
+        loaded.setdefault("users", {})
+        if not isinstance(loaded["users"], dict):
+            loaded["users"] = {}
+        return loaded
+
     def _load(self) -> Dict[str, Any]:
-        if not self.path.exists():
-            return self._empty_data()
-        try:
-            loaded = json.loads(self.path.read_text(encoding="utf-8"))
-            if not isinstance(loaded, dict):
-                return self._empty_data()
-            loaded.setdefault("version", 1)
-            loaded.setdefault("lobe", self.lobe_name)
-            loaded.setdefault("users", {})
-            if not isinstance(loaded["users"], dict):
-                loaded["users"] = {}
-            return loaded
-        except Exception:
-            return self._empty_data()
+        candidate_paths = [self.path, self._backup_path()]
+        for index, path in enumerate(candidate_paths):
+            if not path.exists():
+                continue
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                normalised = self._normalise_loaded(loaded)
+                if normalised is None:
+                    continue
+                if index == 1:
+                    try:
+                        self.path.write_text(
+                            json.dumps(normalised, indent=2, sort_keys=True),
+                            encoding="utf-8",
+                        )
+                    except Exception:
+                        pass
+                return normalised
+            except Exception:
+                continue
+        return self._empty_data()
 
     def _save(self, data: Dict[str, Any]) -> None:
+        normalised = self._normalise_loaded(data)
+        if normalised is None:
+            normalised = self._empty_data()
+        try:
+            if self.path.exists():
+                shutil.copy2(self.path, self._backup_path())
+        except Exception:
+            pass
         tmp = Path(f"{self.path}.tmp")
-        tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        tmp.write_text(json.dumps(normalised, indent=2, sort_keys=True), encoding="utf-8")
         tmp.replace(self.path)
 
     def _user_facts(self, data: Dict[str, Any], user_id: str) -> Dict[str, Dict[str, Any]]:

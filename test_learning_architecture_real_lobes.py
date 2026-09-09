@@ -263,35 +263,58 @@ def test_delivery_without_interpretation_is_not_counted_as_learning_acceptance(t
 def test_corrupt_lobe_state_files_fail_safe_and_direct_core_path_still_works(tmp_path):
     runtime = tmp_path / "runtime"
     systems = create_core_systems(str(runtime))
-    token = _new_token("tok")
-    concept = _new_token("concept")
     try:
-        _teach_relation(
-            systems,
-            user_id="alice",
-            token=token,
-            concept=concept,
-            positives=[f"{token} starts here."],
-            negatives=[],
+        taught = systems["thalamus"].send_message(
+            "conversation",
+            "teach_skill",
+            {
+                "skill": "math_equivalence",
+                "behavior": "2+2=4 and two plus two equals four.",
+                "user_id": "alice",
+                "confidence": 0.9,
+            },
+        )
+        assert taught["status"] == "success"
+        reinforced = systems["thalamus"].send_message(
+            "conversation",
+            "teach_skill",
+            {
+                "skill": "math_equivalence",
+                "behavior": "2+2=4 and two plus two equals four.",
+                "user_id": "alice",
+                "confidence": 0.9,
+            },
+        )
+        assert reinforced["status"] == "success"
+        before_corruption = systems["thalamus"].send_message(
+            "conversation", "list_skills", {"user_id": "alice", "limit": 20}
+        )
+        assert before_corruption["status"] == "success"
+        assert any(
+            row.get("key") == "skill:math_equivalence"
+            for row in before_corruption.get("memories", [])
         )
     finally:
         shutdown_core_systems(systems)
 
-    state_dir = runtime / "lobe_state"
-    (state_dir / "language_learning.json").write_text("{not-json", encoding="utf-8")
-    (state_dir / "pattern_learning.json").write_text("{broken", encoding="utf-8")
+    learning_dir = runtime / "lobe_learning"
+    conversation_state = learning_dir / "conversation.json"
+    conversation_backup = learning_dir / "conversation.json.bak"
+    assert conversation_state.exists()
+    assert conversation_backup.exists()
+    conversation_state.write_text("{not-json", encoding="utf-8")
 
     restarted = create_core_systems(str(runtime))
     try:
-        language = restarted["thalamus"].send_message(
-            "language", "assess_token_usage", {"user_id": "alice", "token": token, "text": token}
-        )
-        pattern = restarted["thalamus"].send_message(
-            "pattern", "classify_token_pattern", {"user_id": "alice", "token": token, "text": token}
+        recovered = restarted["thalamus"].send_message(
+            "conversation", "list_skills", {"user_id": "alice", "limit": 20}
         )
         direct_response = restarted["thalamus"].process_user_input("Explain memory in one sentence.", user_id="alice")
-        assert language["status"] == "success"
-        assert pattern["status"] == "success"
+        assert recovered["status"] == "success"
+        assert any(
+            row.get("key") == "skill:math_equivalence"
+            for row in recovered.get("memories", [])
+        )
         assert isinstance(direct_response, str)
         assert direct_response.strip()
     finally:

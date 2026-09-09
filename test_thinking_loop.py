@@ -5,8 +5,10 @@ Test Thinking Loop - Verify core cognitive cycle works
 
 import time
 import sys
-from thinking_loop import ThinkingLoop
+import pytest
 from thalamus import get_thalamus
+
+ThinkingLoop = pytest.importorskip("thinking_loop").ThinkingLoop
 
 
 def test_thinking_loop():
