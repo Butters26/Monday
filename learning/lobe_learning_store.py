@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -141,14 +142,17 @@ class LobeLearningStore:
         cleaned = (text or "").strip().lower()
         if not cleaned:
             return [0.0] * dims
+        def bucket_for(value: str) -> int:
+            digest = hashlib.sha256(value.encode("utf-8")).digest()
+            return int.from_bytes(digest[:8], "big") % dims
         vector = [0.0] * dims
         padded = f"  {cleaned}  "
         for index in range(len(padded) - 2):
             gram = padded[index:index + 3]
-            bucket = hash(gram) % dims
+            bucket = bucket_for(f"gram:{gram}")
             vector[bucket] += 1.0
         for token in re.findall(r"[a-z0-9]{2,}", cleaned):
-            bucket = hash(f"tok:{token}") % dims
+            bucket = bucket_for(f"tok:{token}")
             vector[bucket] += 2.0
         magnitude = sum(value * value for value in vector) ** 0.5
         if magnitude == 0.0:
@@ -391,6 +395,7 @@ class LobeLearningStore:
         include_deprecated = bool(payload.get("include_deprecated", False))
         include_disputed = bool(payload.get("include_disputed", False))
         mark_used = bool(payload.get("mark_used", False))
+        exclude_auto_adapt = bool(payload.get("exclude_auto_adapt", False))
         scope = self._clean_text(payload.get("scope")).lower()
         record_type = self._clean_text(payload.get("record_type")).lower()
         subject = self._clean_text(payload.get("subject")).lower()
@@ -416,6 +421,13 @@ class LobeLearningStore:
                     continue
                 key = self._clean_text(record.get("key"))
                 fact = self._clean_text(record.get("fact"))
+                source = self._clean_text(record.get("source")).lower()
+                if exclude_auto_adapt and (
+                    key.startswith("behavior:")
+                    or key.startswith("recovery:")
+                    or "auto_adapt" in source
+                ):
+                    continue
                 if key_prefix and not key.lower().startswith(key_prefix):
                     continue
                 structured = record.get("learning_record", {})

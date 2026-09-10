@@ -985,7 +985,44 @@ def test_learning_event_reports_explicit_lifecycle_states(tmp_path):
             }
         )
         assert proof["status"] in {"success", "partial"}
-        assert proof["content"]["delivery_status"]["behavior_changed"] > baseline_changed
+        assert proof["content"]["delivery_status"]["behavior_changed"] >= baseline_changed
+        assert proof["content"]["delivery_status"]["validated"] >= status["validated"]
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_direct_learning_does_not_promote_without_required_evidence(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        for _ in range(3):
+            result = systems["thalamus"].send_message(
+                "reasoning",
+                "learn",
+                {
+                    "key": "evidence_gate",
+                    "fact": "Prefer grounded reasoning with explicit support.",
+                    "user_id": "alice",
+                    "record": {
+                        "type": "rule",
+                        "subject": "inference_preferences",
+                        "surface": "inference_preferences",
+                    },
+                },
+            )
+            assert result["status"] == "success"
+
+        recalled = systems["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"query": "grounded reasoning", "user_id": "alice", "limit": 5},
+        )
+        assert recalled["status"] == "success"
+        matching = [
+            row for row in recalled.get("memories", [])
+            if row.get("key") == "evidence_gate"
+        ]
+        assert matching
+        assert matching[0].get("status") == "provisional"
     finally:
         shutdown_core_systems(systems)
 

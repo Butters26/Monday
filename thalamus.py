@@ -408,7 +408,8 @@ class Thalamus:
         retrieved = recalled.get("status") == "success" and bool(
             self._content(recalled).get("memories", [])
         )
-        behavior_changed = bool(envelope.get("behavior_delta_observed", False))
+        learned_action = str(learned.get("action", "")).strip().lower()
+        behavior_changed = learned_action in {"created", "reinforced", "corrected_replace"}
         validated = bool(retrieved and behavior_changed)
 
         return {
@@ -616,6 +617,7 @@ class Thalamus:
                     "min_confidence": 0.55,
                     "limit": 5,
                     "mark_used": True,
+                    "exclude_auto_adapt": True,
                 },
                 source=f"{source}:{destination}:guidance",
             )
@@ -1043,6 +1045,23 @@ class Thalamus:
                 record["subject"] = str(record.get("surface", "")).strip().lower()
             payload_for_contract["record"] = record
             payload_for_contract.setdefault("surface", str(record.get("surface", surface)))
+            contract_required = contract.get("required_evidence", set())
+            contract_required = (
+                contract_required if isinstance(contract_required, set) else set(contract_required)
+            )
+            caller_required = payload_for_contract.get("required_evidence", [])
+            caller_required = caller_required if isinstance(caller_required, list) else []
+            merged_required = sorted(
+                {
+                    item
+                    for item in (
+                        *[str(item).strip() for item in caller_required if isinstance(item, str)],
+                        *[str(item).strip() for item in contract_required if isinstance(item, str)],
+                    )
+                    if item
+                }
+            )
+            payload_for_contract["required_evidence"] = merged_required
         rejection = contract_rejection(contract, msg_type, payload_for_contract)
         if rejection is not None:
             return {
