@@ -806,6 +806,10 @@ def test_behavioral_learning_two_plus_two_before_teach_after_equivalent_and_rest
     runtime = tmp_path / "runtime"
     first = create_core_systems(str(runtime))
     try:
+        assert "reasoning" in first["thalamus"].lobe_handlers
+        assert "language" in first["thalamus"].lobe_handlers
+        assert "arithmetic" not in first["thalamus"].lobe_handlers
+
         before = first["thalamus"].process_user_input("What is 2+2?", user_id="alice")
         assert not _is_correct_two_plus_two_answer(before)
 
@@ -825,6 +829,10 @@ def test_behavioral_learning_two_plus_two_before_teach_after_equivalent_and_rest
             "What is two plus two?", user_id="alice"
         )
         assert _is_correct_two_plus_two_answer(after)
+        route_names = [route["to"] for route in first["thalamus"].message_routes]
+        assert "reasoning" in route_names
+        assert "language" in route_names
+        assert "arithmetic" not in route_names
     finally:
         shutdown_core_systems(first)
 
