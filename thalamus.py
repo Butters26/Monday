@@ -408,9 +408,8 @@ class Thalamus:
         retrieved = recalled.get("status") == "success" and bool(
             self._content(recalled).get("memories", [])
         )
-        learned_action = str(learned.get("action", "")).strip().lower()
-        behavior_changed = learned_action in {"created", "reinforced", "corrected_replace"}
-        validated = bool(retrieved and behavior_changed)
+        behavior_changed = False
+        validated = False
 
         return {
             "status": "success",
@@ -524,8 +523,17 @@ class Thalamus:
         accepted = sum(1 for item in results if item.get("saved"))
         retrieved = sum(1 for item in results if item.get("retrieved"))
         applied = sum(1 for item in results if item.get("applied"))
-        behavior_affected = sum(1 for item in results if item.get("behavior_changed"))
-        validation_passed = sum(1 for item in results if item.get("validated"))
+        behavior_verification_passed = bool(envelope_dict.get("behavior_verification_passed", False))
+        behavior_affected = (
+            sum(1 for item in results if item.get("behavior_changed"))
+            if behavior_verification_passed
+            else 0
+        )
+        validation_passed = (
+            sum(1 for item in results if item.get("validated"))
+            if behavior_verification_passed
+            else 0
+        )
         partial_failures = [
             {"lobe": item.get("lobe"), "message": item.get("message")}
             for item in results

@@ -1528,6 +1528,35 @@ class MaximumSophisticationReasoning:
         print(f"🧠 Reasoning: think_about started")
         user_input = input_data.get('user_input', '')
         user_id = input_data.get('user_id', 'default')
+        learned_guidance = input_data.get('learned_guidance', [])
+        learned_guidance = [
+            item.strip()
+            for item in learned_guidance
+            if isinstance(item, str) and item.strip()
+        ] if isinstance(learned_guidance, list) else []
+
+        def _guidance_answer(candidates: List[str]) -> Optional[str]:
+            for candidate in candidates:
+                text = candidate.strip()
+                if not text:
+                    continue
+                if "|" in text:
+                    text = text.split("|", 1)[0].strip()
+                lower = text.lower()
+                for prefix in (
+                    "skill behavior:",
+                    "skill behavior to apply:",
+                    "feedback behavior to apply:",
+                    "correction to apply:",
+                ):
+                    if lower.startswith(prefix):
+                        text = text[len(prefix):].strip()
+                        lower = text.lower()
+                if text:
+                    return text
+            return None
+
+        learned_guidance_answer = _guidance_answer(learned_guidance)
         print(f"🧠 Reasoning: user_input = '{user_input[:50]}'")
         
         # CRITICAL FIX: Check if Novelty Lobe has pending questions
@@ -1760,6 +1789,14 @@ class MaximumSophisticationReasoning:
         if is_question or (
             getattr(self, '_direct_core', False) and memories and not is_simple_greeting
         ):
+            if getattr(self, '_direct_core', False) and learned_guidance_answer:
+                response['theories'].append({
+                    'explanation': learned_guidance_answer,
+                    'confidence': 0.97,
+                    'components': ['learned_guidance'],
+                    'evidence_for': ['retrieved_lobe_learning_guidance'],
+                    'predictions': [],
+                })
             # Build theory using understanding context
             theory = self.build_theory(user_input, {
                 'emotion': emotion_data, 
@@ -2702,6 +2739,9 @@ class MaximumSophisticationReasoning:
             # Unwrap Thalamus message structure: message['content'] contains the actual data
             content = message.get('content', {})
             input_data = content.get('input', {})
+            input_data = dict(input_data) if isinstance(input_data, dict) else {}
+            if isinstance(content.get('learned_guidance'), list):
+                input_data['learned_guidance'] = content.get('learned_guidance', [])
             print(f"🧠 Reasoning: Input data keys: {list(input_data.keys())}")
             result = self.think_about(input_data)
             print(f"🧠 Reasoning: think_about completed, response: {result.get('composed_response', 'None')[:50] if result.get('composed_response') else 'None'}")

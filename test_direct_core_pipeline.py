@@ -1224,6 +1224,122 @@ def test_teach_process_restart_keeps_changed_behavior_across_two_lobes(tmp_path)
         shutdown_core_systems(second)
 
 
+def test_domain_neutral_production_learning_unknown_info_then_correction(tmp_path):
+    runtime = tmp_path / "runtime"
+    concept = f"neutralconcept{random.randint(10000, 99999)}"
+    initial_fact = f"{concept} means a silent triad marker."
+    corrected_fact = f"{concept} means a rotating checksum marker."
+
+    first = create_core_systems(str(runtime))
+    try:
+        baseline = first["thalamus"].process_user_input(
+            f"What is {concept}?", user_id="alice"
+        )
+        assert "do not have enough grounded information" in baseline.lower()
+        assert "silent triad marker" not in baseline.lower()
+        assert "rotating checksum marker" not in baseline.lower()
+
+        lifecycle = first["thalamus"].handle_request(
+            {
+                "type": "learn_from_experience",
+                "content": {
+                    "event_type": "explicit_lesson",
+                    "user_id": "alice",
+                    "raw_experience": f"{concept} is newly defined information.",
+                },
+            }
+        )
+        assert lifecycle["status"] in {"success", "partial"}
+        assert lifecycle["content"]["delivery_status"]["behavior_changed"] == 0
+        assert lifecycle["content"]["delivery_status"]["validated"] == 0
+
+        taught = first["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": initial_fact,
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert taught["status"] == "success"
+        reasoning_taught = [
+            entry for entry in taught.get("taught", [])
+            if entry.get("lobe") == "reasoning" and isinstance(entry.get("key"), str)
+        ]
+        assert reasoning_taught
+        reasoning_key = reasoning_taught[0]["key"]
+
+        learned_answer = first["thalamus"].process_user_input(
+            f"Explain the meaning of {concept}.", user_id="alice"
+        )
+        assert "silent triad marker" in learned_answer.lower()
+        assert "rotating checksum marker" not in learned_answer.lower()
+
+        first_reasoning_key = reasoning_key
+    finally:
+        shutdown_core_systems(first)
+
+    second = create_core_systems(str(runtime))
+    try:
+        persisted_after_teach = second["thalamus"].process_user_input(
+            f"Define {concept}.",
+            user_id="alice",
+        )
+        assert "silent triad marker" in persisted_after_teach.lower()
+        assert "rotating checksum marker" not in persisted_after_teach.lower()
+        recalled_before_correction = second["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"query": concept, "user_id": "alice", "limit": 10, "include_disputed": True},
+        )
+        assert recalled_before_correction["status"] == "success"
+        matching_before = [
+            memory for memory in recalled_before_correction.get("memories", [])
+            if memory.get("key") == first_reasoning_key and isinstance(memory.get("fact"), str)
+        ]
+        assert matching_before
+        before_fact = matching_before[0]["fact"]
+
+        corrected = second["thalamus"].send_message(
+            "reasoning",
+            "contradict_learning",
+            {
+                "key": first_reasoning_key,
+                "user_id": "alice",
+                "penalty": 0.2,
+                "correction_fact": corrected_fact,
+                "correction_evidence": [
+                    f"before:{before_fact}",
+                    f"after:{corrected_fact}",
+                    "validated:domain_neutral_production_test",
+                ],
+            },
+        )
+        assert corrected["status"] == "success"
+        assert corrected["action"] == "corrected_replace"
+
+        corrected_answer = second["thalamus"].process_user_input(
+            f"Under equivalent wording, what does {concept} mean?",
+            user_id="alice",
+        )
+        assert "rotating checksum marker" in corrected_answer.lower()
+        assert "silent triad marker" not in corrected_answer.lower()
+    finally:
+        shutdown_core_systems(second)
+
+    third = create_core_systems(str(runtime))
+    try:
+        corrected_after_restart = third["thalamus"].process_user_input(
+            f"Define {concept}.",
+            user_id="alice",
+        )
+        assert "rotating checksum marker" in corrected_after_restart.lower()
+        assert "silent triad marker" not in corrected_after_restart.lower()
+    finally:
+        shutdown_core_systems(third)
+
+
 def test_production_lobes_consume_learned_guidance(tmp_path):
     systems = create_core_systems(str(tmp_path / "runtime"))
     try:
