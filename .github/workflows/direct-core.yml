@@ -16,8 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install focused test dependency
-        run: python -m pip install --disable-pip-version-check pytest
+      - name: Install focused test dependencies
+        run: python -m pip install --disable-pip-version-check pytest numpy
       - name: Check production Python syntax and JSON configuration
         run: |
           python -c "import pathlib, py_compile; [py_compile.compile(str(path), doraise=True) for path in sorted(pathlib.Path('.').rglob('*.py')) if not path.name.startswith('test_') and path.name != 'integration_test.py']"
