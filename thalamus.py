@@ -71,6 +71,22 @@ _LOBE_LEARNING_RULES = {
     "experience": {"skill", "feedback"},
     "reinforcement": {"skill", "feedback", "correction"},
 }
+_GENERIC_EXPERIENCE_PROFILES = {
+    "conversation": {"policy": "dialogue_guidance", "confidence_scale": 0.95, "confidence_cap": 0.9},
+    "reasoning": {"policy": "decision_rule", "confidence_scale": 0.9, "confidence_cap": 0.88},
+    "emotion": {"policy": "tone_regulation", "confidence_scale": 0.75, "confidence_cap": 0.8},
+    "output": {"policy": "response_delivery", "confidence_scale": 0.8, "confidence_cap": 0.82},
+    "pattern": {"policy": "pattern_rule", "confidence_scale": 0.9, "confidence_cap": 0.88},
+    "language": {"policy": "language_rule", "confidence_scale": 0.9, "confidence_cap": 0.88},
+    "attention": {"policy": "focus_signal", "confidence_scale": 0.7, "confidence_cap": 0.78},
+    "meta_cognition": {"policy": "self_check", "confidence_scale": 0.88, "confidence_cap": 0.86},
+    "executive_control": {"policy": "task_priority", "confidence_scale": 0.83, "confidence_cap": 0.84},
+    "social_context": {"policy": "social_norm", "confidence_scale": 0.8, "confidence_cap": 0.83},
+    "sensory_integration": {"policy": "signal_mapping", "confidence_scale": 0.72, "confidence_cap": 0.8},
+    "motor_action": {"policy": "action_safety", "confidence_scale": 0.72, "confidence_cap": 0.8},
+    "novelty": {"policy": "novelty_detection", "confidence_scale": 0.78, "confidence_cap": 0.83},
+    "perception": {"policy": "perception_rule", "confidence_scale": 0.8, "confidence_cap": 0.84},
+}
 
 
 class Thalamus:
@@ -240,12 +256,149 @@ class Thalamus:
         with self.lobe_handlers_lock:
             items = list(self.lobe_handlers.items())
         targets = []
-        for name, handler in items:
+        for name, _handler in items:
             if name == "notus":
                 continue
-            if bool(getattr(handler, "supports_experience_learning", False)):
-                targets.append(name)
+            targets.append(name)
         return targets
+
+    @staticmethod
+    def _safe_confidence(value: Any, default: float = 0.7) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = default
+        return max(0.0, min(1.0, number))
+
+    def _generic_experience_learning(
+        self, destination: str, payload: Dict[str, Any], source: str
+    ) -> Dict[str, Any]:
+        envelope = payload.get("envelope", payload) if isinstance(payload, dict) else {}
+        envelope = envelope if isinstance(envelope, dict) else {}
+        raw_experience = envelope.get("raw_experience", "")
+        raw_experience = raw_experience.strip() if isinstance(raw_experience, str) else ""
+        examples = envelope.get("examples", [])
+        examples = examples if isinstance(examples, list) else []
+        counterexamples = envelope.get("counterexamples", [])
+        counterexamples = counterexamples if isinstance(counterexamples, list) else []
+        user_id = envelope.get("user_id", "default")
+        if not isinstance(user_id, str) or not user_id.strip():
+            user_id = "default"
+
+        signal = raw_experience
+        if not signal:
+            for sample in examples:
+                if isinstance(sample, str) and sample.strip():
+                    signal = sample.strip()
+                    break
+        if not signal:
+            return {
+                "status": "success",
+                "content": {
+                    "delivered": True,
+                    "interpreted": False,
+                    "update_proposed": False,
+                    "update_accepted": False,
+                    "behavior_affected": False,
+                    "validation_passed": False,
+                    "message": "No usable learning signal",
+                    "changes": {},
+                },
+            }
+
+        event_type = envelope.get("event_type", "experience")
+        if not isinstance(event_type, str) or not event_type.strip():
+            event_type = "experience"
+        lesson_type = self._classify_lesson_type(f"{event_type} {signal}")
+        allowed_types = _LOBE_LEARNING_RULES.get(
+            destination, {"skill", "feedback", "correction"}
+        )
+        if lesson_type not in allowed_types:
+            return {
+                "status": "success",
+                "content": {
+                    "delivered": True,
+                    "interpreted": False,
+                    "update_proposed": False,
+                    "update_accepted": False,
+                    "behavior_affected": False,
+                    "validation_passed": True,
+                    "message": f"{destination} policy ignores {lesson_type} lessons",
+                    "changes": {"lesson_type": lesson_type},
+                },
+            }
+
+        profile = _GENERIC_EXPERIENCE_PROFILES.get(
+            destination,
+            {"policy": "general_adaptation", "confidence_scale": 0.8, "confidence_cap": 0.82},
+        )
+        base_confidence = self._safe_confidence(envelope.get("confidence"), 0.7)
+        confidence = min(
+            float(profile.get("confidence_cap", 0.82)),
+            max(0.35, base_confidence * float(profile.get("confidence_scale", 0.8))),
+        )
+        fact = (
+            f"[{destination}:{profile.get('policy', 'general_adaptation')}] "
+            f"{self._behavior_from_lesson(signal[:280], lesson_type)}"
+        )
+        key = (
+            f"experience:{lesson_type}:{event_type}:"
+            f"{str(profile.get('policy', 'general_adaptation')).replace(' ', '_')}"
+        )
+        learned = self._handle_lobe_learning(
+            destination,
+            "learn",
+            {
+                "user_id": user_id,
+                "key": key,
+                "fact": fact,
+                "confidence": confidence,
+                "source": f"{source}:experience:{destination}",
+            },
+            source=f"{source}:experience",
+        )
+        if learned.get("status") != "success":
+            return {
+                "status": "error",
+                "message": learned.get("message", "learning failed"),
+                "content": {
+                    "delivered": True,
+                    "interpreted": True,
+                    "update_proposed": True,
+                    "update_accepted": False,
+                    "behavior_affected": False,
+                    "validation_passed": False,
+                    "changes": {"key": key, "policy": profile.get("policy")},
+                },
+            }
+
+        if counterexamples:
+            self._handle_lobe_learning(
+                destination,
+                "contradict_learning",
+                {"user_id": user_id, "key": key, "penalty": 0.06},
+                source=f"{source}:experience_counterexample",
+            )
+
+        return {
+            "status": "success",
+            "content": {
+                "delivered": True,
+                "interpreted": True,
+                "update_proposed": True,
+                "update_accepted": True,
+                "behavior_affected": True,
+                "validation_passed": True,
+                "confidence": confidence,
+                "evidence": [signal, *[item for item in examples if isinstance(item, str)]][:4],
+                "changes": {
+                    "key": key,
+                    "policy": profile.get("policy"),
+                    "lesson_type": lesson_type,
+                    "counterexamples_seen": len(counterexamples),
+                },
+            },
+        }
 
     def _record_learning_event_in_notus(self, envelope: Dict[str, Any]) -> Dict[str, Any]:
         payload = self._normalise_notus_write(
@@ -728,6 +881,21 @@ class Thalamus:
         if lobe is None:
             self.lobe_status[destination] = "offline"
             return {"status": "error", "message": f"Unknown destination: {destination}"}
+        if msg_type == "learn_from_experience" and not bool(
+            getattr(lobe, "supports_experience_learning", False)
+        ):
+            response = self._generic_experience_learning(destination, content, source)
+            self.lobe_status[destination] = "online" if response.get("status") != "error" else "error"
+            self.message_routes.append(
+                {
+                    "from": source,
+                    "to": destination,
+                    "type": msg_type,
+                    "status": response.get("status", "error"),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            return response
 
         envelope_content = dict(content)
         learned_guidance = self._learned_guidance_for_message(

@@ -599,6 +599,33 @@ def test_teach_monday_feedback_reaches_behavior_lobes(tmp_path):
         shutdown_core_systems(systems)
 
 
+def test_learn_from_experience_delivers_to_all_registered_direct_core_lobes(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "learn_from_experience",
+                "content": {
+                    "event_type": "explicit_lesson",
+                    "user_id": "alice",
+                    "raw_experience": "When uncertain, be respectful, clear, and logically consistent.",
+                    "examples": ["Use calm wording when the user is upset."],
+                    "counterexamples": [],
+                    "confidence": 0.8,
+                },
+            }
+        )
+        assert result["status"] in {"success", "partial"}
+        rows = {row["lobe"]: row for row in result["content"]["results"]}
+        expected = set(systems["thalamus"].lobe_handlers.keys()) - {"notus"}
+        assert expected.issubset(set(rows.keys()))
+        for lobe in expected:
+            assert rows[lobe]["delivered"] is True
+            assert rows[lobe]["status"] != "error"
+    finally:
+        shutdown_core_systems(systems)
+
+
 def test_learning_overview_shows_per_lobe_skills_and_usage(tmp_path):
     class EchoLobe:
         def process_message(self, message):
