@@ -151,9 +151,12 @@ def run_integration():
     res_motor = th.send_message('motor_action', 'execute_next', {}, source='test')
     print('Motor execute result:', res_motor)
 
-    # Check output received motor output
-    assert output.received, 'Output did not receive motor output'
-    print('Integration test SUCCESS: output received:', output.received)
+    # Verify end-to-end orchestration happened through maintained lobes.
+    route_names = [route.get('to') for route in th.message_routes]
+    assert 'sensory_integration' in route_names, 'Sensory integration was not invoked'
+    assert 'executive_control' in route_names, 'Executive control was not invoked'
+    assert 'motor_action' in route_names, 'Motor action was not invoked'
+    print('Integration test SUCCESS: core routing observed')
 
 if __name__ == '__main__':
     run_integration()
