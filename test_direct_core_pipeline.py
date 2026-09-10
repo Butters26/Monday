@@ -391,7 +391,12 @@ def test_lobe_adaptive_contradict_forget_and_stats(tmp_path):
         contradicted = systems["thalamus"].send_message(
             "emotion",
             "contradict_learning",
-            {"key": "trigger_preference", "user_id": "alice", "penalty": 0.4},
+            {
+                "key": "trigger_preference",
+                "user_id": "alice",
+                "penalty": 0.4,
+                "valid_correction": True,
+            },
         )
         assert contradicted["status"] == "success"
         assert contradicted["action"] == "contradicted"
@@ -622,6 +627,147 @@ def test_learn_from_experience_delivers_to_all_registered_direct_core_lobes(tmp_
         for lobe in expected:
             assert rows[lobe]["delivered"] is True
             assert rows[lobe]["status"] != "error"
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_learning_contracts_are_declared_per_lobe(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        contracts = systems["thalamus"].handle_request({"type": "learning_contracts"})
+        assert contracts["status"] == "success"
+        reasoning = contracts["content"]["contracts"]["reasoning"]
+        assert reasoning["learning_enabled"] is True
+        assert "rules" in reasoning["capabilities"]
+        assert "core_pipeline" in reasoning["fixed_surfaces"]
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_contract_scoped_lobes_can_disable_learning_requirements(tmp_path):
+    class ReadOnlyLobe:
+        learning_contract = {
+            "learning_enabled": False,
+            "capabilities": set(),
+            "allowed_record_types": set(),
+        }
+
+        def process_message(self, message):
+            return {"status": "success", "content": {"observed": message.get("type")}}
+
+        def shutdown(self):
+            pass
+
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    systems["thalamus"].register_lobe("readonly", ReadOnlyLobe())
+    try:
+        taught = systems["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {"lesson": "Use calm wording with users.", "user_id": "alice"},
+            }
+        )
+        taught_lobes = {entry.get("lobe") for entry in taught.get("taught", [])}
+        assert "readonly" not in taught_lobes
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_contradiction_rejects_false_claim_and_applies_valid_correction(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        learned = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "math_fact",
+                "fact": "Two plus two equals four.",
+                "user_id": "alice",
+                "confidence": 0.9,
+            },
+        )
+        assert learned["status"] == "success"
+
+        rejected = systems["thalamus"].send_message(
+            "reasoning",
+            "contradict_learning",
+            {"key": "math_fact", "user_id": "alice", "penalty": 0.3},
+        )
+        assert rejected["status"] == "error"
+        assert rejected["content"]["action"] == "contradiction_rejected"
+
+        corrected = systems["thalamus"].send_message(
+            "reasoning",
+            "contradict_learning",
+            {
+                "key": "math_fact",
+                "user_id": "alice",
+                "penalty": 0.1,
+                "valid_correction": True,
+                "correction_fact": "Two plus two equals 4.",
+            },
+        )
+        assert corrected["status"] == "success"
+        assert corrected["action"] == "corrected_replace"
+
+        recalled = systems["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"query": "two plus two", "user_id": "alice", "limit": 3, "include_disputed": True},
+        )
+        assert recalled["status"] == "success"
+        assert any(memory.get("fact") == "Two plus two equals 4." for memory in recalled["memories"])
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_learning_event_reports_explicit_lifecycle_states(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "learn_from_experience",
+                "content": {
+                    "event_type": "explicit_lesson",
+                    "user_id": "alice",
+                    "raw_experience": "Use calm wording for intense prompts.",
+                    "examples": ["Respond respectfully when user sounds upset."],
+                    "counterexamples": [],
+                    "confidence": 0.8,
+                },
+            }
+        )
+        assert result["status"] in {"success", "partial"}
+        status = result["content"]["delivery_status"]
+        for key in (
+            "delivered",
+            "interpreted",
+            "proposed",
+            "saved",
+            "retrieved",
+            "applied",
+            "behavior_changed",
+            "validated",
+        ):
+            assert key in status
+        assert status["behavior_changed"] == 0
+
+        proof = systems["thalamus"].handle_request(
+            {
+                "type": "learn_from_experience",
+                "content": {
+                    "event_type": "explicit_lesson",
+                    "user_id": "alice",
+                    "raw_experience": "Use calm wording for intense prompts.",
+                    "examples": ["Respond respectfully when user sounds upset."],
+                    "counterexamples": [],
+                    "confidence": 0.8,
+                    "behavior_delta_observed": True,
+                },
+            }
+        )
+        assert proof["status"] in {"success", "partial"}
+        assert proof["content"]["delivery_status"]["behavior_changed"] >= 1
     finally:
         shutdown_core_systems(systems)
 

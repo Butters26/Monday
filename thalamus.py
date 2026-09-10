@@ -22,7 +22,7 @@ from typing import Any, Dict, Iterable, Optional, Set
 
 from direct_response import DeterministicResponseProvider, ResponseProvider
 from learning.experience_envelope import ExperienceEnvelope
-from learning.learning_contract import normalize_learning_result
+from learning.learning_contract import normalize_learning_result, resolve_lobe_contract
 from learning.lobe_learning_store import LobeLearningStore
 
 
@@ -49,28 +49,6 @@ _LESSON_TYPE_PATTERNS = {
         re.IGNORECASE,
     ),
 }
-_LOBE_LEARNING_RULES = {
-    "reasoning": {"skill", "correction", "feedback"},
-    "language": {"skill", "correction", "feedback"},
-    "conversation": {"skill", "correction", "feedback"},
-    "output": {"feedback", "correction"},
-    "emotion": {"feedback", "correction"},
-    "pattern": {"skill", "correction"},
-    "perception": {"skill", "correction"},
-    "novelty": {"skill", "feedback"},
-    "attention": {"skill", "feedback"},
-    "meta_cognition": {"correction", "feedback", "skill"},
-    "executive_control": {"skill", "correction"},
-    "social_context": {"feedback", "correction"},
-    "sensory_integration": {"skill"},
-    "motor_action": {"skill"},
-    "speech": {"feedback", "correction"},
-    "autonomous": {"skill", "feedback", "correction"},
-    "representation": {"skill"},
-    "reflection": {"feedback", "correction"},
-    "experience": {"skill", "feedback"},
-    "reinforcement": {"skill", "feedback", "correction"},
-}
 _GENERIC_EXPERIENCE_PROFILES = {
     "conversation": {"policy": "dialogue_guidance", "confidence_scale": 0.95, "confidence_cap": 0.9},
     "reasoning": {"policy": "decision_rule", "confidence_scale": 0.9, "confidence_cap": 0.88},
@@ -86,6 +64,11 @@ _GENERIC_EXPERIENCE_PROFILES = {
     "motor_action": {"policy": "action_safety", "confidence_scale": 0.72, "confidence_cap": 0.8},
     "novelty": {"policy": "novelty_detection", "confidence_scale": 0.78, "confidence_cap": 0.83},
     "perception": {"policy": "perception_rule", "confidence_scale": 0.8, "confidence_cap": 0.84},
+}
+_LESSON_CAPABILITY_MAP = {
+    "skill": {"rules", "procedures"},
+    "correction": {"rules", "exceptions"},
+    "feedback": {"feedback", "rules"},
 }
 
 
@@ -113,6 +96,7 @@ class Thalamus:
         self._pending_notus_writes: Dict[str, deque] = {}
         self._synced_notus_write_ids: Dict[str, Set[str]] = {}
         self._notus_sync_lock = threading.RLock()
+        self._lobe_contracts: Dict[str, Dict[str, Any]] = {}
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -124,12 +108,15 @@ class Thalamus:
         with self.lobe_handlers_lock:
             self.lobe_handlers[name] = lobe
             self.lobe_status[name] = "online"
+            self._lobe_contracts[name] = resolve_lobe_contract(name, lobe)
         if name != "notus" and not hasattr(lobe, "_lobe_learning_store"):
             setattr(
                 lobe,
                 "_lobe_learning_store",
                 LobeLearningStore(name, runtime_directory=self.learning_runtime_directory),
             )
+        if name != "notus":
+            setattr(lobe, "_learning_contract", dict(self._lobe_contracts[name]))
         return {"status": "success", "content": {"registered": name}, "registered": name}
 
     @staticmethod
@@ -259,8 +246,16 @@ class Thalamus:
         for name, _handler in items:
             if name == "notus":
                 continue
-            targets.append(name)
+            contract = self._lobe_contracts.get(name, {})
+            if bool(contract.get("learning_enabled", True)):
+                targets.append(name)
         return targets
+
+    def _lobe_contract(self, name: str) -> Dict[str, Any]:
+        contract = self._lobe_contracts.get(name, {})
+        if isinstance(contract, dict):
+            return contract
+        return {}
 
     @staticmethod
     def _safe_confidence(value: Any, default: float = 0.7) -> float:
@@ -310,20 +305,25 @@ class Thalamus:
         if not isinstance(event_type, str) or not event_type.strip():
             event_type = "experience"
         lesson_type = self._classify_lesson_type(f"{event_type} {signal}")
-        allowed_types = _LOBE_LEARNING_RULES.get(
-            destination, {"skill", "feedback", "correction"}
+        contract = self._lobe_contract(destination)
+        allowed_record_types = contract.get("allowed_record_types", {"fact", "rule"})
+        allowed_record_types = (
+            allowed_record_types if isinstance(allowed_record_types, set) else set(allowed_record_types)
         )
-        if lesson_type not in allowed_types:
+        desired_type = "rule" if lesson_type in {"skill", "feedback", "correction"} else "fact"
+        if desired_type not in allowed_record_types:
             return {
                 "status": "success",
                 "content": {
                     "delivered": True,
                     "interpreted": False,
-                    "update_proposed": False,
-                    "update_accepted": False,
-                    "behavior_affected": False,
-                    "validation_passed": True,
-                    "message": f"{destination} policy ignores {lesson_type} lessons",
+                    "proposed": False,
+                    "saved": False,
+                    "retrieved": False,
+                    "applied": False,
+                    "behavior_changed": False,
+                    "validated": True,
+                    "message": f"{destination} contract rejects {desired_type} record",
                     "changes": {"lesson_type": lesson_type},
                 },
             }
@@ -354,6 +354,18 @@ class Thalamus:
                 "fact": fact,
                 "confidence": confidence,
                 "source": f"{source}:experience:{destination}",
+                "record": {
+                    "type": desired_type,
+                    "subject": profile.get("policy", "general"),
+                    "relation": lesson_type,
+                    "value": signal[:280],
+                    "scope": destination,
+                    "confidence": confidence,
+                    "source": "explicit_user_teaching",
+                    "examples": [item for item in examples if isinstance(item, str)][:5],
+                    "exceptions": [item for item in counterexamples if isinstance(item, str)][:5],
+                    "status": "provisional",
+                },
             },
             source=f"{source}:experience",
         )
@@ -364,10 +376,12 @@ class Thalamus:
                 "content": {
                     "delivered": True,
                     "interpreted": True,
-                    "update_proposed": True,
-                    "update_accepted": False,
-                    "behavior_affected": False,
-                    "validation_passed": False,
+                    "proposed": True,
+                    "saved": False,
+                    "retrieved": False,
+                    "applied": False,
+                    "behavior_changed": False,
+                    "validated": False,
                     "changes": {"key": key, "policy": profile.get("policy")},
                 },
             }
@@ -376,19 +390,32 @@ class Thalamus:
             self._handle_lobe_learning(
                 destination,
                 "contradict_learning",
-                {"user_id": user_id, "key": key, "penalty": 0.06},
+                {"user_id": user_id, "key": key, "penalty": 0.06, "valid_correction": True},
                 source=f"{source}:experience_counterexample",
             )
+        recalled = self._handle_lobe_learning(
+            destination,
+            "recall",
+            {"user_id": user_id, "query": signal, "limit": 1, "include_disputed": True},
+            source=f"{source}:experience_validation",
+        )
+        retrieved = recalled.get("status") == "success" and bool(
+            self._content(recalled).get("memories", [])
+        )
+        behavior_changed = bool(envelope.get("behavior_delta_observed", False))
+        validated = bool(retrieved and behavior_changed)
 
         return {
             "status": "success",
             "content": {
                 "delivered": True,
                 "interpreted": True,
-                "update_proposed": True,
-                "update_accepted": True,
-                "behavior_affected": True,
-                "validation_passed": True,
+                "proposed": True,
+                "saved": True,
+                "retrieved": retrieved,
+                "applied": retrieved,
+                "behavior_changed": behavior_changed,
+                "validated": validated,
                 "confidence": confidence,
                 "evidence": [signal, *[item for item in examples if isinstance(item, str)]][:4],
                 "changes": {
@@ -452,13 +479,15 @@ class Thalamus:
             results.append(normalize_learning_result(destination, envelope.event_id, response))
         delivered = sum(1 for item in results if item.get("delivered"))
         interpreted = sum(1 for item in results if item.get("interpreted"))
-        accepted = sum(1 for item in results if item.get("update_accepted"))
-        behavior_affected = sum(1 for item in results if item.get("behavior_affected"))
-        validation_passed = sum(1 for item in results if item.get("validation_passed"))
+        accepted = sum(1 for item in results if item.get("saved"))
+        retrieved = sum(1 for item in results if item.get("retrieved"))
+        applied = sum(1 for item in results if item.get("applied"))
+        behavior_affected = sum(1 for item in results if item.get("behavior_changed"))
+        validation_passed = sum(1 for item in results if item.get("validated"))
         partial_failures = [
             {"lobe": item.get("lobe"), "message": item.get("message")}
             for item in results
-            if not item.get("update_accepted")
+            if not item.get("saved")
         ]
         status = "success" if accepted > 0 else "partial" if delivered > 0 else "error"
         return {
@@ -470,7 +499,14 @@ class Thalamus:
                 "delivery_status": {
                     "delivered": delivered,
                     "interpreted": interpreted,
-                    "update_proposed": sum(1 for item in results if item.get("update_proposed")),
+                    "proposed": sum(1 for item in results if item.get("proposed")),
+                    "saved": accepted,
+                    "retrieved": retrieved,
+                    "applied": applied,
+                    "behavior_changed": behavior_affected,
+                    "validated": validation_passed,
+                    # Backward-compatible aliases
+                    "update_proposed": sum(1 for item in results if item.get("proposed")),
                     "accepted": accepted,
                     "behavior_affected": behavior_affected,
                     "validation_passed": validation_passed,
@@ -590,36 +626,75 @@ class Thalamus:
             return f"Feedback behavior to apply: {lesson_text}"
         return f"Skill behavior to apply: {lesson_text}"
 
-    def _learning_targets_for_lesson(self, lesson_type: str, lesson_text: str) -> list[str]:
+    def _record_from_lesson(self, lesson_text: str, lesson_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        record_type = payload.get("record_type")
+        if not isinstance(record_type, str) or not record_type.strip():
+            record_type = "rule" if lesson_type in {"skill", "feedback", "correction"} else "fact"
+        scope = payload.get("scope", "general")
+        if not isinstance(scope, str) or not scope.strip():
+            scope = "general"
+        return {
+            "type": record_type.strip().lower(),
+            "subject": payload.get("subject", lesson_type),
+            "relation": payload.get("relation", "guidance"),
+            "value": lesson_text,
+            "scope": scope.strip().lower(),
+            "confidence": self._safe_confidence(payload.get("confidence"), 0.75),
+            "source": payload.get("source", "explicit_user_teaching"),
+            "examples": payload.get("examples", []),
+            "exceptions": payload.get("exceptions", []),
+            "status": "provisional",
+        }
+
+    @staticmethod
+    def _required_capabilities_for_record(record: Dict[str, Any], lesson_type: str) -> set[str]:
+        capability = _LESSON_CAPABILITY_MAP.get(lesson_type, {"rules"})
+        record_type = str(record.get("type", "fact")).strip().lower()
+        if record_type == "fact":
+            capability = {"facts"}
+        elif record_type == "procedure":
+            capability = {"procedures"}
+        elif record_type == "exception":
+            capability = {"exceptions", "rules"}
+        elif record_type == "example":
+            capability = {"facts", "rules"}
+        elif record_type == "rule":
+            capability = {"rules"}
+        return set(capability)
+
+    def _learning_targets_for_record(self, lesson_type: str, record: Dict[str, Any]) -> list[str]:
         with self.lobe_handlers_lock:
             registered = list(self.lobe_handlers.keys())
         candidates = [name for name in registered if name not in {"notus"}]
         if not candidates:
             return []
-        lesson_lower = lesson_text.lower()
+        required_capabilities = self._required_capabilities_for_record(record, lesson_type)
+        record_type = str(record.get("type", "fact")).strip().lower()
         matched: list[str] = []
         for lobe in candidates:
-            allowed_types = _LOBE_LEARNING_RULES.get(
-                lobe, {"skill", "feedback", "correction"}
-            )
-            if lesson_type not in allowed_types:
+            contract = self._lobe_contract(lobe)
+            if not bool(contract.get("learning_enabled", True)):
                 continue
-            if lobe == "pattern" and not any(
-                word in lesson_lower for word in ("pattern", "math", "number", "equation")
-            ):
-                if lesson_type == "skill":
-                    continue
-            if lobe == "language" and not any(
-                word in lesson_lower for word in ("grammar", "word", "tone", "speak", "write")
-            ):
-                if lesson_type in {"skill", "feedback"}:
-                    continue
-            if lobe == "emotion" and lesson_type == "skill":
+            capabilities = contract.get("capabilities", set())
+            capabilities = capabilities if isinstance(capabilities, set) else set(capabilities)
+            if required_capabilities and not capabilities.intersection(required_capabilities):
+                continue
+            allowed_record_types = contract.get("allowed_record_types", {"fact", "rule"})
+            allowed_record_types = (
+                allowed_record_types
+                if isinstance(allowed_record_types, set)
+                else set(allowed_record_types)
+            )
+            if record_type not in allowed_record_types:
                 continue
             matched.append(lobe)
         if matched:
             return matched
-        return candidates
+        return [
+            lobe
+            for lobe in candidates
+            if bool(self._lobe_contract(lobe).get("learning_enabled", True))
+        ]
 
     def teach_monday(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         lesson = payload.get("lesson", payload.get("text", payload.get("content", "")))
@@ -630,12 +705,20 @@ class Thalamus:
         if not isinstance(user_id, str) or not user_id.strip():
             user_id = "default"
         lesson_type = self._classify_lesson_type(lesson_text)
+        record = payload.get("record") if isinstance(payload.get("record"), dict) else None
+        if record is None:
+            record = self._record_from_lesson(lesson_text, lesson_type, payload)
         skill_name = self._skill_name_from_lesson(lesson_text, lesson_type)
         behavior = self._behavior_from_lesson(lesson_text, lesson_type)
-        targets = self._learning_targets_for_lesson(lesson_type, lesson_text)
+        targets = self._learning_targets_for_record(lesson_type, record)
         taught = []
         failed = []
         for destination in targets:
+            contract = self._lobe_contract(destination)
+            required_evidence = contract.get("required_evidence", set())
+            required_evidence = (
+                required_evidence if isinstance(required_evidence, set) else set(required_evidence)
+            )
             result = self._handle_lobe_learning(
                 destination,
                 "teach_skill",
@@ -647,6 +730,8 @@ class Thalamus:
                     "user_id": user_id,
                     "confidence": payload.get("confidence", 0.75),
                     "lesson_type": lesson_type,
+                    "record": {**record, "status": "provisional"},
+                    "required_evidence": sorted(required_evidence),
                 },
                 source="teach_monday",
             )
@@ -714,6 +799,17 @@ class Thalamus:
                 }
             )
         return {"status": "success", "content": {"user_id": user_id, "lobes": overview}, "lobes": overview}
+
+    def learning_contracts(self) -> Dict[str, Any]:
+        with self.lobe_handlers_lock:
+            names = [name for name in self.lobe_handlers.keys() if name != "notus"]
+        contracts = {name: dict(self._lobe_contract(name)) for name in names}
+        for contract in contracts.values():
+            for key in ("capabilities", "allowed_record_types", "required_evidence", "mutable_surfaces", "fixed_surfaces"):
+                value = contract.get(key)
+                if isinstance(value, set):
+                    contract[key] = sorted(value)
+        return {"status": "success", "content": {"contracts": contracts}, "contracts": contracts}
 
     def _handle_lobe_learning(
         self, destination: str, msg_type: str, payload: Dict[str, Any], source: str
@@ -846,6 +942,7 @@ class Thalamus:
                 "user_id": user_id,
                 "key": behavior_key,
                 "penalty": 0.2,
+                "valid_correction": True,
             },
             source=f"{source}:auto_adapt",
         )
@@ -1183,6 +1280,8 @@ class Thalamus:
             return self.process_learning_event(payload if isinstance(payload, dict) else {}, source="learn_from_experience")
         if msg_type == "learning_overview":
             return self.learning_overview(payload if isinstance(payload, dict) else {})
+        if msg_type == "learning_contracts":
+            return self.learning_contracts()
         if msg_type == "sync_notus_pending":
             content = payload if isinstance(payload, dict) else {}
             return {

@@ -61,6 +61,56 @@ class LobeLearningStore:
     def _is_safe_fact(fact: str) -> bool:
         return bool(fact) and len(fact) <= 500 and not _UNSAFE_FACT.search(fact)
 
+    @staticmethod
+    def _safe_list(value: Any) -> List[str]:
+        if not isinstance(value, list):
+            return []
+        cleaned: List[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                cleaned.append(item.strip())
+        return cleaned[:20]
+
+    @staticmethod
+    def _tokens(text: str) -> set[str]:
+        return {token for token in re.findall(r"[a-z0-9]{3,}", text.lower())}
+
+    def _normalise_learning_record(
+        self, payload: Dict[str, Any], fact: str, source: str, confidence: float
+    ) -> Dict[str, Any]:
+        record = payload.get("record", {})
+        record = dict(record) if isinstance(record, dict) else {}
+        record_type = self._clean_text(record.get("type", payload.get("record_type", "fact"))).lower() or "fact"
+        subject = self._clean_text(record.get("subject", payload.get("subject", self.lobe_name)))
+        relation = self._clean_text(record.get("relation", payload.get("relation", "guidance")))
+        input_value = record.get("input", payload.get("input"))
+        if isinstance(input_value, list):
+            learned_input = [self._clean_text(item) for item in input_value if self._clean_text(item)]
+        elif isinstance(input_value, str):
+            learned_input = [input_value.strip()]
+        else:
+            learned_input = []
+        value = self._clean_text(record.get("value", fact))
+        scope = self._clean_text(record.get("scope", payload.get("scope", "general"))).lower() or "general"
+        status = self._clean_text(record.get("status", "provisional")).lower() or "provisional"
+        if status not in {"proposed", "provisional", "validated", "active", "disputed", "deprecated"}:
+            status = "provisional"
+        return {
+            "type": record_type,
+            "subject": subject,
+            "relation": relation,
+            "input": learned_input,
+            "value": value,
+            "scope": scope,
+            "confidence": confidence,
+            "source": self._clean_text(record.get("source", source)) or source,
+            "examples": self._safe_list(record.get("examples", payload.get("examples", []))),
+            "exceptions": self._safe_list(record.get("exceptions", payload.get("exceptions", []))),
+            "status": status,
+            "evidence": self._safe_list(record.get("evidence", payload.get("evidence", []))),
+            "conflict_status": self._clean_text(record.get("conflict_status", "none")).lower() or "none",
+        }
+
     def _empty_data(self) -> Dict[str, Any]:
         return {"version": 1, "lobe": self.lobe_name, "users": {}}
 
@@ -133,6 +183,9 @@ class LobeLearningStore:
         confidence = self._clamp_confidence(payload.get("confidence"), default=0.6)
         source = self._clean_text(payload.get("source")) or "thalamus"
         now = self._now()
+        learning_record = self._normalise_learning_record(payload, fact, source, confidence)
+        required_evidence = payload.get("required_evidence", [])
+        required_evidence = required_evidence if isinstance(required_evidence, list) else []
 
         with self._lock:
             data = self._load()
@@ -145,10 +198,13 @@ class LobeLearningStore:
                     "confidence": confidence,
                     "evidence_count": 1,
                     "contradiction_count": 0,
-                    "status": "active",
+                    "status": learning_record.get("status", "provisional"),
                     "source": source,
                     "use_count": 0,
                     "last_applied_at": None,
+                    "accepted_at": None,
+                    "learning_record": learning_record,
+                    "required_evidence": required_evidence,
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -161,17 +217,37 @@ class LobeLearningStore:
                     record = dict(existing)
                     record["confidence"] = min(1.0, self._clamp_confidence(record.get("confidence"), 0.6) + delta)
                     record["evidence_count"] = int(record.get("evidence_count", 0)) + 1
+                    lifecycle = self._clean_text(record.get("status")).lower() or "provisional"
+                    if lifecycle in {"proposed", "provisional"} and record["evidence_count"] >= 2:
+                        lifecycle = "validated"
+                        record["accepted_at"] = now
+                    if lifecycle == "validated" and record["evidence_count"] >= 3:
+                        lifecycle = "active"
+                    record["status"] = lifecycle
                     action = "reinforced"
                 else:
                     record = dict(existing)
-                    record["fact"] = fact
-                    record["confidence"] = max(0.2, min(0.8, confidence * 0.85))
-                    record["evidence_count"] = 1
+                    conflicts = record.get("conflicts", [])
+                    conflicts = conflicts if isinstance(conflicts, list) else []
+                    conflicts.append(
+                        {
+                            "fact": fact,
+                            "source": source,
+                            "confidence": confidence,
+                            "created_at": now,
+                            "record": learning_record,
+                        }
+                    )
+                    record["conflicts"] = conflicts[-20:]
                     record["contradiction_count"] = int(record.get("contradiction_count", 0)) + 1
-                    action = "replaced_conflict"
-                record["status"] = "active"
+                    record["status"] = "disputed"
+                    action = "pending_conflict"
                 record["source"] = source
                 record["updated_at"] = now
+                if action != "pending_conflict":
+                    record["fact"] = fact
+                    record["learning_record"] = learning_record
+                    record["required_evidence"] = required_evidence
             facts[key] = record
             self._save(data)
         return {"status": "success", "content": {**record, "lobe": self.lobe_name, "user_id": user_id, "action": action}}
@@ -180,10 +256,14 @@ class LobeLearningStore:
         user_id = self._clean_text(payload.get("user_id")) or "default"
         query_text = self._clean_text(payload.get("query", payload.get("text", "")))
         key_prefix = self._clean_text(payload.get("key_prefix")).lower()
-        terms = [term.lower() for term in query_text.split() if len(term) > 2]
+        terms = self._tokens(query_text)
         min_confidence = self._clamp_confidence(payload.get("min_confidence"), default=0.0)
         include_deprecated = bool(payload.get("include_deprecated", False))
+        include_disputed = bool(payload.get("include_disputed", False))
         mark_used = bool(payload.get("mark_used", False))
+        scope = self._clean_text(payload.get("scope")).lower()
+        record_type = self._clean_text(payload.get("record_type")).lower()
+        subject = self._clean_text(payload.get("subject")).lower()
         try:
             limit = int(payload.get("limit", 15))
         except (TypeError, ValueError):
@@ -197,25 +277,53 @@ class LobeLearningStore:
             filtered = []
             for record in records:
                 if not include_deprecated and record.get("status", "active") != "active":
-                    continue
+                    status = self._clean_text(record.get("status")).lower()
+                    if status == "deprecated":
+                        continue
+                    if status == "disputed" and not include_disputed:
+                        continue
                 if self._clamp_confidence(record.get("confidence"), 0.0) < min_confidence:
                     continue
                 key = self._clean_text(record.get("key"))
                 fact = self._clean_text(record.get("fact"))
                 if key_prefix and not key.lower().startswith(key_prefix):
                     continue
+                structured = record.get("learning_record", {})
+                structured = structured if isinstance(structured, dict) else {}
+                if scope and self._clean_text(structured.get("scope")).lower() not in {"", scope}:
+                    continue
+                if record_type and self._clean_text(structured.get("type")).lower() not in {"", record_type}:
+                    continue
+                if subject and subject not in self._clean_text(structured.get("subject")).lower():
+                    continue
                 relevance = 0.0
                 if terms:
-                    haystack = f"{key} {fact}".lower()
+                    haystack = self._tokens(
+                        " ".join(
+                            [
+                                key,
+                                fact,
+                                self._clean_text(structured.get("subject")),
+                                self._clean_text(structured.get("relation")),
+                                self._clean_text(structured.get("value")),
+                                " ".join(self._safe_list(structured.get("examples"))),
+                            ]
+                        )
+                    )
                     matched_terms = sum(1 for term in terms if term in haystack)
                     if matched_terms == 0:
                         continue
                     relevance = matched_terms / len(terms)
+                evidence_score = min(1.0, int(record.get("evidence_count", 0)) / 5.0)
+                recency_bonus = 0.1 if self._clean_text(record.get("updated_at")) else 0.0
+                conflict_penalty = 0.25 if self._clean_text(record.get("status")).lower() == "disputed" else 0.0
+                confidence = self._clamp_confidence(record.get("confidence"), 0.0)
+                record["_score"] = relevance + (0.35 * confidence) + (0.2 * evidence_score) + recency_bonus - conflict_penalty
                 record["_relevance"] = relevance
                 filtered.append(record)
             filtered.sort(
                 key=lambda record: (
-                    float(record.get("_relevance", 0.0)),
+                    float(record.get("_score", 0.0)),
                     self._clamp_confidence(record.get("confidence"), 0.0),
                     int(record.get("evidence_count", 0)),
                     self._clean_text(record.get("updated_at")),
@@ -245,10 +353,12 @@ class LobeLearningStore:
                 "contradiction_count": int(record.get("contradiction_count", 0)),
                 "status": record.get("status", "active"),
                 "source": record.get("source", "thalamus"),
+                "learning_record": record.get("learning_record", {}),
                 "created_at": record.get("created_at"),
                 "updated_at": record.get("updated_at"),
                 "use_count": int(record.get("use_count", 0)),
                 "last_applied_at": record.get("last_applied_at"),
+                "retrieved": True,
             }
             for record in selected
         ]
@@ -272,12 +382,33 @@ class LobeLearningStore:
                 updated["evidence_count"] = int(updated.get("evidence_count", 0)) + 1
                 action = "reinforced"
             elif mode == "contradict":
+                if not bool(payload.get("valid_correction", False)):
+                    updated["updated_at"] = now
+                    return {
+                        "status": "error",
+                        "message": "Contradiction rejected: missing valid correction evidence",
+                        "content": {
+                            "lobe": self.lobe_name,
+                            "user_id": user_id,
+                            "key": key,
+                            "status": updated.get("status", "active"),
+                            "action": "contradiction_rejected",
+                        },
+                    }
                 penalty = self._clamp_confidence(payload.get("penalty"), default=0.2)
                 updated["confidence"] = max(0.0, self._clamp_confidence(updated.get("confidence"), 0.5) - max(0.05, penalty))
                 updated["contradiction_count"] = int(updated.get("contradiction_count", 0)) + 1
+                correction_fact = self._clean_text(payload.get("correction_fact"))
+                if correction_fact:
+                    updated["fact"] = correction_fact
+                    updated["status"] = "provisional"
+                    updated["accepted_at"] = None
+                    action = "corrected_replace"
+                else:
+                    updated["status"] = "deprecated" if updated["confidence"] < 0.15 else "disputed"
+                    action = "contradicted"
                 if updated["confidence"] < 0.15:
                     updated["status"] = "deprecated"
-                action = "contradicted"
             elif mode == "forget":
                 updated["status"] = "deprecated"
                 action = "forgotten"
@@ -317,6 +448,18 @@ class LobeLearningStore:
         total_evidence = sum(int(record.get("evidence_count", 0)) for record in records)
         total_contradictions = sum(int(record.get("contradiction_count", 0)) for record in records)
         total_uses = sum(int(record.get("use_count", 0)) for record in records)
+        lifecycle_counts = {
+            "proposed": 0,
+            "provisional": 0,
+            "validated": 0,
+            "active": 0,
+            "disputed": 0,
+            "deprecated": 0,
+        }
+        for record in records:
+            status = self._clean_text(record.get("status")).lower() or "provisional"
+            if status in lifecycle_counts:
+                lifecycle_counts[status] += 1
         last_applied_at = max(
             [self._clean_text(record.get("last_applied_at")) for record in records if self._clean_text(record.get("last_applied_at"))],
             default=None,
@@ -333,6 +476,7 @@ class LobeLearningStore:
                 "total_evidence": total_evidence,
                 "total_contradictions": total_contradictions,
                 "total_uses": total_uses,
+                "lifecycle_counts": lifecycle_counts,
                 "last_applied_at": last_applied_at,
                 "storage_path": str(self.path),
             },
