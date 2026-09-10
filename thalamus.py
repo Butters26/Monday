@@ -463,7 +463,8 @@ class Thalamus:
         return {"status": "error", "queued": True, "message": result.get("message")}
 
     def process_learning_event(self, payload: Dict[str, Any], source: str = "thalamus") -> Dict[str, Any]:
-        envelope = ExperienceEnvelope.from_payload(payload, source=source)
+        input_payload = payload if isinstance(payload, dict) else {}
+        envelope = ExperienceEnvelope.from_payload(input_payload, source=source)
         validation_error = envelope.validate()
         if validation_error:
             return {
@@ -473,13 +474,13 @@ class Thalamus:
             }
         envelope_dict = envelope.to_dict()
         memory_result = self._record_learning_event_in_notus(envelope_dict)
-        learning_signal = str(envelope_dict.get("raw_experience", "")).strip()
-        event_type = str(envelope_dict.get("event_type", "experience")).strip() or "experience"
-        lesson_type = self._classify_lesson_type(f"{event_type} {learning_signal}", envelope_dict)
+        learning_signal = str(input_payload.get("raw_experience", envelope_dict.get("raw_experience", ""))).strip()
+        event_type = str(input_payload.get("event_type", envelope_dict.get("event_type", "experience"))).strip() or "experience"
+        lesson_type = self._classify_lesson_type(f"{event_type} {learning_signal}", input_payload or envelope_dict)
         derived_record = (
-            envelope_dict.get("record")
-            if isinstance(envelope_dict.get("record"), dict)
-            else self._record_from_lesson(learning_signal or event_type, lesson_type, envelope_dict)
+            input_payload.get("record")
+            if isinstance(input_payload.get("record"), dict)
+            else self._record_from_lesson(learning_signal or event_type, lesson_type, input_payload or envelope_dict)
         )
         targets = self._learning_targets_for_record(lesson_type, derived_record)
         results = []
