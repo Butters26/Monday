@@ -88,9 +88,49 @@ class LobeLearningStore:
         provided_set = self._safe_string_set(provided)
         return required_set.issubset(provided_set)
 
+    def _verified_correction_evidence(
+        self, payload: Dict[str, Any], current_fact: str
+    ) -> tuple[bool, str, List[str]]:
+        correction_fact = self._clean_text(payload.get("correction_fact"))
+        if not self._is_safe_fact(correction_fact):
+            return False, "", []
+        if correction_fact.casefold() == current_fact.casefold():
+            return False, "", []
+        evidence = self._safe_list(payload.get("correction_evidence", payload.get("evidence", [])))
+        evidence_set = {item.lower() for item in evidence}
+        required_markers = {"before", "after", "validated"}
+        if not required_markers.issubset(evidence_set):
+            return False, "", evidence
+        return True, correction_fact, evidence
+
     @staticmethod
     def _tokens(text: str) -> set[str]:
         return {token for token in re.findall(r"[a-z0-9]{3,}", text.lower())}
+
+    @staticmethod
+    def _semantic_vector(text: str, dims: int = 256) -> List[float]:
+        cleaned = (text or "").strip().lower()
+        if not cleaned:
+            return [0.0] * dims
+        vector = [0.0] * dims
+        padded = f"  {cleaned}  "
+        for index in range(len(padded) - 2):
+            gram = padded[index:index + 3]
+            bucket = hash(gram) % dims
+            vector[bucket] += 1.0
+        for token in re.findall(r"[a-z0-9]{2,}", cleaned):
+            bucket = hash(f"tok:{token}") % dims
+            vector[bucket] += 2.0
+        magnitude = sum(value * value for value in vector) ** 0.5
+        if magnitude == 0.0:
+            return [0.0] * dims
+        return [value / magnitude for value in vector]
+
+    @staticmethod
+    def _cosine_similarity(a: List[float], b: List[float]) -> float:
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        return sum(x * y for x, y in zip(a, b))
 
     def _normalise_learning_record(
         self, payload: Dict[str, Any], fact: str, source: str, confidence: float
@@ -316,6 +356,8 @@ class LobeLearningStore:
         query_text = self._clean_text(payload.get("query", payload.get("text", "")))
         key_prefix = self._clean_text(payload.get("key_prefix")).lower()
         terms = self._tokens(query_text)
+        query_vector = self._semantic_vector(query_text)
+        min_semantic_score = self._clamp_confidence(payload.get("min_semantic_score"), default=0.15)
         min_confidence = self._clamp_confidence(payload.get("min_confidence"), default=0.0)
         include_deprecated = bool(payload.get("include_deprecated", False))
         include_disputed = bool(payload.get("include_disputed", False))
@@ -356,29 +398,41 @@ class LobeLearningStore:
                 if subject and subject not in self._clean_text(structured.get("subject")).lower():
                     continue
                 relevance = 0.0
+                semantic_score = 0.0
+                haystack_text = " ".join(
+                    [
+                        key,
+                        fact,
+                        self._clean_text(structured.get("subject")),
+                        self._clean_text(structured.get("relation")),
+                        self._clean_text(structured.get("value")),
+                        " ".join(self._safe_list(structured.get("examples"))),
+                    ]
+                )
                 if terms:
-                    haystack = self._tokens(
-                        " ".join(
-                            [
-                                key,
-                                fact,
-                                self._clean_text(structured.get("subject")),
-                                self._clean_text(structured.get("relation")),
-                                self._clean_text(structured.get("value")),
-                                " ".join(self._safe_list(structured.get("examples"))),
-                            ]
-                        )
-                    )
+                    haystack = self._tokens(haystack_text)
                     matched_terms = sum(1 for term in terms if term in haystack)
-                    if matched_terms == 0:
-                        continue
                     relevance = matched_terms / len(terms)
+                if query_text:
+                    semantic_score = self._cosine_similarity(
+                        query_vector, self._semantic_vector(haystack_text)
+                    )
+                    if relevance == 0.0 and semantic_score < min_semantic_score:
+                        continue
                 evidence_score = min(1.0, int(record.get("evidence_count", 0)) / 5.0)
                 recency_bonus = 0.1 if self._clean_text(record.get("updated_at")) else 0.0
                 conflict_penalty = 0.25 if self._clean_text(record.get("status")).lower() == "disputed" else 0.0
                 confidence = self._clamp_confidence(record.get("confidence"), 0.0)
-                record["_score"] = relevance + (0.35 * confidence) + (0.2 * evidence_score) + recency_bonus - conflict_penalty
+                record["_score"] = (
+                    (0.45 * semantic_score)
+                    + (0.25 * relevance)
+                    + (0.25 * confidence)
+                    + (0.15 * evidence_score)
+                    + recency_bonus
+                    - conflict_penalty
+                )
                 record["_relevance"] = relevance
+                record["_semantic"] = semantic_score
                 filtered.append(record)
             filtered.sort(
                 key=lambda record: (
@@ -441,11 +495,14 @@ class LobeLearningStore:
                 updated["evidence_count"] = int(updated.get("evidence_count", 0)) + 1
                 action = "reinforced"
             elif mode == "contradict":
-                if not bool(payload.get("valid_correction", False)):
+                verified, correction_fact, correction_evidence = self._verified_correction_evidence(
+                    payload, self._clean_text(updated.get("fact"))
+                )
+                if not verified:
                     updated["updated_at"] = now
                     return {
                         "status": "error",
-                        "message": "Contradiction rejected: missing valid correction evidence",
+                        "message": "Contradiction rejected: unverified correction evidence",
                         "content": {
                             "lobe": self.lobe_name,
                             "user_id": user_id,
@@ -457,11 +514,26 @@ class LobeLearningStore:
                 penalty = self._clamp_confidence(payload.get("penalty"), default=0.2)
                 updated["confidence"] = max(0.0, self._clamp_confidence(updated.get("confidence"), 0.5) - max(0.05, penalty))
                 updated["contradiction_count"] = int(updated.get("contradiction_count", 0)) + 1
-                correction_fact = self._clean_text(payload.get("correction_fact"))
                 if correction_fact:
                     updated["fact"] = correction_fact
                     updated["status"] = "provisional"
                     updated["accepted_at"] = None
+                    learning_record = updated.get("learning_record", {})
+                    learning_record = learning_record if isinstance(learning_record, dict) else {}
+                    learning_record["value"] = correction_fact
+                    learning_record["status"] = "provisional"
+                    learning_record["conflict_status"] = "corrected_replace"
+                    learning_record["evidence"] = self._safe_list(
+                        [*learning_record.get("evidence", []), *correction_evidence]
+                    )
+                    updated["learning_record"] = learning_record
+                    existing_required = updated.get("required_evidence", [])
+                    existing_required = existing_required if isinstance(existing_required, list) else []
+                    if (
+                        existing_required
+                        and not self._has_required_evidence(existing_required, learning_record.get("evidence", []))
+                    ):
+                        updated["status"] = "provisional"
                     action = "corrected_replace"
                 else:
                     updated["status"] = "deprecated" if updated["confidence"] < 0.15 else "disputed"

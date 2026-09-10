@@ -408,7 +408,8 @@ def test_lobe_adaptive_contradict_forget_and_stats(tmp_path):
                 "key": "trigger_preference",
                 "user_id": "alice",
                 "penalty": 0.4,
-                "valid_correction": True,
+                "correction_fact": "Sudden loud noises increase stress unless expected.",
+                "correction_evidence": ["before", "after", "validated"],
             },
         )
         assert contradicted["status"] == "success"
@@ -857,8 +858,8 @@ def test_contradiction_rejects_false_claim_and_applies_valid_correction(tmp_path
                 "key": "math_fact",
                 "user_id": "alice",
                 "penalty": 0.1,
-                "valid_correction": True,
                 "correction_fact": "Two plus two equals 4.",
+                "correction_evidence": ["before", "after", "validated"],
             },
         )
         assert corrected["status"] == "success"

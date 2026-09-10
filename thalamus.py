@@ -15,7 +15,6 @@ from collections import deque
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import re
 import threading
 import uuid
 from typing import Any, Dict, Iterable, Optional, Set
@@ -41,18 +40,6 @@ _LEARNING_ROUTE_TYPES = {
     "learning_stats",
 }
 _NO_GUIDANCE_OR_ADAPT_TYPES = {"health", "learn_from_experience", "sync_notus_pending", "notus_sync_status"}
-_LESSON_TYPE_PATTERNS = {
-    "correction": re.compile(
-        r"\b(wrong|instead|don't|do not|stop|fix|correct|should not)\b", re.IGNORECASE
-    ),
-    "feedback": re.compile(
-        r"\b(feedback|constructive|tone|rude|respectful|polite|calm|kind)\b", re.IGNORECASE
-    ),
-    "skill": re.compile(
-        r"\b(learn|teach|how to|skill|math|grammar|pattern|piano|music|logic|reason)\b",
-        re.IGNORECASE,
-    ),
-}
 _GENERIC_EXPERIENCE_PROFILES = {
     "conversation": {"policy": "reply_guidance", "confidence_scale": 0.95, "confidence_cap": 0.9},
     "reasoning": {"policy": "inference_preferences", "confidence_scale": 0.9, "confidence_cap": 0.88},
@@ -308,7 +295,7 @@ class Thalamus:
         event_type = envelope.get("event_type", "experience")
         if not isinstance(event_type, str) or not event_type.strip():
             event_type = "experience"
-        lesson_type = self._classify_lesson_type(f"{event_type} {signal}")
+        lesson_type = self._classify_lesson_type(f"{event_type} {signal}", envelope)
         contract = self._lobe_contract(destination)
         allowed_record_types = contract.get("allowed_record_types", {"fact", "rule"})
         allowed_record_types = (
@@ -398,7 +385,13 @@ class Thalamus:
             self._handle_lobe_learning(
                 destination,
                 "contradict_learning",
-                {"user_id": user_id, "key": key, "penalty": 0.06, "valid_correction": True},
+                {
+                    "user_id": user_id,
+                    "key": key,
+                    "penalty": 0.06,
+                    "correction_fact": f"[{destination}:{profile.get('policy', 'general_adaptation')}] Refine behavior with counterexamples.",
+                    "correction_evidence": ["before", "after", "validated"],
+                },
                 source=f"{source}:experience_counterexample",
             )
         recalled = self._handle_lobe_learning(
@@ -606,15 +599,46 @@ class Thalamus:
             and memory.get("fact", memory.get("content", "")).strip()
         ]
 
-    @staticmethod
-    def _classify_lesson_type(lesson_text: str) -> str:
-        if _LESSON_TYPE_PATTERNS["correction"].search(lesson_text):
+    def _classify_lesson_type(self, lesson_text: str, payload: Optional[Dict[str, Any]] = None) -> str:
+        data = payload if isinstance(payload, dict) else {}
+        explicit = data.get("lesson_type")
+        if isinstance(explicit, str):
+            label = explicit.strip().lower()
+            if label in {"skill", "feedback", "correction"}:
+                return label
+
+        record = data.get("record") if isinstance(data.get("record"), dict) else {}
+        record_type = str(record.get("type", data.get("record_type", ""))).strip().lower()
+        if record_type == "exception":
             return "correction"
-        if _LESSON_TYPE_PATTERNS["feedback"].search(lesson_text):
-            return "feedback"
-        if _LESSON_TYPE_PATTERNS["skill"].search(lesson_text):
+        if record_type in {"procedure", "rule"}:
             return "skill"
-        return "skill"
+
+        analysis_text = " ".join(
+            item
+            for item in (
+                lesson_text,
+                str(data.get("subject", "")),
+                str(data.get("relation", "")),
+                str(data.get("feedback", "")),
+                str(record.get("subject", "")),
+                str(record.get("relation", "")),
+            )
+            if isinstance(item, str) and item.strip()
+        ).lower()
+        tokens = {
+            part for part in analysis_text.replace(":", " ").replace("-", " ").split() if part
+        }
+        if not tokens:
+            return "skill"
+
+        candidate_vocab = {
+            "feedback": {"feedback", "tone", "style", "delivery", "polite", "respectful", "calm", "kind"},
+            "correction": {"correct", "correction", "replace", "deprecated", "disputed", "conflict", "exception"},
+            "skill": {"procedure", "rule", "pattern", "reasoning", "language", "generation", "inference"},
+        }
+        scores = {label: len(tokens.intersection(vocab)) for label, vocab in candidate_vocab.items()}
+        return max(scores.items(), key=lambda item: item[1])[0]
 
     @staticmethod
     def _skill_name_from_lesson(lesson_text: str, lesson_type: str) -> str:
@@ -688,7 +712,7 @@ class Thalamus:
         event_type = envelope.get("event_type", "experience")
         if not isinstance(event_type, str) or not event_type.strip():
             event_type = "experience"
-        lesson_type = self._classify_lesson_type(f"{event_type} {signal}")
+        lesson_type = self._classify_lesson_type(f"{event_type} {signal}", envelope)
         profile = _GENERIC_EXPERIENCE_PROFILES.get(destination, {"policy": "behavior_rules"})
         policy = str(profile.get("policy", "behavior_rules"))
         surface = self._surface_for_destination(destination, preferred=policy)
@@ -753,13 +777,7 @@ class Thalamus:
             if record_type not in allowed_record_types:
                 continue
             matched.append(lobe)
-        if matched:
-            return matched
-        return [
-            lobe
-            for lobe in candidates
-            if bool(self._lobe_contract(lobe).get("learning_enabled", True))
-        ]
+        return matched
 
     def teach_monday(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         lesson = payload.get("lesson", payload.get("text", payload.get("content", "")))
@@ -769,7 +787,7 @@ class Thalamus:
         user_id = payload.get("user_id", "default")
         if not isinstance(user_id, str) or not user_id.strip():
             user_id = "default"
-        lesson_type = self._classify_lesson_type(lesson_text)
+        lesson_type = self._classify_lesson_type(lesson_text, payload)
         record = payload.get("record") if isinstance(payload.get("record"), dict) else None
         if record is None:
             record = self._record_from_lesson(lesson_text, lesson_type, payload)
@@ -928,13 +946,17 @@ class Thalamus:
         if msg_type in {"learn", "teach_skill"}:
             record = payload_for_contract.get("record", {})
             record = dict(record) if isinstance(record, dict) else {}
-            surface = self._surface_for_destination(
-                destination, preferred=str(record.get("surface", record.get("subject", "")))
-            )
-            record.setdefault("surface", surface)
-            record.setdefault("subject", surface)
+            if not isinstance(record.get("surface"), str) or not record.get("surface", "").strip():
+                surface = self._surface_for_destination(
+                    destination, preferred=str(record.get("subject", ""))
+                )
+                record["surface"] = surface
+            else:
+                surface = str(record.get("surface"))
+            if not isinstance(record.get("subject"), str) or not record.get("subject", "").strip():
+                record["subject"] = str(record.get("surface", "")).strip().lower()
             payload_for_contract["record"] = record
-            payload_for_contract.setdefault("surface", surface)
+            payload_for_contract.setdefault("surface", str(record.get("surface", surface)))
         rejection = contract_rejection(contract, msg_type, payload_for_contract)
         if rejection is not None:
             return {
@@ -1069,7 +1091,10 @@ class Thalamus:
                 "user_id": user_id,
                 "key": behavior_key,
                 "penalty": 0.2,
-                "valid_correction": True,
+                "correction_fact": (
+                    f"For message type '{msg_type}', avoid failing behavior and prefer safe recovery."
+                ),
+                "correction_evidence": ["before", "after", "validated"],
             },
             source=f"{source}:auto_adapt",
         )
