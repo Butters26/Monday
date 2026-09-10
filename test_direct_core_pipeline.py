@@ -639,10 +639,20 @@ def test_learning_contracts_are_declared_per_lobe(tmp_path):
     try:
         contracts = systems["thalamus"].handle_request({"type": "learning_contracts"})
         assert contracts["status"] == "success"
+        declared = contracts["content"]["contracts"]
+        assert set(declared.keys()) == {
+            "conversation",
+            "emotion",
+            "reasoning",
+            "pattern",
+            "language",
+            "output",
+        }
         reasoning = contracts["content"]["contracts"]["reasoning"]
         assert reasoning["learning_enabled"] is True
         assert "rules" in reasoning["capabilities"]
         assert "message_routing" in reasoning["fixed_surfaces"]
+        assert "missing_required_evidence" in reasoning["rejection_conditions"]
     finally:
         shutdown_core_systems(systems)
 
@@ -672,6 +682,59 @@ def test_contract_scoped_lobes_can_disable_learning_requirements(tmp_path):
         )
         taught_lobes = {entry.get("lobe") for entry in taught.get("taught", [])}
         assert "readonly" not in taught_lobes
+        direct = systems["thalamus"].send_message(
+            "readonly",
+            "teach_skill",
+            {
+                "skill": "tone",
+                "behavior": "Keep responses short.",
+                "user_id": "alice",
+            },
+        )
+        assert direct["status"] == "error"
+        assert direct["content"]["action"] == "contract_rejected"
+        assert direct["content"]["condition"] == "learning_disabled"
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_contract_rejects_fixed_surface_mutation_and_missing_required_evidence(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        fixed_surface = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "routing_change",
+                "fact": "Change reasoning transport internals.",
+                "record": {
+                    "type": "rule",
+                    "subject": "message_routing",
+                    "surface": "message_routing",
+                },
+                "user_id": "alice",
+            },
+        )
+        assert fixed_surface["status"] == "error"
+        assert fixed_surface["content"]["condition"] == "fixed_surface_mutation"
+
+        missing_evidence = systems["thalamus"].send_message(
+            "reasoning",
+            "learn",
+            {
+                "key": "validated_without_evidence",
+                "fact": "Use reciprocal checks for arithmetic.",
+                "record": {
+                    "type": "rule",
+                    "subject": "inference_preferences",
+                    "status": "validated",
+                    "evidence": ["saved"],
+                },
+                "user_id": "alice",
+            },
+        )
+        assert missing_evidence["status"] == "error"
+        assert missing_evidence["content"]["condition"] == "missing_required_evidence"
     finally:
         shutdown_core_systems(systems)
 

@@ -21,6 +21,13 @@ _DEFAULT_CONTRACT = {
     "mutable_surfaces": {"behavior_rules"},
     "fixed_surfaces": {"core_pipeline"},
     "required_evidence": {"saved", "retrieved", "applied", "behavior_changed", "validated"},
+    "rejection_conditions": {
+        "learning_disabled",
+        "unsupported_record_type",
+        "fixed_surface_mutation",
+        "out_of_scope_surface",
+        "missing_required_evidence",
+    },
 }
 
 _LOBE_CONTRACTS: Dict[str, Dict[str, Any]] = {
@@ -74,8 +81,81 @@ def resolve_lobe_contract(lobe: str, lobe_handler: Any) -> Dict[str, Any]:
     contract["required_evidence"] = set(contract.get("required_evidence", set()))
     contract["mutable_surfaces"] = set(contract.get("mutable_surfaces", set()))
     contract["fixed_surfaces"] = set(contract.get("fixed_surfaces", set()))
+    contract["rejection_conditions"] = set(contract.get("rejection_conditions", set()))
     contract["learning_enabled"] = bool(contract.get("learning_enabled", True))
     return contract
+
+
+def contract_rejection(
+    contract: Dict[str, Any], msg_type: str, payload: Dict[str, Any]
+) -> Dict[str, Any] | None:
+    if msg_type in {"recall", "list_skills", "learning_stats"}:
+        return None
+
+    reasons = contract.get("rejection_conditions", set())
+    reasons = reasons if isinstance(reasons, set) else set(reasons)
+
+    if not bool(contract.get("learning_enabled", True)) and "learning_disabled" in reasons:
+        return {"condition": "learning_disabled", "message": "Learning is disabled for this lobe"}
+
+    record = payload.get("record", {})
+    record = record if isinstance(record, dict) else {}
+    if msg_type == "teach_skill":
+        record_type = "rule"
+    else:
+        record_type = str(record.get("type", payload.get("record_type", "fact"))).strip().lower() or "fact"
+    allowed_record_types = contract.get("allowed_record_types", set())
+    allowed_record_types = (
+        allowed_record_types if isinstance(allowed_record_types, set) else set(allowed_record_types)
+    )
+    if (
+        record_type
+        and allowed_record_types
+        and record_type not in allowed_record_types
+        and "unsupported_record_type" in reasons
+    ):
+        return {
+            "condition": "unsupported_record_type",
+            "message": f"Record type '{record_type}' is not allowed by lobe contract",
+        }
+
+    mutable_surfaces = contract.get("mutable_surfaces", set())
+    mutable_surfaces = mutable_surfaces if isinstance(mutable_surfaces, set) else set(mutable_surfaces)
+    fixed_surfaces = contract.get("fixed_surfaces", set())
+    fixed_surfaces = fixed_surfaces if isinstance(fixed_surfaces, set) else set(fixed_surfaces)
+    surface = payload.get("surface", record.get("surface", record.get("subject")))
+    surface = str(surface).strip().lower() if isinstance(surface, str) and surface.strip() else ""
+    if surface and surface in {item.lower() for item in fixed_surfaces} and "fixed_surface_mutation" in reasons:
+        return {"condition": "fixed_surface_mutation", "message": f"Surface '{surface}' is fixed by contract"}
+    if (
+        surface
+        and mutable_surfaces
+        and surface not in {item.lower() for item in mutable_surfaces}
+        and "out_of_scope_surface" in reasons
+    ):
+        return {
+            "condition": "out_of_scope_surface",
+            "message": f"Surface '{surface}' is outside mutable surfaces for this lobe",
+        }
+
+    record_status = str(record.get("status", payload.get("status", ""))).strip().lower()
+    required_evidence = contract.get("required_evidence", set())
+    required_evidence = required_evidence if isinstance(required_evidence, set) else set(required_evidence)
+    provided_evidence = payload.get("evidence", record.get("evidence", []))
+    provided_evidence = provided_evidence if isinstance(provided_evidence, list) else []
+    provided = {str(item).strip() for item in provided_evidence if isinstance(item, str) and item.strip()}
+    missing = sorted(item for item in required_evidence if item not in provided)
+    if (
+        record_status in {"validated", "active"}
+        and missing
+        and "missing_required_evidence" in reasons
+    ):
+        return {
+            "condition": "missing_required_evidence",
+            "message": "Validated/active updates require all contract evidence",
+            "missing_evidence": missing,
+        }
+    return None
 
 
 def normalize_learning_result(lobe: str, event_id: str, raw: Dict[str, Any]) -> Dict[str, Any]:

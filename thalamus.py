@@ -22,7 +22,11 @@ from typing import Any, Dict, Iterable, Optional, Set
 
 from direct_response import DeterministicResponseProvider, ResponseProvider
 from learning.experience_envelope import ExperienceEnvelope
-from learning.learning_contract import normalize_learning_result, resolve_lobe_contract
+from learning.learning_contract import (
+    contract_rejection,
+    normalize_learning_result,
+    resolve_lobe_contract,
+)
 from learning.lobe_learning_store import LobeLearningStore
 
 
@@ -805,7 +809,14 @@ class Thalamus:
             names = [name for name in self.lobe_handlers.keys() if name != "notus"]
         contracts = {name: dict(self._lobe_contract(name)) for name in names}
         for contract in contracts.values():
-            for key in ("capabilities", "allowed_record_types", "required_evidence", "mutable_surfaces", "fixed_surfaces"):
+            for key in (
+                "capabilities",
+                "allowed_record_types",
+                "required_evidence",
+                "mutable_surfaces",
+                "fixed_surfaces",
+                "rejection_conditions",
+            ):
                 value = contract.get(key)
                 if isinstance(value, set):
                     contract[key] = sorted(value)
@@ -826,6 +837,23 @@ class Thalamus:
             setattr(lobe, "_lobe_learning_store", store)
         if not isinstance(store, LobeLearningStore):
             return {"status": "error", "message": f"{destination} has invalid learning store"}
+        contract = self._lobe_contract(destination)
+        rejection = contract_rejection(contract, msg_type, payload)
+        if rejection is not None:
+            return {
+                "status": "error",
+                "message": rejection.get("message", "Rejected by lobe contract"),
+                "content": {
+                    "destination": destination,
+                    "action": "contract_rejected",
+                    "condition": rejection.get("condition"),
+                    **(
+                        {"missing_evidence": rejection.get("missing_evidence")}
+                        if rejection.get("missing_evidence")
+                        else {}
+                    ),
+                },
+            }
 
         user_id = payload.get("user_id", "default")
         memory_type = self._learning_memory_type(destination)
