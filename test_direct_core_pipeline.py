@@ -409,11 +409,15 @@ def test_lobe_adaptive_contradict_forget_and_stats(tmp_path):
                 "user_id": "alice",
                 "penalty": 0.4,
                 "correction_fact": "Sudden loud noises increase stress unless expected.",
-                "correction_evidence": ["before", "after", "validated"],
+                "correction_evidence": [
+                    "before:Loud noises increase stress.",
+                    "after:Sudden loud noises increase stress unless expected.",
+                    "validated:manual_review",
+                ],
             },
         )
         assert contradicted["status"] == "success"
-        assert contradicted["action"] == "contradicted"
+        assert contradicted["action"] == "corrected_replace"
         assert contradicted["contradiction_count"] >= 1
 
         forgotten = systems["thalamus"].send_message(
@@ -650,6 +654,61 @@ def test_learn_from_experience_delivers_to_all_registered_direct_core_lobes(tmp_
         shutdown_core_systems(systems)
 
 
+def test_learn_from_experience_routes_by_contract_capabilities(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "learn_from_experience",
+                "content": {
+                    "event_type": "explicit_lesson",
+                    "user_id": "alice",
+                    "raw_experience": "Follow a reproducible multi-step calculation procedure.",
+                    "record": {
+                        "type": "procedure",
+                        "subject": "heuristic_selection",
+                        "surface": "heuristic_selection",
+                        "status": "provisional",
+                    },
+                },
+            }
+        )
+        assert result["status"] in {"success", "partial"}
+        rows = {row["lobe"]: row for row in result["content"]["results"]}
+        assert set(rows.keys()) == {"reasoning", "pattern", "language"}
+        for lobe in ("reasoning", "pattern", "language"):
+            assert rows[lobe]["delivered"] is True
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_learn_from_experience_returns_error_when_no_contract_match(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "learn_from_experience",
+                "content": {
+                    "event_type": "explicit_lesson",
+                    "user_id": "alice",
+                    "raw_experience": "Apply a novel memory schema.",
+                    "record": {
+                        "type": "schema",
+                        "subject": "memory_schema",
+                        "surface": "memory_schema",
+                        "status": "provisional",
+                    },
+                },
+            }
+        )
+        assert result["status"] == "error"
+        assert result["content"]["routing_condition"] == "no_capability_match"
+        assert result["content"]["targets"] == []
+        assert result["content"]["results"] == []
+    finally:
+        shutdown_core_systems(systems)
+
+
 def test_learning_contracts_are_declared_per_lobe(tmp_path):
     systems = create_core_systems(str(tmp_path / "runtime"))
     try:
@@ -859,7 +918,11 @@ def test_contradiction_rejects_false_claim_and_applies_valid_correction(tmp_path
                 "user_id": "alice",
                 "penalty": 0.1,
                 "correction_fact": "Two plus two equals 4.",
-                "correction_evidence": ["before", "after", "validated"],
+                "correction_evidence": [
+                    "before:Two plus two equals four.",
+                    "after:Two plus two equals 4.",
+                    "validated:test_proof",
+                ],
             },
         )
         assert corrected["status"] == "success"

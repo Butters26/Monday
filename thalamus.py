@@ -15,6 +15,7 @@ from collections import deque
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import threading
 import uuid
 from typing import Any, Dict, Iterable, Optional, Set
@@ -390,7 +391,11 @@ class Thalamus:
                     "key": key,
                     "penalty": 0.06,
                     "correction_fact": f"[{destination}:{profile.get('policy', 'general_adaptation')}] Refine behavior with counterexamples.",
-                    "correction_evidence": ["before", "after", "validated"],
+                    "correction_evidence": [
+                        f"before:[{destination}:{profile.get('policy', 'general_adaptation')}] {self._behavior_from_lesson(signal[:280], lesson_type)}",
+                        f"after:[{destination}:{profile.get('policy', 'general_adaptation')}] Refine behavior with counterexamples.",
+                        "validated:experience_counterexample",
+                    ],
                 },
                 source=f"{source}:experience_counterexample",
             )
@@ -468,8 +473,42 @@ class Thalamus:
             }
         envelope_dict = envelope.to_dict()
         memory_result = self._record_learning_event_in_notus(envelope_dict)
-        targets = self._learning_targets()
+        learning_signal = str(envelope_dict.get("raw_experience", "")).strip()
+        event_type = str(envelope_dict.get("event_type", "experience")).strip() or "experience"
+        lesson_type = self._classify_lesson_type(f"{event_type} {learning_signal}", envelope_dict)
+        derived_record = (
+            envelope_dict.get("record")
+            if isinstance(envelope_dict.get("record"), dict)
+            else self._record_from_lesson(learning_signal or event_type, lesson_type, envelope_dict)
+        )
+        targets = self._learning_targets_for_record(lesson_type, derived_record)
         results = []
+        if not targets:
+            return {
+                "status": "error",
+                "content": {
+                    "envelope": envelope_dict,
+                    "targets": [],
+                    "results": [],
+                    "delivery_status": {
+                        "delivered": 0,
+                        "interpreted": 0,
+                        "proposed": 0,
+                        "saved": 0,
+                        "retrieved": 0,
+                        "applied": 0,
+                        "behavior_changed": 0,
+                        "validated": 0,
+                        "update_proposed": 0,
+                        "accepted": 0,
+                        "behavior_affected": 0,
+                        "validation_passed": 0,
+                    },
+                    "routing_condition": "no_capability_match",
+                    "notus_event_record": memory_result,
+                    "partial_failures": [],
+                },
+            }
         for destination in targets:
             response = self.send_and_wait(
                 destination,
@@ -626,18 +665,64 @@ class Thalamus:
             )
             if isinstance(item, str) and item.strip()
         ).lower()
-        tokens = {
-            part for part in analysis_text.replace(":", " ").replace("-", " ").split() if part
-        }
-        if not tokens:
+        tokens = {token for token in re.findall(r"[a-z0-9]{3,}", analysis_text)}
+        if not analysis_text.strip():
+            return "skill"
+        semantic_input = data.get("semantic_input", {})
+        semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
+        semantic_text = " ".join(
+            str(semantic_input.get(key, ""))
+            for key in ("answer", "conclusion", "query", "text")
+            if isinstance(semantic_input.get(key), str) and semantic_input.get(key).strip()
+        ).lower()
+        combined_text = f"{analysis_text} {semantic_text}".strip()
+        if not combined_text:
             return "skill"
 
-        candidate_vocab = {
-            "feedback": {"feedback", "tone", "style", "delivery", "polite", "respectful", "calm", "kind"},
-            "correction": {"correct", "correction", "replace", "deprecated", "disputed", "conflict", "exception"},
-            "skill": {"procedure", "rule", "pattern", "reasoning", "language", "generation", "inference"},
+        def _vector(text: str, dims: int = 256) -> list[float]:
+            vector = [0.0] * dims
+            padded = f"  {text}  "
+            for index in range(len(padded) - 2):
+                gram = padded[index:index + 3]
+                bucket = hash(gram) % dims
+                vector[bucket] += 1.0
+            for token in re.findall(r"[a-z0-9]{2,}", text):
+                bucket = hash(f"tok:{token}") % dims
+                vector[bucket] += 2.0
+            magnitude = sum(value * value for value in vector) ** 0.5
+            if magnitude == 0.0:
+                return [0.0] * dims
+            return [value / magnitude for value in vector]
+
+        def _cosine(left: list[float], right: list[float]) -> float:
+            if not left or not right or len(left) != len(right):
+                return 0.0
+            return sum(x * y for x, y in zip(left, right))
+
+        label_prototypes = {
+            "feedback": (
+                "improve tone style wording respectful calm polite constructive response behavior",
+                {"feedback", "tone", "style", "delivery", "polite", "respectful", "calm", "kind"},
+            ),
+            "correction": (
+                "fix contradiction replace incorrect disputed deprecated exception conflict correction",
+                {"correct", "correction", "replace", "deprecated", "disputed", "conflict", "exception"},
+            ),
+            "skill": (
+                "new procedure rule method pattern reasoning language generation inference capability",
+                {"procedure", "rule", "pattern", "reasoning", "language", "generation", "inference"},
+            ),
         }
-        scores = {label: len(tokens.intersection(vocab)) for label, vocab in candidate_vocab.items()}
+        combined_vector = _vector(combined_text)
+        scores: Dict[str, float] = {}
+        for label, (prototype_text, cue_tokens) in label_prototypes.items():
+            semantic_score = _cosine(combined_vector, _vector(prototype_text))
+            cue_score = (
+                float(len(tokens.intersection(cue_tokens))) / float(len(cue_tokens))
+                if cue_tokens
+                else 0.0
+            )
+            scores[label] = (0.75 * semantic_score) + (0.25 * cue_score)
         return max(scores.items(), key=lambda item: item[1])[0]
 
     @staticmethod
@@ -1094,7 +1179,11 @@ class Thalamus:
                 "correction_fact": (
                     f"For message type '{msg_type}', avoid failing behavior and prefer safe recovery."
                 ),
-                "correction_evidence": ["before", "after", "validated"],
+                "correction_evidence": [
+                    f"before:For message type '{msg_type}', keep behavior that returns status success with stable content.",
+                    f"after:For message type '{msg_type}', avoid failing behavior and prefer safe recovery.",
+                    "validated:auto_adapt",
+                ],
             },
             source=f"{source}:auto_adapt",
         )

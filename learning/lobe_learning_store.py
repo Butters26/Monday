@@ -99,7 +99,36 @@ class LobeLearningStore:
         evidence = self._safe_list(payload.get("correction_evidence", payload.get("evidence", [])))
         evidence_set = {item.lower() for item in evidence}
         required_markers = {"before", "after", "validated"}
-        if not required_markers.issubset(evidence_set):
+        has_plain_markers = required_markers.issubset(evidence_set)
+        before_claim = self._clean_text(payload.get("before_fact", payload.get("previous_fact", "")))
+        after_claim = self._clean_text(payload.get("after_fact", payload.get("proposed_fact", "")))
+        validated_claim = self._clean_text(payload.get("validation_note", payload.get("validation_source", "")))
+        for item in evidence:
+            lowered = item.lower()
+            if lowered.startswith("before:"):
+                before_claim = self._clean_text(item.split(":", 1)[1])
+            elif lowered.startswith("after:"):
+                after_claim = self._clean_text(item.split(":", 1)[1])
+            elif lowered.startswith("validated:"):
+                validated_claim = self._clean_text(item.split(":", 1)[1])
+        if not (has_plain_markers or all((before_claim, after_claim, validated_claim))):
+            return False, "", evidence
+        current_tokens = self._tokens(current_fact)
+        before_tokens = self._tokens(before_claim)
+        after_tokens = self._tokens(after_claim)
+        if not current_tokens or not before_tokens:
+            return False, "", evidence
+        before_overlap = len(current_tokens.intersection(before_tokens)) / max(1, len(current_tokens))
+        if before_overlap < 0.6:
+            return False, "", evidence
+        if after_claim.casefold() != correction_fact.casefold():
+            correction_tokens = self._tokens(correction_fact)
+            if not correction_tokens or not after_tokens:
+                return False, "", evidence
+            after_overlap = len(correction_tokens.intersection(after_tokens)) / max(1, len(correction_tokens))
+            if after_overlap < 0.6:
+                return False, "", evidence
+        if not validated_claim:
             return False, "", evidence
         return True, correction_fact, evidence
 
