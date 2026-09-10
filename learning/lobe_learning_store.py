@@ -72,6 +72,23 @@ class LobeLearningStore:
         return cleaned[:20]
 
     @staticmethod
+    def _safe_string_set(values: Any) -> set[str]:
+        if not isinstance(values, list):
+            return set()
+        return {
+            item.strip()
+            for item in values
+            if isinstance(item, str) and item.strip()
+        }
+
+    def _has_required_evidence(self, required: Any, provided: Any) -> bool:
+        required_set = self._safe_string_set(required)
+        if not required_set:
+            return True
+        provided_set = self._safe_string_set(provided)
+        return required_set.issubset(provided_set)
+
+    @staticmethod
     def _tokens(text: str) -> set[str]:
         return {token for token in re.findall(r"[a-z0-9]{3,}", text.lower())}
 
@@ -82,6 +99,7 @@ class LobeLearningStore:
         record = dict(record) if isinstance(record, dict) else {}
         record_type = self._clean_text(record.get("type", payload.get("record_type", "fact"))).lower() or "fact"
         subject = self._clean_text(record.get("subject", payload.get("subject", self.lobe_name)))
+        surface = self._clean_text(record.get("surface", payload.get("surface", subject))).lower()
         relation = self._clean_text(record.get("relation", payload.get("relation", "guidance")))
         input_value = record.get("input", payload.get("input"))
         if isinstance(input_value, list):
@@ -98,6 +116,7 @@ class LobeLearningStore:
         return {
             "type": record_type,
             "subject": subject,
+            "surface": surface,
             "relation": relation,
             "input": learned_input,
             "value": value,
@@ -186,19 +205,29 @@ class LobeLearningStore:
         learning_record = self._normalise_learning_record(payload, fact, source, confidence)
         required_evidence = payload.get("required_evidence", [])
         required_evidence = required_evidence if isinstance(required_evidence, list) else []
+        record_evidence = self._safe_list(
+            learning_record.get("evidence", payload.get("evidence", []))
+        )
+        learning_record["evidence"] = record_evidence
 
         with self._lock:
             data = self._load()
             facts = self._user_facts(data, user_id)
             existing = facts.get(key)
             if not isinstance(existing, dict):
+                initial_status = learning_record.get("status", "provisional")
+                if (
+                    initial_status in {"validated", "active"}
+                    and not self._has_required_evidence(required_evidence, record_evidence)
+                ):
+                    initial_status = "provisional"
                 record = {
                     "key": key,
                     "fact": fact,
                     "confidence": confidence,
                     "evidence_count": 1,
                     "contradiction_count": 0,
-                    "status": learning_record.get("status", "provisional"),
+                    "status": initial_status,
                     "source": source,
                     "use_count": 0,
                     "last_applied_at": None,
@@ -217,13 +246,7 @@ class LobeLearningStore:
                     record = dict(existing)
                     record["confidence"] = min(1.0, self._clamp_confidence(record.get("confidence"), 0.6) + delta)
                     record["evidence_count"] = int(record.get("evidence_count", 0)) + 1
-                    lifecycle = self._clean_text(record.get("status")).lower() or "provisional"
-                    if lifecycle in {"proposed", "provisional"} and record["evidence_count"] >= 2:
-                        lifecycle = "validated"
-                        record["accepted_at"] = now
-                    if lifecycle == "validated" and record["evidence_count"] >= 3:
-                        lifecycle = "active"
-                    record["status"] = lifecycle
+                    record["status"] = self._clean_text(record.get("status")).lower() or "provisional"
                     action = "reinforced"
                 else:
                     record = dict(existing)
@@ -246,8 +269,44 @@ class LobeLearningStore:
                 record["updated_at"] = now
                 if action != "pending_conflict":
                     record["fact"] = fact
-                    record["learning_record"] = learning_record
-                    record["required_evidence"] = required_evidence
+                    existing_learning_record = record.get("learning_record", {})
+                    existing_learning_record = (
+                        existing_learning_record if isinstance(existing_learning_record, dict) else {}
+                    )
+                    combined_evidence = self._safe_list(
+                        [*existing_learning_record.get("evidence", []), *record_evidence]
+                    )
+                    merged_learning_record = {
+                        **existing_learning_record,
+                        **learning_record,
+                        "evidence": combined_evidence,
+                    }
+                    record["learning_record"] = merged_learning_record
+                    existing_required = record.get("required_evidence", [])
+                    existing_required = existing_required if isinstance(existing_required, list) else []
+                    merged_required = sorted({*existing_required, *required_evidence})
+                    record["required_evidence"] = merged_required
+                    required_for_status = merged_required
+                    evidence_for_status = combined_evidence
+                    status_now = self._clean_text(record.get("status")).lower() or "provisional"
+                    if (
+                        status_now in {"validated", "active"}
+                        and not self._has_required_evidence(required_for_status, evidence_for_status)
+                    ):
+                        record["status"] = "provisional"
+                    if (
+                        record["status"] in {"proposed", "provisional"}
+                        and int(record.get("evidence_count", 0)) >= 2
+                        and self._has_required_evidence(required_for_status, evidence_for_status)
+                    ):
+                        record["status"] = "validated"
+                        record["accepted_at"] = now
+                    if (
+                        record["status"] == "validated"
+                        and int(record.get("evidence_count", 0)) >= 3
+                        and self._has_required_evidence(required_for_status, evidence_for_status)
+                    ):
+                        record["status"] = "active"
             facts[key] = record
             self._save(data)
         return {"status": "success", "content": {**record, "lobe": self.lobe_name, "user_id": user_id, "action": action}}

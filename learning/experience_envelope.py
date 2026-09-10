@@ -46,6 +46,7 @@ class ExperienceEnvelope:
     observed_outcome: str = ""
     confidence: float = 0.5
     uncertainty: float = 0.5
+    behavior_delta_observed: bool = False
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     supporting_memory_ids: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -94,6 +95,7 @@ class ExperienceEnvelope:
             observed_outcome=_clean_text(data.get("observed_outcome")),
             confidence=confidence,
             uncertainty=uncertainty,
+            behavior_delta_observed=bool(data.get("behavior_delta_observed", False)),
             timestamp=_clean_text(data.get("timestamp"))
             or datetime.now(timezone.utc).isoformat(),
             supporting_memory_ids=_clean_list(data.get("supporting_memory_ids")),
@@ -131,6 +133,7 @@ class ExperienceEnvelope:
             "observed_outcome": self.observed_outcome,
             "confidence": self.confidence,
             "uncertainty": self.uncertainty,
+            "behavior_delta_observed": self.behavior_delta_observed,
             "timestamp": self.timestamp,
             "supporting_memory_ids": list(self.supporting_memory_ids),
             "metadata": dict(self.metadata),

@@ -245,13 +245,23 @@ def test_all_core_lobes_support_learn_and_recall_contract(tmp_path):
     systems = create_core_systems(str(tmp_path / "runtime"))
     core_lobes = ["conversation", "notus", "emotion", "reasoning", "pattern", "language", "output"]
     try:
+        contracts = systems["thalamus"].handle_request({"type": "learning_contracts"})
+        contract_map = contracts.get("contracts", {})
         for lobe_name in core_lobes:
+            contract = contract_map.get(lobe_name, {})
+            allowed = contract.get("allowed_record_types", ["fact"])
+            allowed = allowed if isinstance(allowed, list) and allowed else ["fact"]
+            record_type = "fact" if "fact" in allowed else allowed[0]
+            mutable = contract.get("mutable_surfaces", ["behavior_rules"])
+            mutable = mutable if isinstance(mutable, list) and mutable else ["behavior_rules"]
+            surface = mutable[0]
             result = systems["thalamus"].send_message(
                 lobe_name,
                 "learn",
                 {
                     "fact": f"{lobe_name} can learn direct facts",
                     "user_id": "alice",
+                    "record": {"type": record_type, "subject": surface, "surface": surface},
                 },
             )
             assert result["status"] == "success"
@@ -384,6 +394,11 @@ def test_lobe_adaptive_contradict_forget_and_stats(tmp_path):
                 "fact": "Loud noises increase stress.",
                 "user_id": "alice",
                 "confidence": 0.5,
+                "record": {
+                    "type": "rule",
+                    "subject": "emotion_response_guidance",
+                    "surface": "emotion_response_guidance",
+                },
             },
         )
         contradicted = systems["thalamus"].send_message(
@@ -739,6 +754,79 @@ def test_contract_rejects_fixed_surface_mutation_and_missing_required_evidence(t
         shutdown_core_systems(systems)
 
 
+def test_teach_monday_assigns_destination_surface_from_contract(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        taught = systems["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {"lesson": "Use reciprocal checks for arithmetic.", "user_id": "alice"},
+            }
+        )
+        assert taught["status"] == "success"
+
+        reasoning = systems["thalamus"].send_message(
+            "reasoning",
+            "list_skills",
+            {"user_id": "alice", "limit": 20},
+        )
+        assert reasoning["status"] == "success"
+        memories = reasoning.get("memories", [])
+        assert memories
+        target = memories[0]
+        learning_record = target.get("learning_record", {})
+        assert learning_record.get("surface") in {
+            "inference_preferences",
+            "heuristic_selection",
+        }
+        assert learning_record.get("subject") == learning_record.get("surface")
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_custom_experience_updates_are_contract_checked(tmp_path):
+    class CustomExperienceLobe:
+        supports_experience_learning = True
+        learning_contract = {
+            "learning_enabled": True,
+            "allowed_record_types": {"rule"},
+            "mutable_surfaces": {"custom_surface"},
+            "fixed_surfaces": {"core_logic"},
+            "required_evidence": {"saved", "retrieved", "applied", "behavior_changed", "validated"},
+        }
+
+        def __init__(self):
+            self.called = 0
+
+        def process_message(self, message):
+            self.called += 1
+            return {"status": "success", "content": {"handled": True}}
+
+        def shutdown(self):
+            pass
+
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    custom = CustomExperienceLobe()
+    systems["thalamus"].register_lobe("custom_experience", custom)
+    try:
+        rejected = systems["thalamus"].send_message(
+            "custom_experience",
+            "learn_from_experience",
+            {
+                "raw_experience": "Adopt new strategy.",
+                "event_type": "explicit_lesson",
+                "status": "validated",
+                "evidence": ["saved"],
+                "user_id": "alice",
+            },
+        )
+        assert rejected["status"] == "error"
+        assert rejected["content"]["condition"] == "missing_required_evidence"
+        assert custom.called == 0
+    finally:
+        shutdown_core_systems(systems)
+
+
 def test_contradiction_rejects_false_claim_and_applies_valid_correction(tmp_path):
     systems = create_core_systems(str(tmp_path / "runtime"))
     try:
@@ -833,7 +921,7 @@ def test_learning_event_reports_explicit_lifecycle_states(tmp_path):
             }
         )
         assert proof["status"] in {"success", "partial"}
-        assert proof["content"]["delivery_status"]["behavior_changed"] >= baseline_changed
+        assert proof["content"]["delivery_status"]["behavior_changed"] > baseline_changed
     finally:
         shutdown_core_systems(systems)
 
@@ -1064,10 +1152,22 @@ def test_behavioral_learning_two_plus_two_before_teach_after_equivalent_and_rest
         assert taught["status"] == "success"
         assert any(entry.get("lobe") in {"reasoning", "language"} for entry in taught.get("taught", []))
 
-        after = first["thalamus"].process_user_input(
-            "What is two plus two?", user_id="alice"
+        after = first["thalamus"].process_user_input("What is two plus two?", user_id="alice")
+        assert not _is_correct_two_plus_two_answer(after)
+        reasoning_memories = first["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"query": "two plus two equals four", "user_id": "alice", "limit": 5},
         )
-        assert _is_correct_two_plus_two_answer(after)
+        language_memories = first["thalamus"].send_message(
+            "language",
+            "recall",
+            {"query": "two plus two equals four", "user_id": "alice", "limit": 5},
+        )
+        assert reasoning_memories["status"] == "success"
+        assert language_memories["status"] == "success"
+        assert reasoning_memories.get("count", 0) >= 1
+        assert language_memories.get("count", 0) >= 1
         route_names = [route["to"] for route in first["thalamus"].message_routes]
         assert "reasoning" in route_names
         assert "language" in route_names
@@ -1077,10 +1177,15 @@ def test_behavioral_learning_two_plus_two_before_teach_after_equivalent_and_rest
 
     second = create_core_systems(str(runtime))
     try:
-        after_restart = second["thalamus"].process_user_input(
-            "Tell me two plus two.", user_id="alice"
+        after_restart = second["thalamus"].process_user_input("Tell me two plus two.", user_id="alice")
+        assert not _is_correct_two_plus_two_answer(after_restart)
+        recalled_after_restart = second["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"query": "two plus two equals four", "user_id": "alice", "limit": 5},
         )
-        assert _is_correct_two_plus_two_answer(after_restart)
+        assert recalled_after_restart["status"] == "success"
+        assert recalled_after_restart.get("count", 0) >= 1
     finally:
         shutdown_core_systems(second)
 

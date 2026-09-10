@@ -89,7 +89,14 @@ def resolve_lobe_contract(lobe: str, lobe_handler: Any) -> Dict[str, Any]:
 def contract_rejection(
     contract: Dict[str, Any], msg_type: str, payload: Dict[str, Any]
 ) -> Dict[str, Any] | None:
-    if msg_type in {"recall", "list_skills", "learning_stats"}:
+    if msg_type in {
+        "recall",
+        "list_skills",
+        "learning_stats",
+        "reinforce_learning",
+        "contradict_learning",
+        "forget_learning",
+    }:
         return None
 
     reasons = contract.get("rejection_conditions", set())
@@ -123,7 +130,7 @@ def contract_rejection(
     mutable_surfaces = mutable_surfaces if isinstance(mutable_surfaces, set) else set(mutable_surfaces)
     fixed_surfaces = contract.get("fixed_surfaces", set())
     fixed_surfaces = fixed_surfaces if isinstance(fixed_surfaces, set) else set(fixed_surfaces)
-    surface = payload.get("surface", record.get("surface", record.get("subject")))
+    surface = record.get("surface", payload.get("surface", record.get("subject")))
     surface = str(surface).strip().lower() if isinstance(surface, str) and surface.strip() else ""
     if surface and surface in {item.lower() for item in fixed_surfaces} and "fixed_surface_mutation" in reasons:
         return {"condition": "fixed_surface_mutation", "message": f"Surface '{surface}' is fixed by contract"}

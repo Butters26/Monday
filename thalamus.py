@@ -54,20 +54,20 @@ _LESSON_TYPE_PATTERNS = {
     ),
 }
 _GENERIC_EXPERIENCE_PROFILES = {
-    "conversation": {"policy": "dialogue_guidance", "confidence_scale": 0.95, "confidence_cap": 0.9},
-    "reasoning": {"policy": "decision_rule", "confidence_scale": 0.9, "confidence_cap": 0.88},
-    "emotion": {"policy": "tone_regulation", "confidence_scale": 0.75, "confidence_cap": 0.8},
-    "output": {"policy": "response_delivery", "confidence_scale": 0.8, "confidence_cap": 0.82},
-    "pattern": {"policy": "pattern_rule", "confidence_scale": 0.9, "confidence_cap": 0.88},
-    "language": {"policy": "language_rule", "confidence_scale": 0.9, "confidence_cap": 0.88},
-    "attention": {"policy": "focus_signal", "confidence_scale": 0.7, "confidence_cap": 0.78},
-    "meta_cognition": {"policy": "self_check", "confidence_scale": 0.88, "confidence_cap": 0.86},
-    "executive_control": {"policy": "task_priority", "confidence_scale": 0.83, "confidence_cap": 0.84},
-    "social_context": {"policy": "social_norm", "confidence_scale": 0.8, "confidence_cap": 0.83},
-    "sensory_integration": {"policy": "signal_mapping", "confidence_scale": 0.72, "confidence_cap": 0.8},
-    "motor_action": {"policy": "action_safety", "confidence_scale": 0.72, "confidence_cap": 0.8},
-    "novelty": {"policy": "novelty_detection", "confidence_scale": 0.78, "confidence_cap": 0.83},
-    "perception": {"policy": "perception_rule", "confidence_scale": 0.8, "confidence_cap": 0.84},
+    "conversation": {"policy": "reply_guidance", "confidence_scale": 0.95, "confidence_cap": 0.9},
+    "reasoning": {"policy": "inference_preferences", "confidence_scale": 0.9, "confidence_cap": 0.88},
+    "emotion": {"policy": "emotion_response_guidance", "confidence_scale": 0.75, "confidence_cap": 0.8},
+    "output": {"policy": "delivery_tone", "confidence_scale": 0.8, "confidence_cap": 0.82},
+    "pattern": {"policy": "pattern_rules", "confidence_scale": 0.9, "confidence_cap": 0.88},
+    "language": {"policy": "generation_guidance", "confidence_scale": 0.9, "confidence_cap": 0.88},
+    "attention": {"policy": "behavior_rules", "confidence_scale": 0.7, "confidence_cap": 0.78},
+    "meta_cognition": {"policy": "behavior_rules", "confidence_scale": 0.88, "confidence_cap": 0.86},
+    "executive_control": {"policy": "behavior_rules", "confidence_scale": 0.83, "confidence_cap": 0.84},
+    "social_context": {"policy": "behavior_rules", "confidence_scale": 0.8, "confidence_cap": 0.83},
+    "sensory_integration": {"policy": "behavior_rules", "confidence_scale": 0.72, "confidence_cap": 0.8},
+    "motor_action": {"policy": "behavior_rules", "confidence_scale": 0.72, "confidence_cap": 0.8},
+    "novelty": {"policy": "behavior_rules", "confidence_scale": 0.78, "confidence_cap": 0.83},
+    "perception": {"policy": "behavior_rules", "confidence_scale": 0.8, "confidence_cap": 0.84},
 }
 _LESSON_CAPABILITY_MAP = {
     "skill": {"rules", "procedures"},
@@ -336,6 +336,9 @@ class Thalamus:
             destination,
             {"policy": "general_adaptation", "confidence_scale": 0.8, "confidence_cap": 0.82},
         )
+        policy_surface = self._surface_for_destination(
+            destination, preferred=str(profile.get("policy", ""))
+        )
         base_confidence = self._safe_confidence(envelope.get("confidence"), 0.7)
         confidence = min(
             float(profile.get("confidence_cap", 0.82)),
@@ -360,7 +363,8 @@ class Thalamus:
                 "source": f"{source}:experience:{destination}",
                 "record": {
                     "type": desired_type,
-                    "subject": profile.get("policy", "general"),
+                    "subject": policy_surface,
+                    "surface": policy_surface,
                     "relation": lesson_type,
                     "value": signal[:280],
                     "scope": destination,
@@ -650,6 +654,63 @@ class Thalamus:
             "status": "provisional",
         }
 
+    def _surface_for_destination(
+        self, destination: str, preferred: Optional[str] = None
+    ) -> str:
+        preferred_value = (
+            preferred.strip().lower()
+            if isinstance(preferred, str) and preferred.strip()
+            else ""
+        )
+        contract = self._lobe_contract(destination)
+        mutable_surfaces = contract.get("mutable_surfaces", set())
+        mutable_surfaces = (
+            mutable_surfaces if isinstance(mutable_surfaces, set) else set(mutable_surfaces)
+        )
+        available = sorted(
+            item.strip().lower()
+            for item in mutable_surfaces
+            if isinstance(item, str) and item.strip()
+        )
+        if preferred_value and preferred_value in available:
+            return preferred_value
+        if available:
+            return available[0]
+        return preferred_value or "behavior_rules"
+
+    def _experience_contract_rejection(
+        self, destination: str, payload: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        envelope = payload.get("envelope", payload) if isinstance(payload, dict) else {}
+        envelope = envelope if isinstance(envelope, dict) else {}
+        signal = envelope.get("raw_experience", "")
+        signal = signal.strip() if isinstance(signal, str) else ""
+        event_type = envelope.get("event_type", "experience")
+        if not isinstance(event_type, str) or not event_type.strip():
+            event_type = "experience"
+        lesson_type = self._classify_lesson_type(f"{event_type} {signal}")
+        profile = _GENERIC_EXPERIENCE_PROFILES.get(destination, {"policy": "behavior_rules"})
+        policy = str(profile.get("policy", "behavior_rules"))
+        surface = self._surface_for_destination(destination, preferred=policy)
+        record = {
+            "type": "rule" if lesson_type in {"skill", "feedback", "correction"} else "fact",
+            "subject": policy,
+            "surface": surface,
+            "status": envelope.get("status", "provisional"),
+            "evidence": envelope.get("evidence", []),
+        }
+        return contract_rejection(
+            self._lobe_contract(destination),
+            "learn",
+            {
+                "record": record,
+                "record_type": record["type"],
+                "surface": surface,
+                "status": record["status"],
+                "evidence": record["evidence"],
+            },
+        )
+
     @staticmethod
     def _required_capabilities_for_record(record: Dict[str, Any], lesson_type: str) -> set[str]:
         capability = _LESSON_CAPABILITY_MAP.get(lesson_type, {"rules"})
@@ -723,6 +784,31 @@ class Thalamus:
             required_evidence = (
                 required_evidence if isinstance(required_evidence, set) else set(required_evidence)
             )
+            preferred_surface = str(
+                _GENERIC_EXPERIENCE_PROFILES.get(destination, {}).get("policy", "")
+            )
+            destination_record = dict(record)
+            destination_record.setdefault(
+                "surface",
+                self._surface_for_destination(
+                    destination,
+                    preferred=preferred_surface or str(destination_record.get("subject", "")),
+                ),
+            )
+            destination_record.setdefault("scope", destination)
+            current_subject = str(destination_record.get("subject", "")).strip().lower()
+            if current_subject in {
+                "",
+                "skill",
+                "feedback",
+                "correction",
+                "fact",
+                "rule",
+                "procedure",
+                "example",
+                "exception",
+            }:
+                destination_record["subject"] = destination_record.get("surface")
             result = self._handle_lobe_learning(
                 destination,
                 "teach_skill",
@@ -734,7 +820,7 @@ class Thalamus:
                     "user_id": user_id,
                     "confidence": payload.get("confidence", 0.75),
                     "lesson_type": lesson_type,
-                    "record": {**record, "status": "provisional"},
+                    "record": {**destination_record, "status": "provisional"},
                     "required_evidence": sorted(required_evidence),
                 },
                 source="teach_monday",
@@ -838,7 +924,18 @@ class Thalamus:
         if not isinstance(store, LobeLearningStore):
             return {"status": "error", "message": f"{destination} has invalid learning store"}
         contract = self._lobe_contract(destination)
-        rejection = contract_rejection(contract, msg_type, payload)
+        payload_for_contract = dict(payload)
+        if msg_type in {"learn", "teach_skill"}:
+            record = payload_for_contract.get("record", {})
+            record = dict(record) if isinstance(record, dict) else {}
+            surface = self._surface_for_destination(
+                destination, preferred=str(record.get("surface", record.get("subject", "")))
+            )
+            record.setdefault("surface", surface)
+            record.setdefault("subject", surface)
+            payload_for_contract["record"] = record
+            payload_for_contract.setdefault("surface", surface)
+        rejection = contract_rejection(contract, msg_type, payload_for_contract)
         if rejection is not None:
             return {
                 "status": "error",
@@ -859,7 +956,7 @@ class Thalamus:
         memory_type = self._learning_memory_type(destination)
 
         if msg_type in {"learn", "teach_skill"}:
-            payload_to_store = dict(payload)
+            payload_to_store = dict(payload_for_contract)
             if msg_type == "teach_skill":
                 skill_fact = self._skill_fact(payload)
                 if skill_fact is None:
@@ -946,6 +1043,7 @@ class Thalamus:
         user_id = self._normalised_user_id(content)
         behavior_key = f"behavior:{msg_type}"
         if response.get("status") == "success":
+            surface = self._surface_for_destination(destination)
             self._handle_lobe_learning(
                 destination,
                 "learn",
@@ -958,6 +1056,7 @@ class Thalamus:
                     ),
                     "confidence": 0.7,
                     "reinforcement": 0.8,
+                    "record": {"type": "rule", "subject": surface, "surface": surface},
                 },
                 source=f"{source}:auto_adapt",
             )
@@ -985,6 +1084,7 @@ class Thalamus:
                     "non-crashing fallback response."
                 ),
                 "confidence": 0.6,
+                "record": {"type": "rule", "subject": self._surface_for_destination(destination), "surface": self._surface_for_destination(destination)},
             },
             source=f"{source}:auto_adapt",
         )
@@ -1009,6 +1109,29 @@ class Thalamus:
         if msg_type == "learn_from_experience" and not bool(
             getattr(lobe, "supports_experience_learning", False)
         ):
+            rejection = self._experience_contract_rejection(destination, content)
+            if rejection is not None:
+                return {
+                    "status": "error",
+                    "message": rejection.get("message", "Rejected by lobe contract"),
+                    "content": {
+                        "delivered": True,
+                        "interpreted": False,
+                        "proposed": False,
+                        "saved": False,
+                        "retrieved": False,
+                        "applied": False,
+                        "behavior_changed": False,
+                        "validated": False,
+                        "action": "contract_rejected",
+                        "condition": rejection.get("condition"),
+                        **(
+                            {"missing_evidence": rejection.get("missing_evidence")}
+                            if rejection.get("missing_evidence")
+                            else {}
+                        ),
+                    },
+                }
             response = self._generic_experience_learning(destination, content, source)
             self.lobe_status[destination] = "online" if response.get("status") != "error" else "error"
             self.message_routes.append(
@@ -1021,6 +1144,22 @@ class Thalamus:
                 }
             )
             return response
+        if msg_type == "learn_from_experience":
+            rejection = self._experience_contract_rejection(destination, content)
+            if rejection is not None:
+                return {
+                    "status": "error",
+                    "message": rejection.get("message", "Rejected by lobe contract"),
+                    "content": {
+                        "action": "contract_rejected",
+                        "condition": rejection.get("condition"),
+                        **(
+                            {"missing_evidence": rejection.get("missing_evidence")}
+                            if rejection.get("missing_evidence")
+                            else {}
+                        ),
+                    },
+                }
 
         envelope_content = dict(content)
         learned_guidance = self._learned_guidance_for_message(
