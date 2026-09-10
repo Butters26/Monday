@@ -89,7 +89,7 @@ class SuperhumanConfig:
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
     snapshot_path: str = runtime_file("monday_notus_snapshot.json")
-    use_sentence_transformer: bool = False
+    use_sentence_transformer: bool = True
     
     # Advanced retrieval
     attention_heads: int = 4

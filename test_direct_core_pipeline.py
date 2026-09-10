@@ -797,36 +797,17 @@ def test_teach_process_restart_keeps_changed_behavior_across_two_lobes(tmp_path)
 
 
 def test_behavioral_learning_two_plus_two_before_teach_after_equivalent_and_restart(tmp_path):
-    class ArithmeticLobe:
-        def process_message(self, message):
-            content = message.get("content", {})
-            text = str(content.get("user_input", "")).lower()
-            guidance = content.get("learned_guidance", [])
-            learned = any(
-                isinstance(item, str)
-                and (
-                    "2+2=4" in item.replace(" ", "")
-                    or "two plus two equals four" in item.lower()
-                )
-                for item in guidance
-            )
-            if "2+2" in text or "two plus two" in text:
-                answer = "4" if learned else "5"
-                return {"status": "success", "content": {"answer": answer}}
-            return {"status": "success", "content": {"answer": "unknown"}}
-
-        def shutdown(self):
-            pass
+    def _is_correct_two_plus_two_answer(text: str) -> bool:
+        if not isinstance(text, str):
+            return False
+        lower = text.lower()
+        return " 4" in f" {lower} " or "four" in lower
 
     runtime = tmp_path / "runtime"
     first = create_core_systems(str(runtime))
-    first["thalamus"].register_lobe("arithmetic", ArithmeticLobe())
     try:
-        before = first["thalamus"].send_message(
-            "arithmetic", "answer", {"user_input": "What is 2+2?", "user_id": "alice"}
-        )
-        assert before["status"] == "success"
-        assert before["content"]["answer"] == "5"
+        before = first["thalamus"].process_user_input("What is 2+2?", user_id="alice")
+        assert not _is_correct_two_plus_two_answer(before)
 
         taught = first["thalamus"].handle_request(
             {
@@ -838,28 +819,21 @@ def test_behavioral_learning_two_plus_two_before_teach_after_equivalent_and_rest
             }
         )
         assert taught["status"] == "success"
-        assert any(entry.get("lobe") == "arithmetic" for entry in taught.get("taught", []))
+        assert any(entry.get("lobe") in {"reasoning", "language"} for entry in taught.get("taught", []))
 
-        after = first["thalamus"].send_message(
-            "arithmetic",
-            "answer",
-            {"user_input": "What is two plus two?", "user_id": "alice"},
+        after = first["thalamus"].process_user_input(
+            "What is two plus two?", user_id="alice"
         )
-        assert after["status"] == "success"
-        assert after["content"]["answer"] == "4"
+        assert _is_correct_two_plus_two_answer(after)
     finally:
         shutdown_core_systems(first)
 
     second = create_core_systems(str(runtime))
-    second["thalamus"].register_lobe("arithmetic", ArithmeticLobe())
     try:
-        after_restart = second["thalamus"].send_message(
-            "arithmetic",
-            "answer",
-            {"user_input": "Tell me two plus two.", "user_id": "alice"},
+        after_restart = second["thalamus"].process_user_input(
+            "Tell me two plus two.", user_id="alice"
         )
-        assert after_restart["status"] == "success"
-        assert after_restart["content"]["answer"] == "4"
+        assert _is_correct_two_plus_two_answer(after_restart)
     finally:
         shutdown_core_systems(second)
 

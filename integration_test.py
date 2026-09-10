@@ -7,7 +7,6 @@ This uses lightweight stubs for `perception`, `reasoning`, `language`, and `outp
 
 from thalamus import Thalamus, get_thalamus
 import time
-import pytest
 
 # Import real lobes we've implemented
 from attention_lobe import AttentionLobe
@@ -16,9 +15,7 @@ from executive_control_lobe import ExecutiveControlLobe
 from meta_cognition_lobe import MetaCognitionLobe
 from social_context_lobe import SocialContextLobe
 from sensory_integration_lobe import SensoryIntegrationLobe
-ValueGoalManagementLobe = pytest.importorskip(
-    "value_goal_management_lobe"
-).ValueGoalManagementLobe
+from value_goal_management_lobe import ValueGoalManagementLobe
 
 # Lightweight stub lobes for core components
 class PerceptionStub:

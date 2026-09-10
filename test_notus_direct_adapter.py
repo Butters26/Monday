@@ -45,6 +45,7 @@ def _make_memory_system(tmp_path: str) -> SuperhumanMemorySystem:
     cfg = SuperhumanConfig(
         snapshot_path=os.path.join(tmp_path, "snap.json"),
         autosave_enabled=False,
+        use_sentence_transformer=False,
     )
     db = os.path.join(tmp_path, "test_memory.db")
     sys = SuperhumanMemorySystem(config=cfg, storage_path=db)
@@ -67,7 +68,7 @@ def _make_memory_system(tmp_path: str) -> SuperhumanMemorySystem:
 class TestAdvancedEmbeddingEngine(unittest.TestCase):
 
     def setUp(self):
-        self.cfg = SuperhumanConfig()
+        self.cfg = SuperhumanConfig(use_sentence_transformer=False)
         self.engine = AdvancedEmbeddingEngine(self.cfg)
 
     def test_empty_string_returns_zero_vector(self):
@@ -363,7 +364,8 @@ class TestCompatCursor(unittest.TestCase):
         import tempfile
         tmp = tempfile.mkdtemp()
         cfg = SuperhumanConfig(autosave_enabled=False,
-                               snapshot_path=os.path.join(tmp, "snap.json"))
+                               snapshot_path=os.path.join(tmp, "snap.json"),
+                               use_sentence_transformer=False)
         mem = SuperhumanMemorySystem(config=cfg,
                                      storage_path=os.path.join(tmp, "c.db"))
         mem._db_sqlite = True
@@ -634,7 +636,8 @@ class TestConfigEnvOverride(unittest.TestCase):
             tmp = tempfile.mkdtemp()
             cfg = SuperhumanConfig(autosave_enabled=False,
                                    snapshot_path=os.path.join(tmp, "snap.json"),
-                                   allow_env_override=True)
+                                   allow_env_override=True,
+                                   use_sentence_transformer=False)
             mem = SuperhumanMemorySystem(config=cfg,
                                          storage_path=os.path.join(tmp, "env.db"))
             # Give the init a moment to apply env overrides
@@ -651,7 +654,8 @@ class TestConfigEnvOverride(unittest.TestCase):
             tmp = tempfile.mkdtemp()
             cfg = SuperhumanConfig(autosave_enabled=False,
                                    snapshot_path=os.path.join(tmp, "snap.json"),
-                                   allow_env_override=True)
+                                   allow_env_override=True,
+                                   use_sentence_transformer=False)
             mem = SuperhumanMemorySystem(config=cfg,
                                          storage_path=os.path.join(tmp, "env2.db"))
             import time; time.sleep(0.05)

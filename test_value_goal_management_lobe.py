@@ -1,9 +1,5 @@
 # Test for ValueGoalManagementLobe
-import pytest
-
-ValueGoalManagementLobe = pytest.importorskip(
-    "value_goal_management_lobe"
-).ValueGoalManagementLobe
+from value_goal_management_lobe import ValueGoalManagementLobe
 
 def test_value_goal_management_lobe():
     lobe = ValueGoalManagementLobe()

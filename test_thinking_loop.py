@@ -3,54 +3,25 @@
 Test Thinking Loop - Verify core cognitive cycle works
 """
 
-import time
 import sys
-import pytest
 from thalamus import get_thalamus
-
-ThinkingLoop = pytest.importorskip("thinking_loop").ThinkingLoop
+from thinking_loop import ThinkingLoop
 
 
 def test_thinking_loop():
-    """Test the complete thinking loop"""
-    print("🧪 Testing Thinking Loop\n")
-    
-    # Get Thalamus
+    """Test the complete thinking loop."""
     thalamus = get_thalamus()
-    
-    # Create thinking loop
     loop = ThinkingLoop()
-    
-    print("✅ Thinking Loop created\n")
-    
-    # Test manual think cycle (don't start continuous loop)
-    print("🔄 Running single think cycle...\n")
-    
-    try:
-        # Manually trigger one cycle
-        loop._run_think_cycle()
-        
-        print("\n✅ Think cycle completed")
-        
-        # Check metrics
-        metrics = loop.process_message({'type': 'get_metrics'})
-        print(f"\n📊 Metrics: {metrics}")
-        
-        # Check recent executions
-        executions = loop.process_message({'type': 'get_recent_executions', 'limit': 5})
-        print(f"\n📜 Recent executions: {len(executions.get('executions', []))} items")
-        
-        print("\n✅ Thinking Loop test PASSED")
-        
-    except Exception as e:
-        print(f"\n❌ Test FAILED: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-    
-    return True
+    cycle = loop._run_think_cycle()
+    assert cycle.get("status") == "success"
+    metrics = loop.process_message({'type': 'get_metrics'})
+    assert metrics.get("status") == "success"
+    assert metrics.get("metrics", {}).get("cycles", 0) >= 1
+    executions = loop.process_message({'type': 'get_recent_executions', 'limit': 5})
+    assert executions.get("status") == "success"
+    assert len(executions.get("executions", [])) >= 1
 
 
 if __name__ == "__main__":
-    success = test_thinking_loop()
-    sys.exit(0 if success else 1)
+    test_thinking_loop()
+    sys.exit(0)
