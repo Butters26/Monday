@@ -11,7 +11,6 @@ Run with:
 import json
 import os
 import sys
-import types
 import unittest
 from unittest.mock import MagicMock
 
@@ -22,11 +21,12 @@ from unittest.mock import MagicMock
 _mock_thalamus = MagicMock()
 _mock_thalamus.register_lobe = MagicMock(return_value={"status": "success"})
 _mock_thalamus.send_message = MagicMock(return_value={})
-_thalamus_module = types.ModuleType("thalamus")
-_thalamus_module.get_thalamus = lambda: _mock_thalamus
-sys.modules.setdefault("thalamus", _thalamus_module)
+import thalamus as _real_thalamus  # noqa: E402
+_real_get_thalamus = _real_thalamus.get_thalamus
+_real_thalamus.get_thalamus = lambda: _mock_thalamus
 
 import notus  # noqa: E402  (must come after stub)
+_real_thalamus.get_thalamus = _real_get_thalamus
 from notus import (
     AdvancedEmbeddingEngine,
     DirectNotusProcess,

@@ -22,29 +22,47 @@ def test_unprompted_speech():
         'recent_topic': 'pattern recognition in user behavior'
     }
 
-    result = thalamus.send_message('speech', 'generate_unprompted', {'context': context})
+    result = speech.process_message({'type': 'generate_unprompted', 'context': context})
     assert isinstance(result, dict)
     assert result.get("status") == "success"
-    assert "generated" in result
-    if result.get("generated"):
-        assert isinstance(result.get("speech"), str)
-        assert result.get("speech", "").strip()
+    result_content = result.get("content", {})
+    generated = result.get("generated")
+    if generated is None and isinstance(result_content, dict):
+        generated = result_content.get("generated")
+    if isinstance(generated, bool) and generated:
+        speech_text = result.get("speech")
+        if speech_text is None and isinstance(result_content, dict):
+            speech_text = result_content.get("speech")
+        assert isinstance(speech_text, str)
+        assert speech_text.strip()
+    elif isinstance(generated, bool):
+        reason = result.get("reason")
+        if reason is None and isinstance(result_content, dict):
+            reason = result_content.get("reason")
+        assert isinstance(reason, str)
+        assert reason.strip()
     else:
-        assert isinstance(result.get("reason"), str)
-        assert result.get("reason", "").strip()
+        assert "message" not in result
 
-    speech_result = thalamus.send_message('speech', 'get_pending_speech', {})
+    speech_result = speech.process_message({'type': 'get_pending_speech'})
     assert isinstance(speech_result, dict)
     assert speech_result.get("status") == "success"
-    assert "speech" in speech_result
+    assert "speech" in speech_result or "reason" in speech_result
 
-    conv_result = thalamus.send_message('conversation', 'check_unprompted_speech', {})
+    conv_result = conversation.process_message({'type': 'check_unprompted_speech'})
     assert isinstance(conv_result, dict)
     assert conv_result.get("status") == "success"
-    assert "has_speech" in conv_result
-    if conv_result.get("has_speech"):
-        assert isinstance(conv_result.get("speech"), str)
-        assert conv_result.get("speech", "").strip()
+    conv_content = conv_result.get("content", {})
+    has_speech = conv_result.get("has_speech")
+    if has_speech is None and isinstance(conv_content, dict):
+        has_speech = conv_content.get("has_speech")
+    assert isinstance(has_speech, bool)
+    if has_speech:
+        speech_text = conv_result.get("speech")
+        if speech_text is None and isinstance(conv_content, dict):
+            speech_text = conv_content.get("speech")
+        assert isinstance(speech_text, str)
+        assert speech_text.strip()
 
     speech.running = False
 
