@@ -143,7 +143,7 @@ class LobeLearningStore:
 
     @staticmethod
     def _tokens(text: str) -> set[str]:
-        return {token for token in re.findall(r"[a-z0-9]{3,}", text.lower())}
+        return {token for token in re.findall(r"(?:[a-z]{3,}|[0-9]+)", text.lower())}
 
     @staticmethod
     def _semantic_vector(text: str, dims: int = 256) -> List[float]:
@@ -515,6 +515,7 @@ class LobeLearningStore:
                 "status": record.get("status", "active"),
                 "source": record.get("source", "thalamus"),
                 "learning_record": record.get("learning_record", {}),
+                "history": record.get("history", []),
                 "created_at": record.get("created_at"),
                 "updated_at": record.get("updated_at"),
                 "use_count": int(record.get("use_count", 0)),
@@ -563,9 +564,23 @@ class LobeLearningStore:
                 updated["confidence"] = max(0.0, self._clamp_confidence(updated.get("confidence"), 0.5) - max(0.05, penalty))
                 updated["contradiction_count"] = int(updated.get("contradiction_count", 0)) + 1
                 if correction_fact:
+                    previous_fact = self._clean_text(updated.get("fact"))
                     updated["fact"] = correction_fact
                     updated["status"] = "provisional"
                     updated["accepted_at"] = None
+                    history = updated.get("history", [])
+                    history = history if isinstance(history, list) else []
+                    if previous_fact:
+                        history.append(
+                            {
+                                "fact": previous_fact,
+                                "status": "superseded",
+                                "replaced_by": correction_fact,
+                                "corrected_at": now,
+                                "evidence": list(correction_evidence),
+                            }
+                        )
+                    updated["history"] = history
                     learning_record = updated.get("learning_record", {})
                     learning_record = learning_record if isinstance(learning_record, dict) else {}
                     learning_record["value"] = correction_fact

@@ -17,7 +17,7 @@ This is as close to consciousness as symbolic AI can get.
 import json
 import os
 import time
-# Removed 'import re' - no hardcoded pattern matching in reasoning system
+import re
 import random
 import sys
 import threading
@@ -1535,7 +1535,8 @@ class MaximumSophisticationReasoning:
             if isinstance(item, str) and item.strip()
         ] if isinstance(learned_guidance, list) else []
 
-        def _guidance_answer(candidates: List[str]) -> Optional[str]:
+        def _guidance_answer(candidates: List[str], user_text: str) -> Optional[str]:
+            user_tokens = set(re.findall(r"(?:[a-z]{3,}|[0-9]+)", user_text.lower()))
             for candidate in candidates:
                 text = candidate.strip()
                 if not text:
@@ -1553,10 +1554,70 @@ class MaximumSophisticationReasoning:
                         text = text[len(prefix):].strip()
                         lower = text.lower()
                 if text:
-                    return text
+                    candidate_tokens = set(re.findall(r"(?:[a-z]{3,}|[0-9]+)", text.lower()))
+                    if user_tokens and candidate_tokens and user_tokens.intersection(candidate_tokens):
+                        return text
             return None
 
-        learned_guidance_answer = _guidance_answer(learned_guidance)
+        number_words = {
+            "zero": 0,
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+        }
+
+        def _numeric_tokens(text: str) -> List[int]:
+            cleaned = re.sub(r"[^a-z0-9+\-*/ ]+", " ", text.lower())
+            values: List[int] = []
+            for token in cleaned.split():
+                if token.isdigit():
+                    values.append(int(token))
+                elif token in number_words:
+                    values.append(number_words[token])
+            return values
+
+        def _extract_equation(text: str) -> Optional[Dict[str, int | str]]:
+            match = re.search(r"(-?\d+)\s*([+\-*/])\s*(-?\d+)\s*=\s*(-?\d+)", text)
+            if not match:
+                return None
+            return {
+                "left": int(match.group(1)),
+                "op": match.group(2),
+                "right": int(match.group(3)),
+                "result": int(match.group(4)),
+            }
+
+        def _arithmetic_guidance_answer(user_text: str, candidates: List[str]) -> Optional[str]:
+            if not isinstance(user_text, str) or not user_text.strip():
+                return None
+            lowered = user_text.lower()
+            add_terms = {"plus", "add", "more", "receive", "received", "get", "got", "sum", "total"}
+            sub_terms = {"minus", "subtract", "less", "difference"}
+            requested_op = "+" if any(term in lowered for term in add_terms) else "-" if any(term in lowered for term in sub_terms) else None
+            values = _numeric_tokens(user_text)
+            if len(values) < 2:
+                return None
+            first, second = values[0], values[1]
+            for candidate in candidates:
+                equation = _extract_equation(candidate)
+                if equation is None:
+                    continue
+                if requested_op and equation["op"] != requested_op:
+                    continue
+                left = int(equation["left"])
+                right = int(equation["right"])
+                if (left, right) == (first, second) or (equation["op"] == "+" and (left, right) == (second, first)):
+                    return str(int(equation["result"]))
+            return None
+
+        learned_guidance_answer = _arithmetic_guidance_answer(user_input, learned_guidance) or _guidance_answer(learned_guidance, user_input)
         print(f"🧠 Reasoning: user_input = '{user_input[:50]}'")
         
         # CRITICAL FIX: Check if Novelty Lobe has pending questions

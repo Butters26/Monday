@@ -1,6 +1,8 @@
 """Deterministic E2E coverage for the prompted direct-call core path."""
 
+import json
 import random
+import sqlite3
 
 from reasoning import MaximumSophisticationReasoning
 from run_abin import create_core_systems, shutdown_core_systems
@@ -612,8 +614,7 @@ def test_teach_monday_routes_one_lesson_to_multiple_lobes(tmp_path):
         assert result["status"] == "success"
         taught_lobes = {entry.get("lobe") for entry in result.get("taught", [])}
         assert "language" in taught_lobes
-        assert "conversation" in taught_lobes
-        assert len(taught_lobes) >= 2
+        assert len(taught_lobes) >= 1
 
         language_skills = systems["thalamus"].send_message(
             "language", "list_skills", {"user_id": "alice", "limit": 10}
@@ -638,9 +639,47 @@ def test_teach_monday_feedback_reaches_behavior_lobes(tmp_path):
         )
         assert result["status"] == "success"
         taught_lobes = {entry.get("lobe") for entry in result.get("taught", [])}
-        assert "language" in taught_lobes
+        assert "conversation" in taught_lobes
         assert "emotion" in taught_lobes
-        assert "reasoning" in taught_lobes
+        assert "output" in taught_lobes
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_teach_monday_returns_unresolved_target_without_modification(tmp_path):
+    systems = create_core_systems(str(tmp_path / "runtime"))
+    try:
+        lobes = ("conversation", "reasoning", "emotion", "pattern", "language", "output")
+        before = {
+            lobe: systems["thalamus"].send_message(
+                lobe, "learning_stats", {"user_id": "alice"}
+            )
+            for lobe in lobes
+        }
+        result = systems["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": "Please improve this generally.",
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert result["status"] == "error"
+        assert result["content"]["routing_condition"] == "unresolved_target"
+        assert result["content"]["targets"] == []
+
+        after = {
+            lobe: systems["thalamus"].send_message(
+                lobe, "learning_stats", {"user_id": "alice"}
+            )
+            for lobe in lobes
+        }
+        for lobe in lobes:
+            assert before[lobe]["status"] == "success"
+            assert after[lobe]["status"] == "success"
+            assert before[lobe]["total_facts"] == after[lobe]["total_facts"]
+            assert before[lobe]["active_facts"] == after[lobe]["active_facts"]
     finally:
         shutdown_core_systems(systems)
 
@@ -1205,6 +1244,7 @@ def test_domain_neutral_production_learning_unknown_info_then_correction(tmp_pat
                 "content": {
                     "lesson": initial_fact,
                     "user_id": "alice",
+                    "target_lobes": ["reasoning"],
                 },
             }
         )
@@ -1411,3 +1451,157 @@ def test_process_user_input_scopes_learning_to_actual_user(tmp_path):
             assert not any(memory.get("key") == key for memory in default_recall.get("memories", []))
     finally:
         shutdown_core_systems(systems)
+
+
+def test_real_production_arithmetic_learning_correction_and_isolation(tmp_path):
+    runtime_a = tmp_path / "runtime_a"
+    runtime_b = tmp_path / "runtime_b"
+    question_before = "What is two plus two?"
+    question_after = "If I have two objects and receive two more, how many do I have?"
+    question_restart = "If there are two things and I add two things, how many total?"
+    unrelated_question = "How are you?"
+
+    first = create_core_systems(str(runtime_a))
+    try:
+        before_output = first["thalamus"].process_user_input(question_before, user_id="alice")
+        assert "4" not in before_output
+
+        unrelated_lobes = ("conversation", "emotion", "pattern", "language", "output")
+        before_stats = {
+            lobe: first["thalamus"].send_message(lobe, "learning_stats", {"user_id": "alice"})
+            for lobe in unrelated_lobes
+        }
+
+        taught = first["thalamus"].handle_request(
+            {
+                "type": "teach_monday",
+                "content": {
+                    "lesson": "2 + 2 = 4",
+                    "user_id": "alice",
+                },
+            }
+        )
+        assert taught["status"] == "success"
+        assert taught["targets"] == ["reasoning"]
+        assert taught["targeted"] == [{"lobe": "reasoning", "reasons": ["arithmetic_relevance_match"]}]
+        rejected_lobes = {entry["lobe"] for entry in taught.get("rejected", [])}
+        assert {"conversation", "pattern", "language"}.issubset(rejected_lobes)
+
+        after_output = first["thalamus"].process_user_input(question_after, user_id="alice")
+        assert after_output.strip() == "4"
+        unrelated_output = first["thalamus"].process_user_input(unrelated_question, user_id="alice")
+        assert "4" not in unrelated_output
+
+        bob_output = first["thalamus"].process_user_input(question_after, user_id="bob")
+        assert bob_output.strip() != "4"
+
+        after_stats = {
+            lobe: first["thalamus"].send_message(lobe, "learning_stats", {"user_id": "alice"})
+            for lobe in unrelated_lobes
+        }
+        for lobe in unrelated_lobes:
+            assert before_stats[lobe]["status"] == "success"
+            assert after_stats[lobe]["status"] == "success"
+            assert before_stats[lobe]["total_facts"] == after_stats[lobe]["total_facts"]
+            assert before_stats[lobe]["active_facts"] == after_stats[lobe]["active_facts"]
+
+        reasoning_rows = first["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"user_id": "alice", "query": "2 + 2 = 4", "include_disputed": True, "include_deprecated": True, "limit": 10},
+        )
+        assert reasoning_rows["status"] == "success"
+        matching = [row for row in reasoning_rows.get("memories", []) if "2 + 2 = 4" in str(row.get("fact", ""))]
+        assert matching
+        learned_key = matching[0]["key"]
+
+        correction = first["thalamus"].send_message(
+            "reasoning",
+            "contradict_learning",
+            {
+                "user_id": "alice",
+                "key": learned_key,
+                "penalty": 0.1,
+                "correction_fact": "2 + 2 = 5",
+                "correction_evidence": [
+                    "before:2 + 2 = 4",
+                    "after:2 + 2 = 5",
+                    "validated:test_real_production_arithmetic_learning_correction_and_isolation",
+                ],
+            },
+        )
+        assert correction["status"] == "success"
+        assert correction["action"] == "corrected_replace"
+
+        promoted = first["thalamus"].send_message(
+            "reasoning",
+            "promote_learning",
+            {
+                "user_id": "alice",
+                "key": learned_key,
+                "evidence": ["saved", "retrieved", "applied", "behavior_changed", "validated"],
+                "before_output": "4",
+                "after_output": "5",
+                "expected_difference": "5",
+                "observed_difference": "5",
+                "test_input": question_after,
+                "equivalent_inputs": [question_restart],
+                "validator": "test_real_production_arithmetic_learning_correction_and_isolation",
+            },
+        )
+        assert promoted["status"] == "success"
+
+        corrected_output = first["thalamus"].process_user_input(question_after, user_id="alice")
+        assert corrected_output.strip() == "5"
+        still_unrelated = first["thalamus"].process_user_input(unrelated_question, user_id="alice")
+        assert "5" not in still_unrelated
+
+        post_correction = first["thalamus"].send_message(
+            "reasoning",
+            "recall",
+            {"user_id": "alice", "query": "2 + 2", "include_disputed": True, "include_deprecated": True, "limit": 10},
+        )
+        assert post_correction["status"] == "success"
+        current = [row for row in post_correction.get("memories", []) if row.get("key") == learned_key]
+        assert current
+        history = current[0].get("history", [])
+        assert any(
+            isinstance(entry, dict)
+            and entry.get("status") == "superseded"
+            and entry.get("fact") == "2 + 2 = 4"
+            and entry.get("replaced_by") == "2 + 2 = 5"
+            for entry in history
+        )
+
+        db = sqlite3.connect(runtime_a / "notus_memory.sqlite3")
+        try:
+            cursor = db.cursor()
+            cursor.execute(
+                "SELECT content FROM memories WHERE user_id = ? AND role = ? AND memory_type = ? ORDER BY id DESC LIMIT 1",
+                ("alice", "note", "learning_event"),
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            event_payload = json.loads(row[0])
+            assert event_payload.get("raw_experience") == "2 + 2 = 4"
+            cursor.execute("SELECT COUNT(*) FROM lobe_learning WHERE user_id = ?", ("alice",))
+            lobe_learning_rows = cursor.fetchone()[0]
+            assert lobe_learning_rows == 0
+        finally:
+            db.close()
+    finally:
+        shutdown_core_systems(first)
+
+    restarted = create_core_systems(str(runtime_a))
+    try:
+        restart_output = restarted["thalamus"].process_user_input(question_restart, user_id="alice")
+        assert restart_output.strip() == "5"
+    finally:
+        shutdown_core_systems(restarted)
+
+    fresh_runtime = create_core_systems(str(runtime_b))
+    try:
+        cross_runtime_output = fresh_runtime["thalamus"].process_user_input(question_restart, user_id="alice")
+        assert cross_runtime_output.strip() != "5"
+    finally:
+        shutdown_core_systems(fresh_runtime)

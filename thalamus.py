@@ -18,7 +18,7 @@ from pathlib import Path
 import re
 import threading
 import uuid
-from typing import Any, Dict, Iterable, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from direct_response import DeterministicResponseProvider, ResponseProvider
 from learning.experience_envelope import ExperienceEnvelope
@@ -66,6 +66,19 @@ _LESSON_CAPABILITY_MAP = {
     "skill": {"rules", "procedures"},
     "correction": {"rules", "exceptions"},
     "feedback": {"feedback", "rules"},
+}
+_NUMBER_WORDS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
 }
 
 
@@ -162,7 +175,35 @@ class Thalamus:
 
         if not candidates and isinstance(msg_type, str) and msg_type.strip():
             candidates.append(msg_type.strip())
+        for seed in list(candidates):
+            for arithmetic_variant in Thalamus._arithmetic_query_variants(seed):
+                add(arithmetic_variant)
         return candidates
+
+    @staticmethod
+    def _arithmetic_query_variants(text: str) -> List[str]:
+        if not isinstance(text, str) or not text.strip():
+            return []
+        lowered = text.lower()
+        normalized = re.sub(r"[^a-z0-9+\-*/= ]+", " ", lowered)
+        tokens = [token for token in normalized.split() if token]
+        values: List[int] = []
+        for token in tokens:
+            if token.isdigit():
+                values.append(int(token))
+            elif token in _NUMBER_WORDS:
+                values.append(_NUMBER_WORDS[token])
+        if len(values) < 2:
+            return []
+        add_terms = {"plus", "add", "added", "more", "receive", "received", "get", "got", "sum", "total"}
+        sub_terms = {"minus", "subtract", "subtracted", "less", "difference"}
+        operation = "+"
+        if any(term in tokens for term in sub_terms):
+            operation = "-"
+        elif not any(term in tokens for term in add_terms) and "+" not in normalized:
+            return []
+        first, second = values[0], values[1]
+        return [f"{first} {operation} {second}", f"{first}{operation}{second}", f"{first} {'plus' if operation == '+' else 'minus'} {second}"]
 
     @staticmethod
     def _normalise_notus_write(payload: Dict[str, Any], user_id: str) -> Dict[str, Any]:
@@ -780,7 +821,7 @@ class Thalamus:
     @staticmethod
     def _expected_phrase_from_lesson(lesson_text: str) -> Optional[str]:
         text = lesson_text.strip().rstrip(".!?")
-        for marker in (" means ", " is ", " are ", " equals ", " refers to "):
+        for marker in (" means ", " is ", " are ", " equals ", " refers to ", " = "):
             if marker in text.lower():
                 parts = re.split(marker, text, maxsplit=1, flags=re.IGNORECASE)
                 if len(parts) == 2 and parts[1].strip():
@@ -790,7 +831,7 @@ class Thalamus:
     @staticmethod
     def _probe_prompt_from_lesson(lesson_text: str) -> str:
         text = lesson_text.strip().rstrip(".!?")
-        for marker in (" means ", " is ", " are ", " equals ", " refers to "):
+        for marker in (" means ", " is ", " are ", " equals ", " refers to ", " = "):
             if marker in text.lower():
                 parts = re.split(marker, text, maxsplit=1, flags=re.IGNORECASE)
                 subject = parts[0].strip() if len(parts) == 2 else text
@@ -937,6 +978,78 @@ class Thalamus:
             matched.append(lobe)
         return matched
 
+    def _teach_target_decision(
+        self, lesson_text: str, lesson_type: str, record: Dict[str, Any], payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        explicit_targets = payload.get("target_lobes", payload.get("targets"))
+        if isinstance(payload.get("target_lobe"), str) and payload.get("target_lobe", "").strip():
+            explicit_targets = [payload.get("target_lobe", "").strip()]
+        if isinstance(explicit_targets, str):
+            explicit_targets = [explicit_targets]
+        explicit_targets = [
+            item.strip() for item in explicit_targets
+            if isinstance(item, str) and item.strip()
+        ] if isinstance(explicit_targets, list) else []
+
+        candidates = self._learning_targets_for_record(lesson_type, record)
+        candidate_set = set(candidates)
+        lowered = lesson_text.lower()
+        requested = explicit_targets if explicit_targets else candidates
+
+        lobe_terms = {
+            "reasoning": {"reason", "logic", "infer", "math", "arithmetic", "plus", "minus", "equation", "calculate", "sum", "total"},
+            "pattern": {"pattern", "token", "classify", "detect", "regex", "sequence", "arithmetic"},
+            "language": {"language", "word", "sentence", "grammar", "phrase", "writing"},
+            "conversation": {"conversation", "reply", "respond", "tone", "respectful", "calm", "dialog"},
+            "emotion": {"emotion", "feeling", "mood", "empathetic", "calm", "frustrated"},
+            "output": {"output", "format", "delivery", "present", "tone"},
+        }
+        rejected = []
+        targeted: List[Dict[str, Any]] = []
+        for lobe in requested:
+            reasons: List[str] = []
+            if lobe not in candidate_set:
+                rejected.append({"lobe": lobe, "reason": "contract_no_capability_match"})
+                continue
+            if explicit_targets:
+                reasons.append("explicit_target")
+            terms = lobe_terms.get(lobe, set())
+            if any(term in lowered for term in terms):
+                reasons.append("lesson_keyword_match")
+            contract = self._lobe_contract(lobe)
+            mutable_surfaces = contract.get("mutable_surfaces", set())
+            mutable_surfaces = mutable_surfaces if isinstance(mutable_surfaces, set) else set(mutable_surfaces)
+            surface = str(record.get("surface", "")).strip().lower()
+            subject = str(record.get("subject", "")).strip().lower()
+            if surface and surface in {entry.lower() for entry in mutable_surfaces if isinstance(entry, str)}:
+                reasons.append("surface_contract_match")
+            if subject and any(term in subject for term in terms):
+                reasons.append("subject_relevance_match")
+            if lobe == "reasoning":
+                arithmetic_hits = self._arithmetic_query_variants(lesson_text)
+                if arithmetic_hits:
+                    reasons.append("arithmetic_relevance_match")
+            if not reasons:
+                rejected.append({"lobe": lobe, "reason": "no_explicit_relevance"})
+                continue
+            targeted.append({"lobe": lobe, "reasons": reasons})
+
+        if not targeted:
+            return {
+                "status": "error",
+                "routing_condition": "unresolved_target",
+                "targets": [],
+                "targeted": [],
+                "rejected": rejected or [{"lobe": lobe, "reason": "unresolved_target"} for lobe in requested],
+            }
+        return {
+            "status": "success",
+            "routing_condition": "resolved",
+            "targets": [entry["lobe"] for entry in targeted],
+            "targeted": targeted,
+            "rejected": rejected,
+        }
+
     def teach_monday(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         lesson = payload.get("lesson", payload.get("text", payload.get("content", "")))
         if not isinstance(lesson, str) or not lesson.strip():
@@ -955,13 +1068,36 @@ class Thalamus:
         learning_id = str(payload.get("learning_id", str(uuid.uuid4())))
         skill_name = self._skill_name_from_lesson(lesson_text, lesson_type)
         behavior = self._behavior_from_lesson(lesson_text, lesson_type)
-        targets = self._learning_targets_for_record(lesson_type, record)
-        if not targets:
+        target_decision = self._teach_target_decision(lesson_text, lesson_type, record, payload)
+        if target_decision.get("status") != "success":
             return {
                 "status": "error",
-                "message": "No lobe matches lesson contract requirements",
-                "content": {"routing_condition": "no_capability_match", "taught": [], "failed": []},
+                "message": "Unable to resolve a safe lobe target for lesson",
+                "content": {
+                    "routing_condition": target_decision.get("routing_condition", "unresolved_target"),
+                    "targets": [],
+                    "targeted": target_decision.get("targeted", []),
+                    "rejected": target_decision.get("rejected", []),
+                    "taught": [],
+                    "failed": [],
+                },
             }
+        targets = target_decision.get("targets", [])
+        targeted_entries = target_decision.get("targeted", [])
+        rejected_entries = target_decision.get("rejected", [])
+        teach_event_record = self._record_learning_event_in_notus(
+            {
+                "event_id": str(uuid.uuid4()),
+                "event_type": "explicit_lesson",
+                "raw_experience": lesson_text,
+                "source": "teach_monday",
+                "user_id": user_id,
+                "record": record,
+                "targets": targets,
+                "targeted": targeted_entries,
+                "rejected": rejected_entries,
+            }
+        )
         taught = []
         failed = []
         for destination in targets:
@@ -1037,10 +1173,31 @@ class Thalamus:
                         "confidence": result.get("confidence"),
                         "learning_id": learning_id,
                         "status": result.get("status"),
+                        "target_reasons": next(
+                            (
+                                entry.get("reasons", [])
+                                for entry in targeted_entries
+                                if entry.get("lobe") == destination
+                            ),
+                            [],
+                        ),
                     }
                 )
             else:
-                failed.append({"lobe": destination, "message": result.get("message", "unknown error")})
+                failed.append(
+                    {
+                        "lobe": destination,
+                        "message": result.get("message", "unknown error"),
+                        "target_reasons": next(
+                            (
+                                entry.get("reasons", [])
+                                for entry in targeted_entries
+                                if entry.get("lobe") == destination
+                            ),
+                            [],
+                        ),
+                    }
+                )
 
         probe_input = str(payload.get("validation_input", self._probe_prompt_from_lesson(lesson_text))).strip()
         equivalent_inputs = payload.get("equivalent_inputs", [])
@@ -1144,6 +1301,10 @@ class Thalamus:
                 "failed": failed,
                 "target_count": len(targets),
                 "applied_count": len(taught),
+                "targets": targets,
+                "targeted": targeted_entries,
+                "rejected": rejected_entries,
+                "notus_event_record": teach_event_record,
                 "validation": {
                     "probe_input": probe_input,
                     "before_output": before_output,
@@ -1161,6 +1322,10 @@ class Thalamus:
             "lesson_type": lesson_type,
             "skill": skill_name,
             "learning_id": learning_id,
+            "targets": targets,
+            "targeted": targeted_entries,
+            "rejected": rejected_entries,
+            "notus_event_record": teach_event_record,
             "taught": taught,
             "failed": failed,
         }
