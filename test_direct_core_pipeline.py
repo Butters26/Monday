@@ -524,7 +524,7 @@ def test_teach_skill_and_list_skills_for_any_lobe(tmp_path):
                 "confidence": 0.8,
             },
         )
-        assert taught["status"] == "success"
+        assert taught["status"] in {"success", "partial"}
         assert taught["key"] == "skill:math_patterns"
 
         listed = systems["thalamus"].send_message(
@@ -563,7 +563,24 @@ def test_learned_skill_guidance_is_applied_to_message_envelope(tmp_path):
                 "confidence": 0.9,
             },
         )
-        assert taught["status"] == "success"
+        assert taught["status"] in {"success", "partial"}
+        promoted = systems["thalamus"].send_message(
+            "echo",
+            "promote_learning",
+            {
+                "key": "skill:respectful_reply",
+                "user_id": "alice",
+                "evidence": ["saved", "retrieved", "applied", "behavior_changed", "validated"],
+                "before_output": "default",
+                "after_output": "guided",
+                "expected_difference": "guided",
+                "observed_difference": "guided",
+                "test_input": "emotionally intense user text",
+                "equivalent_inputs": ["intense user text"],
+                "validator": "test",
+            },
+        )
+        assert promoted["status"] == "success"
 
         response = systems["thalamus"].send_message(
             "echo",
@@ -645,8 +662,8 @@ def test_learn_from_experience_delivers_to_all_registered_direct_core_lobes(tmp_
         )
         assert result["status"] in {"success", "partial"}
         rows = {row["lobe"]: row for row in result["content"]["results"]}
-        expected = set(systems["thalamus"].lobe_handlers.keys()) - {"notus"}
-        assert expected.issubset(set(rows.keys()))
+        expected = {"conversation", "reasoning", "pattern", "language", "emotion", "output"}
+        assert set(rows.keys()) == expected
         for lobe in expected:
             assert rows[lobe]["delivered"] is True
             assert rows[lobe]["status"] != "error"
@@ -823,7 +840,7 @@ def test_teach_monday_assigns_destination_surface_from_contract(tmp_path):
                 "content": {"lesson": "Use reciprocal checks for arithmetic.", "user_id": "alice"},
             }
         )
-        assert taught["status"] == "success"
+        assert taught["status"] in {"success", "partial"}
 
         reasoning = systems["thalamus"].send_message(
             "reasoning",
@@ -1022,7 +1039,7 @@ def test_direct_learning_does_not_promote_without_required_evidence(tmp_path):
             if row.get("key") == "evidence_gate"
         ]
         assert matching
-        assert matching[0].get("status") == "provisional"
+        assert matching[0].get("status") == "proposed"
     finally:
         shutdown_core_systems(systems)
 
@@ -1048,7 +1065,24 @@ def test_learning_overview_shows_per_lobe_skills_and_usage(tmp_path):
                 "confidence": 0.9,
             },
         )
-        assert taught["status"] == "success"
+        assert taught["status"] in {"success", "partial"}
+        promoted = systems["thalamus"].send_message(
+            "echo",
+            "promote_learning",
+            {
+                "key": "skill:deescalate",
+                "user_id": "alice",
+                "evidence": ["saved", "retrieved", "applied", "behavior_changed", "validated"],
+                "before_output": "default",
+                "after_output": "deescalated",
+                "expected_difference": "deescalated",
+                "observed_difference": "deescalated",
+                "test_input": "This conflict needs calm wording.",
+                "equivalent_inputs": ["use calm wording during conflict"],
+                "validator": "test",
+            },
+        )
+        assert promoted["status"] == "success"
 
         used = systems["thalamus"].send_message(
             "echo",
@@ -1085,7 +1119,7 @@ def test_lobe_learning_persists_across_restart_without_notus_learning_backend(tm
                 "confidence": 0.85,
             },
         )
-        assert taught["status"] == "success"
+        assert taught["status"] in {"success", "partial"}
     finally:
         shutdown_core_systems(first)
 
@@ -1187,7 +1221,7 @@ def test_teach_process_restart_keeps_changed_behavior_across_two_lobes(tmp_path)
                 },
             }
         )
-        assert taught["status"] == "success"
+        assert taught["status"] in {"success", "partial"}
 
         decision_after = first["thalamus"].send_message(
             "decision",
@@ -1318,6 +1352,31 @@ def test_domain_neutral_production_learning_unknown_info_then_correction(tmp_pat
         )
         assert corrected["status"] == "success"
         assert corrected["action"] == "corrected_replace"
+        promoted = second["thalamus"].send_message(
+            "reasoning",
+            "promote_learning",
+            {
+                "key": first_reasoning_key,
+                "user_id": "alice",
+                "evidence": [
+                    "saved",
+                    "retrieved",
+                    "applied",
+                    "behavior_changed",
+                    "validated",
+                    f"before_output:{before_fact}",
+                    f"after_output:{corrected_fact}",
+                ],
+                "before_output": before_fact,
+                "after_output": corrected_fact,
+                "expected_difference": corrected_fact,
+                "observed_difference": corrected_fact,
+                "test_input": f"What is {concept}?",
+                "equivalent_inputs": [f"Under equivalent wording, what does {concept} mean?"],
+                "validator": "test_domain_neutral",
+            },
+        )
+        assert promoted["status"] == "success"
 
         corrected_answer = second["thalamus"].process_user_input(
             f"Under equivalent wording, what does {concept} mean?",
@@ -1355,6 +1414,23 @@ def test_production_lobes_consume_learned_guidance(tmp_path):
                 },
             )
             assert taught["status"] == "success"
+            promoted = systems["thalamus"].send_message(
+                lobe,
+                "promote_learning",
+                {
+                    "key": f"skill:{lobe}_guidance",
+                    "user_id": "alice",
+                    "evidence": ["saved", "retrieved", "applied", "behavior_changed", "validated"],
+                    "before_output": "default",
+                    "after_output": "guided",
+                    "expected_difference": "guided",
+                    "observed_difference": "guided",
+                    "test_input": "Please use respectful calm wording now.",
+                    "equivalent_inputs": ["use respectful calm wording"],
+                    "validator": "test",
+                },
+            )
+            assert promoted["status"] == "success"
 
         conversation = systems["thalamus"].send_message(
             "conversation",

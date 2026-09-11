@@ -177,9 +177,9 @@ def normalize_learning_result(lobe: str, event_id: str, raw: Dict[str, Any]) -> 
     proposed = bool(content.get("proposed", content.get("update_proposed", False)))
     saved = bool(content.get("saved", content.get("update_accepted", False)))
     retrieved = bool(content.get("retrieved", False))
-    applied = bool(content.get("applied", content.get("behavior_affected", False)))
-    behavior_changed = bool(content.get("behavior_changed", content.get("behavior_affected", False)))
-    validated = bool(content.get("validated", content.get("validation_passed", False)))
+    applied = bool(content.get("applied", False))
+    behavior_changed = bool(content.get("behavior_changed", False))
+    validated = bool(content.get("validated", False))
 
     return {
         "lobe": lobe,

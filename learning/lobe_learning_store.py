@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import threading
+import uuid
 from typing import Any, Dict, List, Optional
 
 from runtime_paths import runtime_dir
@@ -81,6 +82,13 @@ class LobeLearningStore:
             for item in values
             if isinstance(item, str) and item.strip()
         }
+
+    @staticmethod
+    def _normalise_status(value: Any, default: str = "proposed") -> str:
+        status = value.strip().lower() if isinstance(value, str) else default
+        if status not in {"proposed", "provisional", "validated", "active", "disputed", "deprecated"}:
+            return default
+        return status
 
     def _has_required_evidence(self, required: Any, provided: Any) -> bool:
         required_set = self._safe_string_set(required)
@@ -183,9 +191,7 @@ class LobeLearningStore:
             learned_input = []
         value = self._clean_text(record.get("value", fact))
         scope = self._clean_text(record.get("scope", payload.get("scope", "general"))).lower() or "general"
-        status = self._clean_text(record.get("status", "provisional")).lower() or "provisional"
-        if status not in {"proposed", "provisional", "validated", "active", "disputed", "deprecated"}:
-            status = "provisional"
+        status = self._normalise_status(record.get("status", payload.get("status", "proposed")))
         return {
             "type": record_type,
             "subject": subject,
@@ -201,6 +207,7 @@ class LobeLearningStore:
             "status": status,
             "evidence": self._safe_list(record.get("evidence", payload.get("evidence", []))),
             "conflict_status": self._clean_text(record.get("conflict_status", "none")).lower() or "none",
+            "learning_id": self._clean_text(record.get("learning_id", payload.get("learning_id", ""))),
         }
 
     def _empty_data(self) -> Dict[str, Any]:
@@ -288,7 +295,11 @@ class LobeLearningStore:
             facts = self._user_facts(data, user_id)
             existing = facts.get(key)
             if not isinstance(existing, dict):
-                initial_status = learning_record.get("status", "provisional")
+                learning_id = self._clean_text(
+                    payload.get("learning_id", learning_record.get("learning_id"))
+                ) or str(uuid.uuid4())
+                learning_record["learning_id"] = learning_id
+                initial_status = self._normalise_status(learning_record.get("status", "proposed"))
                 if (
                     initial_status in {"validated", "active"}
                     and not self._has_required_evidence(required_evidence, record_evidence)
@@ -305,8 +316,11 @@ class LobeLearningStore:
                     "use_count": 0,
                     "last_applied_at": None,
                     "accepted_at": None,
+                    "validated_at": None,
                     "learning_record": learning_record,
                     "required_evidence": required_evidence,
+                    "learning_id": learning_id,
+                    "version": 1,
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -319,7 +333,7 @@ class LobeLearningStore:
                     record = dict(existing)
                     record["confidence"] = min(1.0, self._clamp_confidence(record.get("confidence"), 0.6) + delta)
                     record["evidence_count"] = int(record.get("evidence_count", 0)) + 1
-                    record["status"] = self._clean_text(record.get("status")).lower() or "provisional"
+                    record["status"] = self._normalise_status(record.get("status"), default="proposed")
                     action = "reinforced"
                 else:
                     record = dict(existing)
@@ -354,32 +368,24 @@ class LobeLearningStore:
                         **learning_record,
                         "evidence": combined_evidence,
                     }
+                    merged_learning_record["learning_id"] = self._clean_text(
+                        record.get("learning_id", merged_learning_record.get("learning_id"))
+                    ) or str(uuid.uuid4())
                     record["learning_record"] = merged_learning_record
+                    record["learning_id"] = merged_learning_record["learning_id"]
                     existing_required = record.get("required_evidence", [])
                     existing_required = existing_required if isinstance(existing_required, list) else []
                     merged_required = sorted({*existing_required, *required_evidence})
                     record["required_evidence"] = merged_required
-                    required_for_status = merged_required
-                    evidence_for_status = combined_evidence
-                    status_now = self._clean_text(record.get("status")).lower() or "provisional"
+                    status_now = self._normalise_status(record.get("status"), default="proposed")
                     if (
                         status_now in {"validated", "active"}
-                        and not self._has_required_evidence(required_for_status, evidence_for_status)
+                        and not self._has_required_evidence(merged_required, combined_evidence)
                     ):
                         record["status"] = "provisional"
-                    if (
-                        record["status"] in {"proposed", "provisional"}
-                        and int(record.get("evidence_count", 0)) >= 2
-                        and self._has_required_evidence(required_for_status, evidence_for_status)
-                    ):
-                        record["status"] = "validated"
-                        record["accepted_at"] = now
-                    if (
-                        record["status"] == "validated"
-                        and int(record.get("evidence_count", 0)) >= 3
-                        and self._has_required_evidence(required_for_status, evidence_for_status)
-                    ):
-                        record["status"] = "active"
+                    if record["status"] in {"active", "validated"}:
+                        record["status"] = "provisional"
+                    record["version"] = int(record.get("version", 1)) + (0 if same_fact else 1)
             facts[key] = record
             self._save(data)
         return {"status": "success", "content": {**record, "lobe": self.lobe_name, "user_id": user_id, "action": action}}
@@ -394,6 +400,7 @@ class LobeLearningStore:
         min_confidence = self._clamp_confidence(payload.get("min_confidence"), default=0.0)
         include_deprecated = bool(payload.get("include_deprecated", False))
         include_disputed = bool(payload.get("include_disputed", False))
+        include_only_active = bool(payload.get("include_only_active", False))
         mark_used = bool(payload.get("mark_used", False))
         exclude_auto_adapt = bool(payload.get("exclude_auto_adapt", False))
         scope = self._clean_text(payload.get("scope")).lower()
@@ -411,8 +418,10 @@ class LobeLearningStore:
             records = [dict(value) for value in facts.values() if isinstance(value, dict)]
             filtered = []
             for record in records:
+                status = self._normalise_status(record.get("status"), default="proposed")
+                if include_only_active and status != "active":
+                    continue
                 if not include_deprecated and record.get("status", "active") != "active":
-                    status = self._clean_text(record.get("status")).lower()
                     if status == "deprecated":
                         continue
                     if status == "disputed" and not include_disputed:
@@ -455,9 +464,7 @@ class LobeLearningStore:
                     matched_terms = sum(1 for term in terms if term in haystack)
                     relevance = matched_terms / len(terms)
                 if query_text:
-                    semantic_score = self._cosine_similarity(
-                        query_vector, self._semantic_vector(haystack_text)
-                    )
+                    semantic_score = self._cosine_similarity(query_vector, self._semantic_vector(haystack_text))
                     if relevance == 0.0 and semantic_score < min_semantic_score:
                         continue
                 evidence_score = min(1.0, int(record.get("evidence_count", 0)) / 5.0)
@@ -602,6 +609,153 @@ class LobeLearningStore:
                 "action": action,
             },
         }
+
+    def promote(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        user_id = self._clean_text(payload.get("user_id")) or "default"
+        key = self._normalise_key(payload.get("key"), self._clean_text(payload.get("fact", "")))
+        evidence = self._safe_list(payload.get("evidence", []))
+        validator = self._clean_text(payload.get("validator", "thalamus"))
+        now = self._now()
+        with self._lock:
+            data = self._load()
+            facts = self._user_facts(data, user_id)
+            record = facts.get(key)
+            if not isinstance(record, dict):
+                return {"status": "error", "message": f"No learned fact for key: {key}"}
+            updated = dict(record)
+            learning_record = updated.get("learning_record", {})
+            learning_record = learning_record if isinstance(learning_record, dict) else {}
+            merged_evidence = self._safe_list([*learning_record.get("evidence", []), *evidence])
+            learning_record["evidence"] = merged_evidence
+            required = updated.get("required_evidence", [])
+            required = required if isinstance(required, list) else []
+            if not self._has_required_evidence(required, merged_evidence):
+                updated["status"] = "provisional"
+                learning_record["status"] = "provisional"
+                updated["learning_record"] = learning_record
+                updated["updated_at"] = now
+                facts[key] = updated
+                self._save(data)
+                return {
+                    "status": "error",
+                    "message": "Cannot promote without required evidence",
+                    "content": {"key": key, "status": "provisional"},
+                }
+            updated["status"] = "active"
+            updated["validated_at"] = now
+            updated["accepted_at"] = now
+            updated.pop("_staged_previous_status", None)
+            learning_record["status"] = "active"
+            learning_record["validation_pending"] = False
+            learning_record["validation"] = {
+                "validator": validator,
+                "validated_at": now,
+                "before_output": self._clean_text(payload.get("before_output")),
+                "after_output": self._clean_text(payload.get("after_output")),
+                "expected_difference": self._clean_text(payload.get("expected_difference")),
+                "observed_difference": self._clean_text(payload.get("observed_difference")),
+                "test_input": self._clean_text(payload.get("test_input")),
+                "equivalent_inputs": self._safe_list(payload.get("equivalent_inputs", [])),
+                "lobe": self.lobe_name,
+            }
+            updated["learning_record"] = learning_record
+            updated["updated_at"] = now
+            facts[key] = updated
+            self._save(data)
+        return {"status": "success", "content": {"key": key, "status": "active", "action": "promoted_active"}}
+
+    def records_by_learning_id(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        user_id = self._clean_text(payload.get("user_id")) or "default"
+        learning_id = self._clean_text(payload.get("learning_id"))
+        if not learning_id:
+            return {"status": "error", "message": "learning_id is required"}
+        with self._lock:
+            data = self._load()
+            facts = self._user_facts(data, user_id)
+            records = [
+                dict(record)
+                for record in facts.values()
+                if isinstance(record, dict)
+                and self._clean_text(record.get("learning_id")) == learning_id
+            ]
+        return {
+            "status": "success",
+            "content": {"learning_id": learning_id, "records": records, "count": len(records)},
+        }
+
+    def deprecate_learning_id(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        user_id = self._clean_text(payload.get("user_id")) or "default"
+        learning_id = self._clean_text(payload.get("learning_id"))
+        if not learning_id:
+            return {"status": "error", "message": "learning_id is required"}
+        now = self._now()
+        changed = 0
+        with self._lock:
+            data = self._load()
+            facts = self._user_facts(data, user_id)
+            for key, record in list(facts.items()):
+                if not isinstance(record, dict):
+                    continue
+                if self._clean_text(record.get("learning_id")) != learning_id:
+                    continue
+                updated = dict(record)
+                updated["status"] = "deprecated"
+                learning_record = updated.get("learning_record", {})
+                learning_record = learning_record if isinstance(learning_record, dict) else {}
+                learning_record["status"] = "deprecated"
+                updated["learning_record"] = learning_record
+                updated["updated_at"] = now
+                facts[key] = updated
+                changed += 1
+            self._save(data)
+        return {"status": "success", "content": {"learning_id": learning_id, "deprecated": changed}}
+
+    def stage_activation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        user_id = self._clean_text(payload.get("user_id")) or "default"
+        key = self._normalise_key(payload.get("key"), self._clean_text(payload.get("fact", "")))
+        now = self._now()
+        with self._lock:
+            data = self._load()
+            facts = self._user_facts(data, user_id)
+            record = facts.get(key)
+            if not isinstance(record, dict):
+                return {"status": "error", "message": f"No learned fact for key: {key}"}
+            updated = dict(record)
+            updated["_staged_previous_status"] = self._normalise_status(updated.get("status"), "proposed")
+            updated["status"] = "active"
+            learning_record = updated.get("learning_record", {})
+            learning_record = learning_record if isinstance(learning_record, dict) else {}
+            learning_record["status"] = "active"
+            learning_record["validation_pending"] = True
+            updated["learning_record"] = learning_record
+            updated["updated_at"] = now
+            facts[key] = updated
+            self._save(data)
+        return {"status": "success", "content": {"key": key, "action": "staged_active"}}
+
+    def rollback_staged(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        user_id = self._clean_text(payload.get("user_id")) or "default"
+        key = self._normalise_key(payload.get("key"), self._clean_text(payload.get("fact", "")))
+        now = self._now()
+        with self._lock:
+            data = self._load()
+            facts = self._user_facts(data, user_id)
+            record = facts.get(key)
+            if not isinstance(record, dict):
+                return {"status": "error", "message": f"No learned fact for key: {key}"}
+            updated = dict(record)
+            previous = self._normalise_status(updated.get("_staged_previous_status"), "proposed")
+            updated["status"] = previous
+            updated.pop("_staged_previous_status", None)
+            learning_record = updated.get("learning_record", {})
+            learning_record = learning_record if isinstance(learning_record, dict) else {}
+            learning_record["status"] = previous
+            learning_record["validation_pending"] = False
+            updated["learning_record"] = learning_record
+            updated["updated_at"] = now
+            facts[key] = updated
+            self._save(data)
+        return {"status": "success", "content": {"key": key, "action": "rolled_back", "status": previous}}
 
     def stats(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         user_id = self._clean_text(payload.get("user_id")) or "default"

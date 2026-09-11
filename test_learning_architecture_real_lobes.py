@@ -106,7 +106,7 @@ def test_generic_real_lobe_learning_random_tokens_generalizes_and_rejects_counte
             assert results[lobe]["interpreted"] is True
             assert results[lobe]["update_proposed"] is True
             assert results[lobe]["update_accepted"] is True
-            assert results[lobe]["validation_passed"] is True
+            assert results[lobe]["validation_passed"] is False
 
         assert "relation_updates" in results["language"]["changes"]
         assert "token_rule_updates" in results["pattern"]["changes"]

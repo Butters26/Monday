@@ -39,6 +39,11 @@ _LEARNING_ROUTE_TYPES = {
     "contradict_learning",
     "forget_learning",
     "learning_stats",
+    "promote_learning",
+    "records_by_learning_id",
+    "deprecate_learning_id",
+    "stage_activation",
+    "rollback_staged",
 }
 _NO_GUIDANCE_OR_ADAPT_TYPES = {"health", "learn_from_experience", "sync_notus_pending", "notus_sync_status"}
 _GENERIC_EXPERIENCE_PROFILES = {
@@ -296,13 +301,37 @@ class Thalamus:
         event_type = envelope.get("event_type", "experience")
         if not isinstance(event_type, str) or not event_type.strip():
             event_type = "experience"
-        lesson_type = self._classify_lesson_type(f"{event_type} {signal}", envelope)
+        try:
+            lesson_type = self._classify_lesson_type(signal, envelope)
+        except ValueError as exc:
+            return {
+                "status": "error",
+                "message": str(exc),
+                "content": {
+                    "delivered": True,
+                    "interpreted": False,
+                    "proposed": False,
+                    "saved": False,
+                    "retrieved": False,
+                    "applied": False,
+                    "behavior_changed": False,
+                    "validated": False,
+                },
+            }
         contract = self._lobe_contract(destination)
         allowed_record_types = contract.get("allowed_record_types", {"fact", "rule"})
         allowed_record_types = (
             allowed_record_types if isinstance(allowed_record_types, set) else set(allowed_record_types)
         )
-        desired_type = "rule" if lesson_type in {"skill", "feedback", "correction"} else "fact"
+        desired_type = (
+            "exception"
+            if lesson_type == "correction"
+            else "rule"
+            if lesson_type == "feedback"
+            else "rule"
+            if lesson_type == "skill"
+            else "fact"
+        )
         if desired_type not in allowed_record_types:
             return {
                 "status": "success",
@@ -419,7 +448,7 @@ class Thalamus:
                 "proposed": True,
                 "saved": True,
                 "retrieved": retrieved,
-                "applied": retrieved,
+                "applied": False,
                 "behavior_changed": behavior_changed,
                 "validated": validated,
                 "confidence": confidence,
@@ -476,7 +505,35 @@ class Thalamus:
         memory_result = self._record_learning_event_in_notus(envelope_dict)
         learning_signal = str(input_payload.get("raw_experience", envelope_dict.get("raw_experience", ""))).strip()
         event_type = str(input_payload.get("event_type", envelope_dict.get("event_type", "experience"))).strip() or "experience"
-        lesson_type = self._classify_lesson_type(f"{event_type} {learning_signal}", input_payload or envelope_dict)
+        try:
+            lesson_type = self._classify_lesson_type(learning_signal, input_payload or envelope_dict)
+        except ValueError as exc:
+            return {
+                "status": "error",
+                "message": str(exc),
+                "content": {
+                    "envelope": envelope_dict,
+                    "targets": [],
+                    "results": [],
+                    "delivery_status": {
+                        "delivered": 0,
+                        "interpreted": 0,
+                        "proposed": 0,
+                        "saved": 0,
+                        "retrieved": 0,
+                        "applied": 0,
+                        "behavior_changed": 0,
+                        "validated": 0,
+                        "update_proposed": 0,
+                        "accepted": 0,
+                        "behavior_affected": 0,
+                        "validation_passed": 0,
+                    },
+                    "routing_condition": "ambiguous_lesson",
+                    "notus_event_record": memory_result,
+                    "partial_failures": [],
+                },
+            }
         derived_record = (
             input_payload.get("record")
             if isinstance(input_payload.get("record"), dict)
@@ -523,17 +580,8 @@ class Thalamus:
         accepted = sum(1 for item in results if item.get("saved"))
         retrieved = sum(1 for item in results if item.get("retrieved"))
         applied = sum(1 for item in results if item.get("applied"))
-        behavior_verification_passed = bool(envelope_dict.get("behavior_verification_passed", False))
-        behavior_affected = (
-            sum(1 for item in results if item.get("behavior_changed"))
-            if behavior_verification_passed
-            else 0
-        )
-        validation_passed = (
-            sum(1 for item in results if item.get("validated"))
-            if behavior_verification_passed
-            else 0
-        )
+        behavior_affected = sum(1 for item in results if item.get("behavior_changed"))
+        validation_passed = sum(1 for item in results if item.get("validated"))
         partial_failures = [
             {"lobe": item.get("lobe"), "message": item.get("message")}
             for item in results
@@ -626,6 +674,7 @@ class Thalamus:
                     "limit": 5,
                     "mark_used": True,
                     "exclude_auto_adapt": True,
+                    "include_only_active": True,
                 },
                 source=f"{source}:{destination}:guidance",
             )
@@ -651,90 +700,63 @@ class Thalamus:
 
     def _classify_lesson_type(self, lesson_text: str, payload: Optional[Dict[str, Any]] = None) -> str:
         data = payload if isinstance(payload, dict) else {}
-        explicit = data.get("lesson_type")
-        if isinstance(explicit, str):
-            label = explicit.strip().lower()
-            if label in {"skill", "feedback", "correction"}:
-                return label
-
         record = data.get("record") if isinstance(data.get("record"), dict) else {}
-        record_type = str(record.get("type", data.get("record_type", ""))).strip().lower()
-        if record_type == "exception":
-            return "correction"
-        if record_type in {"procedure", "rule"}:
-            return "skill"
+        explicit_record_type = str(record.get("type", data.get("record_type", ""))).strip().lower()
+        explicit_lesson_type = str(data.get("lesson_type", "")).strip().lower()
+        explicit_event_type = str(data.get("event_type", "")).strip().lower()
+        explicit_feedback = str(data.get("feedback", "")).strip()
 
-        analysis_text = " ".join(
-            item
-            for item in (
-                lesson_text,
-                str(data.get("subject", "")),
-                str(data.get("relation", "")),
-                str(data.get("feedback", "")),
-                str(record.get("subject", "")),
-                str(record.get("relation", "")),
-            )
-            if isinstance(item, str) and item.strip()
-        ).lower()
-        tokens = {token for token in re.findall(r"[a-z0-9]{3,}", analysis_text)}
-        if not analysis_text.strip():
-            return "skill"
-        semantic_input = data.get("semantic_input", {})
-        semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
-        semantic_text = " ".join(
-            str(semantic_input.get(key, ""))
-            for key in ("answer", "conclusion", "query", "text")
-            if isinstance(semantic_input.get(key), str) and semantic_input.get(key).strip()
-        ).lower()
-        combined_text = f"{analysis_text} {semantic_text}".strip()
-        if not combined_text:
-            return "skill"
-
-        def _vector(text: str, dims: int = 256) -> list[float]:
-            vector = [0.0] * dims
-            padded = f"  {text}  "
-            for index in range(len(padded) - 2):
-                gram = padded[index:index + 3]
-                bucket = hash(gram) % dims
-                vector[bucket] += 1.0
-            for token in re.findall(r"[a-z0-9]{2,}", text):
-                bucket = hash(f"tok:{token}") % dims
-                vector[bucket] += 2.0
-            magnitude = sum(value * value for value in vector) ** 0.5
-            if magnitude == 0.0:
-                return [0.0] * dims
-            return [value / magnitude for value in vector]
-
-        def _cosine(left: list[float], right: list[float]) -> float:
-            if not left or not right or len(left) != len(right):
-                return 0.0
-            return sum(x * y for x, y in zip(left, right))
-
-        label_prototypes = {
-            "feedback": (
-                "improve tone style wording respectful calm polite constructive response behavior",
-                {"feedback", "tone", "style", "delivery", "polite", "respectful", "calm", "kind"},
-            ),
-            "correction": (
-                "fix contradiction replace incorrect disputed deprecated exception conflict correction",
-                {"correct", "correction", "replace", "deprecated", "disputed", "conflict", "exception"},
-            ),
-            "skill": (
-                "new procedure rule method pattern reasoning language generation inference capability",
-                {"procedure", "rule", "pattern", "reasoning", "language", "generation", "inference"},
-            ),
+        mapping = {
+            "fact": "fact",
+            "rule": "skill",
+            "feedback": "feedback",
+            "correction": "correction",
+            "exception": "correction",
+            "procedure": "skill",
+            "skill": "skill",
+            "experience": "fact",
+            "outcome": "feedback",
+            "reflection": "feedback",
         }
-        combined_vector = _vector(combined_text)
-        scores: Dict[str, float] = {}
-        for label, (prototype_text, cue_tokens) in label_prototypes.items():
-            semantic_score = _cosine(combined_vector, _vector(prototype_text))
-            cue_score = (
-                float(len(tokens.intersection(cue_tokens))) / float(len(cue_tokens))
-                if cue_tokens
-                else 0.0
-            )
-            scores[label] = (0.75 * semantic_score) + (0.25 * cue_score)
-        return max(scores.items(), key=lambda item: item[1])[0]
+
+        if explicit_record_type:
+            if explicit_record_type not in mapping:
+                return "fact"
+            if explicit_lesson_type and explicit_lesson_type in mapping and mapping[explicit_lesson_type] != mapping[explicit_record_type]:
+                raise ValueError("ambiguous classification: conflicting lesson_type and record_type")
+            return mapping[explicit_record_type]
+
+        if explicit_lesson_type:
+            if explicit_lesson_type not in mapping:
+                raise ValueError(f"ambiguous classification: unsupported lesson_type '{explicit_lesson_type}'")
+            return mapping[explicit_lesson_type]
+
+        if explicit_feedback:
+            return "feedback"
+
+        if explicit_event_type:
+            if explicit_event_type in {"correction", "outcome", "reflection"}:
+                return mapping[explicit_event_type]
+            if explicit_event_type not in {"experience", "explicit_lesson"}:
+                raise ValueError(f"ambiguous classification: unsupported event_type '{explicit_event_type}'")
+
+        cleaned = lesson_text.strip()
+        if not cleaned:
+            raise ValueError("ambiguous classification: lesson text missing")
+        lowered = cleaned.lower()
+        if re.match(r"^\s*(learn|use|apply|follow|avoid|keep|adopt)\b", lowered):
+            return "skill"
+        if (
+            re.search(r"\bwhen\b", lowered)
+            and re.search(r"\b(respond|tone|respectful|calm|kind|rude)\b", lowered)
+        ):
+            return "feedback"
+        # deterministic default for ordinary declarative info
+        if re.search(r"\b(?:is|are|means|refers to|equals)\b", cleaned, re.IGNORECASE):
+            return "fact"
+        if cleaned.endswith("?"):
+            raise ValueError("ambiguous classification: question-shaped lesson is unsupported")
+        return "fact"
 
     @staticmethod
     def _skill_name_from_lesson(lesson_text: str, lesson_type: str) -> str:
@@ -754,10 +776,38 @@ class Thalamus:
             return f"Feedback behavior to apply: {lesson_text}"
         return f"Skill behavior to apply: {lesson_text}"
 
+    @staticmethod
+    def _expected_phrase_from_lesson(lesson_text: str) -> Optional[str]:
+        text = lesson_text.strip().rstrip(".!?")
+        for marker in (" means ", " is ", " are ", " equals ", " refers to "):
+            if marker in text.lower():
+                parts = re.split(marker, text, maxsplit=1, flags=re.IGNORECASE)
+                if len(parts) == 2 and parts[1].strip():
+                    return parts[1].strip().lower()
+        return None
+
+    @staticmethod
+    def _probe_prompt_from_lesson(lesson_text: str) -> str:
+        text = lesson_text.strip().rstrip(".!?")
+        for marker in (" means ", " is ", " are ", " equals ", " refers to "):
+            if marker in text.lower():
+                parts = re.split(marker, text, maxsplit=1, flags=re.IGNORECASE)
+                subject = parts[0].strip() if len(parts) == 2 else text
+                if subject:
+                    return f"What is {subject}?"
+        return f"Explain: {text}"
+
     def _record_from_lesson(self, lesson_text: str, lesson_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         record_type = payload.get("record_type")
         if not isinstance(record_type, str) or not record_type.strip():
-            record_type = "rule" if lesson_type in {"skill", "feedback", "correction"} else "fact"
+            if lesson_type == "correction":
+                record_type = "exception"
+            elif lesson_type == "feedback":
+                record_type = "rule"
+            elif lesson_type == "skill":
+                record_type = "rule"
+            else:
+                record_type = "fact"
         scope = payload.get("scope", "general")
         if not isinstance(scope, str) or not scope.strip():
             scope = "general"
@@ -808,12 +858,23 @@ class Thalamus:
         event_type = envelope.get("event_type", "experience")
         if not isinstance(event_type, str) or not event_type.strip():
             event_type = "experience"
-        lesson_type = self._classify_lesson_type(f"{event_type} {signal}", envelope)
+        try:
+            lesson_type = self._classify_lesson_type(signal, envelope)
+        except ValueError as exc:
+            return {"condition": "ambiguous_lesson", "message": str(exc)}
         profile = _GENERIC_EXPERIENCE_PROFILES.get(destination, {"policy": "behavior_rules"})
         policy = str(profile.get("policy", "behavior_rules"))
         surface = self._surface_for_destination(destination, preferred=policy)
         record = {
-            "type": "rule" if lesson_type in {"skill", "feedback", "correction"} else "fact",
+            "type": (
+                "exception"
+                if lesson_type == "correction"
+                else "rule"
+                if lesson_type == "feedback"
+                else "rule"
+                if lesson_type == "skill"
+                else "fact"
+            ),
             "subject": policy,
             "surface": surface,
             "status": envelope.get("status", "provisional"),
@@ -883,13 +944,23 @@ class Thalamus:
         user_id = payload.get("user_id", "default")
         if not isinstance(user_id, str) or not user_id.strip():
             user_id = "default"
-        lesson_type = self._classify_lesson_type(lesson_text, payload)
+        try:
+            lesson_type = self._classify_lesson_type(lesson_text, payload)
+        except ValueError as exc:
+            return {"status": "error", "message": str(exc)}
         record = payload.get("record") if isinstance(payload.get("record"), dict) else None
         if record is None:
             record = self._record_from_lesson(lesson_text, lesson_type, payload)
+        learning_id = str(payload.get("learning_id", str(uuid.uuid4())))
         skill_name = self._skill_name_from_lesson(lesson_text, lesson_type)
         behavior = self._behavior_from_lesson(lesson_text, lesson_type)
         targets = self._learning_targets_for_record(lesson_type, record)
+        if not targets:
+            return {
+                "status": "error",
+                "message": "No lobe matches lesson contract requirements",
+                "content": {"routing_condition": "no_capability_match", "taught": [], "failed": []},
+            }
         taught = []
         failed = []
         for destination in targets:
@@ -910,6 +981,7 @@ class Thalamus:
                 ),
             )
             destination_record.setdefault("scope", destination)
+            destination_record["learning_id"] = learning_id
             current_subject = str(destination_record.get("subject", "")).strip().lower()
             if current_subject in {
                 "",
@@ -923,47 +995,171 @@ class Thalamus:
                 "exception",
             }:
                 destination_record["subject"] = destination_record.get("surface")
-            result = self._handle_lobe_learning(
-                destination,
-                "teach_skill",
-                {
-                    "skill": skill_name,
-                    "behavior": behavior,
-                    "trigger": payload.get("trigger", lesson_text),
-                    "outcome": payload.get("outcome", "Apply lesson on relevant future tasks."),
-                    "user_id": user_id,
-                    "confidence": payload.get("confidence", 0.75),
-                    "lesson_type": lesson_type,
-                    "record": {**destination_record, "status": "provisional"},
-                    "required_evidence": sorted(required_evidence),
-                },
-                source="teach_monday",
-            )
+            record_type = str(destination_record.get("type", "fact")).strip().lower()
+            learning_payload = {
+                "user_id": user_id,
+                "confidence": payload.get("confidence", 0.75),
+                "lesson_type": lesson_type,
+                "record": {**destination_record, "status": "proposed"},
+                "required_evidence": sorted(required_evidence),
+                "learning_id": learning_id,
+            }
+            if lesson_type in {"skill", "feedback"} and record_type == "rule":
+                result = self._handle_lobe_learning(
+                    destination,
+                    "teach_skill",
+                    {
+                        **learning_payload,
+                        "skill": skill_name,
+                        "behavior": behavior,
+                        "trigger": payload.get("trigger", lesson_text),
+                        "outcome": payload.get("outcome", "Apply lesson on relevant future tasks."),
+                    },
+                    source="teach_monday",
+                )
+            else:
+                result = self._handle_lobe_learning(
+                    destination,
+                    "learn",
+                    {
+                        **learning_payload,
+                        "key": f"learning:{learning_id}:{destination}",
+                        "fact": lesson_text,
+                    },
+                    source="teach_monday",
+                )
             if result.get("status") == "success":
                 taught.append(
                     {
                         "lobe": destination,
                         "key": result.get("key"),
                         "confidence": result.get("confidence"),
+                        "learning_id": learning_id,
+                        "status": result.get("status"),
                     }
                 )
             else:
                 failed.append({"lobe": destination, "message": result.get("message", "unknown error")})
 
-        status = "success" if taught else "error"
+        probe_input = str(payload.get("validation_input", self._probe_prompt_from_lesson(lesson_text))).strip()
+        equivalent_inputs = payload.get("equivalent_inputs", [])
+        equivalent_inputs = (
+            [item for item in equivalent_inputs if isinstance(item, str) and item.strip()]
+            if isinstance(equivalent_inputs, list)
+            else []
+        )
+        if not equivalent_inputs:
+            equivalent_inputs = [probe_input.replace("What is", "Explain").replace("?", ".")]
+        unrelated_input = str(payload.get("unrelated_input", "hello")).strip() or "hello"
+        expected_phrase = self._expected_phrase_from_lesson(lesson_text)
+        before_output = ""
+        unrelated_before = ""
+        after_output = ""
+        equivalent_after: list[str] = []
+        unrelated_after = ""
+        validation_passed = False
+        validation_pending = expected_phrase is None
+        if not validation_pending:
+            before_output = self.process_user_input(probe_input, user_id=user_id)
+            unrelated_before = self.process_user_input(unrelated_input, user_id=user_id)
+            for entry in taught:
+                self._handle_lobe_learning(
+                    entry["lobe"],
+                    "stage_activation",
+                    {"user_id": user_id, "key": entry.get("key")},
+                    source="teach_monday_validation",
+                )
+            after_output = self.process_user_input(probe_input, user_id=user_id)
+            equivalent_after = [
+                self.process_user_input(prompt, user_id=user_id)
+                for prompt in equivalent_inputs
+            ]
+            unrelated_after = self.process_user_input(unrelated_input, user_id=user_id)
+            changed = before_output.strip() != after_output.strip()
+            expected_hit = expected_phrase in after_output.lower() and expected_phrase not in before_output.lower()
+            equivalent_hit = any(expected_phrase in answer.lower() for answer in equivalent_after)
+            protected_unchanged = unrelated_before.strip() == unrelated_after.strip()
+            validation_passed = bool(changed and expected_hit and equivalent_hit and protected_unchanged)
+        if validation_passed:
+            evidence = [
+                "saved",
+                "retrieved",
+                "applied",
+                "behavior_changed",
+                "validated",
+                f"before_output:{before_output}",
+                f"after_output:{after_output}",
+            ]
+            for entry in taught:
+                promoted = self._handle_lobe_learning(
+                    entry["lobe"],
+                    "promote_learning",
+                    {
+                        "user_id": user_id,
+                        "key": entry.get("key"),
+                        "evidence": evidence,
+                        "before_output": before_output,
+                        "after_output": after_output,
+                        "expected_difference": expected_phrase or "",
+                        "observed_difference": after_output,
+                        "test_input": probe_input,
+                        "equivalent_inputs": equivalent_inputs,
+                        "validator": "thalamus:auto_behavior_verifier",
+                    },
+                    source="teach_monday_validation",
+                )
+                if promoted.get("status") != "success":
+                    failed.append(
+                        {
+                            "lobe": entry["lobe"],
+                            "message": promoted.get("message", "promotion failed"),
+                        }
+                    )
+        elif not validation_pending:
+            for entry in taught:
+                self._handle_lobe_learning(
+                    entry["lobe"],
+                    "rollback_staged",
+                    {"user_id": user_id, "key": entry.get("key")},
+                    source="teach_monday_validation",
+                )
+                self._handle_lobe_learning(
+                    entry["lobe"],
+                    "deprecate_learning_id",
+                    {"user_id": user_id, "learning_id": learning_id},
+                    source="teach_monday_validation",
+                )
+            failed.append({"lobe": "validation", "message": "Automated behavior validation failed"})
+
+        status = "success" if taught and not failed else "partial" if taught else "error"
         return {
             "status": status,
             "content": {
                 "lesson_type": lesson_type,
                 "skill": skill_name,
                 "lesson": lesson_text,
+                "learning_id": learning_id,
                 "taught": taught,
                 "failed": failed,
                 "target_count": len(targets),
                 "applied_count": len(taught),
+                "validation": {
+                    "probe_input": probe_input,
+                    "before_output": before_output,
+                    "after_output": after_output,
+                    "equivalent_inputs": equivalent_inputs,
+                    "equivalent_outputs": equivalent_after,
+                    "unrelated_input": unrelated_input,
+                    "unrelated_before": unrelated_before,
+                    "unrelated_after": unrelated_after,
+                    "behavior_changed": validation_passed,
+                    "validated": validation_passed,
+                    "pending": validation_pending,
+                },
             },
             "lesson_type": lesson_type,
             "skill": skill_name,
+            "learning_id": learning_id,
             "taught": taught,
             "failed": failed,
         }
@@ -1127,6 +1323,11 @@ class Thalamus:
             "contradict_learning": "contradict_lobe_fact",
             "forget_learning": "forget_lobe_fact",
             "learning_stats": "lobe_learning_stats",
+            "promote_learning": "promote_lobe_fact",
+            "records_by_learning_id": "records_by_learning_id",
+            "deprecate_learning_id": "deprecate_learning_id",
+            "stage_activation": "stage_activation",
+            "rollback_staged": "rollback_staged",
         }
         target_operation = operation_map.get(msg_type)
         if target_operation is None:
@@ -1147,6 +1348,16 @@ class Thalamus:
             outcome = store.adjust(routed_payload, "forget")
         elif target_operation == "lobe_learning_stats":
             outcome = store.stats(routed_payload)
+        elif target_operation == "promote_lobe_fact":
+            outcome = store.promote(routed_payload)
+        elif target_operation == "records_by_learning_id":
+            outcome = store.records_by_learning_id(routed_payload)
+        elif target_operation == "deprecate_learning_id":
+            outcome = store.deprecate_learning_id(routed_payload)
+        elif target_operation == "stage_activation":
+            outcome = store.stage_activation(routed_payload)
+        elif target_operation == "rollback_staged":
+            outcome = store.rollback_staged(routed_payload)
         else:
             return {"status": "error", "message": f"Unsupported operation: {target_operation}"}
         if outcome.get("status") != "success":
