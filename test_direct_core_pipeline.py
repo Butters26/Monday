@@ -1618,6 +1618,38 @@ def test_each_real_lobe_learns_retains_and_uses_its_own_information(tmp_path, lo
     user_id = "alice"
     all_learning_lobes = ["conversation", "reasoning", "pattern", "language", "emotion", "output"]
 
+    def _before_after_for_lobe(thalamus):
+        if lobe_name == "conversation":
+            return thalamus.send_message(
+                "conversation", "understand", {"user_id": user_id, "user_input": "Explain moonphrase please"}
+            )
+        if lobe_name == "reasoning":
+            return thalamus.process_user_input(
+                "If I have two objects and receive three more, how many do I have?",
+                user_id=user_id,
+            )
+        if lobe_name == "pattern":
+            return thalamus.send_message(
+                "pattern",
+                "observe",
+                {"user_id": user_id, "data": {"user_input": "patternphi started this sentence"}},
+            )
+        if lobe_name == "language":
+            return thalamus.send_message(
+                "language",
+                "generate",
+                {"user_id": user_id, "user_input": "langphi detected", "semantic_input": {}},
+            )
+        if lobe_name == "emotion":
+            return thalamus.send_message(
+                "emotion", "process_input", {"user_id": user_id, "user_input": "I feel emotephrase and sad"}
+            )
+        return thalamus.send_message(
+            "output",
+            "generate_output",
+            {"user_id": user_id, "text": "outputphrase test", "preserve_text": True},
+        )
+
     systems = create_core_systems(str(runtime))
     try:
         thalamus = systems["thalamus"]
@@ -1634,6 +1666,8 @@ def test_each_real_lobe_learns_retains_and_uses_its_own_information(tmp_path, lo
         for stats in before_stats.values():
             assert stats["status"] == "success"
 
+        before_function = _before_after_for_lobe(thalamus)
+
         if lobe_name in {"conversation", "reasoning", "emotion", "output"}:
             preferred_surface = {
                 "conversation": "reply_guidance",
@@ -1643,7 +1677,7 @@ def test_each_real_lobe_learns_retains_and_uses_its_own_information(tmp_path, lo
             }[lobe_name]
             assert preferred_surface in mutable_surfaces
             fact = {
-                "conversation": "moonphrase means user is asking moon context",
+                "conversation": "moonphrase means user asks for moon context",
                 "reasoning": "2 + 3 = 5",
                 "emotion": "emotephrase means emotional-support context",
                 "output": "outputphrase means concise delivery context",
@@ -1658,7 +1692,90 @@ def test_each_real_lobe_learns_retains_and_uses_its_own_information(tmp_path, lo
             )
             assert learned["status"] == "success"
             assert learned["content"]["learning_record"]["surface"] == preferred_surface
+            if lobe_name == "reasoning":
+                staged = thalamus.send_message(
+                    "reasoning",
+                    "stage_activation",
+                    {"user_id": user_id, "key": key, "record": record},
+                )
+                assert staged["status"] == "success"
+        elif lobe_name == "pattern":
+            assert "pattern_rules" in mutable_surfaces
+            learned = thalamus.send_message(
+                "pattern",
+                "learn_from_experience",
+                {
+                    "envelope": {
+                        "event_type": "explicit_lesson",
+                        "user_id": user_id,
+                        "raw_experience": "patternphi is beacon",
+                        "metadata": {"relation": {"token": "patternphi", "concept": "beacon"}},
+                        "examples": ["patternphi appears first in this command"],
+                    }
+                },
+            )
+            assert learned["status"] == "success"
+            assert learned["content"]["interpreted"] is True
+            assert learned["content"]["update_accepted"] is True
+        else:  # language
+            assert "generation_guidance" in mutable_surfaces
+            for _ in range(2):
+                learned = thalamus.send_message(
+                    "language",
+                    "learn_from_experience",
+                    {
+                        "envelope": {
+                            "event_type": "explicit_lesson",
+                            "user_id": user_id,
+                            "raw_experience": "langphi means beacon",
+                            "metadata": {"relation": {"token": "langphi", "concept": "beacon"}},
+                            "examples": ["langphi appears in this phrase"],
+                        }
+                    },
+                )
+                assert learned["status"] == "success"
+                assert learned["content"]["interpreted"] is True
+                assert learned["content"]["update_accepted"] is True
 
+        after_function = _before_after_for_lobe(thalamus)
+
+        if lobe_name == "conversation":
+            before_understanding = before_function["content"]["understanding"]
+            after_understanding = after_function["content"]["understanding"]
+            assert "learned_guidance" not in before_understanding
+            assert "learned_guidance" in after_understanding
+            assert any("moonphrase" in item for item in after_understanding["learned_guidance"])
+        elif lobe_name == "reasoning":
+            assert before_function.strip() != "5"
+            assert after_function.strip() == "5"
+        elif lobe_name == "pattern":
+            assert before_function["content"]["token_rule_applied"] is False
+            assert after_function["content"]["token_rule_applied"] is True
+            assert after_function["content"]["token_rule_matches"]
+        elif lobe_name == "language":
+            assert before_function.get("response") == "I'm thinking about that"
+            assert after_function.get("response", "").strip() != ""
+            assert "langphi" in after_function.get("response", "").lower()
+            assert "beacon" in after_function.get("response", "").lower()
+        elif lobe_name == "emotion":
+            before_response = before_function.get("response", "")
+            after_response = after_function.get("response", "")
+            assert before_response != after_response, "Emotion learning did not produce a functional response change"
+            assert "emotephrase" in after_response.lower()
+        else:
+            assert before_function.get("text") != after_function.get("text"), "Output learning did not change output text"
+            assert "outputphrase" in after_function.get("text", "").lower()
+
+        # Only promote after functional difference is proven.
+        if lobe_name in {"conversation", "reasoning", "emotion", "output"}:
+            preferred_surface = {
+                "conversation": "reply_guidance",
+                "reasoning": "inference_preferences",
+                "emotion": "emotion_response_guidance",
+                "output": "delivery_tone",
+            }[lobe_name]
+            key = f"{lobe_name}_owned_rule"
+            record = {"type": "rule", "subject": preferred_surface, "surface": preferred_surface}
             promoted = thalamus.send_message(
                 lobe_name,
                 "promote_learning",
@@ -1668,166 +1785,11 @@ def test_each_real_lobe_learns_retains_and_uses_its_own_information(tmp_path, lo
                     "record": record,
                     "evidence": ["saved", "retrieved", "applied", "behavior_changed", "validated"],
                     "validator": "test_each_real_lobe_learns_retains_and_uses_its_own_information",
+                    "before_output": str(before_function),
+                    "after_output": str(after_function),
                 },
             )
             assert promoted["status"] == "success"
-
-            after_target_stats = thalamus.send_message(lobe_name, "learning_stats", {"user_id": user_id})
-            assert after_target_stats["status"] == "success"
-            assert after_target_stats["total_facts"] == before_stats[lobe_name]["total_facts"] + 1
-            assert after_target_stats["active_facts"] >= before_stats[lobe_name]["active_facts"] + 1
-
-            recalled = thalamus.send_message(
-                lobe_name,
-                "recall",
-                {"user_id": user_id, "query": fact.split()[0], "limit": 5, "include_disputed": True, "include_deprecated": True},
-            )
-            assert recalled["status"] == "success"
-            targeted = [row for row in recalled.get("memories", []) if row.get("key") == key]
-            assert targeted
-            before_use_count = int(targeted[0].get("use_count", 0))
-
-            if lobe_name == "conversation":
-                used = thalamus.send_message(
-                    "conversation",
-                    "understand",
-                    {"user_id": user_id, "user_input": "Please explain moonphrase"},
-                )
-                assert used["status"] == "success"
-                assert used["content"]["learned_guidance_used"] is True
-            elif lobe_name == "reasoning":
-                used_output = thalamus.process_user_input(
-                    "If I have two objects and receive three more, how many do I have?",
-                    user_id=user_id,
-                )
-                assert used_output.strip() == "5"
-            elif lobe_name == "emotion":
-                used = thalamus.send_message(
-                    "emotion",
-                    "process_input",
-                    {"user_id": user_id, "user_input": "I feel emotephrase and sad"},
-                )
-                assert used["status"] == "success"
-            else:
-                used = thalamus.send_message(
-                    "output",
-                    "generate_output",
-                    {"user_id": user_id, "text": "outputphrase test", "preserve_text": True},
-                )
-                assert used["status"] == "success"
-                assert used["text"] == "outputphrase test"
-
-            used_recall = thalamus.send_message(
-                lobe_name,
-                "recall",
-                {"user_id": user_id, "query": fact.split()[0], "limit": 5, "include_disputed": True, "include_deprecated": True},
-            )
-            assert used_recall["status"] == "success"
-            used_rows = [row for row in used_recall.get("memories", []) if row.get("key") == key]
-            assert used_rows
-            assert int(used_rows[0].get("use_count", 0)) >= before_use_count + 1
-        elif lobe_name == "pattern":
-            assert "pattern_rules" in mutable_surfaces
-            token = "patternphi"
-            before_state = thalamus.send_message(
-                "pattern",
-                "get_pattern_learning_state",
-                {"user_id": user_id, "token": token},
-            )
-            assert before_state["status"] == "success"
-            assert before_state["content"]["token_rules"] == {}
-
-            learned = thalamus.send_message(
-                "pattern",
-                "learn_from_experience",
-                {
-                    "envelope": {
-                        "event_type": "explicit_lesson",
-                        "user_id": user_id,
-                        "raw_experience": f"{token} is beacon",
-                        "metadata": {"relation": {"token": token, "concept": "beacon"}},
-                        "examples": [f"{token} appears first in this command"],
-                    }
-                },
-            )
-            assert learned["status"] == "success"
-            assert learned["content"]["interpreted"] is True
-            assert learned["content"]["update_accepted"] is True
-
-            after_state = thalamus.send_message(
-                "pattern",
-                "get_pattern_learning_state",
-                {"user_id": user_id, "token": token},
-            )
-            assert after_state["status"] == "success"
-            token_rule = after_state["content"]["token_rules"]
-            assert token_rule.get("concept_hint") == "beacon"
-            assert float(token_rule.get("confidence", 0.0)) > 0.0
-
-            classified = thalamus.send_message(
-                "pattern",
-                "classify_token_pattern",
-                {"user_id": user_id, "token": token, "text": f"{token} is visible now"},
-            )
-            assert classified["status"] == "success"
-            assert classified["content"]["classification"] in {"opening_token", "embedded_token"}
-
-            observed = thalamus.send_message(
-                "pattern",
-                "observe",
-                {"user_id": user_id, "data": {"user_input": f"{token} started this sentence"}},
-            )
-            assert observed["status"] == "success"
-            assert observed["content"]["token_rule_applied"] is True
-        else:  # language
-            assert "generation_guidance" in mutable_surfaces
-            token = "langphi"
-            before_state = thalamus.send_message(
-                "language",
-                "get_language_learning_state",
-                {"user_id": user_id, "token": token},
-            )
-            assert before_state["status"] == "success"
-            assert before_state["content"]["concept_relations"] == {}
-
-            for _ in range(2):
-                learned = thalamus.send_message(
-                    "language",
-                    "learn_from_experience",
-                    {
-                        "envelope": {
-                            "event_type": "explicit_lesson",
-                            "user_id": user_id,
-                            "raw_experience": f"{token} means beacon",
-                            "metadata": {"relation": {"token": token, "concept": "beacon"}},
-                            "examples": [f"{token} appears in this phrase"],
-                        }
-                    },
-                )
-                assert learned["status"] == "success"
-                assert learned["content"]["interpreted"] is True
-                assert learned["content"]["update_accepted"] is True
-
-            after_state = thalamus.send_message(
-                "language",
-                "get_language_learning_state",
-                {"user_id": user_id, "token": token},
-            )
-            assert after_state["status"] == "success"
-            relations = after_state["content"]["concept_relations"]
-            assert "beacon" in relations
-            assert float(relations["beacon"]["confidence"]) >= 0.5
-
-            generated = thalamus.send_message(
-                "language",
-                "generate",
-                {"user_id": user_id, "user_input": f"{token} detected", "semantic_input": {}},
-            )
-            assert generated["status"] == "success"
-            assert any(
-                item.get("token") == token and item.get("concept") == "beacon"
-                for item in generated.get("token_matches", [])
-            )
 
         after_stats = {
             lobe: thalamus.send_message(lobe, "learning_stats", {"user_id": user_id})
@@ -1845,90 +1807,31 @@ def test_each_real_lobe_learns_retains_and_uses_its_own_information(tmp_path, lo
     restarted = create_core_systems(str(runtime))
     try:
         thalamus = restarted["thalamus"]
+        retained_after_restart = _before_after_for_lobe(thalamus)
+
+        if lobe_name == "reasoning":
+            assert retained_after_restart.strip() == "5"
+        elif lobe_name == "pattern":
+            assert retained_after_restart["content"]["token_rule_applied"] is True
+        elif lobe_name == "language":
+            assert any(
+                item.get("token") == "langphi" and item.get("concept") == "beacon"
+                for item in retained_after_restart.get("token_matches", [])
+            )
+        elif lobe_name == "conversation":
+            understanding = retained_after_restart["content"]["understanding"]
+            assert "learned_guidance" in understanding and any(
+                "moonphrase" in item for item in understanding["learned_guidance"]
+            )
+        elif lobe_name == "emotion":
+            assert "emotephrase" in retained_after_restart.get("response", "").lower()
+        else:
+            assert "outputphrase" in retained_after_restart.get("text", "").lower()
+
         after_restart_stats = {
             lobe: thalamus.send_message(lobe, "learning_stats", {"user_id": user_id})
             for lobe in all_learning_lobes
         }
-
-        if lobe_name in {"conversation", "reasoning", "emotion", "output"}:
-            fact_seed = {
-                "conversation": "moonphrase",
-                "reasoning": "2",
-                "emotion": "emotephrase",
-                "output": "outputphrase",
-            }[lobe_name]
-            restarted_recall = thalamus.send_message(
-                lobe_name,
-                "recall",
-                {"user_id": user_id, "query": fact_seed, "limit": 5, "include_disputed": True, "include_deprecated": True},
-            )
-            assert restarted_recall["status"] == "success"
-            assert restarted_recall["memories"]
-            if lobe_name == "conversation":
-                used = thalamus.send_message(
-                    "conversation",
-                    "understand",
-                    {"user_id": user_id, "user_input": "moonphrase follow-up"},
-                )
-                assert used["status"] == "success"
-                assert used["content"]["learned_guidance_used"] is True
-            elif lobe_name == "reasoning":
-                restart_output = thalamus.process_user_input(
-                    "If two items are joined with three items, how many are there?",
-                    user_id=user_id,
-                )
-                assert restart_output.strip() == "5"
-            elif lobe_name == "emotion":
-                used = thalamus.send_message(
-                    "emotion",
-                    "process_input",
-                    {"user_id": user_id, "user_input": "emotephrase made me upset"},
-                )
-                assert used["status"] == "success"
-            else:
-                used = thalamus.send_message(
-                    "output",
-                    "generate_output",
-                    {"user_id": user_id, "text": "outputphrase post-restart", "preserve_text": True},
-                )
-                assert used["status"] == "success"
-                assert used["text"] == "outputphrase post-restart"
-        elif lobe_name == "pattern":
-            token = "patternphi"
-            retained = thalamus.send_message(
-                "pattern",
-                "get_pattern_learning_state",
-                {"user_id": user_id, "token": token},
-            )
-            assert retained["status"] == "success"
-            assert retained["content"]["token_rules"].get("concept_hint") == "beacon"
-            observed = thalamus.send_message(
-                "pattern",
-                "observe",
-                {"user_id": user_id, "data": {"user_input": f"{token} repeated after restart"}},
-            )
-            assert observed["status"] == "success"
-            assert observed["content"]["token_rule_applied"] is True
-        else:
-            token = "langphi"
-            retained = thalamus.send_message(
-                "language",
-                "get_language_learning_state",
-                {"user_id": user_id, "token": token},
-            )
-            assert retained["status"] == "success"
-            assert "beacon" in retained["content"]["concept_relations"]
-            generated = thalamus.send_message(
-                "language",
-                "generate",
-                {"user_id": user_id, "user_input": f"{token} after restart", "semantic_input": {}},
-            )
-            assert generated["status"] == "success"
-            assert any(
-                item.get("token") == token and item.get("concept") == "beacon"
-                for item in generated.get("token_matches", [])
-            )
-
         for lobe in all_learning_lobes:
             assert after_restart_stats[lobe]["status"] == "success"
             if lobe == lobe_name:
