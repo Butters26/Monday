@@ -94,6 +94,7 @@ class Thalamus:
         self._synced_notus_write_ids: Dict[str, Set[str]] = {}
         self._notus_sync_lock = threading.RLock()
         self._lobe_contracts: Dict[str, Dict[str, Any]] = {}
+        self.auto_adapt_enabled = False
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1380,6 +1381,11 @@ class Thalamus:
         response: Dict[str, Any],
         source: str,
     ) -> None:
+        allow_auto_adapt = bool(getattr(self, "auto_adapt_enabled", False))
+        if isinstance(content, dict) and content.get("allow_auto_adapt") is True:
+            allow_auto_adapt = True
+        if not allow_auto_adapt:
+            return
         if (
             destination == "notus"
             or msg_type in _LEARNING_ROUTE_TYPES
