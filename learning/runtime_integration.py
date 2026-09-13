@@ -34,6 +34,15 @@ def _query_from_message(message: Dict[str, Any]) -> str:
     return ""
 
 
+def _relation_from_guidance(guidance: str) -> tuple[str, str] | None:
+    match = re.match(r"^\s*(.+?)\s+means\s+(.+?)\s*\.?\s*$", guidance, re.IGNORECASE)
+    if not match:
+        return None
+    left = match.group(1).strip()
+    right = match.group(2).strip()
+    return (left, right) if left and right else None
+
+
 def _effective_guidance(lobe: Any, message: Dict[str, Any]) -> list[str]:
     guidance = _guidance_from_message(message)
     if guidance:
@@ -46,44 +55,40 @@ def _effective_guidance(lobe: Any, message: Dict[str, Any]) -> list[str]:
     query = _query_from_message(message)
     if not query:
         return []
-    recalled = store.recall(
-        {
-            "user_id": user_id,
-            "query": query,
-            "min_confidence": 0.55,
-            "limit": 5,
-            "include_only_active": True,
-            "exclude_auto_adapt": True,
-            "mark_used": True,
-        }
-    )
-    content = recalled.get("content", {}) if isinstance(recalled, dict) else {}
-    memories = content.get("memories", []) if isinstance(content, dict) else []
+
+    def recall(query_text: str) -> list[dict]:
+        result = store.recall(
+            {
+                "user_id": user_id,
+                "query": query_text,
+                "min_confidence": 0.55,
+                "limit": 20,
+                "include_only_active": True,
+                "exclude_auto_adapt": True,
+                "mark_used": True,
+            }
+        )
+        content = result.get("content", {}) if isinstance(result, dict) else {}
+        rows = content.get("memories", []) if isinstance(content, dict) else []
+        return [row for row in rows if isinstance(row, dict)]
+
+    memories = recall(query)
+    if not memories:
+        # Relation rules are persisted per-user and active. If the normal
+        # relevance search misses one, inspect the small active set and apply
+        # only rules whose left-hand term actually appears in this message.
+        memories = recall("")
+        memories = [
+            row for row in memories
+            if isinstance(row.get("fact"), str)
+            and (relation := _relation_from_guidance(row["fact"])) is not None
+            and re.search(re.escape(relation[0]), query, re.IGNORECASE)
+        ]
     return [
         row.get("fact", "").strip()
         for row in memories
-        if isinstance(row, dict) and isinstance(row.get("fact"), str) and row.get("fact", "").strip()
+        if isinstance(row.get("fact"), str) and row.get("fact", "").strip()
     ]
-
-
-def _relation_from_guidance(guidance: str) -> tuple[str, str] | None:
-    match = re.match(r"^\s*(.+?)\s+means\s+(.+?)\s*\.?\s*$", guidance, re.IGNORECASE)
-    if not match:
-        return None
-    left = match.group(1).strip()
-    right = match.group(2).strip()
-    return (left, right) if left and right else None
-
-
-def _replace_relation(text: str, guidance: list[str]) -> str:
-    result = text
-    for item in guidance:
-        relation = _relation_from_guidance(item)
-        if relation is None:
-            continue
-        left, right = relation
-        result = re.sub(re.escape(left), right, result, flags=re.IGNORECASE)
-    return result
 
 
 def _wrap_conversation(lobe: Any) -> None:
@@ -141,7 +146,13 @@ def _postprocess_output(lobe: Any, payload: Dict[str, Any], result: Dict[str, An
     if not isinstance(text, str):
         content = result.get("content", {})
         text = content.get("text", "") if isinstance(content, dict) else ""
-    changed_text = _replace_relation(text, guidance) if isinstance(text, str) else text
+    changed_text = text
+    if isinstance(text, str):
+        for item in guidance:
+            relation = _relation_from_guidance(item)
+            if relation and re.search(re.escape(relation[0]), text, re.IGNORECASE):
+                changed_text = f"{text.rstrip()} — {relation[1]}"
+                break
     if isinstance(changed_text, str) and changed_text != text:
         result["text"] = changed_text
         lobe.last_output = changed_text
