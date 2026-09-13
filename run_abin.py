@@ -16,6 +16,7 @@ from pattern_recognition import AdvancedPatternRecognition
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 from learning.runtime_integration import install_learning_integration
+from learning.hardening import install_hardened_stores
 
 
 def create_core_systems(
@@ -52,6 +53,7 @@ def create_core_systems(
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
     install_learning_integration(systems)
+    install_hardened_stores(systems)
     return systems
 
 
