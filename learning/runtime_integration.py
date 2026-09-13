@@ -43,31 +43,40 @@ def _relation_from_guidance(guidance: str) -> tuple[str, str] | None:
     return (left, right) if left and right else None
 
 
-def _applicable_relations(items: list[str], query: str) -> list[str]:
+def _trigger_from_guidance(guidance: str) -> str | None:
+    """Extract an explicit applicability trigger from a general rule."""
+    match = re.match(r"^\s*for\s+(.+?),\s+.+$", guidance, re.IGNORECASE)
+    if not match:
+        return None
+    trigger = match.group(1).strip()
+    return trigger or None
+
+
+def _guidance_applies(item: str, query: str) -> bool:
+    relation = _relation_from_guidance(item)
+    if relation is not None:
+        return bool(re.search(re.escape(relation[0]), query, re.IGNORECASE))
+    trigger = _trigger_from_guidance(item)
+    if trigger is not None:
+        return bool(re.search(re.escape(trigger), query, re.IGNORECASE))
+    return False
+
+
+def _applicable_guidance(items: list[str], query: str) -> list[str]:
     if not query:
         return []
-    applicable = []
-    for item in items:
-        relation = _relation_from_guidance(item)
-        if relation and re.search(re.escape(relation[0]), query, re.IGNORECASE):
-            applicable.append(item)
-    return applicable
+    return [item for item in items if _guidance_applies(item, query)]
 
 
 def _staged_guidance(lobe: Any, user_id: str, query: str) -> list[str]:
-    """Return only explicitly staged rules for this user that match this input.
-
-    Staged rules are temporary validation candidates. They are never treated as
-    generally active learning: they can affect only an input containing the
-    relation's left-hand trigger, and are removed after promotion/rollback.
-    """
+    """Return only explicitly staged rules for this user that match this input."""
     cache = getattr(lobe, "_runtime_staged_guidance", {})
     if not isinstance(cache, dict):
         return []
     user_cache = cache.get(user_id, {})
     if not isinstance(user_cache, dict):
         return []
-    return _applicable_relations(
+    return _applicable_guidance(
         [value for value in user_cache.values() if isinstance(value, str)], query
     )
 
@@ -103,23 +112,17 @@ def _effective_guidance(lobe: Any, message: Dict[str, Any]) -> list[str]:
         memories = recall(query)
         if not memories:
             memories = recall("")
-            memories = [
-                row for row in memories
-                if isinstance(row.get("fact"), str)
-                and (relation := _relation_from_guidance(row["fact"])) is not None
-                and re.search(re.escape(relation[0]), query, re.IGNORECASE)
-            ]
         stored_guidance = [
             row.get("fact", "").strip()
             for row in memories
-            if isinstance(row.get("fact"), str) and row.get("fact", "").strip()
+            if isinstance(row.get("fact"), str)
+            and row.get("fact", "").strip()
+            and _guidance_applies(row.get("fact", ""), query)
         ]
         if stored_guidance:
             return stored_guidance
 
-    # During validation, use only the exact relation that was successfully
-    # staged by the learning store. This lets a lobe prove behavior changed
-    # before promotion without leaking arbitrary provisional learning.
+    # During validation, use only exact rules that were successfully staged.
     return _staged_guidance(lobe, user_id, query)
 
 
@@ -152,7 +155,7 @@ def _postprocess_emotion(lobe: Any, payload: Dict[str, Any], result: Dict[str, A
     if not guidance or result.get("status") != "success":
         return result
     user_input = _query_from_message({"content": payload})
-    applicable = _applicable_relations(guidance, user_input)
+    applicable = _applicable_guidance(guidance, user_input)
     if applicable and isinstance(result.get("response"), str) and applicable[0] not in result["response"]:
         result["response"] = f"{result['response'].rstrip()} {applicable[0]}".strip()
     result["learned_guidance"] = list(guidance)
@@ -170,19 +173,20 @@ def _postprocess_output(lobe: Any, payload: Dict[str, Any], result: Dict[str, An
     guidance = _effective_guidance(lobe, {"content": payload})
     if not guidance or result.get("status") != "success":
         return result
+    query = _query_from_message({"content": payload})
+    applicable = _applicable_guidance(guidance, query)
     text = result.get("text")
     if not isinstance(text, str):
         content = result.get("content", {})
         text = content.get("text", "") if isinstance(content, dict) else ""
     changed_text = text
-    applied = False
-    if isinstance(text, str):
-        for item in guidance:
-            relation = _relation_from_guidance(item)
-            if relation and re.search(re.escape(relation[0]), text, re.IGNORECASE):
-                changed_text = f"{text.rstrip()} — {relation[1]}"
-                applied = True
-                break
+    if applicable and isinstance(text, str):
+        item = applicable[0]
+        relation = _relation_from_guidance(item)
+        suffix = relation[1] if relation is not None else item
+        if suffix and suffix not in text:
+            changed_text = f"{text.rstrip()} — {suffix}"
+    applied = bool(applicable)
     if isinstance(changed_text, str) and changed_text != text:
         result["text"] = changed_text
         lobe.last_output = changed_text
@@ -268,8 +272,7 @@ def install_learning_integration(systems: Dict[str, Any]) -> None:
             and isinstance(payload, dict)
         ):
             fact = payload.get("fact")
-            relation = _relation_from_guidance(fact) if isinstance(fact, str) else None
-            if relation is not None:
+            if isinstance(fact, str) and (_relation_from_guidance(fact) is not None or _trigger_from_guidance(fact) is not None):
                 result_content = result.get("content", {})
                 key = result.get("key")
                 if not isinstance(key, str) and isinstance(result_content, dict):
