@@ -1,2 +1,0 @@
-FIX_VERSION = 1
-FIX_ACTIVE = True
