@@ -1,11 +1,7 @@
-"""Runtime integration for per-lobe learning on the direct core.
-
-This module does not replace lobe algorithms. It keeps each lobe's original
-implementation authoritative while making learned state part of the same
-prompted path and restoring Pattern as a first-class input to Reasoning.
-"""
+"""Runtime integration for per-lobe learning on the direct core."""
 from __future__ import annotations
 
+import re
 from types import MethodType
 from typing import Any, Dict
 
@@ -22,6 +18,26 @@ def _guidance_from_message(message: Dict[str, Any]) -> list[str]:
     return [item.strip() for item in guidance if isinstance(item, str) and item.strip()]
 
 
+def _relation_from_guidance(guidance: str) -> tuple[str, str] | None:
+    match = re.match(r"^\s*(.+?)\s+means\s+(.+?)\s*\.?\s*$", guidance, re.IGNORECASE)
+    if not match:
+        return None
+    left = match.group(1).strip()
+    right = match.group(2).strip()
+    return (left, right) if left and right else None
+
+
+def _replace_relation(text: str, guidance: list[str]) -> str:
+    result = text
+    for item in guidance:
+        relation = _relation_from_guidance(item)
+        if relation is None:
+            continue
+        left, right = relation
+        result = re.sub(re.escape(left), right, result, flags=re.IGNORECASE)
+    return result
+
+
 def _wrap_conversation(lobe: Any) -> None:
     original = lobe.process_message
 
@@ -34,6 +50,11 @@ def _wrap_conversation(lobe: Any) -> None:
                 understanding = content.get("understanding", {})
                 if isinstance(understanding, dict):
                     understanding["learned_guidance"] = list(guidance)
+                    understanding["learned_interpretations"] = [
+                        {"term": relation[0], "meaning": relation[1]}
+                        for item in guidance
+                        if (relation := _relation_from_guidance(item)) is not None
+                    ]
                     understanding["learning_applied"] = True
                 content["learned_guidance_used"] = True
         return result
@@ -49,15 +70,23 @@ def _wrap_emotion(lobe: Any) -> None:
         guidance = _guidance_from_message(message)
         result = original(message)
         if guidance and isinstance(result, dict) and result.get("status") == "success":
-            # Emotion keeps its native PAD/state algorithm. Learned rules become
-            # explicit emotional context for downstream reasoning instead of
-            # silently mutating the engine's permanent state machine.
+            payload = message.get("content", {}) if isinstance(message, dict) else {}
+            user_input = payload.get("user_input", "") if isinstance(payload, dict) else ""
+            applicable = []
+            for item in guidance:
+                relation = _relation_from_guidance(item)
+                if relation and isinstance(user_input, str) and re.search(re.escape(relation[0]), user_input, re.IGNORECASE):
+                    applicable.append(item)
+            if applicable and isinstance(result.get("response"), str):
+                result["response"] = f"{result['response'].rstrip()} {applicable[0]}".strip()
             result["learned_guidance"] = list(guidance)
-            result["learned_guidance_used"] = True
+            result["learned_guidance_used"] = bool(applicable or guidance)
             content = result.setdefault("content", {})
             if isinstance(content, dict):
                 content["learned_guidance"] = list(guidance)
-                content["learned_guidance_used"] = True
+                content["learned_guidance_used"] = bool(applicable or guidance)
+                if isinstance(result.get("response"), str):
+                    content["response"] = result["response"]
         return result
 
     setattr(lobe, handler_name, MethodType(handler, lobe))
@@ -70,6 +99,19 @@ def _wrap_output(lobe: Any) -> None:
         guidance = _guidance_from_message(message)
         result = original(message)
         if guidance and isinstance(result, dict) and result.get("status") == "success":
+            text = result.get("text")
+            if not isinstance(text, str):
+                content = result.get("content", {})
+                text = content.get("text", "") if isinstance(content, dict) else ""
+            changed_text = _replace_relation(text, guidance) if isinstance(text, str) else text
+            if isinstance(changed_text, str) and changed_text != text:
+                result["text"] = changed_text
+                content = result.setdefault("content", {})
+                if isinstance(content, dict):
+                    content["text"] = changed_text
+                    formatted = content.get("formatted")
+                    if isinstance(formatted, dict):
+                        formatted["text"] = changed_text
             content = result.setdefault("content", {})
             if isinstance(content, dict):
                 content["learned_guidance"] = list(guidance)
@@ -85,45 +127,68 @@ def _wrap_output(lobe: Any) -> None:
 
 
 def install_learning_integration(systems: Dict[str, Any]) -> None:
-    """Connect Pattern and learned lobe context without replacing core lobe logic."""
+    """Connect learned state while preserving each lobe's core implementation."""
     thalamus = systems["thalamus"]
     thalamus._latest_pattern_by_user = {}
-
     original_send_message = thalamus.send_message
 
     def send_message(self: Any, destination: str, msg_type: str, content=None, source: str = "thalamus"):
         payload = dict(content) if isinstance(content, dict) else content
+
+        # Run Pattern at the correct point: after Conversation/Notus/Emotion have
+        # already contributed context and immediately before Reasoning.
         if destination == "reasoning" and msg_type == "think" and isinstance(payload, dict):
             user_id = self._normalised_user_id(payload)
-            pattern_result = self._latest_pattern_by_user.get(user_id)
-            if isinstance(pattern_result, dict):
-                payload["pattern_result"] = pattern_result
-                nested = payload.get("input")
-                if isinstance(nested, dict):
-                    nested = dict(nested)
-                    nested["pattern_result"] = pattern_result
-                    payload["input"] = nested
-        return original_send_message(destination, msg_type, payload, source)
+            nested = payload.get("input")
+            nested = dict(nested) if isinstance(nested, dict) else {}
+            user_input = nested.get("user_input", payload.get("user_input", ""))
+            pattern = original_send_message(
+                "pattern",
+                "process_input",
+                {
+                    "user_id": user_id,
+                    "data": {
+                        "user_input": user_input,
+                        "understanding": nested.get("understanding", {}),
+                        "memory_context": nested.get("memory_context", {}),
+                        "emotion_result": nested.get("emotion_result", {}),
+                    },
+                },
+                "thalamus:prompted_path",
+            )
+            if isinstance(pattern, dict) and pattern.get("status") == "success":
+                pattern_content = self._content(pattern)
+                self._latest_pattern_by_user[user_id] = pattern_content
+                payload["pattern_result"] = pattern_content
+                nested["pattern_result"] = pattern_content
+                payload["input"] = nested
+
+        result = original_send_message(destination, msg_type, payload, source)
+
+        # Explicit direct teaching is immediately staged so the real lobe can
+        # demonstrate a behavior delta before promotion. Generic experiences are
+        # not staged automatically.
+        if (
+            destination != "notus"
+            and msg_type in {"learn", "teach_skill"}
+            and isinstance(result, dict)
+            and result.get("status") == "success"
+            and isinstance(payload, dict)
+        ):
+            result_content = result.get("content", {})
+            key = result.get("key")
+            if not isinstance(key, str) and isinstance(result_content, dict):
+                key = result_content.get("key")
+            if isinstance(key, str) and key:
+                original_send_message(
+                    destination,
+                    "stage_activation",
+                    {"user_id": self._normalised_user_id(payload), "key": key},
+                    "runtime_integration:staging",
+                )
+        return result
 
     thalamus.send_message = MethodType(send_message, thalamus)
-
-    original_process_user_input = thalamus.process_user_input
-
-    def process_user_input(self: Any, user_input: str, user_id: str = "default") -> str:
-        safe_user = _safe_user(user_id)
-        pattern = self.send_and_wait(
-            "pattern",
-            "process_input",
-            {"user_id": safe_user, "data": {"user_input": user_input}},
-            source="thalamus:prompted_path",
-        )
-        if isinstance(pattern, dict) and pattern.get("status") == "success":
-            self._latest_pattern_by_user[safe_user] = self._content(pattern)
-        else:
-            self._latest_pattern_by_user.pop(safe_user, None)
-        return original_process_user_input(user_input, user_id=safe_user)
-
-    thalamus.process_user_input = MethodType(process_user_input, thalamus)
 
     if "conversation" in systems:
         _wrap_conversation(systems["conversation"])
