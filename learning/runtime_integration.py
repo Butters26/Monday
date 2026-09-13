@@ -110,68 +110,57 @@ def _wrap_conversation(lobe: Any) -> None:
     lobe.process_message = MethodType(process_message, lobe)
 
 
-def _wrap_emotion(lobe: Any) -> None:
-    handler_name = "process_message" if callable(getattr(lobe, "process_message", None)) else "process_message_safe"
-    original = getattr(lobe, handler_name)
-
-    def handler(self: Any, message: Dict[str, Any]) -> Dict[str, Any]:
-        guidance = _effective_guidance(self, message)
-        result = original(message)
-        if guidance and isinstance(result, dict) and result.get("status") == "success":
-            user_input = _query_from_message(message)
-            applicable = []
-            for item in guidance:
-                relation = _relation_from_guidance(item)
-                if relation and re.search(re.escape(relation[0]), user_input, re.IGNORECASE):
-                    applicable.append(item)
-            if applicable and isinstance(result.get("response"), str):
-                result["response"] = f"{result['response'].rstrip()} {applicable[0]}".strip()
-            result["learned_guidance"] = list(guidance)
-            result["learned_guidance_used"] = True
-            content = result.setdefault("content", {})
-            if isinstance(content, dict):
-                content["learned_guidance"] = list(guidance)
-                content["learned_guidance_used"] = True
-                if isinstance(result.get("response"), str):
-                    content["response"] = result["response"]
+def _postprocess_emotion(lobe: Any, payload: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    guidance = _effective_guidance(lobe, {"content": payload})
+    if not guidance or result.get("status") != "success":
         return result
+    user_input = _query_from_message({"content": payload})
+    applicable = []
+    for item in guidance:
+        relation = _relation_from_guidance(item)
+        if relation and re.search(re.escape(relation[0]), user_input, re.IGNORECASE):
+            applicable.append(item)
+    if applicable and isinstance(result.get("response"), str) and applicable[0] not in result["response"]:
+        result["response"] = f"{result['response'].rstrip()} {applicable[0]}".strip()
+    result["learned_guidance"] = list(guidance)
+    result["learned_guidance_used"] = True
+    content = result.setdefault("content", {})
+    if isinstance(content, dict):
+        content["learned_guidance"] = list(guidance)
+        content["learned_guidance_used"] = True
+        if isinstance(result.get("response"), str):
+            content["response"] = result["response"]
+    return result
 
-    setattr(lobe, handler_name, MethodType(handler, lobe))
 
-
-def _wrap_output(lobe: Any) -> None:
-    original = lobe.process_message
-
-    def process_message(self: Any, message: Dict[str, Any]) -> Dict[str, Any]:
-        guidance = _effective_guidance(self, message)
-        result = original(message)
-        if guidance and isinstance(result, dict) and result.get("status") == "success":
-            text = result.get("text")
-            if not isinstance(text, str):
-                content = result.get("content", {})
-                text = content.get("text", "") if isinstance(content, dict) else ""
-            changed_text = _replace_relation(text, guidance) if isinstance(text, str) else text
-            if isinstance(changed_text, str) and changed_text != text:
-                result["text"] = changed_text
-                self.last_output = changed_text
-                content = result.setdefault("content", {})
-                if isinstance(content, dict):
-                    content["text"] = changed_text
-                    formatted = content.get("formatted")
-                    if isinstance(formatted, dict):
-                        formatted["text"] = changed_text
-            content = result.setdefault("content", {})
-            if isinstance(content, dict):
-                content["learned_guidance"] = list(guidance)
-                content["learned_guidance_used"] = True
-                formatted = content.get("formatted")
-                if isinstance(formatted, dict):
-                    formatted["learned_guidance"] = list(guidance)
-                    formatted["learning_applied"] = True
-            result["learned_guidance_used"] = True
+def _postprocess_output(lobe: Any, payload: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    guidance = _effective_guidance(lobe, {"content": payload})
+    if not guidance or result.get("status") != "success":
         return result
-
-    lobe.process_message = MethodType(process_message, lobe)
+    text = result.get("text")
+    if not isinstance(text, str):
+        content = result.get("content", {})
+        text = content.get("text", "") if isinstance(content, dict) else ""
+    changed_text = _replace_relation(text, guidance) if isinstance(text, str) else text
+    if isinstance(changed_text, str) and changed_text != text:
+        result["text"] = changed_text
+        lobe.last_output = changed_text
+        content = result.setdefault("content", {})
+        if isinstance(content, dict):
+            content["text"] = changed_text
+            formatted = content.get("formatted")
+            if isinstance(formatted, dict):
+                formatted["text"] = changed_text
+    content = result.setdefault("content", {})
+    if isinstance(content, dict):
+        content["learned_guidance"] = list(guidance)
+        content["learned_guidance_used"] = True
+        formatted = content.get("formatted")
+        if isinstance(formatted, dict):
+            formatted["learned_guidance"] = list(guidance)
+            formatted["learning_applied"] = True
+    result["learned_guidance_used"] = True
+    return result
 
 
 def install_learning_integration(systems: Dict[str, Any]) -> None:
@@ -211,8 +200,6 @@ def install_learning_integration(systems: Dict[str, Any]) -> None:
 
         result = original_send_message(destination, msg_type, payload, source)
 
-        # Only simple explicit relation teaching is staged for a pre-promotion
-        # behavior check. Other direct learning remains proposed until validated.
         if (
             destination in {"conversation", "emotion", "output"}
             and msg_type == "learn"
@@ -233,13 +220,15 @@ def install_learning_integration(systems: Dict[str, Any]) -> None:
                         {"user_id": self._normalised_user_id(payload), "key": key},
                         "runtime_integration:staging",
                     )
+
+        if isinstance(result, dict) and isinstance(payload, dict):
+            if destination == "emotion" and msg_type == "process_input":
+                result = _postprocess_emotion(systems["emotion"], payload, result)
+            elif destination == "output" and msg_type == "generate_output":
+                result = _postprocess_output(systems["output"], payload, result)
         return result
 
     thalamus.send_message = MethodType(send_message, thalamus)
 
     if "conversation" in systems:
         _wrap_conversation(systems["conversation"])
-    if "emotion" in systems:
-        _wrap_emotion(systems["emotion"])
-    if "output" in systems:
-        _wrap_output(systems["output"])
