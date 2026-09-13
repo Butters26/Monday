@@ -89,6 +89,9 @@ def resolve_lobe_contract(lobe: str, lobe_handler: Any) -> Dict[str, Any]:
 def contract_rejection(
     contract: Dict[str, Any], msg_type: str, payload: Dict[str, Any]
 ) -> Dict[str, Any] | None:
+    # These operations control or inspect an existing learning record. They do
+    # not create a new fact/rule, so record-type and mutable-surface admission
+    # checks do not apply to them.
     if msg_type in {
         "recall",
         "list_skills",
@@ -96,6 +99,11 @@ def contract_rejection(
         "reinforce_learning",
         "contradict_learning",
         "forget_learning",
+        "promote_learning",
+        "records_by_learning_id",
+        "deprecate_learning_id",
+        "stage_activation",
+        "rollback_staged",
     }:
         return None
 
@@ -193,7 +201,6 @@ def normalize_learning_result(lobe: str, event_id: str, raw: Dict[str, Any]) -> 
         "applied": applied,
         "behavior_changed": behavior_changed,
         "validated": validated,
-        # Backward-compatible aliases
         "update_proposed": proposed,
         "update_accepted": saved,
         "behavior_affected": behavior_changed,
