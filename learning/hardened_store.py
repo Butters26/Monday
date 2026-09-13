@@ -36,9 +36,6 @@ class HardenedLobeLearningStore(LobeLearningStore):
         return True
 
     def promote(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        # Promotion must prove an observed behavior delta. Explicit/manual recall
-        # remains able to inspect proposed records; runtime guidance itself is
-        # already gated by Thalamus to active records.
         if not self._runtime_validation_is_real(payload):
             return {
                 "status": "error",
@@ -48,7 +45,43 @@ class HardenedLobeLearningStore(LobeLearningStore):
         return super().promote(payload)
 
     def adjust(self, payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
-        # Preserve explicit user/manual correction semantics. The base store
-        # verifies that before matches the current fact and after matches the
-        # proposed correction; automatic adaptation remains disabled by default.
+        if mode != "contradict":
+            return super().adjust(payload, mode)
+
+        correction_fact = payload.get("correction_fact")
+        # Auto-adaptation failures are evidence that the previous behavior rule
+        # failed, not proof that its text should be replaced by a recovery rule.
+        # Preserve the original behavior record for audit/retrieval, increment
+        # its contradiction count, and let the separate recovery record carry
+        # the new fallback behavior.
+        if isinstance(correction_fact, str) and "avoid failing behavior and prefer safe recovery" in correction_fact:
+            user_id = self._clean_text(payload.get("user_id")) or "default"
+            key = self._normalise_key(payload.get("key"), self._clean_text(payload.get("fact", "")))
+            now = self._now()
+            with self._lock:
+                data = self._load()
+                facts = self._user_facts(data, user_id)
+                record = facts.get(key)
+                if not isinstance(record, dict):
+                    return {"status": "error", "message": f"No learned fact for key: {key}"}
+                updated = dict(record)
+                updated["contradiction_count"] = int(updated.get("contradiction_count", 0)) + 1
+                updated["status"] = "disputed"
+                updated["updated_at"] = now
+                facts[key] = updated
+                self._save(data)
+            return {
+                "status": "success",
+                "content": {
+                    "lobe": self.lobe_name,
+                    "user_id": user_id,
+                    "key": key,
+                    "confidence": self._clamp_confidence(updated.get("confidence"), 0.0),
+                    "evidence_count": int(updated.get("evidence_count", 0)),
+                    "contradiction_count": int(updated.get("contradiction_count", 0)),
+                    "status": updated.get("status"),
+                    "action": "contradicted_preserved",
+                },
+            }
+
         return super().adjust(payload, mode)
