@@ -28,6 +28,20 @@ def _clean_list(values: Any) -> List[str]:
     return [item.strip() for item in values if isinstance(item, str) and item.strip()]
 
 
+def _safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass
 class ExperienceEnvelope:
     """Transport envelope shared by all learning-capable lobes."""
@@ -64,16 +78,9 @@ class ExperienceEnvelope:
         raw_experience = _clean_text(
             data.get("raw_experience", data.get("lesson", data.get("text", "")))
         )
-        confidence = data.get("confidence", 0.5)
-        uncertainty = data.get("uncertainty", 1.0 - float(confidence or 0.5))
-        try:
-            confidence = float(confidence)
-        except (TypeError, ValueError):
-            confidence = 0.5
-        try:
-            uncertainty = float(uncertainty)
-        except (TypeError, ValueError):
-            uncertainty = 0.5
+        confidence = _safe_float(data.get("confidence", 0.5), 0.5)
+        default_uncertainty = 1.0 - confidence
+        uncertainty = _safe_float(data.get("uncertainty", default_uncertainty), default_uncertainty)
         confidence = max(0.0, min(1.0, confidence))
         uncertainty = max(0.0, min(1.0, uncertainty))
         if confidence + uncertainty > 1.0:
@@ -81,7 +88,7 @@ class ExperienceEnvelope:
             confidence = confidence / total
             uncertainty = uncertainty / total
         return cls(
-            schema_version=int(data.get("schema_version", SUPPORTED_SCHEMA_VERSION)),
+            schema_version=_safe_int(data.get("schema_version", SUPPORTED_SCHEMA_VERSION), SUPPORTED_SCHEMA_VERSION),
             event_id=_clean_text(data.get("event_id")) or str(uuid.uuid4()),
             correlation_id=_clean_text(data.get("correlation_id")) or str(uuid.uuid4()),
             event_type=event_type,
