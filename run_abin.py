@@ -15,6 +15,7 @@ from output import OutputLobe
 from pattern_recognition import AdvancedPatternRecognition
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
+from learning.runtime_integration import install_learning_integration
 
 
 def create_core_systems(
@@ -50,6 +51,7 @@ def create_core_systems(
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
+    install_learning_integration(systems)
     return systems
 
 
