@@ -43,52 +43,84 @@ def _relation_from_guidance(guidance: str) -> tuple[str, str] | None:
     return (left, right) if left and right else None
 
 
+def _applicable_relations(items: list[str], query: str) -> list[str]:
+    if not query:
+        return []
+    applicable = []
+    for item in items:
+        relation = _relation_from_guidance(item)
+        if relation and re.search(re.escape(relation[0]), query, re.IGNORECASE):
+            applicable.append(item)
+    return applicable
+
+
+def _staged_guidance(lobe: Any, user_id: str, query: str) -> list[str]:
+    """Return only explicitly staged rules for this user that match this input.
+
+    Staged rules are temporary validation candidates. They are never treated as
+    generally active learning: they can affect only an input containing the
+    relation's left-hand trigger, and are removed after promotion/rollback.
+    """
+    cache = getattr(lobe, "_runtime_staged_guidance", {})
+    if not isinstance(cache, dict):
+        return []
+    user_cache = cache.get(user_id, {})
+    if not isinstance(user_cache, dict):
+        return []
+    return _applicable_relations(
+        [value for value in user_cache.values() if isinstance(value, str)], query
+    )
+
+
 def _effective_guidance(lobe: Any, message: Dict[str, Any]) -> list[str]:
     guidance = _guidance_from_message(message)
     if guidance:
         return guidance
-    store = getattr(lobe, "_lobe_learning_store", None)
-    if store is None:
-        return []
     payload = message.get("content", {}) if isinstance(message, dict) else {}
     user_id = _safe_user(payload.get("user_id") if isinstance(payload, dict) else None)
     query = _query_from_message(message)
     if not query:
         return []
 
-    def recall(query_text: str) -> list[dict]:
-        result = store.recall(
-            {
-                "user_id": user_id,
-                "query": query_text,
-                "min_confidence": 0.55,
-                "limit": 20,
-                "include_only_active": True,
-                "exclude_auto_adapt": True,
-                "mark_used": True,
-            }
-        )
-        content = result.get("content", {}) if isinstance(result, dict) else {}
-        rows = content.get("memories", []) if isinstance(content, dict) else []
-        return [row for row in rows if isinstance(row, dict)]
+    store = getattr(lobe, "_lobe_learning_store", None)
+    if store is not None:
+        def recall(query_text: str) -> list[dict]:
+            result = store.recall(
+                {
+                    "user_id": user_id,
+                    "query": query_text,
+                    "min_confidence": 0.55,
+                    "limit": 20,
+                    "include_only_active": True,
+                    "exclude_auto_adapt": True,
+                    "mark_used": True,
+                }
+            )
+            content = result.get("content", {}) if isinstance(result, dict) else {}
+            rows = content.get("memories", []) if isinstance(content, dict) else []
+            return [row for row in rows if isinstance(row, dict)]
 
-    memories = recall(query)
-    if not memories:
-        # Relation rules are persisted per-user and active. If the normal
-        # relevance search misses one, inspect the small active set and apply
-        # only rules whose left-hand term actually appears in this message.
-        memories = recall("")
-        memories = [
-            row for row in memories
-            if isinstance(row.get("fact"), str)
-            and (relation := _relation_from_guidance(row["fact"])) is not None
-            and re.search(re.escape(relation[0]), query, re.IGNORECASE)
+        memories = recall(query)
+        if not memories:
+            memories = recall("")
+            memories = [
+                row for row in memories
+                if isinstance(row.get("fact"), str)
+                and (relation := _relation_from_guidance(row["fact"])) is not None
+                and re.search(re.escape(relation[0]), query, re.IGNORECASE)
+            ]
+        stored_guidance = [
+            row.get("fact", "").strip()
+            for row in memories
+            if isinstance(row.get("fact"), str) and row.get("fact", "").strip()
         ]
-    return [
-        row.get("fact", "").strip()
-        for row in memories
-        if isinstance(row.get("fact"), str) and row.get("fact", "").strip()
-    ]
+        if stored_guidance:
+            return stored_guidance
+
+    # During validation, use only the exact relation that was successfully
+    # staged by the learning store. This lets a lobe prove behavior changed
+    # before promotion without leaking arbitrary provisional learning.
+    return _staged_guidance(lobe, user_id, query)
 
 
 def _wrap_conversation(lobe: Any) -> None:
@@ -120,19 +152,15 @@ def _postprocess_emotion(lobe: Any, payload: Dict[str, Any], result: Dict[str, A
     if not guidance or result.get("status") != "success":
         return result
     user_input = _query_from_message({"content": payload})
-    applicable = []
-    for item in guidance:
-        relation = _relation_from_guidance(item)
-        if relation and re.search(re.escape(relation[0]), user_input, re.IGNORECASE):
-            applicable.append(item)
+    applicable = _applicable_relations(guidance, user_input)
     if applicable and isinstance(result.get("response"), str) and applicable[0] not in result["response"]:
         result["response"] = f"{result['response'].rstrip()} {applicable[0]}".strip()
     result["learned_guidance"] = list(guidance)
-    result["learned_guidance_used"] = True
+    result["learned_guidance_used"] = bool(applicable)
     content = result.setdefault("content", {})
     if isinstance(content, dict):
         content["learned_guidance"] = list(guidance)
-        content["learned_guidance_used"] = True
+        content["learned_guidance_used"] = bool(applicable)
         if isinstance(result.get("response"), str):
             content["response"] = result["response"]
     return result
@@ -147,11 +175,13 @@ def _postprocess_output(lobe: Any, payload: Dict[str, Any], result: Dict[str, An
         content = result.get("content", {})
         text = content.get("text", "") if isinstance(content, dict) else ""
     changed_text = text
+    applied = False
     if isinstance(text, str):
         for item in guidance:
             relation = _relation_from_guidance(item)
             if relation and re.search(re.escape(relation[0]), text, re.IGNORECASE):
                 changed_text = f"{text.rstrip()} — {relation[1]}"
+                applied = True
                 break
     if isinstance(changed_text, str) and changed_text != text:
         result["text"] = changed_text
@@ -165,13 +195,32 @@ def _postprocess_output(lobe: Any, payload: Dict[str, Any], result: Dict[str, An
     content = result.setdefault("content", {})
     if isinstance(content, dict):
         content["learned_guidance"] = list(guidance)
-        content["learned_guidance_used"] = True
+        content["learned_guidance_used"] = applied
         formatted = content.get("formatted")
         if isinstance(formatted, dict):
             formatted["learned_guidance"] = list(guidance)
-            formatted["learning_applied"] = True
-    result["learned_guidance_used"] = True
+            formatted["learning_applied"] = applied
+    result["learned_guidance_used"] = applied
     return result
+
+
+def _cache_staged_rule(lobe: Any, user_id: str, key: str, fact: str) -> None:
+    cache = getattr(lobe, "_runtime_staged_guidance", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(lobe, "_runtime_staged_guidance", cache)
+    cache.setdefault(user_id, {})[key] = fact
+
+
+def _clear_staged_rule(lobe: Any, user_id: str, key: str) -> None:
+    cache = getattr(lobe, "_runtime_staged_guidance", None)
+    if not isinstance(cache, dict):
+        return
+    user_cache = cache.get(user_id)
+    if isinstance(user_cache, dict):
+        user_cache.pop(key, None)
+        if not user_cache:
+            cache.pop(user_id, None)
 
 
 def install_learning_integration(systems: Dict[str, Any]) -> None:
@@ -219,18 +268,35 @@ def install_learning_integration(systems: Dict[str, Any]) -> None:
             and isinstance(payload, dict)
         ):
             fact = payload.get("fact")
-            if isinstance(fact, str) and _relation_from_guidance(fact) is not None:
+            relation = _relation_from_guidance(fact) if isinstance(fact, str) else None
+            if relation is not None:
                 result_content = result.get("content", {})
                 key = result.get("key")
                 if not isinstance(key, str) and isinstance(result_content, dict):
                     key = result_content.get("key")
                 if isinstance(key, str) and key:
-                    original_send_message(
+                    user_id = self._normalised_user_id(payload)
+                    staged = original_send_message(
                         destination,
                         "stage_activation",
-                        {"user_id": self._normalised_user_id(payload), "key": key},
+                        {"user_id": user_id, "key": key},
                         "runtime_integration:staging",
                     )
+                    if isinstance(staged, dict) and staged.get("status") == "success":
+                        _cache_staged_rule(systems[destination], user_id, key, fact)
+                        result["staged_for_validation"] = True
+                    else:
+                        result["staged_for_validation"] = False
+                        result["staging_error"] = staged.get("message") if isinstance(staged, dict) else "unknown staging failure"
+
+        if (
+            destination in {"conversation", "emotion", "output"}
+            and msg_type in {"promote_learning", "rollback_staged", "forget_learning", "deprecate_learning_id"}
+            and isinstance(payload, dict)
+        ):
+            key = payload.get("key")
+            if isinstance(key, str) and key:
+                _clear_staged_rule(systems[destination], self._normalised_user_id(payload), key)
 
         if isinstance(result, dict) and isinstance(payload, dict):
             if destination == "emotion" and msg_type == "process_input":
