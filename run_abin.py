@@ -10,7 +10,7 @@ from advanced_emotional_engine import EmotionalProcess
 from conversation import ConversationSystem
 from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
-from direct_notus import DirectNotusProcess
+from notus_memory import NotusMemorySystem
 from output import OutputLobe
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
@@ -22,8 +22,8 @@ def create_core_systems(
 ) -> Dict[str, Any]:
     """Instantiate and register only the six prompted-path systems.
 
-    `runtime_directory` is intended for embedding and tests.  It defaults to
-    the private directory selected by ``MONDAY_RUNTIME_DIR``.
+    `runtime_directory` is retained for mutable non-Notus runtime state and tests.
+    Notus itself is PostgreSQL-only and does not use a local SQLite file.
     """
     directory = Path(runtime_directory) if runtime_directory else runtime_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -31,9 +31,7 @@ def create_core_systems(
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
         "conversation": ConversationSystem(thalamus=thalamus),
-        "notus": DirectNotusProcess(
-            storage_path=str(directory / "notus_memory.sqlite3"), thalamus=thalamus
-        ),
+        "notus": NotusMemorySystem(thalamus=thalamus),
         "emotion": EmotionalProcess(
             state_file=str(directory / "emotional_state.json"), thalamus=thalamus
         ),
