@@ -55,6 +55,68 @@ def _copy_message_with_guidance(lobe: Any, message: Dict[str, Any]) -> tuple[Dic
     return copied, guidance
 
 
+def _pattern_evidence(pattern_result: Any) -> List[Dict[str, str]]:
+    """Convert Pattern's structured observations into evidence Reasoning can use."""
+    if not isinstance(pattern_result, dict):
+        return []
+    evidence: List[Dict[str, str]] = []
+
+    matches = pattern_result.get("token_rule_matches", [])
+    if isinstance(matches, list):
+        for match in matches[:8]:
+            if not isinstance(match, dict):
+                continue
+            token = match.get("token")
+            concept = match.get("concept_hint", match.get("concept"))
+            confidence = match.get("confidence")
+            if isinstance(token, str) and token.strip() and isinstance(concept, str) and concept.strip():
+                confidence_text = ""
+                try:
+                    confidence_text = f" (confidence {float(confidence):.2f})"
+                except (TypeError, ValueError):
+                    pass
+                evidence.append(
+                    {
+                        "role": "pattern",
+                        "content": (
+                            f"Pattern evidence: token '{token.strip()}' indicates "
+                            f"concept '{concept.strip()}'{confidence_text}."
+                        ),
+                    }
+                )
+
+    patterns = pattern_result.get("patterns", {})
+    if isinstance(patterns, dict):
+        behavioral = patterns.get("behavioral", [])
+        if isinstance(behavioral, list):
+            for item in behavioral[:5]:
+                if isinstance(item, str) and item.strip():
+                    evidence.append(
+                        {"role": "pattern", "content": f"Behavioral pattern observed: {item.strip()}."}
+                    )
+                elif isinstance(item, dict):
+                    name = item.get("name") or item.get("pattern")
+                    if isinstance(name, str) and name.strip():
+                        evidence.append(
+                            {"role": "pattern", "content": f"Behavioral pattern observed: {name.strip()}."}
+                        )
+        contradictions = patterns.get("contradictions", [])
+        if isinstance(contradictions, list):
+            for item in contradictions[-5:]:
+                if isinstance(item, dict):
+                    first = item.get("statement_a")
+                    second = item.get("statement_b")
+                    if isinstance(first, str) and isinstance(second, str):
+                        evidence.append(
+                            {
+                                "role": "pattern",
+                                "content": f"Pattern detected a contradiction between '{first}' and '{second}'.",
+                            }
+                        )
+
+    return evidence
+
+
 class AdaptiveConversationSystem(ConversationSystem):
     owns_learning_application = True
 
@@ -114,7 +176,33 @@ class AdaptiveReasoningAdapter(DirectMaximumSophisticationAdapter):
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         copied, _guidance = _copy_message_with_guidance(self, message)
-        return super().process_message(copied)
+        pattern_evidence: List[Dict[str, str]] = []
+        if copied.get("type") == "think":
+            payload = copied.get("content", {})
+            payload = dict(payload) if isinstance(payload, dict) else {}
+            direct_input = payload.get("input", {})
+            direct_input = dict(direct_input) if isinstance(direct_input, dict) else {}
+            pattern_result = direct_input.get("pattern_result", payload.get("pattern_result", {}))
+            pattern_evidence = _pattern_evidence(pattern_result)
+            if pattern_evidence:
+                memory_context = direct_input.get("memory_context", {})
+                memory_context = dict(memory_context) if isinstance(memory_context, dict) else {}
+                memories = memory_context.get("memories", memory_context.get("results", []))
+                memories = list(memories) if isinstance(memories, list) else []
+                memory_context["memories"] = [*memories, *pattern_evidence]
+                direct_input["memory_context"] = memory_context
+                understanding = direct_input.get("understanding", {})
+                understanding = dict(understanding) if isinstance(understanding, dict) else {}
+                understanding["pattern_result"] = pattern_result
+                direct_input["understanding"] = understanding
+                payload["input"] = direct_input
+                copied["content"] = payload
+        result = super().process_message(copied)
+        if pattern_evidence and isinstance(result, dict) and result.get("status") == "success":
+            content = result.setdefault("content", {})
+            if isinstance(content, dict):
+                content["pattern_evidence_used"] = len(pattern_evidence)
+        return result
 
 
 class AdaptivePatternRecognition(AdvancedPatternRecognition):
