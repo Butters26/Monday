@@ -1,7 +1,8 @@
 """Minimal runtime integration for native lobe-owned learning.
 
-Runtime integration now only coordinates cross-lobe flow.  Lesson relevance and
-learned-behavior application live inside the lobe classes themselves.
+Runtime integration only coordinates cross-lobe flow. Lesson relevance,
+activation policy, and learned-behavior application live inside the lobe
+classes themselves.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ def install_learning_integration(systems: Dict[str, Any]) -> None:
     ):
         payload = dict(content) if isinstance(content, dict) else content
 
-        # Pattern is a normal cognitive predecessor of Reasoning.  This is
+        # Pattern is a normal cognitive predecessor of Reasoning. This is
         # pipeline coordination, not learning application.
         if destination == "reasoning" and msg_type == "think" and isinstance(payload, dict):
             user_id = self._normalised_user_id(payload)
@@ -55,6 +56,25 @@ def install_learning_integration(systems: Dict[str, Any]) -> None:
                 nested["pattern_result"] = pattern_content
                 payload["input"] = nested
 
-        return original_send_message(destination, msg_type, payload, source)
+        result = original_send_message(destination, msg_type, payload, source)
+
+        # A lobe may choose to stage a directly saved rule for runtime
+        # validation. The lobe owns the decision and touches only its own store.
+        if (
+            msg_type == "learn"
+            and isinstance(payload, dict)
+            and isinstance(result, dict)
+            and result.get("status") == "success"
+        ):
+            lobe = systems.get(destination)
+            hook = getattr(lobe, "on_learning_saved", None)
+            if callable(hook):
+                try:
+                    result = hook(payload, result)
+                except Exception as exc:
+                    result["staged_for_validation"] = False
+                    result["staging_error"] = str(exc)
+
+        return result
 
     thalamus.send_message = MethodType(send_message, thalamus)
