@@ -10,7 +10,7 @@ from advanced_emotional_engine import EmotionalProcess
 from conversation import ConversationSystem
 from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
-from notus_memory import NotusMemorySystem
+from notus_memory_core import ActiveNotusMemorySystem
 from output import OutputLobe
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
@@ -31,7 +31,7 @@ def create_core_systems(
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
         "conversation": ConversationSystem(thalamus=thalamus),
-        "notus": NotusMemorySystem(thalamus=thalamus),
+        "notus": ActiveNotusMemorySystem(thalamus=thalamus),
         "emotion": EmotionalProcess(
             state_file=str(directory / "emotional_state.json"), thalamus=thalamus
         ),
