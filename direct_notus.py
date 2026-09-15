@@ -1,17 +1,16 @@
-"""SQLite memory adapter for the direct Monday core.
-
-This module deliberately has no dependency on the historical Notus process or
-its optional database and ML dependencies.
-"""
+"""SQLite memory lobe for the direct Monday core."""
 
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+import json
+import math
 import re
 import sqlite3
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
 from runtime_paths import runtime_file
 from thalamus import get_thalamus
@@ -19,6 +18,7 @@ from thalamus import get_thalamus
 
 _TRANSCRIPT_PREFIX = re.compile(r"^\s*(?:user|abin)\s*:", re.IGNORECASE)
 _LEARNING_KEY_SAFE = re.compile(r"[^a-z0-9:_-]+")
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 _UNSAFE_LEARNING = re.compile(
     r"(?:ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|"
     r"reveal\s+(?:the\s+)?system\s+prompt|developer\s+message)",
@@ -27,7 +27,7 @@ _UNSAFE_LEARNING = re.compile(
 
 
 class DirectNotusProcess:
-    """Persist structured, user-scoped conversation input in SQLite."""
+    """Persist user-scoped turns, facts, episodes, and lobe learning in SQLite."""
 
     def __init__(self, storage_path: Optional[str] = None, thalamus: Any = None) -> None:
         self.running = True
@@ -38,43 +38,313 @@ class DirectNotusProcess:
         self._connection: Optional[sqlite3.Connection] = sqlite3.connect(
             self.storage_path, check_same_thread=False
         )
-        self._connection.execute(
-            """CREATE TABLE IF NOT EXISTS memories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                memory_type TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )"""
-        )
-        self._connection.execute(
-            """CREATE TABLE IF NOT EXISTS lobe_learning (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                lobe TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                learning_key TEXT NOT NULL,
-                fact TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                evidence_count INTEGER NOT NULL DEFAULT 1,
-                contradiction_count INTEGER NOT NULL DEFAULT 0,
-                status TEXT NOT NULL DEFAULT 'active',
-                source TEXT NOT NULL DEFAULT 'thalamus',
-                use_count INTEGER NOT NULL DEFAULT 0,
-                last_applied_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(lobe, user_id, learning_key)
-            )"""
-        )
-        self._ensure_lobe_learning_schema()
-        self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_lobe_learning_scope "
-            "ON lobe_learning(lobe, user_id, status, confidence, updated_at)"
-        )
-        self._connection.commit()
+        self._connection.row_factory = sqlite3.Row
+
+        self.working_set: Dict[str, Deque[Dict[str, Any]]] = {
+            "turns": deque(maxlen=50),
+            "facts": deque(maxlen=50),
+            "episodes": deque(maxlen=50),
+        }
+
+        self._embedding_model_checked = False
+        self._embedding_model: Any = None
+        self._fts_available = False
+
+        self._initialize_schema()
         self.memory_ready = threading.Event()
         self.memory_ready.set()
+
+    def _initialize_schema(self) -> None:
+        connection = self._require_connection()
+        with self._lock:
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    memory_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    access_count INTEGER NOT NULL DEFAULT 0,
+                    last_accessed TEXT,
+                    embedding BLOB
+                )"""
+            )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS brain_facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    subject TEXT NOT NULL COLLATE NOCASE,
+                    predicate TEXT NOT NULL COLLATE NOCASE,
+                    object TEXT NOT NULL COLLATE NOCASE,
+                    value TEXT,
+                    confidence REAL NOT NULL DEFAULT 0.9,
+                    usage_count INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    last_reinforced TEXT,
+                    is_contradicted INTEGER NOT NULL DEFAULT 0,
+                    conflicts_with TEXT,
+                    UNIQUE(user_id, subject, predicate, object)
+                )"""
+            )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS episodic_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    object TEXT,
+                    place TEXT,
+                    cause TEXT,
+                    effect TEXT,
+                    note TEXT,
+                    sentiment REAL,
+                    confidence REAL NOT NULL DEFAULT 0.8,
+                    created_at TEXT NOT NULL
+                )"""
+            )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS lobe_learning (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    lobe TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    learning_key TEXT NOT NULL,
+                    fact TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    evidence_count INTEGER NOT NULL DEFAULT 1,
+                    contradiction_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    source TEXT NOT NULL DEFAULT 'thalamus',
+                    use_count INTEGER NOT NULL DEFAULT 0,
+                    last_applied_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(lobe, user_id, learning_key)
+                )"""
+            )
+
+            self._ensure_memory_schema()
+            self._ensure_fact_schema()
+            self._ensure_episode_schema()
+            self._ensure_lobe_learning_schema()
+
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_user "
+                "ON memories(user_id, created_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_brain_facts_user "
+                "ON brain_facts(user_id, is_contradicted, last_reinforced, created_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_episodic_events_user "
+                "ON episodic_events(user_id, created_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_lobe_learning_scope "
+                "ON lobe_learning(lobe, user_id, status, confidence, updated_at)"
+            )
+
+            self._initialize_fts()
+            connection.commit()
+
+    @staticmethod
+    def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+        return {
+            str(row[1])
+            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+            if len(row) > 1
+        }
+
+    def _ensure_memory_schema(self) -> None:
+        connection = self._require_connection()
+        columns = self._table_columns(connection, "memories")
+        if "access_count" not in columns:
+            connection.execute(
+                "ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "last_accessed" not in columns:
+            connection.execute("ALTER TABLE memories ADD COLUMN last_accessed TEXT")
+        if "embedding" not in columns:
+            connection.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
+
+    def _ensure_fact_schema(self) -> None:
+        connection = self._require_connection()
+        columns = self._table_columns(connection, "brain_facts")
+        if not columns:
+            return
+        additions = {
+            "value": "TEXT",
+            "confidence": "REAL NOT NULL DEFAULT 0.9",
+            "usage_count": "INTEGER NOT NULL DEFAULT 1",
+            "created_at": "TEXT",
+            "last_reinforced": "TEXT",
+            "is_contradicted": "INTEGER NOT NULL DEFAULT 0",
+            "conflicts_with": "TEXT",
+        }
+        for name, declaration in additions.items():
+            if name not in columns:
+                connection.execute(
+                    f"ALTER TABLE brain_facts ADD COLUMN {name} {declaration}"
+                )
+
+    def _ensure_episode_schema(self) -> None:
+        connection = self._require_connection()
+        columns = self._table_columns(connection, "episodic_events")
+        if not columns:
+            return
+        additions = {
+            "object": "TEXT",
+            "place": "TEXT",
+            "cause": "TEXT",
+            "effect": "TEXT",
+            "note": "TEXT",
+            "sentiment": "REAL",
+            "confidence": "REAL NOT NULL DEFAULT 0.8",
+            "created_at": "TEXT",
+        }
+        for name, declaration in additions.items():
+            if name not in columns:
+                connection.execute(
+                    f"ALTER TABLE episodic_events ADD COLUMN {name} {declaration}"
+                )
+
+    def _ensure_lobe_learning_schema(self) -> None:
+        connection = self._require_connection()
+        columns = self._table_columns(connection, "lobe_learning")
+        if "use_count" not in columns:
+            connection.execute(
+                "ALTER TABLE lobe_learning ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "last_applied_at" not in columns:
+            connection.execute(
+                "ALTER TABLE lobe_learning ADD COLUMN last_applied_at TEXT"
+            )
+
+    def _initialize_fts(self) -> None:
+        connection = self._require_connection()
+        try:
+            connection.execute(
+                """CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    content,
+                    content='memories',
+                    content_rowid='id'
+                )"""
+            )
+            connection.execute(
+                """CREATE VIRTUAL TABLE IF NOT EXISTS brain_facts_fts USING fts5(
+                    subject,
+                    predicate,
+                    object,
+                    value,
+                    content='brain_facts',
+                    content_rowid='id'
+                )"""
+            )
+            connection.execute(
+                """CREATE VIRTUAL TABLE IF NOT EXISTS episodic_events_fts USING fts5(
+                    actor,
+                    action,
+                    object,
+                    place,
+                    cause,
+                    effect,
+                    note,
+                    content='episodic_events',
+                    content_rowid='id'
+                )"""
+            )
+
+            connection.executescript(
+                """
+                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+                    INSERT INTO memories_fts(rowid, content)
+                    VALUES (new.id, new.content);
+                END;
+                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content)
+                    VALUES ('delete', old.id, old.content);
+                END;
+                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content)
+                    VALUES ('delete', old.id, old.content);
+                    INSERT INTO memories_fts(rowid, content)
+                    VALUES (new.id, new.content);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS brain_facts_ai AFTER INSERT ON brain_facts BEGIN
+                    INSERT INTO brain_facts_fts(rowid, subject, predicate, object, value)
+                    VALUES (new.id, new.subject, new.predicate, new.object, new.value);
+                END;
+                CREATE TRIGGER IF NOT EXISTS brain_facts_ad AFTER DELETE ON brain_facts BEGIN
+                    INSERT INTO brain_facts_fts(
+                        brain_facts_fts, rowid, subject, predicate, object, value
+                    )
+                    VALUES (
+                        'delete', old.id, old.subject, old.predicate, old.object, old.value
+                    );
+                END;
+                CREATE TRIGGER IF NOT EXISTS brain_facts_au
+                AFTER UPDATE OF subject, predicate, object, value ON brain_facts BEGIN
+                    INSERT INTO brain_facts_fts(
+                        brain_facts_fts, rowid, subject, predicate, object, value
+                    )
+                    VALUES (
+                        'delete', old.id, old.subject, old.predicate, old.object, old.value
+                    );
+                    INSERT INTO brain_facts_fts(rowid, subject, predicate, object, value)
+                    VALUES (new.id, new.subject, new.predicate, new.object, new.value);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS episodic_events_ai AFTER INSERT ON episodic_events BEGIN
+                    INSERT INTO episodic_events_fts(
+                        rowid, actor, action, object, place, cause, effect, note
+                    )
+                    VALUES (
+                        new.id, new.actor, new.action, new.object, new.place,
+                        new.cause, new.effect, new.note
+                    );
+                END;
+                CREATE TRIGGER IF NOT EXISTS episodic_events_ad AFTER DELETE ON episodic_events BEGIN
+                    INSERT INTO episodic_events_fts(
+                        episodic_events_fts, rowid, actor, action, object, place,
+                        cause, effect, note
+                    )
+                    VALUES (
+                        'delete', old.id, old.actor, old.action, old.object, old.place,
+                        old.cause, old.effect, old.note
+                    );
+                END;
+                CREATE TRIGGER IF NOT EXISTS episodic_events_au
+                AFTER UPDATE OF actor, action, object, place, cause, effect, note
+                ON episodic_events BEGIN
+                    INSERT INTO episodic_events_fts(
+                        episodic_events_fts, rowid, actor, action, object, place,
+                        cause, effect, note
+                    )
+                    VALUES (
+                        'delete', old.id, old.actor, old.action, old.object, old.place,
+                        old.cause, old.effect, old.note
+                    );
+                    INSERT INTO episodic_events_fts(
+                        rowid, actor, action, object, place, cause, effect, note
+                    )
+                    VALUES (
+                        new.id, new.actor, new.action, new.object, new.place,
+                        new.cause, new.effect, new.note
+                    );
+                END;
+                """
+            )
+
+            connection.execute("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')")
+            connection.execute("INSERT INTO brain_facts_fts(brain_facts_fts) VALUES('rebuild')")
+            connection.execute(
+                "INSERT INTO episodic_events_fts(episodic_events_fts) VALUES('rebuild')"
+            )
+            self._fts_available = True
+        except sqlite3.OperationalError:
+            self._fts_available = False
 
     @staticmethod
     def _is_safe_memory(role: Any, content: Any) -> bool:
@@ -92,26 +362,14 @@ class DirectNotusProcess:
             raise RuntimeError("Notus is closed")
         return self._connection
 
-    def _ensure_lobe_learning_schema(self) -> None:
-        connection = self._require_connection()
-        columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(lobe_learning)").fetchall()
-            if len(row) > 1
-        }
-        if "use_count" not in columns:
-            connection.execute(
-                "ALTER TABLE lobe_learning ADD COLUMN use_count INTEGER NOT NULL DEFAULT 0"
-            )
-        if "last_applied_at" not in columns:
-            connection.execute(
-                "ALTER TABLE lobe_learning ADD COLUMN last_applied_at TEXT"
-            )
-        connection.commit()
-
     @staticmethod
     def _clean_text(value: Any) -> str:
         return value.strip() if isinstance(value, str) else ""
+
+    @staticmethod
+    def _optional_text(value: Any) -> Optional[str]:
+        cleaned = value.strip() if isinstance(value, str) else ""
+        return cleaned or None
 
     @staticmethod
     def _clamp_confidence(value: Any, default: float = 0.6) -> float:
@@ -120,6 +378,14 @@ class DirectNotusProcess:
         except (TypeError, ValueError):
             number = default
         return max(0.0, min(number, 1.0))
+
+    @staticmethod
+    def _normalise_limit(value: Any, default: int = 15, maximum: int = 100) -> int:
+        try:
+            result = int(value)
+        except (TypeError, ValueError):
+            result = default
+        return max(1, min(result, maximum))
 
     @staticmethod
     def _normalise_learning_key(raw_key: Any, fact: str) -> str:
@@ -139,11 +405,160 @@ class DirectNotusProcess:
             and not _UNSAFE_LEARNING.search(fact)
         )
 
+    @staticmethod
+    def _is_safe_structured_text(value: str, max_length: int = 2000) -> bool:
+        return (
+            bool(value)
+            and len(value) <= max_length
+            and not _TRANSCRIPT_PREFIX.match(value)
+        )
+
+    @staticmethod
+    def _query_terms(query: str) -> List[str]:
+        return [
+            token.casefold()
+            for token in _TOKEN_RE.findall(query or "")
+            if len(token) > 1
+        ]
+
+    @classmethod
+    def _fts_query(cls, query: str) -> str:
+        terms = cls._query_terms(query)
+        return " OR ".join(f'"{term}"' for term in terms)
+
+    @classmethod
+    def _match_quality(cls, query: str, text: str) -> float:
+        terms = cls._query_terms(query)
+        if not terms:
+            return 0.0
+        haystack = (text or "").casefold()
+        matched = sum(1 for term in terms if term in haystack)
+        token_ratio = matched / max(1, len(terms))
+        phrase_bonus = 1.0 if query.strip() and query.strip().casefold() in haystack else 0.0
+        return (token_ratio * 10.0) + phrase_bonus
+
+    @staticmethod
+    def _recency_value(timestamp: Any) -> str:
+        return str(timestamp or "")
+
+    def _get_embedding_model(self) -> Any:
+        if self._embedding_model_checked:
+            return self._embedding_model
+        self._embedding_model_checked = True
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            self._embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception:
+            self._embedding_model = None
+        return self._embedding_model
+
+    def _encode_embedding(self, text: str) -> Optional[bytes]:
+        model = self._get_embedding_model()
+        if model is None or not text.strip():
+            return None
+        try:
+            vector = model.encode(text, normalize_embeddings=True, show_progress_bar=False)
+            return json.dumps([float(value) for value in vector]).encode("utf-8")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _decode_embedding(blob: Any) -> Optional[List[float]]:
+        if blob is None:
+            return None
+        try:
+            raw = blob.decode("utf-8") if isinstance(blob, (bytes, bytearray)) else str(blob)
+            values = json.loads(raw)
+            if not isinstance(values, list):
+                return None
+            return [float(value) for value in values]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
+        if len(left) != len(right) or not left:
+            return 0.0
+        dot = sum(a * b for a, b in zip(left, right))
+        left_norm = math.sqrt(sum(a * a for a in left))
+        right_norm = math.sqrt(sum(b * b for b in right))
+        if left_norm <= 1e-12 or right_norm <= 1e-12:
+            return 0.0
+        return dot / (left_norm * right_norm)
+
     def start(self) -> "DirectNotusProcess":
         if not self.running:
             raise RuntimeError("Cannot restart a closed Notus adapter")
         self.thalamus.register_lobe("notus", self)
         return self
+
+    def _working_set_for_user(self, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
+        return {
+            name: [dict(item) for item in queue if item.get("user_id") == user_id]
+            for name, queue in self.working_set.items()
+        }
+
+    def _memory_type_clause(self, memory_type: Any) -> Tuple[str, List[Any]]:
+        if isinstance(memory_type, str) and memory_type.strip():
+            return " AND m.memory_type = ?", [memory_type.strip()]
+        if isinstance(memory_type, (list, tuple, set)):
+            values = [
+                item.strip()
+                for item in memory_type
+                if isinstance(item, str) and item.strip()
+            ]
+            if values:
+                return (
+                    " AND m.memory_type IN (" + ",".join("?" for _ in values) + ")",
+                    values,
+                )
+        return "", []
+
+    def _retrieve_memory_rows(
+        self, query: str, user_id: str, memory_type: Any
+    ) -> List[sqlite3.Row]:
+        connection = self._require_connection()
+        type_clause, type_params = self._memory_type_clause(memory_type)
+        fts_query = self._fts_query(query)
+
+        if query.strip() and self._fts_available and fts_query:
+            try:
+                return connection.execute(
+                    """
+                    SELECT m.id, m.role, m.content, m.user_id, m.memory_type,
+                           m.created_at, m.access_count, m.last_accessed,
+                           m.embedding, bm25(memories_fts) AS fts_rank
+                    FROM memories_fts
+                    JOIN memories AS m ON m.id = memories_fts.rowid
+                    WHERE memories_fts MATCH ?
+                      AND m.user_id = ?
+                      AND m.role IN ('user', 'fact', 'note')
+                      AND lower(trim(m.content)) NOT LIKE 'user:%'
+                      AND lower(trim(m.content)) NOT LIKE 'abin:%'
+                    """
+                    + type_clause,
+                    [fts_query, user_id, *type_params],
+                ).fetchall()
+            except sqlite3.OperationalError:
+                self._fts_available = False
+
+        sql = (
+            "SELECT m.id, m.role, m.content, m.user_id, m.memory_type, "
+            "m.created_at, m.access_count, m.last_accessed, m.embedding, "
+            "NULL AS fts_rank "
+            "FROM memories AS m WHERE m.user_id = ? "
+            "AND m.role IN ('user', 'fact', 'note') "
+            "AND lower(trim(m.content)) NOT LIKE 'user:%' "
+            "AND lower(trim(m.content)) NOT LIKE 'abin:%'"
+            + type_clause
+        )
+        params: List[Any] = [user_id, *type_params]
+        terms = self._query_terms(query)
+        if terms:
+            sql += " AND (" + " OR ".join("lower(m.content) LIKE ?" for _ in terms) + ")"
+            params.extend(f"%{term}%" for term in terms)
+        return connection.execute(sql, params).fetchall()
 
     def retrieve_memories(
         self,
@@ -152,57 +567,66 @@ class DirectNotusProcess:
         limit: int = 15,
         memory_type: Any = None,
     ) -> List[Dict[str, Any]]:
-        """Return only clean, structured records belonging to ``user_id``."""
-        if not isinstance(user_id, str):
+        """Search all eligible memories for one user, rank, then apply the return limit."""
+        if not isinstance(user_id, str) or not user_id:
             return []
-        terms = [
-            term.lower() for term in query.split()
-            if len(term) > 2 and not _TRANSCRIPT_PREFIX.match(term)
-        ]
-        sql = (
-            "SELECT role, content, user_id, memory_type, created_at FROM memories "
-            "WHERE user_id = ? "
-            "AND role IN ('user', 'fact', 'note') "
-            "AND lower(trim(content)) NOT LIKE 'user:%' "
-            "AND lower(trim(content)) NOT LIKE 'abin:%'"
-        )
-        params: List[Any] = [user_id]
-        if isinstance(memory_type, str) and memory_type.strip():
-            sql += " AND memory_type = ?"
-            params.append(memory_type.strip())
-        elif isinstance(memory_type, (list, tuple, set)):
-            memory_types = [
-                item.strip()
-                for item in memory_type
-                if isinstance(item, str) and item.strip()
-            ]
-            if memory_types:
-                sql += " AND (" + " OR ".join("memory_type = ?" for _ in memory_types) + ")"
-                params.extend(memory_types)
-        if terms:
-            sql += " AND (" + " OR ".join("lower(content) LIKE ?" for _ in terms) + ")"
-            params.extend(f"%{term}%" for term in terms)
-        try:
-            normalized_limit = int(limit)
-        except (TypeError, ValueError):
-            normalized_limit = 15
-        normalized_limit = max(1, min(normalized_limit, 100))
-        sql += " ORDER BY id DESC LIMIT ?"
-        params.append(normalized_limit)
+
+        normalized_limit = self._normalise_limit(limit, 15)
+        query_blob = self._encode_embedding(query) if query.strip() else None
+        query_vector = self._decode_embedding(query_blob)
 
         with self._lock:
-            rows = self._require_connection().execute(sql, params).fetchall()
+            connection = self._require_connection()
+            rows = self._retrieve_memory_rows(query, user_id, memory_type)
+
+            ranked: List[Tuple[float, str, sqlite3.Row]] = []
+            for row in rows:
+                if not self._is_safe_memory(row["role"], row["content"]):
+                    continue
+                lexical = self._match_quality(query, row["content"])
+                if row["fts_rank"] is not None:
+                    lexical += max(0.0, -float(row["fts_rank"]))
+                semantic = 0.0
+                stored_embedding = self._decode_embedding(row["embedding"])
+                if query_vector is not None and stored_embedding is not None:
+                    semantic = max(
+                        0.0,
+                        self._cosine_similarity(query_vector, stored_embedding),
+                    )
+                ranked.append(
+                    (
+                        lexical + (semantic * 2.0),
+                        self._recency_value(row["created_at"]),
+                        row,
+                    )
+                )
+
+            ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            chosen = ranked[:normalized_limit]
+            now = datetime.now(timezone.utc).isoformat()
+
+            if chosen:
+                connection.executemany(
+                    "UPDATE memories SET access_count = access_count + 1, "
+                    "last_accessed = ? WHERE id = ?",
+                    [(now, int(row["id"])) for _, _, row in chosen],
+                )
+                connection.commit()
+
         return [
             {
-                "role": role,
-                "content": content.strip(),
-                "user_id": stored_user,
-                "memory_type": memory_type,
-                "timestamp": created_at,
+                "id": int(row["id"]),
+                "role": row["role"],
+                "content": row["content"].strip(),
+                "user_id": row["user_id"],
+                "memory_type": row["memory_type"],
+                "timestamp": row["created_at"],
+                "access_count": int(row["access_count"] or 0) + 1,
+                "last_accessed": now,
+                "match_score": float(score),
             }
-            for role, content, stored_user, memory_type, created_at in rows
-            if self._is_safe_memory(role, content)
-        ][:normalized_limit]
+            for score, _, row in chosen
+        ]
 
     def _store(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         content = payload.get("content")
@@ -213,21 +637,481 @@ class DirectNotusProcess:
         if not isinstance(user_id, str) or not user_id:
             return {"status": "error", "message": "Memory user_id must be a non-empty string"}
 
+        now = datetime.now(timezone.utc).isoformat()
+        embedding = self._encode_embedding(content.strip())
+
         with self._lock:
             connection = self._require_connection()
-            connection.execute(
-                "INSERT INTO memories(role, content, user_id, memory_type, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+            cursor = connection.execute(
+                "INSERT INTO memories("
+                "role, content, user_id, memory_type, created_at, access_count, last_accessed, embedding"
+                ") VALUES (?, ?, ?, ?, ?, 0, NULL, ?)",
                 (
                     role,
                     content.strip(),
                     user_id,
                     payload.get("memory_type", "conversation"),
-                    datetime.now(timezone.utc).isoformat(),
+                    now,
+                    embedding,
                 ),
             )
+            memory_id = int(cursor.lastrowid)
             connection.commit()
-        return {"status": "success", "content": {"stored": True, "content": content.strip()}}
+
+        item = {
+            "id": memory_id,
+            "role": role,
+            "content": content.strip(),
+            "user_id": user_id,
+            "memory_type": payload.get("memory_type", "conversation"),
+            "timestamp": now,
+        }
+        self.working_set["turns"].append(item)
+        return {"status": "success", "content": {"stored": True, **item}}
+
+    @staticmethod
+    def _merge_conflicts(raw: Any, new_id: int) -> str:
+        existing: List[int] = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    existing = [int(value) for value in parsed]
+            except Exception:
+                existing = []
+        if new_id not in existing:
+            existing.append(new_id)
+        return json.dumps(existing)
+
+    def store_brain_fact(
+        self,
+        subject: Any,
+        predicate: Any,
+        obj: Any,
+        *,
+        value: Any = None,
+        confidence: Any = 0.9,
+        user_id: Any = "default",
+    ) -> Dict[str, Any]:
+        subject_text = self._clean_text(subject)
+        predicate_text = self._clean_text(predicate)
+        object_text = self._clean_text(obj)
+        value_text = self._optional_text(value)
+        user_text = self._clean_text(user_id) or "default"
+
+        if not all(
+            self._is_safe_structured_text(part, 500)
+            for part in (subject_text, predicate_text, object_text)
+        ):
+            raise ValueError("subject, predicate, and object must be clean non-empty text")
+        if not self._is_safe_learning_fact(
+            " ".join((subject_text, predicate_text, object_text))[:500]
+        ):
+            raise ValueError("Unsafe fact content")
+        if value_text and not self._is_safe_structured_text(value_text, 2000):
+            raise ValueError("value must be clean text")
+
+        confidence_value = self._clamp_confidence(confidence, 0.9)
+        now = datetime.now(timezone.utc).isoformat()
+
+        with self._lock:
+            connection = self._require_connection()
+            same = connection.execute(
+                """
+                SELECT id, confidence, usage_count, created_at
+                FROM brain_facts
+                WHERE user_id = ?
+                  AND lower(subject) = lower(?)
+                  AND lower(predicate) = lower(?)
+                  AND lower(object) = lower(?)
+                LIMIT 1
+                """,
+                (user_text, subject_text, predicate_text, object_text),
+            ).fetchone()
+
+            if same is None:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO brain_facts(
+                        user_id, subject, predicate, object, value, confidence,
+                        usage_count, created_at, last_reinforced,
+                        is_contradicted, conflicts_with
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0, NULL)
+                    """,
+                    (
+                        user_text,
+                        subject_text,
+                        predicate_text,
+                        object_text,
+                        value_text,
+                        confidence_value,
+                        now,
+                        now,
+                    ),
+                )
+                fact_id = int(cursor.lastrowid)
+                usage_count = 1
+                created_at = now
+                resulting_confidence = confidence_value
+            else:
+                fact_id = int(same["id"])
+                usage_count = int(same["usage_count"] or 0) + 1
+                created_at = str(same["created_at"] or now)
+                resulting_confidence = min(
+                    1.0,
+                    max(float(same["confidence"] or 0.0), confidence_value) + 0.05,
+                )
+                connection.execute(
+                    """
+                    UPDATE brain_facts
+                    SET value = COALESCE(?, value),
+                        confidence = ?,
+                        usage_count = ?,
+                        last_reinforced = ?,
+                        is_contradicted = 0,
+                        conflicts_with = NULL
+                    WHERE id = ?
+                    """,
+                    (
+                        value_text,
+                        resulting_confidence,
+                        usage_count,
+                        now,
+                        fact_id,
+                    ),
+                )
+
+            conflicts = connection.execute(
+                """
+                SELECT id, conflicts_with
+                FROM brain_facts
+                WHERE user_id = ?
+                  AND lower(subject) = lower(?)
+                  AND lower(predicate) = lower(?)
+                  AND lower(object) <> lower(?)
+                  AND id <> ?
+                  AND is_contradicted = 0
+                """,
+                (user_text, subject_text, predicate_text, object_text, fact_id),
+            ).fetchall()
+
+            conflict_ids = [int(row["id"]) for row in conflicts]
+            for conflict in conflicts:
+                connection.execute(
+                    "UPDATE brain_facts SET is_contradicted = 1, conflicts_with = ? WHERE id = ?",
+                    (
+                        self._merge_conflicts(conflict["conflicts_with"], fact_id),
+                        int(conflict["id"]),
+                    ),
+                )
+
+            connection.execute(
+                "UPDATE brain_facts SET conflicts_with = ? WHERE id = ?",
+                (json.dumps(conflict_ids) if conflict_ids else None, fact_id),
+            )
+            connection.commit()
+
+        item = {
+            "id": fact_id,
+            "user_id": user_text,
+            "subject": subject_text,
+            "predicate": predicate_text,
+            "object": object_text,
+            "value": value_text,
+            "confidence": resulting_confidence,
+            "usage_count": usage_count,
+            "created_at": created_at,
+            "last_reinforced": now,
+            "is_contradicted": False,
+            "conflicts_with": conflict_ids,
+        }
+        self.working_set["facts"].append(item)
+        return item
+
+    def remember_fact(
+        self,
+        subject: Any,
+        predicate: Any,
+        obj: Any,
+        *,
+        value: Any = None,
+        confidence: Any = 0.9,
+        user_id: Any = "default",
+    ) -> Dict[str, Any]:
+        return self.store_brain_fact(
+            subject,
+            predicate,
+            obj,
+            value=value,
+            confidence=confidence,
+            user_id=user_id,
+        )
+
+    def _query_fact_rows(self, query: str, user_id: str) -> List[sqlite3.Row]:
+        connection = self._require_connection()
+        fts_query = self._fts_query(query)
+        if query.strip() and self._fts_available and fts_query:
+            try:
+                return connection.execute(
+                    """
+                    SELECT f.*, bm25(brain_facts_fts) AS fts_rank
+                    FROM brain_facts_fts
+                    JOIN brain_facts AS f ON f.id = brain_facts_fts.rowid
+                    WHERE brain_facts_fts MATCH ?
+                      AND f.user_id = ?
+                      AND f.is_contradicted = 0
+                    """,
+                    (fts_query, user_id),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                self._fts_available = False
+
+        sql = (
+            "SELECT f.*, NULL AS fts_rank FROM brain_facts AS f "
+            "WHERE f.user_id = ? AND f.is_contradicted = 0"
+        )
+        params: List[Any] = [user_id]
+        terms = self._query_terms(query)
+        if terms:
+            fields = ("subject", "predicate", "object", "value")
+            sql += " AND (" + " OR ".join(
+                f"lower(COALESCE(f.{field}, '')) LIKE ?"
+                for _term in terms
+                for field in fields
+            ) + ")"
+            params.extend(
+                f"%{term}%"
+                for term in terms
+                for _field in fields
+            )
+        return connection.execute(sql, params).fetchall()
+
+    def query_brain_facts(
+        self, query: str = "", user_id: str = "default", limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(user_id, str) or not user_id:
+            return []
+        normalized_limit = self._normalise_limit(limit, 10)
+
+        with self._lock:
+            connection = self._require_connection()
+            rows = self._query_fact_rows(query, user_id)
+
+            ranked: List[Tuple[float, float, str, sqlite3.Row]] = []
+            for row in rows:
+                text = " ".join(
+                    str(row[key] or "")
+                    for key in ("subject", "predicate", "object", "value")
+                )
+                score = self._match_quality(query, text)
+                if row["fts_rank"] is not None:
+                    score += max(0.0, -float(row["fts_rank"]))
+                ranked.append(
+                    (
+                        score,
+                        float(row["confidence"] or 0.0),
+                        self._recency_value(row["last_reinforced"] or row["created_at"]),
+                        row,
+                    )
+                )
+            ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+            chosen = ranked[:normalized_limit]
+
+            if chosen:
+                connection.executemany(
+                    "UPDATE brain_facts SET usage_count = usage_count + 1 WHERE id = ?",
+                    [(int(row["id"]),) for _, _, _, row in chosen],
+                )
+                connection.commit()
+
+        return [
+            {
+                "id": int(row["id"]),
+                "user_id": row["user_id"],
+                "subject": row["subject"],
+                "predicate": row["predicate"],
+                "object": row["object"],
+                "value": row["value"],
+                "confidence": float(row["confidence"] or 0.0),
+                "usage_count": int(row["usage_count"] or 0) + 1,
+                "created_at": row["created_at"],
+                "last_reinforced": row["last_reinforced"],
+                "is_contradicted": False,
+                "conflicts_with": (
+                    json.loads(row["conflicts_with"])
+                    if row["conflicts_with"]
+                    else []
+                ),
+                "match_score": float(score),
+            }
+            for score, _confidence, _recency, row in chosen
+        ]
+
+    def store_episodic_event(
+        self,
+        actor: Any,
+        action: Any,
+        *,
+        object_value: Any = None,
+        place: Any = None,
+        cause: Any = None,
+        effect: Any = None,
+        note: Any = None,
+        sentiment: Any = None,
+        confidence: Any = 0.8,
+        user_id: Any = "default",
+    ) -> Dict[str, Any]:
+        actor_text = self._clean_text(actor)
+        action_text = self._clean_text(action)
+        user_text = self._clean_text(user_id) or "default"
+        if not self._is_safe_structured_text(actor_text, 500):
+            raise ValueError("actor must be clean non-empty text")
+        if not self._is_safe_structured_text(action_text, 1000):
+            raise ValueError("action must be clean non-empty text")
+
+        fields = {
+            "object": self._optional_text(object_value),
+            "place": self._optional_text(place),
+            "cause": self._optional_text(cause),
+            "effect": self._optional_text(effect),
+            "note": self._optional_text(note),
+        }
+        for name, value_text in fields.items():
+            if value_text and not self._is_safe_structured_text(value_text, 4000):
+                raise ValueError(f"{name} must be clean text")
+
+        try:
+            sentiment_value = (
+                None if sentiment is None else max(-1.0, min(float(sentiment), 1.0))
+            )
+        except (TypeError, ValueError):
+            sentiment_value = None
+        confidence_value = self._clamp_confidence(confidence, 0.8)
+        now = datetime.now(timezone.utc).isoformat()
+
+        with self._lock:
+            connection = self._require_connection()
+            cursor = connection.execute(
+                """
+                INSERT INTO episodic_events(
+                    user_id, actor, action, object, place, cause, effect, note,
+                    sentiment, confidence, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_text,
+                    actor_text,
+                    action_text,
+                    fields["object"],
+                    fields["place"],
+                    fields["cause"],
+                    fields["effect"],
+                    fields["note"],
+                    sentiment_value,
+                    confidence_value,
+                    now,
+                ),
+            )
+            event_id = int(cursor.lastrowid)
+            connection.commit()
+
+        item = {
+            "id": event_id,
+            "user_id": user_text,
+            "actor": actor_text,
+            "action": action_text,
+            **fields,
+            "sentiment": sentiment_value,
+            "confidence": confidence_value,
+            "created_at": now,
+        }
+        self.working_set["episodes"].append(item)
+        return item
+
+    def _query_episode_rows(self, query: str, user_id: str) -> List[sqlite3.Row]:
+        connection = self._require_connection()
+        fts_query = self._fts_query(query)
+        if query.strip() and self._fts_available and fts_query:
+            try:
+                return connection.execute(
+                    """
+                    SELECT e.*, bm25(episodic_events_fts) AS fts_rank
+                    FROM episodic_events_fts
+                    JOIN episodic_events AS e ON e.id = episodic_events_fts.rowid
+                    WHERE episodic_events_fts MATCH ?
+                      AND e.user_id = ?
+                    """,
+                    (fts_query, user_id),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                self._fts_available = False
+
+        sql = "SELECT e.*, NULL AS fts_rank FROM episodic_events AS e WHERE e.user_id = ?"
+        params: List[Any] = [user_id]
+        terms = self._query_terms(query)
+        if terms:
+            fields = ("actor", "action", "object", "place", "cause", "effect", "note")
+            sql += " AND (" + " OR ".join(
+                f"lower(COALESCE(e.{field}, '')) LIKE ?"
+                for _term in terms
+                for field in fields
+            ) + ")"
+            params.extend(
+                f"%{term}%"
+                for term in terms
+                for _field in fields
+            )
+        return connection.execute(sql, params).fetchall()
+
+    def query_episodic_events(
+        self, query: str = "", user_id: str = "default", limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(user_id, str) or not user_id:
+            return []
+        normalized_limit = self._normalise_limit(limit, 10)
+
+        with self._lock:
+            rows = self._query_episode_rows(query, user_id)
+
+        ranked: List[Tuple[float, float, str, sqlite3.Row]] = []
+        for row in rows:
+            text = " ".join(
+                str(row[key] or "")
+                for key in ("actor", "action", "object", "place", "cause", "effect", "note")
+            )
+            score = self._match_quality(query, text)
+            if row["fts_rank"] is not None:
+                score += max(0.0, -float(row["fts_rank"]))
+            ranked.append(
+                (
+                    score,
+                    float(row["confidence"] or 0.0),
+                    self._recency_value(row["created_at"]),
+                    row,
+                )
+            )
+        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+
+        return [
+            {
+                "id": int(row["id"]),
+                "user_id": row["user_id"],
+                "actor": row["actor"],
+                "action": row["action"],
+                "object": row["object"],
+                "place": row["place"],
+                "cause": row["cause"],
+                "effect": row["effect"],
+                "note": row["note"],
+                "sentiment": row["sentiment"],
+                "confidence": float(row["confidence"] or 0.0),
+                "created_at": row["created_at"],
+                "match_score": float(score),
+            }
+            for score, _confidence, _recency, row in ranked[:normalized_limit]
+        ]
 
     def _learn_lobe_fact(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         lobe = self._clean_text(payload.get("lobe"))
@@ -264,12 +1148,18 @@ class DirectNotusProcess:
                 evidence_count = 1
                 contradiction_count = 0
             else:
-                row_id, old_fact, old_confidence, old_evidence, old_contradictions = existing
+                row_id = int(existing["id"])
+                old_fact = existing["fact"]
+                old_confidence = existing["confidence"]
+                old_evidence = existing["evidence_count"]
+                old_contradictions = existing["contradiction_count"]
                 same_fact = self._clean_text(old_fact).casefold() == fact.casefold()
                 if same_fact:
                     reinforcement = self._clamp_confidence(payload.get("reinforcement"), default=0.7)
                     delta = 0.03 + (0.07 * reinforcement)
-                    resulting_confidence = min(1.0, self._clamp_confidence(old_confidence, 0.6) + delta)
+                    resulting_confidence = min(
+                        1.0, self._clamp_confidence(old_confidence, 0.6) + delta
+                    )
                     evidence_count = int(old_evidence) + 1
                     contradiction_count = int(old_contradictions)
                     action = "reinforced"
@@ -317,17 +1207,13 @@ class DirectNotusProcess:
         key_prefix = self._clean_text(payload.get("key_prefix")).lower()
         min_confidence = self._clamp_confidence(payload.get("min_confidence"), default=0.0)
         include_deprecated = bool(payload.get("include_deprecated", False))
-        try:
-            normalized_limit = int(payload.get("limit", 15))
-        except (TypeError, ValueError):
-            normalized_limit = 15
-        normalized_limit = max(1, min(normalized_limit, 100))
+        normalized_limit = self._normalise_limit(payload.get("limit", 15), 15)
         mark_used = bool(payload.get("mark_used", False))
 
         sql = (
             "SELECT id, learning_key, fact, confidence, evidence_count, contradiction_count, "
-            "status, source, created_at, updated_at, use_count, last_applied_at FROM lobe_learning "
-            "WHERE lobe = ? AND user_id = ? AND confidence >= ?"
+            "status, source, created_at, updated_at, use_count, last_applied_at "
+            "FROM lobe_learning WHERE lobe = ? AND user_id = ? AND confidence >= ?"
         )
         params: List[Any] = [lobe, user_id, min_confidence]
         if not include_deprecated:
@@ -350,50 +1236,44 @@ class DirectNotusProcess:
                     "UPDATE lobe_learning "
                     "SET use_count = use_count + 1, last_applied_at = ?, updated_at = ? "
                     "WHERE id = ?",
-                    [(now, now, row[0]) for row in rows],
+                    [(now, now, int(row["id"])) for row in rows],
                 )
                 connection.commit()
                 rows = connection.execute(sql, params).fetchall()
+
         memories = [
             {
-                "key": key,
-                "content": fact,
-                "fact": fact,
-                "confidence": confidence,
-                "evidence_count": evidence_count,
-                "contradiction_count": contradiction_count,
-                "status": status,
-                "source": source,
-                "created_at": created_at,
-                "updated_at": updated_at,
-                "use_count": use_count,
-                "last_applied_at": last_applied_at,
+                "key": row["learning_key"],
+                "content": row["fact"],
+                "fact": row["fact"],
+                "confidence": row["confidence"],
+                "evidence_count": row["evidence_count"],
+                "contradiction_count": row["contradiction_count"],
+                "status": row["status"],
+                "source": row["source"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "use_count": row["use_count"],
+                "last_applied_at": row["last_applied_at"],
             }
-            for (
-                _row_id,
-                key,
-                fact,
-                confidence,
-                evidence_count,
-                contradiction_count,
-                status,
-                source,
-                created_at,
-                updated_at,
-                use_count,
-                last_applied_at,
-            ) in rows
+            for row in rows
         ]
-        return {"status": "success", "content": {"lobe": lobe, "memories": memories, "count": len(memories)}}
+        return {
+            "status": "success",
+            "content": {"lobe": lobe, "memories": memories, "count": len(memories)},
+        }
 
     def _adjust_lobe_fact(self, payload: Dict[str, Any], mode: str) -> Dict[str, Any]:
         lobe = self._clean_text(payload.get("lobe"))
         user_id = self._clean_text(payload.get("user_id")) or "default"
         if not lobe:
             return {"status": "error", "message": "lobe is required"}
-        fallback_fact = self._clean_text(payload.get("fact", payload.get("text", payload.get("content", ""))))
+        fallback_fact = self._clean_text(
+            payload.get("fact", payload.get("text", payload.get("content", "")))
+        )
         learning_key = self._normalise_learning_key(payload.get("key"), fallback_fact)
         now = datetime.now(timezone.utc).isoformat()
+
         with self._lock:
             connection = self._require_connection()
             existing = connection.execute(
@@ -402,12 +1282,19 @@ class DirectNotusProcess:
                 (lobe, user_id, learning_key),
             ).fetchone()
             if existing is None:
-                return {"status": "error", "message": f"No learned fact for key: {learning_key}"}
-            row_id, confidence, evidence_count, contradiction_count, status = existing
-            confidence_value = self._clamp_confidence(confidence, 0.5)
-            evidence_value = int(evidence_count)
-            contradiction_value = int(contradiction_count)
-            status_value = status if isinstance(status, str) else "active"
+                return {
+                    "status": "error",
+                    "message": f"No learned fact for key: {learning_key}",
+                }
+
+            row_id = int(existing["id"])
+            confidence_value = self._clamp_confidence(existing["confidence"], 0.5)
+            evidence_value = int(existing["evidence_count"])
+            contradiction_value = int(existing["contradiction_count"])
+            status_value = (
+                existing["status"] if isinstance(existing["status"], str) else "active"
+            )
+
             if mode == "reinforce":
                 delta = self._clamp_confidence(payload.get("delta"), default=0.08)
                 new_confidence = min(1.0, confidence_value + max(0.01, delta))
@@ -426,12 +1313,21 @@ class DirectNotusProcess:
                 action = "forgotten"
             else:
                 return {"status": "error", "message": f"Unknown adjustment mode: {mode}"}
+
             connection.execute(
                 "UPDATE lobe_learning SET confidence = ?, evidence_count = ?, "
                 "contradiction_count = ?, status = ?, updated_at = ? WHERE id = ?",
-                (new_confidence, evidence_value, contradiction_value, status_value, now, row_id),
+                (
+                    new_confidence,
+                    evidence_value,
+                    contradiction_value,
+                    status_value,
+                    now,
+                    row_id,
+                ),
             )
             connection.commit()
+
         return {
             "status": "success",
             "content": {
@@ -451,6 +1347,7 @@ class DirectNotusProcess:
         user_id = self._clean_text(payload.get("user_id")) or "default"
         if not lobe:
             return {"status": "error", "message": "lobe is required"}
+
         with self._lock:
             connection = self._require_connection()
             totals = connection.execute(
@@ -462,6 +1359,7 @@ class DirectNotusProcess:
                 "FROM lobe_learning WHERE lobe = ? AND user_id = ?",
                 (lobe, user_id),
             ).fetchone()
+
         (
             total_count,
             avg_confidence,
@@ -471,7 +1369,8 @@ class DirectNotusProcess:
             contradiction_sum,
             use_sum,
             last_applied_at,
-        ) = totals
+        ) = tuple(totals)
+
         return {
             "status": "success",
             "content": {
@@ -488,55 +1387,165 @@ class DirectNotusProcess:
             },
         }
 
+    @staticmethod
+    def _payload(message: Dict[str, Any]) -> Dict[str, Any]:
+        payload = message.get("content", message)
+        return payload if isinstance(payload, dict) else {}
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
-        payload = message.get("content", message)
+        payload = self._payload(message)
+
         if msg_type == "health":
-            return {"status": "success", "content": {"healthy": self.running}}
+            return {
+                "status": "success",
+                "content": {
+                    "healthy": self.running,
+                    "backend": "sqlite",
+                    "fts5": self._fts_available,
+                },
+            }
+
         if msg_type == "store":
             return self._store(payload)
+
         if msg_type in {"query", "query_semantic"}:
-            query = payload.get("query", payload.get("text", ""))
+            query = self._clean_text(payload.get("query", payload.get("text", "")))
             memories = self.retrieve_memories(
                 query,
                 payload.get("user_id", "default"),
                 payload.get("limit", 15),
                 payload.get("memory_type"),
             )
-            return {"status": "success", "content": {"results": memories, "memories": memories}}
+            return {
+                "status": "success",
+                "content": {
+                    "results": memories,
+                    "memories": memories,
+                    "count": len(memories),
+                },
+            }
+
+        if msg_type == "store_fact":
+            try:
+                fact = self.store_brain_fact(
+                    payload.get("subject"),
+                    payload.get("predicate"),
+                    payload.get("object", payload.get("obj")),
+                    value=payload.get("value"),
+                    confidence=payload.get("confidence", 0.9),
+                    user_id=payload.get("user_id", "default"),
+                )
+            except ValueError as exc:
+                return {"status": "error", "message": str(exc)}
+            return {"status": "success", "content": {"fact": fact, "id": fact["id"]}}
+
+        if msg_type == "query_facts":
+            query = self._clean_text(payload.get("query", payload.get("text", "")))
+            facts = self.query_brain_facts(
+                query,
+                self._clean_text(payload.get("user_id")) or "default",
+                payload.get("limit", payload.get("max_results", 10)),
+            )
+            return {
+                "status": "success",
+                "content": {"facts": facts, "count": len(facts)},
+            }
+
+        if msg_type == "store_episodic":
+            try:
+                episode = self.store_episodic_event(
+                    payload.get("actor", "user"),
+                    payload.get("action"),
+                    object_value=payload.get("object"),
+                    place=payload.get("place"),
+                    cause=payload.get("cause"),
+                    effect=payload.get("effect"),
+                    note=payload.get("note"),
+                    sentiment=payload.get("sentiment"),
+                    confidence=payload.get("confidence", 0.8),
+                    user_id=payload.get("user_id", "default"),
+                )
+            except ValueError as exc:
+                return {"status": "error", "message": str(exc)}
+            return {
+                "status": "success",
+                "content": {"episode": episode, "id": episode["id"]},
+            }
+
+        if msg_type == "query_episodic":
+            query = self._clean_text(payload.get("query", payload.get("text", "")))
+            episodes = self.query_episodic_events(
+                query,
+                self._clean_text(payload.get("user_id")) or "default",
+                payload.get("limit", payload.get("max_results", 10)),
+            )
+            return {
+                "status": "success",
+                "content": {
+                    "events": episodes,
+                    "episodic": episodes,
+                    "count": len(episodes),
+                },
+            }
+
         if msg_type == "learn_lobe_fact":
             return self._learn_lobe_fact(payload)
+
         if msg_type == "recall_lobe_facts":
             return self._recall_lobe_facts(payload)
+
         if msg_type == "reinforce_lobe_fact":
             return self._adjust_lobe_fact(payload, "reinforce")
+
         if msg_type == "contradict_lobe_fact":
             return self._adjust_lobe_fact(payload, "contradict")
+
         if msg_type == "forget_lobe_fact":
             return self._adjust_lobe_fact(payload, "forget")
+
         if msg_type == "lobe_learning_stats":
             return self._lobe_learning_stats(payload)
+
         if msg_type == "query_context":
-            query = payload.get("text", "")
+            query = self._clean_text(payload.get("query", payload.get("text", "")))
+            user_id = self._clean_text(payload.get("user_id")) or "default"
+            limit = self._normalise_limit(
+                payload.get("max_results", payload.get("limit", 15)),
+                15,
+            )
             memories = self.retrieve_memories(
                 query,
-                payload.get("user_id", "default"),
-                payload.get("max_results", 15),
+                user_id,
+                limit,
                 payload.get("memory_type"),
             )
+            facts = self.query_brain_facts(query, user_id, limit)
+            episodes = self.query_episodic_events(query, user_id, limit)
+
             return {
                 "status": "success",
                 "content": {
                     "query_text": query,
                     "semantic": memories,
-                    "episodic": [],
-                    "facts": [],
-                    "summary": f"Found {len(memories)} stored memories",
+                    "memories": memories,
+                    "episodic": episodes,
+                    "facts": facts,
+                    "working_set": self._working_set_for_user(user_id),
+                    "summary": (
+                        f"Found {len(memories)} memories, "
+                        f"{len(facts)} facts, and {len(episodes)} episodes"
+                    ),
                 },
             }
-        if msg_type in {"query_episodic", "query_facts", "query_patterns"}:
-            key = {"query_episodic": "events", "query_facts": "facts", "query_patterns": "patterns"}[msg_type]
-            return {"status": "success", "content": {key: []}}
+
+        if msg_type == "query_patterns":
+            return {
+                "status": "error",
+                "message": "query_patterns is not implemented by DirectNotusProcess",
+                "content": {"patterns": []},
+            }
+
         return {"status": "error", "message": f"Unknown message type: {msg_type}"}
 
     def shutdown(self) -> None:
