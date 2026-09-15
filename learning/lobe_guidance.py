@@ -6,6 +6,33 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
+_TRIGGER_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "be",
+    "for",
+    "if",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "someone",
+    "that",
+    "the",
+    "then",
+    "to",
+    "user",
+    "users",
+    "when",
+    "whenever",
+    "you",
+}
+
+
 def safe_user(user_id: Any) -> str:
     return user_id.strip() if isinstance(user_id, str) and user_id.strip() else "default"
 
@@ -13,7 +40,11 @@ def safe_user(user_id: Any) -> str:
 def relation_from_guidance(guidance: str) -> Optional[Tuple[str, str]]:
     if not isinstance(guidance, str):
         return None
-    match = re.match(r"^\s*(.+?)\s+(?:means|is|equals|refers\s+to)\s+(.+?)\s*\.?\s*$", guidance, re.IGNORECASE)
+    match = re.match(
+        r"^\s*(.+?)\s+(?:means|is|equals|refers\s+to)\s+(.+?)\s*\.?\s*$",
+        guidance,
+        re.IGNORECASE,
+    )
     if not match:
         return None
     left = match.group(1).strip()
@@ -21,17 +52,27 @@ def relation_from_guidance(guidance: str) -> Optional[Tuple[str, str]]:
     return (left, right) if left and right else None
 
 
+def _condition_clause(text: str) -> Optional[str]:
+    if not isinstance(text, str):
+        return None
+    match = re.match(r"^\s*(?:for|when|whenever|if)\s+(.+?)(?:,|\bthen\b)\s+.+$", text, re.IGNORECASE)
+    if not match:
+        return None
+    clause = match.group(1).strip()
+    return clause or None
+
+
 def trigger_from_guidance(guidance: str) -> Optional[str]:
     if not isinstance(guidance, str):
         return None
-    match = re.match(r"^\s*for\s+(.+?),\s+.+$", guidance, re.IGNORECASE)
-    if match:
-        trigger = match.group(1).strip()
-        return trigger or None
+    condition = _condition_clause(guidance)
+    if condition:
+        return condition
     marker = re.search(r"(?:^|\|)\s*Trigger context:\s*([^|]+)", guidance, re.IGNORECASE)
     if marker:
-        trigger = marker.group(1).strip()
-        return trigger or None
+        trigger_text = marker.group(1).strip()
+        condition = _condition_clause(trigger_text)
+        return condition or trigger_text or None
     return None
 
 
@@ -63,6 +104,26 @@ def query_from_payload(payload: Dict[str, Any]) -> str:
     return ""
 
 
+def _tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if len(token) > 1 and token not in _TRIGGER_STOPWORDS
+    }
+
+
+def _trigger_matches(trigger: str, query: str) -> bool:
+    if re.search(re.escape(trigger), query, re.IGNORECASE):
+        return True
+    trigger_tokens = _tokens(trigger)
+    query_tokens = _tokens(query)
+    if not trigger_tokens or not query_tokens:
+        return False
+    overlap = len(trigger_tokens.intersection(query_tokens))
+    required = 1 if len(trigger_tokens) <= 2 else max(2, (len(trigger_tokens) + 1) // 2)
+    return overlap >= required
+
+
 def guidance_applies(guidance: str, query: str) -> bool:
     if not isinstance(guidance, str) or not isinstance(query, str) or not query.strip():
         return False
@@ -71,7 +132,7 @@ def guidance_applies(guidance: str, query: str) -> bool:
         return bool(re.search(re.escape(relation[0]), query, re.IGNORECASE))
     trigger = trigger_from_guidance(guidance)
     if trigger is not None:
-        return bool(re.search(re.escape(trigger), query, re.IGNORECASE))
+        return _trigger_matches(trigger, query)
     return False
 
 
@@ -82,8 +143,8 @@ def applicable_guidance(items: Any, query: str) -> List[str]:
 def effective_guidance(lobe: Any, payload: Dict[str, Any]) -> List[str]:
     """Return active guidance owned by this lobe that applies to this input.
 
-    Thalamus may already inject guidance.  If it does not, the lobe asks its own
-    persistent learning store.  This keeps actual application inside the lobe
+    Thalamus may already inject guidance. If it does not, the lobe asks its own
+    persistent learning store. This keeps actual application inside the lobe
     rather than in a global runtime postprocessor.
     """
     if not isinstance(payload, dict):
@@ -98,8 +159,16 @@ def effective_guidance(lobe: Any, payload: Dict[str, Any]) -> List[str]:
 
     user_id = safe_user(
         payload.get("user_id")
-        or (payload.get("input", {}).get("user_id") if isinstance(payload.get("input"), dict) else None)
-        or (payload.get("semantic_input", {}).get("user_id") if isinstance(payload.get("semantic_input"), dict) else None)
+        or (
+            payload.get("input", {}).get("user_id")
+            if isinstance(payload.get("input"), dict)
+            else None
+        )
+        or (
+            payload.get("semantic_input", {}).get("user_id")
+            if isinstance(payload.get("semantic_input"), dict)
+            else None
+        )
     )
     store = getattr(lobe, "_lobe_learning_store", None)
     if store is None:
