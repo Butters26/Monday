@@ -10,16 +10,43 @@ permissions:
 jobs:
   direct-core:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: notus_memory
+          POSTGRES_USER: monday
+          POSTGRES_PASSWORD: monday
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U monday -d notus_memory"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NOTUS_POSTGRES_DB: notus_memory
+      NOTUS_POSTGRES_USER: monday
+      NOTUS_POSTGRES_PASSWORD: monday
+      NOTUS_POSTGRES_HOST: localhost
+      NOTUS_POSTGRES_PORT: "5432"
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install focused test dependency
-        run: python -m pip install --disable-pip-version-check pytest
-      - name: Check direct-core syntax and JSON configuration
+
+      - name: Install direct-core dependencies
+        run: python -m pip install --disable-pip-version-check pytest numpy psycopg2-binary
+
+      - name: Check active core syntax and JSON configuration
         run: |
-          python -m py_compile run_abin.py thalamus.py direct_reasoning.py direct_notus.py
+          python -m py_compile run_abin.py thalamus.py direct_reasoning.py notus.py notus_memory.py live_notus_memory_check.py
           python -c "import glob,json; [json.load(open(path, encoding='utf-8')) for path in glob.glob('*.json')]"
-      - name: Run direct-core tests
-        run: python -m pytest -q test_direct_core_pipeline.py
+
+      - name: Run live Notus memory behavior check
+        run: python live_notus_memory_check.py
