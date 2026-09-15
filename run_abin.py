@@ -9,13 +9,13 @@ from typing import Any, Dict, Optional
 from direct_notus import DirectNotusProcess
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
-from learning.adaptive_lobes import (
-    AdaptiveConversationSystem,
-    AdaptiveEmotionProcess,
-    AdaptiveLanguageGenerator,
-    AdaptiveOutputLobe,
-    AdaptivePatternRecognition,
-    AdaptiveReasoningAdapter,
+from learning.functional_lobes import (
+    FunctionalConversationSystem,
+    FunctionalEmotionProcess,
+    FunctionalLanguageGenerator,
+    FunctionalOutputLobe,
+    FunctionalPatternRecognition,
+    FunctionalReasoningAdapter,
 )
 from learning.runtime_integration_native import install_learning_integration
 from learning.hardening import install_hardened_stores
@@ -35,20 +35,20 @@ def create_core_systems(
     thalamus = Thalamus(runtime_directory=directory)
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
-        "conversation": AdaptiveConversationSystem(thalamus=thalamus),
+        "conversation": FunctionalConversationSystem(thalamus=thalamus),
         "notus": DirectNotusProcess(
             storage_path=str(directory / "notus_memory.sqlite3"), thalamus=thalamus
         ),
-        "emotion": AdaptiveEmotionProcess(
+        "emotion": FunctionalEmotionProcess(
             state_file=str(directory / "emotional_state.json"), thalamus=thalamus
         ),
-        "reasoning": AdaptiveReasoningAdapter(
+        "reasoning": FunctionalReasoningAdapter(
             thalamus=thalamus,
             **({"reasoner_factory": reasoning_factory} if reasoning_factory else {}),
         ),
-        "pattern": AdaptivePatternRecognition(thalamus=thalamus),
-        "language": AdaptiveLanguageGenerator(thalamus=thalamus),
-        "output": AdaptiveOutputLobe(thalamus=thalamus, enable_tts=False),
+        "pattern": FunctionalPatternRecognition(thalamus=thalamus),
+        "language": FunctionalLanguageGenerator(thalamus=thalamus),
+        "output": FunctionalOutputLobe(thalamus=thalamus, enable_tts=False),
     }
     for name in ("conversation", "notus", "emotion", "reasoning", "pattern", "language", "output"):
         result = thalamus.register_lobe(name, systems[name])
