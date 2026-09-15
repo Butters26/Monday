@@ -1,8 +1,8 @@
 """Contract-driven lesson routing.
 
-The router no longer guesses from a global keyword dictionary.  It first checks
+The router no longer guesses from a global keyword dictionary. It first checks
 lobe learning contracts, then asks each candidate lobe whether it can actually
-interpret the lesson.  Ambiguous lessons fail closed instead of being sprayed
+interpret the lesson. Ambiguous lessons fail closed instead of being sprayed
 across unrelated lobes.
 """
 
@@ -29,7 +29,7 @@ def _explicit_targets(payload: Dict[str, Any]) -> List[str]:
 
 
 def install_contract_router(thalamus: Any) -> None:
-    """Replace keyword routing with lobe-owned relevance decisions."""
+    """Replace global keyword routing with lobe-owned relevance decisions."""
 
     def _teach_target_decision(
         self: Any,
@@ -42,7 +42,7 @@ def install_contract_router(thalamus: Any) -> None:
         candidate_set = set(candidates)
         explicit = _explicit_targets(payload)
         requested = explicit if explicit else candidates
-        targeted: List[Dict[str, Any]] = []
+        targeted_internal: List[Dict[str, Any]] = []
         rejected: List[Dict[str, Any]] = []
 
         with self.lobe_handlers_lock:
@@ -56,11 +56,11 @@ def install_contract_router(thalamus: Any) -> None:
                 continue
 
             if explicit:
-                targeted.append(
+                targeted_internal.append(
                     {
                         "lobe": lobe_name,
                         "reasons": ["explicit_target", "contract_capability_match"],
-                        "relevance_score": 1.0,
+                        "_score": 1.0,
                     }
                 )
                 continue
@@ -100,11 +100,11 @@ def install_contract_router(thalamus: Any) -> None:
             ] if isinstance(reasons, list) else []
 
             if accepted and score >= 0.65:
-                targeted.append(
+                targeted_internal.append(
                     {
                         "lobe": lobe_name,
                         "reasons": reasons or ["lobe_relevance_accept"],
-                        "relevance_score": score,
+                        "_score": score,
                     }
                 )
             else:
@@ -117,7 +117,7 @@ def install_contract_router(thalamus: Any) -> None:
                     }
                 )
 
-        if not targeted:
+        if not targeted_internal:
             return {
                 "status": "error",
                 "routing_condition": "unresolved_target",
@@ -127,7 +127,15 @@ def install_contract_router(thalamus: Any) -> None:
                 or [{"lobe": lobe, "reason": "unresolved_target"} for lobe in requested],
             }
 
-        targeted.sort(key=lambda item: float(item.get("relevance_score", 0.0)), reverse=True)
+        targeted_internal.sort(
+            key=lambda item: float(item.get("_score", 0.0)), reverse=True
+        )
+        # Keep routing diagnostics stable for callers/tests; score is only an
+        # internal ordering detail, not part of the public target contract.
+        targeted = [
+            {"lobe": entry["lobe"], "reasons": list(entry.get("reasons", []))}
+            for entry in targeted_internal
+        ]
         return {
             "status": "success",
             "routing_condition": "resolved_by_lobe_relevance",
