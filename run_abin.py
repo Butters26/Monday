@@ -6,16 +6,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from advanced_emotional_engine import EmotionalProcess
-from conversation import ConversationSystem
-from direct_reasoning import DirectMaximumSophisticationAdapter
-from language_generation import LanguageGenerator
 from direct_notus import DirectNotusProcess
-from output import OutputLobe
-from pattern_recognition import AdvancedPatternRecognition
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
-from learning.runtime_integration import install_learning_integration
+from learning.adaptive_lobes import (
+    AdaptiveConversationSystem,
+    AdaptiveEmotionProcess,
+    AdaptiveLanguageGenerator,
+    AdaptiveOutputLobe,
+    AdaptivePatternRecognition,
+    AdaptiveReasoningAdapter,
+)
+from learning.runtime_integration_native import install_learning_integration
 from learning.hardening import install_hardened_stores
 
 
@@ -33,20 +35,20 @@ def create_core_systems(
     thalamus = Thalamus(runtime_directory=directory)
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
-        "conversation": ConversationSystem(thalamus=thalamus),
+        "conversation": AdaptiveConversationSystem(thalamus=thalamus),
         "notus": DirectNotusProcess(
             storage_path=str(directory / "notus_memory.sqlite3"), thalamus=thalamus
         ),
-        "emotion": EmotionalProcess(
+        "emotion": AdaptiveEmotionProcess(
             state_file=str(directory / "emotional_state.json"), thalamus=thalamus
         ),
-        "reasoning": DirectMaximumSophisticationAdapter(
+        "reasoning": AdaptiveReasoningAdapter(
             thalamus=thalamus,
             **({"reasoner_factory": reasoning_factory} if reasoning_factory else {}),
         ),
-        "pattern": AdvancedPatternRecognition(thalamus=thalamus),
-        "language": LanguageGenerator(thalamus=thalamus),
-        "output": OutputLobe(thalamus=thalamus, enable_tts=False),
+        "pattern": AdaptivePatternRecognition(thalamus=thalamus),
+        "language": AdaptiveLanguageGenerator(thalamus=thalamus),
+        "output": AdaptiveOutputLobe(thalamus=thalamus, enable_tts=False),
     }
     for name in ("conversation", "notus", "emotion", "reasoning", "pattern", "language", "output"):
         result = thalamus.register_lobe(name, systems[name])
