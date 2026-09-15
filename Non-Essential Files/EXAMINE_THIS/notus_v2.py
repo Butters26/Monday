@@ -1,0 +1,3474 @@
+#!/usr/bin/env python3
+"""
+Fixed Superhuman Memory System - Actually works with cheap AI
+Instead of trying to BE the AI, this helps your cheap AI be smarter
+"""
+
+import json
+import sqlite3
+import time
+import uuid
+import re
+import pickle
+import numpy as np
+import sys
+import traceback
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Tuple, Union, Set
+from collections import defaultdict, Counter, deque
+from dataclasses import dataclass, field
+import logging
+import os
+import threading
+import hashlib
+from threading import Lock
+import heapq
+from functools import lru_cache
+import signal
+import sys
+from thalamus import get_thalamus
+from runtime_paths import runtime_file
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Configuration
+MEMORY_DB_PATH = runtime_file("superhuman_memory.db")
+MAX_CONTEXT_LENGTH = 50000
+EMBEDDING_DIM = 768
+
+# Thread safety
+DB_LOCK = threading.RLock()
+
+@dataclass
+class SuperhumanConfig:
+    """Configuration for the superhuman memory system"""
+    
+    # Semantic similarity settings
+    similarity_threshold: float = 0.4  # Lower threshold to catch more context
+    min_semantic_score: float = 0.3
+    
+    # Learning parameters
+    learning_rate: float = 0.1
+    importance_decay: float = 0.95
+    feedback_weight: float = 0.3
+    online_learning_rate: float = 0.01
+    
+    # Memory organization
+    episodic_semantic_ratio: float = 0.7
+    memory_consolidation_threshold: int = 5
+    hierarchical_clustering_depth: int = 3
+    
+    # Performance settings
+    max_cache_size: int = 10000
+    batch_process_size: int = 100
+    
+    # Context generation - FIXED FOR CHEAP AI
+    max_context_memories: int = 15  # Good amount for context
+    max_context_chars: int = 3000   # Don't overwhelm the cheap AI
+    personality_adaptation_rate: float = 0.05
+    # Final prompt/UI safety
+    final_prompt_max_chars: int = 3500
+    ui_chunk_size: int = 1800
+    allow_env_override: bool = True
+    # Working set and autosave
+    working_set_max_facts: int = 20
+    working_set_max_episodes: int = 20
+    autosave_enabled: bool = True
+    snapshot_path: str = runtime_file("monday_notus_snapshot.json")
+    
+    # Advanced retrieval
+    attention_heads: int = 4
+    reasoning_depth: int = 3
+    time_decay_factor: float = 0.1
+    
+    # AI Prompt Templates - THE FIX
+    system_prompt: str = "You are Monday, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
+    
+    context_template: str = """CONTEXT FROM PREVIOUS CONVERSATIONS:
+{context}
+
+ANALYSIS:
+{analysis}
+
+USER'S CURRENT MESSAGE: {user_input}
+
+INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
+
+class MemoryType:
+    EPISODIC = "episodic"
+    SEMANTIC = "semantic"
+    PROCEDURAL = "procedural"
+    CONVERSATION = "conversation"
+
+class AdvancedEmbeddingEngine:
+    """Simplified but robust embedding engine"""
+    
+    def __init__(self, config: SuperhumanConfig):
+        self.config = config
+        self.model = None
+        self.tokenizer = None
+        self.embedding_cache = {}
+        self.cache_lock = Lock()
+        self.model_type = 'basic'
+        self.personalization_vectors = {}
+        self._initialize_model()
+        
+    def _initialize_model(self):
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer("all-MiniLM-L6-v2")
+            self.model_type = "sentence_transformer"
+            logger.info("✅ Loaded sentence-transformers model")
+        except Exception as e:
+            # Graceful fallback to basic embeddings if ST is unavailable
+            logger.warning(f"sentence-transformers unavailable ({e}); falling back to basic embeddings")
+            self.model = None
+            self.model_type = 'basic'
+
+    def get_embedding(self, text: str, user_id: str = None) -> np.ndarray:
+        """Get embedding for text with proper parameters and retry logic"""
+        if not text or not text.strip():
+            return np.zeros(EMBEDDING_DIM)
+            
+        # Simple caching
+        cache_key = f"{user_id}:{text}" if user_id else text
+        text_hash = hashlib.sha256(cache_key.encode('utf-8', errors='ignore')).hexdigest()
+        
+        with self.cache_lock:
+            if text_hash in self.embedding_cache:
+                return self.embedding_cache[text_hash]
+        
+        try:
+            if self.model_type == 'sentence_transformer':
+                # Try up to 3 times with proper parameters
+                for attempt in range(3):
+                    try:
+                        embedding = self.model.encode(
+                            text,
+                            normalize_embeddings=True,
+                            show_progress_bar=False,
+                            batch_size=16
+                        )
+                        embedding = self._normalize_dimensions(embedding)
+                        break
+                    except OSError as e:
+                        if "Broken pipe" in str(e) and attempt < 2:
+                            time.sleep(0.2)  # Brief pause before retry
+                            continue
+                        # If we're out of retries, try TF-IDF
+                        return self._get_tfidf_embedding(text)
+
+            else:
+                embedding = self._get_basic_embedding(text)
+            
+            # Cache it
+            with self.cache_lock:
+                if len(self.embedding_cache) < self.config.max_cache_size:
+                    self.embedding_cache[text_hash] = embedding
+
+                    
+            return embedding
+            
+        except Exception as e:
+            logger.warning(f"Embedding failed: {e}")
+            return self._get_basic_embedding(text)
+
+    def _normalize_dimensions(self, embedding: np.ndarray) -> np.ndarray:
+        """Normalize embedding to standard dimensions"""
+        if embedding.size == 0:
+            return np.zeros(EMBEDDING_DIM)
+            
+        if embedding.ndim > 1:
+            embedding = embedding.flatten()
+            
+        if embedding.size < EMBEDDING_DIM:
+            embedding = np.pad(embedding, (0, EMBEDDING_DIM - embedding.size), 'constant')
+        elif embedding.size > EMBEDDING_DIM:
+            embedding = embedding[:EMBEDDING_DIM]
+            
+        return embedding
+
+
+
+    def _get_tfidf_embedding(self, text: str) -> np.ndarray:
+        """Get TF-IDF embedding"""
+        try:
+            if not self._tfidf_fitted:
+                self._tfidf_docs.append(text)
+                if len(self._tfidf_docs) >= 10:
+                    self.model.fit(self._tfidf_docs)
+                    self._tfidf_fitted = True
+            
+            if self._tfidf_fitted:
+                tfidf_vector = self.model.transform([text]).toarray().flatten()
+                return self._normalize_dimensions(tfidf_vector)
+            else:
+                self._tfidf_docs.append(text)
+                return self._get_basic_embedding(text)
+                
+        except Exception as e:
+            return self._get_basic_embedding(text)
+
+    def _get_basic_embedding(self, text: str) -> np.ndarray:
+        """Basic word frequency embedding"""
+        try:
+            words = re.findall(r'\b\w+\b', text.lower())
+            word_freq = Counter(words)
+            
+            embedding = np.zeros(EMBEDDING_DIM)
+            for i, (word, freq) in enumerate(word_freq.most_common(min(EMBEDDING_DIM, len(word_freq)))):
+                if i < EMBEDDING_DIM:
+                    embedding[i] = freq / len(words)
+                    
+            return embedding
+            
+        except Exception:
+            return np.zeros(EMBEDDING_DIM)
+
+    def calculate_similarity(self, text1: str, text2: str, user_id: str = None) -> float:
+        """Calculate similarity between texts"""
+        try:
+            emb1 = self.get_embedding(text1, user_id)
+            emb2 = self.get_embedding(text2, user_id)
+            
+            dot_product = np.dot(emb1, emb2)
+            norm1 = np.linalg.norm(emb1)
+            norm2 = np.linalg.norm(emb2)
+            
+            if norm1 < 1e-10 or norm2 < 1e-10:
+                return 0.0
+            
+            similarity = dot_product / (norm1 * norm2)
+            return max(0.0, min(1.0, similarity))
+            
+        except Exception:
+            return 0.0
+
+class NamedEntityRecognition:
+    """Simple entity recognition"""
+    
+    def __init__(self):
+        self.model_type = 'basic'
+    
+    def extract_entities(self, text: str) -> Dict[str, List[str]]:
+        """Extract basic entities"""
+        if not text or not text.strip():
+            return {"PERSON": [], "ORG": [], "LOC": [], "MISC": []}
+        
+        try:
+            entities = {"PERSON": [], "ORG": [], "LOC": [], "MISC": []}
+            
+            # Extract capitalized phrases
+            words = text.split()
+            for i, word in enumerate(words):
+                if len(word) > 1 and word[0].isupper():
+                    entity_parts = [word]
+                    j = i + 1
+                    while j < len(words) and len(words[j]) > 0 and words[j][0].isupper():
+                        entity_parts.append(words[j])
+                        j += 1
+                    
+                    if len(entity_parts) > 0:
+                        entity_text = ' '.join(entity_parts)
+                        if any(word.lower() in ['inc', 'corp', 'company', 'ltd', 'llc'] for word in entity_parts):
+                            entities["ORG"].append(entity_text)
+                        elif any(word.lower() in ['street', 'avenue', 'road', 'city', 'state'] for word in entity_parts):
+                            entities["LOC"].append(entity_text)
+                        else:
+                            entities["PERSON"].append(entity_text)
+            
+            return entities
+            
+        except Exception as e:
+            logger.warning(f"Entity extraction failed: {e}")
+            return {"PERSON": [], "ORG": [], "LOC": [], "MISC": []}
+
+class SuperhumanMemorySystem:
+    """Fixed memory system that helps your cheap AI instead of replacing it"""
+    
+    def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
+        self.config = config or SuperhumanConfig()
+        self.db_path = storage_path or MEMORY_DB_PATH
+        
+        # Initialize components
+        self.embedding_engine = AdvancedEmbeddingEngine(self.config)
+        self.entity_recognition = NamedEntityRecognition()
+        
+        # Thread safety
+        self.memory_cache = {}
+        self.cache_lock = Lock()
+        self.recent_queries = deque(maxlen=100)
+        self.conversation_id = str(uuid.uuid4())
+        self.working_set = {
+            'facts': deque(maxlen=self.config.working_set_max_facts),
+            'episodes': deque(maxlen=self.config.working_set_max_episodes),
+        }
+        
+        # Initialize database
+        self._init_database()
+        
+        # Optional overrides from environment for quick tuning without code edits
+        try:
+            if self.config.allow_env_override:
+                mc = os.getenv("NOTUS_MAX_CONTEXT_CHARS")
+                if mc:
+                    self.config.max_context_chars = max(500, int(mc))
+                fp = os.getenv("NOTUS_FINAL_PROMPT_MAX_CHARS")
+                if fp:
+                    self.config.final_prompt_max_chars = max(1000, int(fp))
+                cs = os.getenv("NOTUS_UI_CHUNK_SIZE")
+                if cs:
+                    self.config.ui_chunk_size = max(500, int(cs))
+        except Exception as e:
+            logger.warning(f"Env override failed: {e}")
+
+        logger.info(f"🧠 Fixed Superhuman Memory System initialized")
+    
+    def _init_database(self):
+        try:
+            if not hasattr(self, '_db_connection'):
+                self._db_connection = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+                # Enable WAL mode for concurrent reads/writes
+                self._db_connection.execute('PRAGMA journal_mode=WAL')
+                self._db_connection.execute('PRAGMA synchronous=NORMAL')
+                self._db_connection.execute('PRAGMA busy_timeout=30000')
+                self._db_connection.execute('PRAGMA cache_size=-64000')  # 64MB cache
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS superhuman_memories (
+                        id TEXT PRIMARY KEY,
+                        timestamp TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        tag TEXT NOT NULL,
+                        importance_score REAL DEFAULT 5.0,
+                        mode TEXT DEFAULT 'writing',
+                        personality TEXT DEFAULT 'witty',
+                        embedding BLOB,
+                        entities TEXT,
+                        concepts TEXT,
+                        semantic_hash TEXT,
+                        access_count INTEGER DEFAULT 0,
+                        last_accessed TEXT,
+                        user_id TEXT,
+                        memory_type TEXT DEFAULT 'episodic',
+                        conversation_id TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS learning_patterns (
+                        pattern_key TEXT PRIMARY KEY,
+                        pattern_data TEXT NOT NULL,
+                        usage_count INTEGER DEFAULT 1,
+                        last_used DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Vocabulary learning table - learns words from conversations
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS learned_vocabulary (
+                        word TEXT NOT NULL,
+                        category TEXT NOT NULL,
+                        emotion TEXT,
+                        intensity_min REAL DEFAULT 0.0,
+                        intensity_max REAL DEFAULT 1.0,
+                        usage_count INTEGER DEFAULT 1,
+                        last_used DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (word, category, emotion)
+                    )
+                ''')
+                
+                # Word meanings table - stores what words actually mean
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS word_meanings (
+                        word TEXT PRIMARY KEY,
+                        meaning TEXT NOT NULL,
+                        part_of_speech TEXT,
+                        intent_type TEXT,
+                        synonyms TEXT,
+                        usage_count INTEGER DEFAULT 1,
+                        last_used DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Grammar knowledge table - stores sentence structure rules
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS grammar_knowledge (
+                        id TEXT PRIMARY KEY,
+                        rule_type TEXT NOT NULL,
+                        rule_description TEXT NOT NULL,
+                        example TEXT,
+                        usage_count INTEGER DEFAULT 1,
+                        last_used DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                # Episodic events table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS episodic_events (
+                        id TEXT PRIMARY KEY,
+                        timestamp TEXT NOT NULL,
+                        user_id TEXT,
+                        actor TEXT,
+                        action TEXT,
+                        object TEXT,
+                        place TEXT,
+                        cause TEXT,
+                        effect TEXT,
+                        note TEXT,
+                        sentiment REAL,
+                        confidence REAL DEFAULT 0.8,
+                        source TEXT,
+                        usage_count INTEGER DEFAULT 0,
+                        last_accessed TEXT
+                    )
+                ''')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_epi_user_time ON episodic_events(user_id, timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_epi_action ON episodic_events(action)')
+                
+                # Durable semantic knowledge: brain facts
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS brain_facts (
+                        id TEXT PRIMARY KEY,
+                        subject TEXT NOT NULL,
+                        predicate TEXT NOT NULL,
+                        object TEXT NOT NULL,
+                        value TEXT,
+                        confidence REAL DEFAULT 0.85,
+                        permanent INTEGER DEFAULT 0,
+                        usage_count INTEGER DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        last_reinforced TEXT,
+                        user_id TEXT,
+                        source TEXT,
+                        semantic_hash TEXT,
+                        conflicts_with TEXT,
+                        is_contradicted INTEGER DEFAULT 0
+                    )
+                ''')
+                cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_fact_user ON brain_facts(subject, predicate, object, user_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_fact_conf ON brain_facts(confidence)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_fact_last ON brain_facts(last_reinforced)')
+                
+                # Create indexes
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_id ON superhuman_memories(user_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_conversation_id ON superhuman_memories(conversation_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON superhuman_memories(timestamp)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_role ON superhuman_memories(role)')
+                
+                self._db_connection.commit()
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+    
+    def _validate_embedding(self, embedding: np.ndarray) -> bool:
+        """Validate embedding quality and dimensions"""
+        try:
+            # Check for None or empty
+            if embedding is None or embedding.size == 0:
+                return False
+            
+            # Check dimensions
+            if len(embedding.shape) != 1:
+                return False
+            
+            if embedding.shape[0] != EMBEDDING_DIM:
+                return False
+            
+            # Check for NaN or Inf values
+            if np.isnan(embedding).any() or np.isinf(embedding).any():
+                return False
+            
+            # Check for all zeros (completely degenerate)
+            if np.allclose(embedding, 0):
+                return False
+            
+            # Check magnitude (prevent numerical issues)
+            norm = np.linalg.norm(embedding)
+            if norm < 1e-10 or norm > 1e10:
+                return False
+            
+            return True
+        
+        except Exception as e:
+            logger.warning(f"Embedding validation failed: {e}")
+            return False
+    
+    def store_memory(self, role: str, content: str, user_id: str = "default", tag: str = "General", 
+                    importance: float = 5.0, mode: str = "writing", memory_type: str = MemoryType.CONVERSATION,
+                    personality: str = "witty") -> str:
+        """Store a memory with embedding quality validation"""
+        try:
+            memory_id = str(uuid.uuid4())
+            timestamp = datetime.now().isoformat()
+            
+            # Generate embedding
+            embedding = self.embedding_engine.get_embedding(content, user_id)
+            
+            # Validate embedding quality - if bad, retry with fallback
+            if not self._validate_embedding(embedding):
+                logger.warning(f"Bad embedding for content: {content[:50]}... Retrying with fallback")
+                # Try TF-IDF fallback
+                embedding = self.embedding_engine._get_tfidf_embedding(content)
+                
+                # If still bad, use basic embedding as last resort
+                if not self._validate_embedding(embedding):
+                    embedding = self.embedding_engine._get_basic_embedding(content)
+                    
+                    # If STILL bad, skip storing this memory to prevent corruption
+                    if not self._validate_embedding(embedding):
+                        logger.error(f"All embedding methods failed for: {content[:50]}... Skipping memory")
+                        return None
+            
+            embedding_blob = pickle.dumps(embedding)
+            
+            # Extract entities
+            entities = self.entity_recognition.extract_entities(content)
+            entities_json = json.dumps(entities)
+            
+            # Generate semantic hash
+            semantic_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+            
+            # Extract concepts
+            concepts = self._extract_concepts(content)
+            concepts_json = json.dumps(concepts)
+            
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                cursor.execute('''
+                    INSERT INTO superhuman_memories 
+                    (id, timestamp, role, content, tag, importance_score, mode, personality, 
+                     embedding, entities, concepts, semantic_hash, user_id, memory_type, conversation_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (memory_id, timestamp, role, content, tag, importance, mode, personality,
+                     embedding_blob, entities_json, concepts_json, semantic_hash, user_id, memory_type, self.conversation_id))
+                
+                self._db_connection.commit()
+            
+            # Learn vocabulary from conversation (outside DB_LOCK to avoid deadlock)
+            self._learn_vocabulary_from_content(content, role)
+            
+            logger.info(f"💾 Stored memory: {role} - {content[:50]}...")
+            return memory_id
+            
+        except Exception as e:
+            logger.error(f"Failed to store memory: {e}")
+            return None
+    
+    def _learn_vocabulary_from_content(self, content: str, role: str):
+        """Extract and learn vocabulary from conversation content"""
+        try:
+            import re
+            # Extract words (3+ characters, alphanumeric)
+            words = re.findall(r'\b[a-zA-Z]{3,}\b', content.lower())
+            
+            # Categorize words based on common patterns
+            profanity_words = ['fuck', 'shit', 'damn', 'hell', 'goddamn', 'bullshit', 'ass', 'bitch', 'asshole', 'crap']
+            emotional_words = {
+                'positive': ['good', 'great', 'cool', 'nice', 'sweet', 'amazing', 'awesome', 'fantastic', 'wonderful', 'happy', 'glad', 'excited'],
+                'negative': ['bad', 'rough', 'hard', 'weird', 'messy', 'exhausting', 'heavy', 'awful', 'terrible', 'horrible', 'sad', 'angry', 'frustrated'],
+                'excited': ['hyped', 'thrilling', 'crazy', 'wild', 'fantastic', 'incredible', 'insane', 'unreal'],
+                'calm': ['chill', 'relaxed', 'easy', 'quiet', 'peaceful', 'mellow', 'serene'],
+                'curious': ['interesting', 'strange', 'curious', 'fascinating', 'intriguing', 'odd', 'bizarre'],
+                'empathetic': ['understand', 'know', 'see', 'recognize', 'appreciate', 'relate', 'feel'],
+                'awkward': ['awkward', 'uncomfortable', 'off', 'unsettling', 'cringy'],
+                'angry': ['pissed', 'furious', 'livid', 'raging', 'fuming', 'mad', 'annoyed'],
+                'frustrated': ['frustrated', 'annoyed', 'irritated', 'aggravated', 'bothered']
+            }
+            
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                for word in words:
+                    # Check if profanity
+                    if word in profanity_words:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO learned_vocabulary 
+                            (word, category, emotion, intensity_min, intensity_max, usage_count, last_used)
+                            VALUES (?, 'profanity', NULL, 0.6, 1.0, 
+                                COALESCE((SELECT usage_count FROM learned_vocabulary WHERE word = ? AND category = 'profanity'), 0) + 1,
+                                CURRENT_TIMESTAMP)
+                        ''', (word, word))
+                    
+                    # Check emotional categories
+                    for emotion, emotion_words in emotional_words.items():
+                        if word in emotion_words:
+                            cursor.execute('''
+                                INSERT OR REPLACE INTO learned_vocabulary 
+                                (word, category, emotion, intensity_min, intensity_max, usage_count, last_used)
+                                VALUES (?, 'emotional', ?, 0.0, 1.0,
+                                    COALESCE((SELECT usage_count FROM learned_vocabulary WHERE word = ? AND category = 'emotional' AND emotion = ?), 0) + 1,
+                                    CURRENT_TIMESTAMP)
+                            ''', (word, emotion, word, emotion))
+                            
+        except Exception as e:
+            logger.warning(f"Vocabulary learning failed: {e}")
+    
+    def get_vocabulary(self, category: str = None, emotion: str = None, intensity: float = None) -> List[str]:
+        """Get learned vocabulary based on category, emotion, and intensity"""
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                query = "SELECT word FROM learned_vocabulary WHERE 1=1"
+                params = []
+                
+                if category:
+                    query += " AND category = ?"
+                    params.append(category)
+                
+                if emotion:
+                    query += " AND emotion = ?"
+                    params.append(emotion)
+                
+                if intensity is not None:
+                    query += " AND intensity_min <= ? AND intensity_max >= ?"
+                    params.extend([intensity, intensity])
+                
+                query += " ORDER BY usage_count DESC, last_used DESC LIMIT 50"
+                
+                cursor.execute(query, params)
+                words = [row[0] for row in cursor.fetchall()]
+                return words
+                
+        except Exception as e:
+            logger.error(f"Failed to get vocabulary: {e}")
+            return []
+    
+    def get_word_meaning(self, word: str) -> Optional[Dict[str, Any]]:
+        """Get the meaning and intent type of a word"""
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                cursor.execute('''
+                    SELECT word, meaning, part_of_speech, intent_type, synonyms
+                    FROM word_meanings WHERE word = ?
+                ''', (word.lower(),))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        'word': row[0],
+                        'meaning': row[1],
+                        'part_of_speech': row[2],
+                        'intent_type': row[3],
+                        'synonyms': row[4].split(', ') if row[4] else []
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get word meaning: {e}")
+            return None
+    
+    def get_grammar_knowledge(self, rule_type: str = None) -> List[Dict[str, Any]]:
+        """Get grammar knowledge - sentence structure rules"""
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                if rule_type:
+                    cursor.execute('''
+                        SELECT rule_type, rule_description, example
+                        FROM grammar_knowledge WHERE rule_type = ?
+                        ORDER BY usage_count DESC
+                    ''', (rule_type,))
+                else:
+                    cursor.execute('''
+                        SELECT rule_type, rule_description, example
+                        FROM grammar_knowledge
+                        ORDER BY usage_count DESC
+                    ''')
+                rows = cursor.fetchall()
+                return [
+                    {
+                        'rule_type': row[0],
+                        'description': row[1],
+                        'example': row[2]
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Failed to get grammar knowledge: {e}")
+            return []
+    
+    def detect_intent_from_vocabulary(self, message: str) -> Dict[str, Any]:
+        """Detect intent using vocabulary knowledge instead of hardcoded pattern matching"""
+        message_lower = message.lower().strip()
+        words = message_lower.split()
+        
+        # Query word meanings to understand what words mean
+        detected_intents = []
+        for word in words:
+            meaning = self.get_word_meaning(word)
+            if meaning and meaning.get('intent_type'):
+                detected_intents.append(meaning['intent_type'])
+        
+        # Determine primary intent
+        if 'greeting' in detected_intents:
+            return {'intent': 'greeting', 'confidence': 0.9, 'method': 'vocabulary'}
+        elif 'question' in detected_intents:
+            return {'intent': 'question', 'confidence': 0.9, 'method': 'vocabulary'}
+        elif '?' in message:
+            return {'intent': 'question', 'confidence': 0.8, 'method': 'punctuation'}
+        elif 'gratitude' in detected_intents:
+            return {'intent': 'gratitude', 'confidence': 0.8, 'method': 'vocabulary'}
+        elif 'emotion' in detected_intents:
+            return {'intent': 'emotional_sharing', 'confidence': 0.7, 'method': 'vocabulary'}
+        else:
+            return {'intent': 'statement', 'confidence': 0.5, 'method': 'default'}
+    
+    def retrieve_memories(self, query: str, user_id: str = "default", limit: int = None) -> List[Dict[str, Any]]:
+        """Retrieve relevant memories with validation"""
+        try:
+            limit = limit or self.config.max_context_memories
+            query_embedding = self.embedding_engine.get_embedding(query, user_id)
+            
+            # Validate query embedding
+            if not self._validate_embedding(query_embedding):
+                logger.warning(f"Query embedding validation failed, returning empty results")
+                return []
+            
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                # Get recent memories
+                cursor.execute('''
+                    SELECT id, timestamp, role, content, tag, importance_score, mode, personality,
+                           embedding, entities, concepts, semantic_hash, access_count, last_accessed,
+                           user_id, memory_type, conversation_id
+                    FROM superhuman_memories
+                    WHERE user_id = ? OR user_id IS NULL
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                ''', (user_id, min(50, limit * 2)))  # SPEED
+                
+                memories = []
+                for row in cursor.fetchall():
+                    try:
+                        memory_embedding = pickle.loads(row[8]) if row[8] else np.zeros(EMBEDDING_DIM)
+                        
+                        # Validate memory embedding before using it
+                        if not self._validate_embedding(memory_embedding):
+                            logger.warning(f"Skipping memory with invalid embedding: {row[0]}")
+                            continue
+                        
+                        # Use stored embeddings instead of recalculating
+                        similarity = np.dot(query_embedding, memory_embedding) / (np.linalg.norm(query_embedding) * np.linalg.norm(memory_embedding) + 1e-10)
+                        
+                        if similarity >= self.config.similarity_threshold:
+                            memories.append({
+                                'id': row[0],
+                                'timestamp': row[1],
+                                'role': row[2],
+                                'content': row[3],
+                                'tag': row[4],
+                                'importance_score': row[5],
+                                'mode': row[6],
+                                'personality': row[7],
+                                'entities': json.loads(row[9]) if row[9] else {},
+                                'concepts': json.loads(row[10]) if row[10] else [],
+                                'semantic_hash': row[11],
+                                'access_count': row[12],
+                                'last_accessed': row[13],
+                                'user_id': row[14],
+                                'memory_type': row[15],
+                                'conversation_id': row[16],
+                                'similarity': similarity
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error processing memory {row[0]}: {e}")
+                        continue
+            
+            # Sort by similarity and recency
+            memories.sort(key=lambda x: (x['similarity'], x['timestamp']), reverse=True)
+            
+            # Update access counts
+            if memories:
+                memory_ids = [m['id'] for m in memories[:limit]]
+                self._update_access_counts(memory_ids)
+            
+            return memories[:limit]
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve memories: {e}")
+            return []
+    
+    def retrieve_memories_smart(self, query: str, user_id: str = "default", limit: int = None, story_text: str = None) -> List[Dict[str, Any]]:
+        """Smart memory retrieval with filtering based on query type and story context"""
+        try:
+            limit = limit or self.config.max_context_memories
+            
+            # FAST PATH: Skip semantic search for simple greetings
+            if len(query) < 20 and any(w in query.lower() for w in ['hello', 'hi', 'hey', 'sup', 'yo']):
+                return []  # Empty memories for greetings
+            
+            # Analyze query type to determine what memories are relevant
+            query_type = self._analyze_query_type(query)
+            print(f"🔍 Query type detected: {query_type}")
+            
+            # Get base memories
+            base_memories = self.retrieve_memories(query, user_id, limit * 2)
+            
+            # Apply smart filtering based on query type
+            if query_type == "story_specific":
+                # For story-specific questions, prioritize recent story-related memories
+                filtered_memories = self._filter_story_relevant_memories(base_memories, story_text)
+            elif query_type == "writing_help":
+                # For writing help, include some writing advice but prioritize recent context
+                filtered_memories = self._filter_writing_help_memories(base_memories)
+            elif query_type == "chat":
+                # For general chat, include more conversation history
+                filtered_memories = base_memories[:limit]
+            else:
+                # Default filtering
+                filtered_memories = base_memories[:limit]
+            
+            # Limit context length to prevent overwhelming
+            total_chars = sum(len(m.get('content', '')) for m in filtered_memories)
+            if total_chars > self.config.max_context_chars:
+                # Trim to fit within context limits
+                filtered_memories = self._trim_memories_to_fit(filtered_memories, self.config.max_context_chars)
+            
+            print(f"🧠 Smart filtering: {len(base_memories)} -> {len(filtered_memories)} memories")
+            return filtered_memories[:limit]
+            
+        except Exception as e:
+            print(f"❌ Error in smart memory retrieval: {e}")
+            return self.retrieve_memories(query, user_id, limit)
+
+    def _analyze_query_type(self, query: str) -> str:
+        """Analyze query to determine what type of context is needed"""
+        query_lower = query.lower()
+        
+        # Story-specific indicators
+        story_indicators = [
+            'character', 'scene', 'plot', 'chapter', 'story', 'book', 'novel',
+            'what happens', 'what should happen', 'how does', 'why does',
+            'quote', 'read', 'see', 'text', 'writing area'
+        ]
+        
+        # Writing help indicators
+        writing_help_indicators = [
+            'help me', 'how to', 'advice', 'improve', 'better', 'fix',
+            'problem', 'issue', 'struggling', 'stuck'
+        ]
+        
+        # Chat indicators
+        chat_indicators = [
+            'how are you', 'feeling', 'day', 'life', 'vent', 'talk',
+            'chat', 'conversation'
+        ]
+        
+        if any(indicator in query_lower for indicator in story_indicators):
+            return "story_specific"
+        elif any(indicator in query_lower for indicator in writing_help_indicators):
+            return "writing_help"
+        elif any(indicator in query_lower for indicator in chat_indicators):
+            return "chat"
+        else:
+            return "general"
+
+    def _filter_story_relevant_memories(self, memories: List[Dict], story_text: str = None) -> List[Dict]:
+        """Filter memories to prioritize story-specific context"""
+        if not memories:
+            return []
+        
+        # Prioritize recent story-related memories
+        story_memories = []
+        recent_memories = []
+        other_memories = []
+        
+        for memory in memories:
+            content = memory.get('content', '').lower()
+            memory_type = memory.get('memory_type', '')
+            
+            # Story-related memories get highest priority
+            if any(word in content for word in ['character', 'scene', 'plot', 'story', 'chapter']):
+                story_memories.append(memory)
+            # Recent memories (last 5) get medium priority
+            elif len(recent_memories) < 5:
+                recent_memories.append(memory)
+            else:
+                other_memories.append(memory)
+        
+        # Combine with story memories first, then recent, then others
+        filtered = story_memories + recent_memories + other_memories
+        return filtered[:self.config.max_context_memories]
+
+    def _filter_writing_help_memories(self, memories: List[Dict]) -> List[Dict]:
+        """Filter memories for writing help requests"""
+        if not memories:
+            return []
+        
+        # Prioritize recent writing advice and user's specific writing context
+        writing_memories = []
+        recent_memories = []
+        
+        for memory in memories:
+            content = memory.get('content', '').lower()
+            role = memory.get('role', '')
+            
+            # Writing advice from Monday gets priority
+            if role == 'monday' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
+                writing_memories.append(memory)
+            # Recent user messages about their writing
+            elif role == 'user' and len(recent_memories) < 3:
+                recent_memories.append(memory)
+        
+        filtered = writing_memories + recent_memories
+        return filtered[:self.config.max_context_memories]
+
+    def _trim_memories_to_fit(self, memories: List[Dict], max_chars: int) -> List[Dict]:
+        """Trim memories to fit within character limit"""
+        if not memories:
+            return []
+        
+        total_chars = 0
+        trimmed_memories = []
+        
+        for memory in memories:
+            content = memory.get('content', '')
+            if total_chars + len(content) <= max_chars:
+                trimmed_memories.append(memory)
+                total_chars += len(content)
+            else:
+                break
+        
+        return trimmed_memories
+
+    def _detect_contradictory_facts(self, subject: str, predicate: str, obj: str, user_id: str) -> List[Tuple[str, str]]:
+        """Find facts that contradict this one. Returns list of (fact_id, contradicting_object)"""
+        contradictions = []
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                # Check for direct contradictions with same subject/predicate but different object
+                cursor.execute('''
+                    SELECT id, object FROM brain_facts
+                    WHERE subject = ? AND predicate = ? AND object != ? 
+                    AND (user_id = ? OR user_id IS NULL)
+                    AND confidence > 0.7
+                ''', (subject, predicate, obj, user_id))
+                
+                for fact_id, existing_obj in cursor.fetchall():
+                    # Check if objects are semantically opposite
+                    sim = self.embedding_engine.calculate_similarity(obj, existing_obj)
+                    if sim < 0.3:  # Low similarity = likely opposite
+                        contradictions.append((fact_id, existing_obj))
+                
+                # Also check for negation patterns (e.g., "happy" vs "not happy")
+                negated_obj = obj if obj.startswith("not ") else f"not {obj}"
+                cursor.execute('''
+                    SELECT id, object FROM brain_facts
+                    WHERE subject = ? AND predicate = ? AND (object = ? OR object = ?)
+                    AND (user_id = ? OR user_id IS NULL)
+                    AND confidence > 0.7
+                ''', (subject, predicate, obj, negated_obj, user_id))
+                
+                for fact_id, existing_obj in cursor.fetchall():
+                    if existing_obj != obj:
+                        contradictions.append((fact_id, existing_obj))
+        
+        except Exception as e:
+            logger.warning(f"Conflict detection failed: {e}")
+        
+        return contradictions
+
+    # ===== Brain: Durable Facts + Active Learning =====
+    def remember_fact(self, subject: str, predicate: str, obj: str, value: Optional[str] = None,
+                      confidence: float = 0.9, user_id: str = "default", source: str = "user",
+                      permanent: bool = False) -> str:
+        """Store or reinforce a durable fact. Idempotent per (subject,predicate,object,user). Detects and tracks contradictions."""
+        try:
+            subject = (subject or '').strip()
+            predicate = (predicate or '').strip()
+            obj = (obj or '').strip()
+            value = (value or None)
+            if not subject or not predicate or not obj:
+                return None
+
+            # First, detect any contradictory facts
+            contradictions = self._detect_contradictory_facts(subject, predicate, obj, user_id)
+            
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                cursor.execute('''
+                    SELECT id, confidence, permanent, usage_count FROM brain_facts
+                    WHERE subject = ? AND predicate = ? AND object = ? AND (user_id = ? OR user_id IS NULL)
+                    LIMIT 1
+                ''', (subject, predicate, obj, user_id))
+                row = cursor.fetchone()
+
+                now = datetime.now().isoformat()
+                
+                # Build conflicts_with string from contradictions
+                conflicts_json = None
+                if contradictions:
+                    conflicts_json = json.dumps([{"id": cid, "object": obj} for cid, obj in contradictions])
+                
+                if row:
+                    fact_id, conf_old, perm_old, usage = row
+                    conf_new = min(1.0, float(conf_old or 0.0) + 0.05 + 0.5*max(0.0, confidence-0.8))
+                    perm_new = 1 if (perm_old or 0) or permanent else 0
+                    cursor.execute('''
+                        UPDATE brain_facts
+                        SET value = COALESCE(?, value), confidence = ?, permanent = ?, usage_count = ?, last_reinforced = ?, source = COALESCE(?, source), conflicts_with = ?
+                        WHERE id = ?
+                    ''', (value, conf_new, perm_new, int(usage)+1, now, source, conflicts_json, fact_id))
+                    
+                    # Mark contradicted facts
+                    if contradictions:
+                        for contradicted_id, _ in contradictions:
+                            cursor.execute('UPDATE brain_facts SET is_contradicted = 1 WHERE id = ?', (contradicted_id,))
+                    
+                    self._db_connection.commit()
+                    return fact_id
+                else:
+                    fact_id = str(uuid.uuid4())
+                    sem_hash = hashlib.sha256(f"{subject}|{predicate}|{obj}|{user_id}".encode('utf-8')).hexdigest()
+                    cursor.execute('''
+                        INSERT INTO brain_facts
+                        (id, subject, predicate, object, value, confidence, permanent, usage_count, created_at, last_reinforced, user_id, source, semantic_hash, conflicts_with, is_contradicted)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    ''', (fact_id, subject, predicate, obj, value, float(confidence), 1 if permanent else 0, 1, now, now, user_id, source, sem_hash, conflicts_json))
+                    
+                    # Mark contradicted facts
+                    if contradictions:
+                        for contradicted_id, _ in contradictions:
+                            cursor.execute('UPDATE brain_facts SET is_contradicted = 1 WHERE id = ?', (contradicted_id,))
+                    
+                    self._db_connection.commit()
+                    return fact_id
+        except Exception as e:
+            logger.error(f"remember_fact failed: {e}")
+            return None
+
+    def learn_facts_from_text(self, text: str, user_id: str = "default", default_conf: float = 0.85) -> List[str]:
+        """Extract simple facts from text and store them. Returns list of fact IDs."""
+        if not text or not text.strip():
+            return []
+        facts: List[Tuple[str,str,str,Optional[str]]] = []
+        t = text.strip()
+        try:
+            # X is Y
+            for m in re.finditer(r"\b([A-Za-z0-9_][A-Za-z0-9_\s]{0,50}?)\s+is\s+([A-Za-z0-9_\-][A-Za-z0-9_\-\s]{1,50})\b", t, re.IGNORECASE):
+                sub = m.group(1).strip()
+                obj = m.group(2).strip()
+                facts.append((sub, "is", obj, None))
+            # X = Y
+            for m in re.finditer(r"\b([A-Za-z0-9_][A-Za-z0-9_\s]{0,50}?)\s*=\s*([A-Za-z0-9_\-][A-Za-z0-9_\-\s]{1,50})\b", t):
+                sub = m.group(1).strip()
+                obj = m.group(2).strip()
+                facts.append((sub, "equals", obj, None))
+            # X likes Y
+            for m in re.finditer(r"\b([A-Za-z0-9_][A-Za-z0-9_\s]{0,50}?)\s+likes\s+([A-Za-z0-9_\-][A-Za-z0-9_\-\s]{1,50})\b", t, re.IGNORECASE):
+                sub = m.group(1).strip(); obj = m.group(2).strip()
+                facts.append((sub, "likes", obj, None))
+            # Simple arithmetic a+b=c
+            for m in re.finditer(r"\b(\d{1,6})\s*([+\-*/])\s*(\d{1,6})\s*=\s*(\d{1,12})\b", t):
+                a, op, b, c = m.groups()
+                facts.append(("math", f"{a}{op}{b}", c, None))
+            # Preferences
+            for m in re.finditer(r"\bI\s+(like|love|hate|prefer)\s+([^\.\n\r]{1,60})", t, re.IGNORECASE):
+                pred = m.group(1).lower()
+                obj = m.group(2).strip()
+                facts.append(("user", pred, obj, None))
+            # Goals/intent
+            for m in re.finditer(r"\bI\s+(want|need|plan)\s+to\s+([^\.\n\r]{1,80})", t, re.IGNORECASE):
+                pred = m.group(1).lower() + "_to"
+                obj = m.group(2).strip()
+                facts.append(("user", pred, obj, None))
+        except Exception as e:
+            logger.warning(f"learn_facts_from_text parse warning: {e}")
+
+        ids: List[str] = []
+        for sub, pred, obj, val in facts:
+            fid = self.remember_fact(sub, pred, obj, value=val, confidence=default_conf, user_id=user_id, source="learn_text")
+            if fid:
+                ids.append(fid)
+        return ids
+
+    def recall_facts(self, query: str, user_id: str = "default", limit: int = 10) -> List[Dict[str, Any]]:
+        """Recall top facts for a query by similarity/confidence/recency. Deep recall (no time cutoff)."""
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                # Pull a candidate pool: prioritize high confidence and reinforced facts
+                cursor.execute('''
+                    SELECT id, subject, predicate, object, value, confidence, permanent, usage_count, created_at, last_reinforced, user_id, source
+                    FROM brain_facts
+                    WHERE user_id = ? OR user_id IS NULL
+                    ORDER BY confidence DESC, COALESCE(last_reinforced, created_at) DESC
+                    LIMIT 500
+                ''', (user_id,))
+                rows = cursor.fetchall()
+
+            scored: List[Tuple[float, Dict[str, Any]]] = []
+            for r in rows:
+                fact_text = f"{r[1]} {r[2]} {r[3]}" + (f" = {r[4]}" if r[4] else "")
+                sim = self.embedding_engine.calculate_similarity(query, fact_text, user_id)
+                conf = float(r[5] or 0.0)
+                perm = 0.1 if (r[6] or 0) else 0.0
+                score = 0.6*sim + 0.35*conf + 0.05*perm
+                scored.append((score, {
+                    'id': r[0], 'subject': r[1], 'predicate': r[2], 'object': r[3], 'value': r[4],
+                    'confidence': conf, 'permanent': bool(r[6]), 'usage_count': r[7],
+                    'created_at': r[8], 'last_reinforced': r[9], 'user_id': r[10], 'source': r[11],
+                    'text': fact_text
+                }))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            results = [item for _, item in scored[:max(1, int(limit))]]
+
+            # Active learning: reinforce retrieved facts a bit
+            now = datetime.now().isoformat()
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                for fact in results:
+                    cursor.execute('''
+                        UPDATE brain_facts
+                        SET usage_count = usage_count + 1,
+                            confidence = MIN(1.0, confidence + ?),
+                            last_reinforced = ?
+                        WHERE id = ?
+                    ''', (self.config.online_learning_rate, now, fact['id']))
+                self._db_connection.commit()
+
+            return results
+        except Exception as e:
+            logger.error(f"recall_facts failed: {e}")
+            return []
+
+    def get_brain_context(self, query: str, user_id: str = "default", limit: int = 5) -> str:
+        """Return a compact context string of top facts for inclusion elsewhere."""
+        facts = self.recall_facts(query, user_id=user_id, limit=limit)
+        if not facts:
+            return ""
+        lines = [f"- FACT: {f['text']} (conf {f['confidence']:.2f}{', permanent' if f['permanent'] else ''})" for f in facts]
+        return "\n".join(lines)
+    
+    def _enforce_final_length(self, prompt: str) -> str:
+        """Ensure the final prompt stays under configured limit by trimming context first."""
+        try:
+            max_len = int(self.config.final_prompt_max_chars)
+            if len(prompt) <= max_len:
+                return prompt
+
+            # Identify blocks
+            ctx_marker = "CONTEXT FROM PREVIOUS CONVERSATIONS:"
+            analysis_marker = "\n\nANALYSIS:"
+            user_marker = "\n\nUSER'S CURRENT MESSAGE:"
+
+            ctx_start = prompt.find(ctx_marker)
+            analysis_start = prompt.find(analysis_marker)
+            user_start = prompt.find(user_marker)
+
+            # Trim context block first
+            if ctx_start != -1 and analysis_start != -1 and analysis_start > ctx_start:
+                head = prompt[:ctx_start]
+                ctx = prompt[ctx_start:analysis_start]
+                tail = prompt[analysis_start:]
+                budget = max_len - len(head) - len(tail)
+                if budget < 200:
+                    budget = 200
+                ctx = ctx[:budget]
+                prompt = head + ctx + tail
+
+            # If still too long, trim analysis block before the user message
+            if len(prompt) > max_len and analysis_start != -1 and user_start != -1 and user_start > analysis_start:
+                head2 = prompt[:analysis_start]
+                analysis_block = prompt[analysis_start:user_start]
+                tail2 = prompt[user_start:]
+                budget2 = max_len - len(head2) - len(tail2)
+                if budget2 < 150:
+                    budget2 = 150
+                analysis_block = analysis_block[:budget2]
+                prompt = head2 + analysis_block + tail2
+
+            # Fallback: hard truncate preserving the tail
+            if len(prompt) > max_len:
+                keep_tail = prompt[-600:]
+                head_budget = max_len - len(keep_tail)
+                prompt = prompt[:max(0, head_budget)] + keep_tail
+            return prompt
+        except Exception:
+            return prompt[:self.config.final_prompt_max_chars]
+
+    def chunk_for_ui(self, text: str, chunk_size: Optional[int] = None) -> List[str]:
+        """Split long text into UI-safe chunks on line boundaries when possible."""
+        size = int(chunk_size or self.config.ui_chunk_size)
+        if len(text) <= size:
+            return [text]
+        chunks: List[str] = []
+        start = 0
+        n = len(text)
+        while start < n:
+            end = min(n, start + size)
+            newline = text.rfind("\n", start, end)
+            cut = newline if newline != -1 and newline > start else end
+            chunks.append(text[start:cut])
+            start = cut
+            if start < n and text[start:start+1] == "\n":
+                start += 1
+        return chunks
+
+    def generate_smart_prompt_chunks_for_ai(self, user_input: str, user_id: str = "default", story_text: str = None,
+                                            chunk_size: Optional[int] = None) -> List[str]:
+        """Convenience: generate smart prompt and return UI-safe chunks."""
+        prompt = self.generate_smart_prompt_for_ai(user_input, user_id=user_id, story_text=story_text)
+        return self.chunk_for_ui(prompt, chunk_size)
+
+    # =================== Episodic Memory and Observe ===================
+    def store_event(self, actor: str, action: str, object: Optional[str] = None, place: Optional[str] = None,
+                    cause: Optional[str] = None, effect: Optional[str] = None, note: Optional[str] = None,
+                    sentiment: Optional[float] = None, confidence: float = 0.8, user_id: str = "default",
+                    source: str = "user") -> Optional[str]:
+        try:
+            eid = str(uuid.uuid4())
+            ts = datetime.now().isoformat()
+            with DB_LOCK:
+                c = self._db_connection.cursor()
+                c.execute('''
+                    INSERT INTO episodic_events
+                    (id, timestamp, user_id, actor, action, object, place, cause, effect, note, sentiment, confidence, source, usage_count, last_accessed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                ''', (eid, ts, user_id, actor, action, object, place, cause, effect, note, sentiment, confidence, source, ts))
+                self._db_connection.commit()
+            return eid
+        except Exception as e:
+            logger.error(f"store_event failed: {e}")
+            return None
+
+    def _extract_events_from_text(self, text: str, user_id: str = "default") -> List[str]:
+        if not text or not text.strip():
+            return []
+        ids: List[str] = []
+        t = text.strip()
+        try:
+            for m in re.finditer(r"\bI\s+([a-z]{2,15})\s+([^\.\n\r]{1,120})", t, re.IGNORECASE):
+                action = m.group(1).lower()
+                obj = m.group(2).strip()
+                eid = self.store_event(actor="user", action=action, object=obj, user_id=user_id, source="event_text")
+                if eid:
+                    ids.append(eid)
+            for m in re.finditer(r"\b([A-Z][a-zA-Z]{1,30})\s+([a-z]{2,15})\s+([^\.\n\r]{1,120})", t):
+                actor = m.group(1)
+                action = m.group(2).lower()
+                obj = m.group(3).strip()
+                eid = self.store_event(actor=actor, action=action, object=obj, user_id=user_id, source="event_text")
+                if eid:
+                    ids.append(eid)
+        except Exception as e:
+            logger.warning(f"event extraction warning: {e}")
+        return ids
+
+    def recall_episodes(self, query: str, user_id: str = "default", limit: int = 10) -> List[Dict[str, Any]]:
+        try:
+            with DB_LOCK:
+                c = self._db_connection.cursor()
+                c.execute('''
+                    SELECT id, timestamp, actor, action, object, place, cause, effect, note, sentiment, confidence, source, usage_count
+                    FROM episodic_events
+                    WHERE user_id = ? OR user_id IS NULL
+                    ORDER BY timestamp DESC
+                    LIMIT 500
+                ''', (user_id,))
+                rows = c.fetchall()
+            scored: List[Tuple[float, Dict[str, Any]]] = []
+            for r in rows:
+                parts = [p for p in [r[2], r[3], r[4], r[5], r[6], r[7], r[8]] if p]
+                text = " ".join(parts)
+                sim = self.embedding_engine.calculate_similarity(query, text, user_id)
+                conf = float(r[10] or 0.0)
+                recency_bonus = 0.05
+                score = 0.65*sim + 0.3*conf + recency_bonus
+                scored.append((score, {
+                    'id': r[0], 'timestamp': r[1], 'actor': r[2], 'action': r[3], 'object': r[4], 'place': r[5],
+                    'cause': r[6], 'effect': r[7], 'note': r[8], 'sentiment': r[9], 'confidence': conf,
+                    'source': r[11], 'usage_count': r[12]
+                }))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            results = [d for _, d in scored[:max(1,int(limit))]]
+            now = datetime.now().isoformat()
+            with DB_LOCK:
+                c = self._db_connection.cursor()
+                for ep in results:
+                    c.execute('UPDATE episodic_events SET usage_count = usage_count + 1, last_accessed = ? WHERE id = ?', (now, ep['id']))
+                self._db_connection.commit()
+            return results
+        except Exception as e:
+            logger.error(f"recall_episodes failed: {e}")
+            return []
+
+    def _update_working_set(self, facts: List[Dict[str, Any]], episodes: List[Dict[str, Any]]):
+        """Update working set with smart aging based on relevance (confidence for facts, recency for episodes)"""
+        # Add facts with age-out logic based on confidence
+        for f in facts or []:
+            self.working_set['facts'].appendleft(f)
+            
+            # If working set is full, smartly remove the least relevant fact
+            if len(self.working_set['facts']) >= self.config.working_set_max_facts:
+                # Keep high-confidence facts, age out low-confidence ones
+                facts_list = list(self.working_set['facts'])
+                
+                # Find the lowest confidence fact
+                min_conf_idx = 0
+                min_conf = facts_list[0].get('confidence', 0.5)
+                for i, fact in enumerate(facts_list):
+                    conf = fact.get('confidence', 0.5)
+                    if conf < min_conf:
+                        min_conf = conf
+                        min_conf_idx = i
+                
+                # Remove if it's low confidence (< 0.6)
+                if min_conf < 0.6:
+                    facts_list.pop(min_conf_idx)
+                    self.working_set['facts'].clear()
+                    for fact in facts_list:
+                        self.working_set['facts'].append(fact)
+        
+        # Add episodes with age-out logic based on recency + importance
+        for e in episodes or []:
+            self.working_set['episodes'].appendleft(e)
+            
+            # If working set is full, remove the oldest/least important episode
+            if len(self.working_set['episodes']) >= self.config.working_set_max_episodes:
+                # Keep recent and important episodes, age out old/unimportant ones
+                episodes_list = list(self.working_set['episodes'])
+                
+                # Find the oldest/least important episode (last item has lower importance)
+                # Since appendleft makes newest first, just remove the last one (oldest)
+                if episodes_list:
+                    episodes_list.pop()  # Remove the oldest
+                    self.working_set['episodes'].clear()
+                    for episode in episodes_list:
+                        self.working_set['episodes'].append(episode)
+
+    def get_working_set(self) -> Dict[str, List[Dict[str, Any]]]:
+        return {
+            'facts': list(self.working_set['facts']),
+            'episodes': list(self.working_set['episodes'])
+        }
+
+    def build_prompt(self, user_input: str, include_working_set: bool = True, user_id: str = "default",
+                     story_text: Optional[str] = None) -> str:
+        ws_lines: List[str] = []
+        if include_working_set:
+            for f in list(self.working_set['facts'])[:10]:
+                ws_lines.append(f"FACT: {f.get('text')}")
+            for e in list(self.working_set['episodes'])[:10]:
+                ws_lines.append(f"EVENT: {e.get('actor','?')} {e.get('action','?')} {e.get('object','')}")
+        ws_block = ("\n".join(ws_lines) + "\n\n") if ws_lines else ""
+        base = self.generate_smart_prompt_for_ai(user_input, user_id=user_id, story_text=story_text)
+        prompt = ("WORKING SET:\n" + ws_block + base) if ws_block else base
+        return self._enforce_final_length(prompt)
+
+    def observe(self, user_text: str, ai_text: Optional[str] = None, user_id: str = "default",
+                story_text: Optional[str] = None, autosave: Optional[bool] = None) -> Dict[str, Any]:
+        self.store_memory("user", user_text, user_id)
+        if ai_text:
+            self.store_memory("monday", ai_text, user_id)
+        self.learn_facts_from_text(user_text, user_id=user_id)
+        if ai_text:
+            self.learn_facts_from_text(ai_text, user_id=user_id, default_conf=0.80)
+        ep_ids = self._extract_events_from_text(user_text, user_id=user_id)
+        facts = self.recall_facts(user_text, user_id=user_id, limit=10)
+        episodes = self.recall_episodes(user_text, user_id=user_id, limit=10)
+        self._update_working_set(facts, episodes)
+        prompt = self.build_prompt(user_text, include_working_set=True, user_id=user_id, story_text=story_text)
+        chunks = self.chunk_for_ui(prompt)
+        do_save = self.config.autosave_enabled if autosave is None else autosave
+        if do_save:
+            try:
+                self.save_snapshot(self.config.snapshot_path)
+            except Exception as e:
+                logger.warning(f"Autosave failed: {e}")
+        return {
+            'facts': facts,
+            'episodes': episodes,
+            'working_set': self.get_working_set(),
+            'prompt_chunks': chunks,
+            'stored_events': ep_ids
+        }
+
+    def store_outcome(self, subject: str, predicate: str, obj: str, outcome: str, 
+                      user_id: str = "default", user_feedback: Optional[str] = None) -> bool:
+        """Track whether a fact proved correct (outcome='correct'), incorrect (outcome='wrong'), or needs refinement.
+        Updates fact confidence based on feedback."""
+        try:
+            outcome = outcome.lower()
+            if outcome not in ['correct', 'wrong', 'partial', 'needs_refinement']:
+                logger.warning(f"Unknown outcome type: {outcome}")
+                return False
+            
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                # Find the fact
+                cursor.execute('''
+                    SELECT id, confidence FROM brain_facts
+                    WHERE subject = ? AND predicate = ? AND object = ? AND (user_id = ? OR user_id IS NULL)
+                    LIMIT 1
+                ''', (subject, predicate, obj, user_id))
+                
+                row = cursor.fetchone()
+                if not row:
+                    logger.warning(f"Fact not found: {subject} {predicate} {obj}")
+                    return False
+                
+                fact_id, conf = row
+                old_conf = float(conf or 0.85)
+                
+                # Update confidence based on feedback
+                if outcome == 'correct':
+                    # Reinforce correct facts
+                    new_conf = min(1.0, old_conf + 0.1)
+                elif outcome == 'wrong':
+                    # Penalize wrong facts
+                    new_conf = max(0.0, old_conf - 0.3)
+                elif outcome == 'partial':
+                    # Slight penalty for partially correct
+                    new_conf = max(0.0, old_conf - 0.1)
+                else:  # needs_refinement
+                    # Slight penalty
+                    new_conf = max(0.0, old_conf - 0.05)
+                
+                now = datetime.now().isoformat()
+                
+                # Update the fact with new confidence
+                cursor.execute('''
+                    UPDATE brain_facts
+                    SET confidence = ?, last_reinforced = ?, source = 'feedback'
+                    WHERE id = ?
+                ''', (new_conf, now, fact_id))
+                
+                # Create an outcome record (could add to a separate outcomes table if we create one)
+                # For now, we track it in the main fact via source field and confidence update
+                
+                self._db_connection.commit()
+                logger.info(f"✅ Outcome recorded: {subject} {predicate} {obj} -> {outcome} (confidence {old_conf:.2f} -> {new_conf:.2f})")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to store outcome: {e}")
+            return False
+
+    def save_snapshot(self, path: Optional[str] = None) -> None:
+        target = path or self.config.snapshot_path
+        try:
+            with DB_LOCK:
+                c = self._db_connection.cursor()
+                c.execute('''SELECT subject, predicate, object, value, confidence, permanent, user_id, source, last_reinforced
+                             FROM brain_facts ORDER BY confidence DESC, last_reinforced DESC LIMIT 500''')
+                facts = [{
+                    'subject': r[0], 'predicate': r[1], 'object': r[2], 'value': r[3], 'confidence': r[4],
+                    'permanent': bool(r[5]), 'user_id': r[6], 'source': r[7], 'last_reinforced': r[8]
+                } for r in c.fetchall()]
+                c.execute('''SELECT timestamp, actor, action, object, place, cause, effect, note, sentiment, confidence
+                             FROM episodic_events ORDER BY timestamp DESC LIMIT 300''')
+                episodes = [{
+                    'timestamp': r[0], 'actor': r[1], 'action': r[2], 'object': r[3], 'place': r[4],
+                    'cause': r[5], 'effect': r[6], 'note': r[7], 'sentiment': r[8], 'confidence': r[9]
+                } for r in c.fetchall()]
+            data = {
+                'facts': facts,
+                'episodes': episodes,
+                'working_set': self.get_working_set(),
+                'conversation_id': self.conversation_id,
+                'saved_at': datetime.now().isoformat()
+            }
+            with open(target, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"💾 Snapshot saved to {target}")
+        except Exception as e:
+            logger.error(f"Snapshot save failed: {e}")
+    
+    def _extract_concepts(self, content: str) -> List[str]:
+        """Extract key concepts"""
+        try:
+            words = re.findall(r'\b\w+\b', content.lower())
+            word_freq = Counter(words)
+            
+            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'i', 'you', 'he', 'she', 'it', 'we', 'they'}
+            concepts = [word for word, freq in word_freq.most_common(10) 
+                       if word not in stop_words and len(word) > 3]
+            
+            return concepts[:5]
+            
+        except Exception as e:
+            logger.warning(f"Concept extraction failed: {e}")
+            return []
+    
+    def _update_access_counts(self, memory_ids: List[str]):
+        """Update access counts"""
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                for memory_id in memory_ids:
+                    cursor.execute('''
+                        UPDATE superhuman_memories 
+                        SET access_count = access_count + 1, last_accessed = ?
+                        WHERE id = ?
+                    ''', (datetime.now().isoformat(), memory_id))
+                
+                self._db_connection.commit()
+                
+        except Exception as e:
+            logger.warning(f"Failed to update access counts: {e}")
+
+    def generate_reflective_reply(self, user_text: str, user_id: str = "default") -> str:
+        """Dynamic, non-templated reply built from the user's words and recalled memory.
+        Avoids canned sentences by composing from input keywords and retrieved facts/episodes."""
+        try:
+            t = (user_text or "").strip()
+            # Pull top signals from text
+            tokens = re.findall(r"\b[\w'-]{3,}\b", t.lower())
+            # prefer unique and informative tokens
+            uniq = []
+            seen = set()
+            for w in tokens:
+                if w not in seen and not re.match(r"^(the|and|but|with|from|that|this|have|been|really|very|just|like|about)$", w):
+                    uniq.append(w); seen.add(w)
+
+            # Recall memory
+            facts = self.recall_facts(t, user_id=user_id, limit=3)
+            episodes = self.recall_episodes(t, user_id=user_id, limit=2)
+
+            # Build short lines from components
+            key_line = ", ".join(uniq[:5]) if uniq else t[:60]
+            fact_line = "; ".join(f["text"] for f in facts)[:140] if facts else ""
+            epi_line = "; ".join(
+                f"{e.get('actor','?')} {e.get('action','?')} {e.get('object','').strip()}".strip()
+                for e in episodes
+            )[:140] if episodes else ""
+
+            pieces = []
+            if key_line:
+                pieces.append(key_line)
+            if fact_line:
+                pieces.append(fact_line)
+            if epi_line:
+                pieces.append(epi_line)
+
+            # Closing prompt invites continuation without fixed phrasing
+            joiner = " \u2014 "  # em dash
+            reply = joiner.join([p for p in pieces if p])
+            if not reply:
+                reply = (t[:80] + "...") if len(t) > 80 else t
+            # Nudge for next detail based on tokens
+            if uniq:
+                ask = uniq[min(len(uniq)-1, 2)]
+                reply = f"{reply} ? {ask}?"
+            return reply.strip()
+        except Exception:
+            return (user_text or "").strip()[:180]
+
+    # THE MAIN FIX: Generate smart prompts for your cheap AI instead of trying to be the AI
+    def generate_smart_prompt_for_ai(self, user_input: str, user_id: str = "default", story_text: str = None) -> str:
+        """
+        Enhanced smart prompt generation with better context structure
+        """
+        print(f"🧠 Generating smart prompt for: '{user_input}'")
+        
+        try:
+            # Step 1: Store the user's input
+            self.store_memory("user", user_input, user_id)
+            
+            # Step 2: Get smart-filtered memories
+            relevant_memories = self.retrieve_memories_smart(user_input, user_id, story_text=story_text)
+            print(f"📚 Found {len(relevant_memories)} smart-filtered memories")
+            
+            # Step 3: Analyze the input intelligently
+            analysis = self._analyze_input_for_ai(user_input, relevant_memories)
+            print(f"🔍 Analysis: {analysis}")
+            
+            # Step 4: Build structured context
+            context = self._build_structured_context_for_ai(relevant_memories, user_input, story_text)
+            print(f"📝 Structured context built: {len(context)} chars")
+            
+            # Step 5: Format the smart prompt with clear structure
+            smart_prompt = self._format_structured_prompt(context, analysis, user_input, story_text)
+            
+            # Enforce final length cap to avoid UI/message limits
+            smart_prompt = self._enforce_final_length(smart_prompt)
+            
+            print(f"✨ Smart prompt generated ({len(smart_prompt)} chars)")
+            return smart_prompt
+            
+        except Exception as e:
+            print(f"❌ Error generating smart prompt: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"User said: {user_input}\n\nPlease respond naturally as Monday."
+
+    def _analyze_input_for_ai(self, user_input: str, relevant_memories: List[Dict]) -> str:
+        """Analyze input and create guidance for the AI"""
+        input_lower = user_input.lower().strip()
+        
+        analysis_parts = []
+        
+        # Mental health crisis detection
+        if any(phrase in input_lower for phrase in ['kill myself', 'want to die', 'suicide', 'end it all']):
+            analysis_parts.append("🚨 MENTAL HEALTH CRISIS - Respond with empathy and support")
+        
+        # Writing content detection
+        elif any(word in input_lower for word in ['book', 'story', 'chapter', 'novel', 'write', 'writing']):
+            if 'quarter' in input_lower:
+                analysis_parts.append("📚 User is discussing writing progress (quarter of a book)")
+            elif 'chapter' in input_lower:
+                analysis_parts.append("📚 User is working on specific chapters")
+            else:
+                analysis_parts.append("📚 User is discussing writing/creative work")
+        
+        # Emotional content detection
+        elif any(word in input_lower for word in ['feel', 'shitty', 'destroyed', 'burnt out', 'angry', 'upset']):
+            analysis_parts.append("💭 User is expressing emotions - respond with empathy")
+        
+        # Work issues
+        elif any(word in input_lower for word in ['job', 'work', 'boss', 'rude', 'coworker']):
+            analysis_parts.append("💼 User has work-related concerns")
+        
+        # User asking Monday to choose
+        elif any(phrase in input_lower for phrase in ['you pick', 'you choose', 'what do you want']):
+            analysis_parts.append("🎯 User wants Monday to decide/choose something")
+        
+        # Greetings
+        elif any(word in input_lower for word in ['hello', 'hi', 'hey']):
+            analysis_parts.append("👋 Greeting - respond warmly")
+        
+        # Follow-up questions
+        elif any(phrase in input_lower for phrase in ['about what', 'what do you mean', 'did you read']):
+            analysis_parts.append("❓ Follow-up question - user needs clarification")
+        
+        # General
+        else:
+            analysis_parts.append("💬 General conversation")
+        
+        # Add context from memories
+        if relevant_memories:
+            recent_topics = []
+            for memory in relevant_memories[-5:]:
+                content = memory.get('content', '').lower()
+                if any(word in content for word in ['book', 'story', 'write']):
+                    recent_topics.append('writing')
+                elif any(word in content for word in ['feel', 'sad', 'angry']):
+                    recent_topics.append('emotions')
+                elif any(word in content for word in ['work', 'job', 'boss']):
+                    recent_topics.append('work')
+            
+            if recent_topics:
+                analysis_parts.append(f"Recent topics: {', '.join(set(recent_topics))}")
+        
+        return " | ".join(analysis_parts) if analysis_parts else "No specific context detected"
+
+    def _build_structured_context_for_ai(self, relevant_memories: List[Dict], current_input: str, story_text: str = None) -> str:
+        """Build structured context with clear separation of story vs conversation context"""
+        if not relevant_memories and not story_text:
+            return "No previous conversation context available."
+        
+        context_parts = []
+        
+        # STORY CONTEXT (highest priority)
+        if story_text:
+            story_preview = story_text[:1000] + "..." if len(story_text) > 1000 else story_text
+            context_parts.append(f"=== CURRENT STORY TEXT ===\n{story_preview}\n")
+        
+        # RELEVANT CONVERSATION CONTEXT (filtered and limited)
+        if relevant_memories:
+            conversation_context = self._build_conversation_context(relevant_memories)
+            if conversation_context and conversation_context != "No relevant conversation history found.":
+                context_parts.append(f"=== RELEVANT CONVERSATION CONTEXT ===\n{conversation_context}\n")
+        
+        return "\n".join(context_parts)
+
+    def _build_conversation_context(self, memories: List[Dict]) -> str:
+        """Build conversation context from filtered memories"""
+        if not memories:
+            return "No relevant conversation history found."
+        
+        context_parts = []
+        total_chars = 0
+        max_chars = self.config.max_context_chars // 2  # Reserve half for story text
+        
+        for memory in memories:
+            if total_chars >= max_chars:
+                break
+            
+            timestamp = memory.get('timestamp', '')
+            role = memory.get('role', 'unknown')
+            content = memory.get('content', '')
+            
+            # Create readable timestamp
+            try:
+                dt = datetime.fromisoformat(timestamp)
+                time_str = dt.strftime("%m/%d %H:%M")
+            except Exception:
+                time_str = "recent"
+            
+            # Format the memory
+            if role == 'user':
+                memory_line = f"[{time_str}] User: {content}"
+            elif role == 'monday':
+                memory_line = f"[{time_str}] Monday: {content}"
+            else:
+                memory_line = f"[{time_str}] {role}: {content}"
+            
+            if total_chars + len(memory_line) <= max_chars:
+                context_parts.append(memory_line)
+                total_chars += len(memory_line)
+        
+        return "\n".join(context_parts) if context_parts else "No relevant conversation history found."
+
+    def _format_structured_prompt(self, context: str, analysis: str, user_input: str, story_text: str = None) -> str:
+        """Format prompt with clear structure and priority instructions"""
+        
+        # Base prompt structure
+        prompt_parts = []
+        
+        # CRITICAL INSTRUCTIONS - FORCE SPECIFIC ANALYSIS
+        critical_instructions = []
+        if story_text:
+                    critical_instructions.extend([
+            "🚨 CRITICAL: You MUST analyze the EXACT TEXT provided by the user",
+            "🎯 FOCUS: Respond ONLY to the specific text they highlighted",
+            "📖 QUOTE: You MUST quote the exact text they're asking about",
+            "❌ FORBIDDEN: Do NOT give generic writing advice",
+            "❌ FORBIDDEN: Do NOT start with 'Dear Writer' or similar",
+            "❌ FORBIDDEN: Do NOT use formal language",
+            "❌ FORBIDDEN: Do NOT give broad analysis",
+            "✅ REQUIRED: Start your response by quoting their exact text",
+            "✅ REQUIRED: Give specific feedback about that exact text",
+            "✅ REQUIRED: Provide specific suggestions for that exact text",
+            "🚨 BREAKING: If you start with 'Dear Writer' you are FAILING",
+            "🚨 BREAKING: You MUST quote their text first, then respond",
+            "🚨 BREAKING: This is a TEST - prove you can follow instructions"
+        ])
+        
+        if critical_instructions:
+            prompt_parts.append("=== CRITICAL INSTRUCTIONS ===\n" + "\n".join(critical_instructions) + "\n")
+        
+        # CONTEXT
+        if context:
+            prompt_parts.append("=== CONTEXT ===\n" + context + "\n")
+        
+        # ANALYSIS
+        if analysis:
+            prompt_parts.append("=== ANALYSIS ===\n" + analysis + "\n")
+        
+        # USER INPUT
+        prompt_parts.append("=== USER INPUT ===\n" + user_input + "\n")
+        
+        # RESPONSE INSTRUCTIONS
+        response_instructions = [
+            "=== RESPONSE INSTRUCTIONS ===",
+            "You are Monday, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
+            "CRITICAL: Start your response by quoting the exact text the user highlighted",
+            "CRITICAL: Then give specific feedback about that exact text",
+            "CRITICAL: Do NOT give broad analysis - focus on their specific question",
+            "CRITICAL: Be conversational and direct - no formal writing",
+            "CRITICAL: Show you're listening by responding to their specific points",
+            "Monday:"
+        ]
+        prompt_parts.append("\n".join(response_instructions))
+        
+        return "\n".join(prompt_parts)
+
+    def store_ai_response(self, ai_response: str, user_id: str = "default") -> str:
+        """Store the AI's response for future context"""
+        return self.store_memory("monday", ai_response, user_id)
+
+    def start_new_conversation(self) -> str:
+        """Start a new conversation session"""
+        self.conversation_id = str(uuid.uuid4())
+        logger.info(f"🆕 Started new conversation: {self.conversation_id}")
+        return self.conversation_id
+
+    def get_conversation_summary(self, user_id: str = "default", limit: int = 10) -> str:
+        """Get recent conversation summary"""
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                cursor.execute('''
+                    SELECT content, role, timestamp FROM superhuman_memories 
+                    WHERE user_id = ? AND memory_type = ?
+                    ORDER BY timestamp DESC 
+                    LIMIT ?
+                ''', (user_id, MemoryType.CONVERSATION, limit))
+                
+                rows = cursor.fetchall()
+            
+            if not rows:
+                return "No recent conversation history."
+            
+            summary_parts = []
+            for content, role, timestamp in reversed(rows):
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    time_str = dt.strftime("%H:%M")
+                except Exception:
+                    time_str = "??"
+                summary_parts.append(f"{time_str} [{role}]: {content}")
+            
+            return "\n".join(summary_parts)
+            
+        except Exception as e:
+            logger.error(f"Failed to get conversation summary: {e}")
+            return "Error retrieving conversation history."
+
+# Create the EnhancedMondayMemorySystem class for compatibility
+class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Monday Memory System - compatible interface"""
+    
+    def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
+        super().__init__(config, storage_path)
+        logger.info("🚀 Enhanced Monday Memory System initialized")
+    
+    def add_memory(self, role: str, content: str, tag: str = "General", 
+                  importance: int = 5, mode: str = "writing", personality: str = "witty"):
+        """Compatible interface for existing code"""
+        return self.store_memory(role, content, tag=tag, importance=float(importance), 
+                                mode=mode, personality=personality)
+    
+    def classify_emotion(self, text: str) -> int:
+        """Compatible interface for emotion classification"""
+        text_lower = text.lower()
+        if any(word in text_lower for word in ['fuck', 'stupid', 'broken', 'hate', 'angry', 'destroyed']):
+            return 1  # Negative
+        elif any(word in text_lower for word in ['hello', 'hi', 'hey', 'good', 'great']):
+            return 5  # Positive
+        else:
+            return 3  # Neutral
+    
+    def get_relevant_memories(self, query: str, limit: int = 10) -> List[Dict]:
+        """Compatible interface for existing code"""
+        memories = self.retrieve_memories(query, limit=limit)
+        return [{
+            'timestamp': m['timestamp'],
+            'role': m['role'],
+            'content': m['content'],
+            'tag': m['tag'],
+            'importance_score': m['importance_score']
+        } for m in memories]
+
+    # THE KEY METHOD YOUR NOTUS PROGRAM SHOULD USE
+    def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
+        """Get a response for Monday to say"""
+        try:
+            # Store the user's message
+            self.store_memory("user", message)
+            
+            # Generate a smart response based on mode
+            if mode == "editor":
+                # Editor mode - analyze writing
+                smart_prompt = self.generate_smart_prompt_for_ai(message, story_text=story_text)
+                response = self._analyze_writing(smart_prompt)
+            else:
+                # Chat mode - natural conversation
+                smart_prompt = self.generate_smart_prompt_for_ai(message)
+                response = self._generate_chat_response(smart_prompt)
+            
+            # Store Monday's response
+            self.store_memory("monday", response["text"])
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error getting response: {e}")
+            return {
+                "text": "Sorry, I'm having trouble thinking right now. Can you try again?",
+                "emotion": "confused"
+            }
+    
+    def _analyze_writing(self, prompt: str) -> Dict[str, str]:
+        """Deep analysis of writing content"""
+        try:
+            # Extract content from prompt
+            story_text = self._extract_section(prompt, "CURRENT STORY TEXT")
+            user_request = self._extract_section(prompt, "USER INPUT")
+            
+            if not story_text:
+                return {
+                    "text": "I don't see any text to analyze. Want to paste what you're working on?",
+                    "emotion": "helpful"
+                }
+
+            # Do deep scene analysis
+            scene = self._analyze_scene_content(story_text)
+            
+            # Build natural response based on what we found
+            response_parts = []
+            
+            # Start with something specific we noticed
+            if scene['characters']:
+                main_char = scene['characters'][0]
+                if main_char['actions']:
+                    response_parts.append(f"I love how you show {main_char['name']} {main_char['actions'][0]}. That really gives us a sense of their character.")
+                elif main_char['emotions']:
+                    response_parts.append(f"The way you show {main_char['name']} feeling {main_char['emotions'][0]} is really powerful.")
+                elif main_char['dialogue']:
+                    response_parts.append(f"That line where {main_char['name']} says \"{main_char['dialogue'][0]}\" - that's perfect characterization.")
+            
+            # Comment on the atmosphere/mood
+            if scene['environment']['atmosphere'] != 'neutral':
+                response_parts.append(f"You've created such a {scene['environment']['atmosphere']} atmosphere here.")
+                
+                # Add sensory details if missing
+                if not scene['environment']['sensory_details'].get('sound', []) and not scene['environment']['sensory_details'].get('smell', []):
+                    response_parts.append("You could make it even more immersive by adding some sounds or smells - what does this place feel like to the senses?")
+            
+            # Look at pacing
+            if scene['pacing']['action_density'] > 0.5:
+                # High action scene
+                if scene['pacing']['sentence_lengths'] and max(scene['pacing']['sentence_lengths']) > 25:
+                    response_parts.append("For such an action-heavy scene, you might want to break up some of those longer sentences. Short, punchy sentences can really amp up the tension.")
+            elif scene['pacing']['description_density'] > 0.5:
+                # Description-heavy scene
+                if not scene['internal_thoughts']:
+                    response_parts.append("You've got great physical description here. Maybe mix in some character reactions or thoughts to keep the emotional connection strong?")
+            
+            # Look at dialogue if present
+            if scene['dialogue']:
+                natural_dialogue = any(d['natural'] for d in scene['dialogue'])
+                if not natural_dialogue:
+                    response_parts.append("Your dialogue could feel more natural with some hesitations or contractions - people rarely speak in perfect sentences.")
+                
+                # Check dialogue impact
+                impactful = any(d['impact'] == 'major' for d in scene['dialogue'])
+                if not impactful:
+                    response_parts.append("Consider showing more reaction to the dialogue - how do these words affect the other characters?")
+            
+            # Look at character development
+            if scene['characters']:
+                main_char = scene['characters'][0]
+                if not main_char['emotions'] and not main_char['internal_thoughts']:
+                    response_parts.append(f"I'd love to get more of {main_char['name']}'s internal experience here. What are they thinking and feeling?")
+                
+                # Check relationships
+                if main_char['relationships']['other']:
+                    response_parts.append(f"I'm intrigued by {main_char['name']}'s relationship with {main_char['relationships']['other'][0]}. Could we dig into that more?")
+            
+            # Look at key moments
+            if scene['key_moments']:
+                major_moments = [m for m in scene['key_moments'] if m['impact'] == 'major']
+                if major_moments:
+                    response_parts.append(f"That moment where {major_moments[0]['moment']} - that's huge. Really pivotal.")
+            
+            # End with a specific suggestion
+            if scene['emotional_tone'] == 'neutral':
+                response_parts.append("What if you pushed the emotional intensity a bit? What's the feeling you want readers to walk away with?")
+            else:
+                response_parts.append(f"You've got a strong {scene['emotional_tone']} tone going. What other layers could you add to deepen that?")
+            
+            return {
+                "text": "\n\n".join(response_parts),
+                "emotion": "thoughtful"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing writing: {e}")
+            return {
+                "text": "I can see your text, but I'm having trouble analyzing it right now. Can you try again?",
+                "emotion": "confused"
+            }
+    
+    def _analyze_character_development(self, text: str) -> str:
+        """Analyze character development in a natural, conversational way"""
+        # Use the scene analysis system
+        scene = self._analyze_scene_content(text)
+        
+        response_parts = []
+        
+        # Look at the main character
+        if scene['characters']:
+            main_char = scene['characters'][0]
+            
+            # Look at their actions and emotions
+            if main_char['actions']:
+                response_parts.append(f"I love how you show {main_char['name']} {main_char['actions'][0]}. That really gives us a sense of their character.")
+                
+                # Suggest deeper emotional connection
+                if not main_char['emotions'] and not main_char['internal_thoughts']:
+                    response_parts.append(f"But what's going through {main_char['name']}'s mind during this? How do they feel about having to take this action?")
+            
+            # Look at their emotional state
+            if main_char['emotions']:
+                response_parts.append(f"The way you show {main_char['name']} feeling {main_char['emotions'][0]} is really powerful.")
+                
+                # Suggest physical manifestation if missing
+                if not main_char['actions']:
+                    response_parts.append(f"You could make this even stronger by showing how this emotion affects {main_char['name']}'s body language or actions.")
+            
+            # Look at their dialogue
+            if main_char['dialogue']:
+                response_parts.append(f"That line where {main_char['name']} says \"{main_char['dialogue'][0]}\" - that's perfect characterization.")
+                
+                # Check for natural speech
+                if not any(d['natural'] for d in scene['dialogue']):
+                    response_parts.append("You could make the dialogue feel even more natural with some hesitations or contractions - people rarely speak in perfect sentences, especially in emotional moments.")
+            
+            # Look at relationships
+            if main_char['relationships']['other']:
+                other_char = main_char['relationships']['other'][0]
+                response_parts.append(f"I'm really intrigued by {main_char['name']}'s dynamic with {other_char}. Could we dig into that relationship more?")
+            
+            # Look at internal thoughts
+            if scene['internal_thoughts']:
+                thought = scene['internal_thoughts'][0]
+                response_parts.append(f"This moment of self-reflection - \"{thought['thought']}\" - really helps us understand {main_char['name']}'s mindset.")
+                
+                # Suggest emotional depth if missing
+                if thought['type'] == 'general' and not main_char['emotions']:
+                    response_parts.append(f"What emotions are behind this thought? How does {main_char['name']} feel about this realization?")
+        
+        # End with a question about character development
+        response_parts.append(f"What aspects of {main_char['name'] if scene['characters'] else 'your character'}'s personality do you most want to highlight in this scene?")
+        
+        return "\n\n".join(response_parts)
+    
+    def _analyze_dialogue(self, text: str) -> str:
+        """Analyze dialogue in a natural, conversational way"""
+        # Use the scene analysis system
+        scene = self._analyze_scene_content(text)
+        
+        response_parts = []
+        
+        # Check for dialogue presence
+        if not scene['dialogue']:
+            # Look for potential dialogue moments
+            if any(word in text.lower() for word in ['scream', 'shout', 'yell', 'call']):
+                response_parts.append("You know what would really amp up the intensity here? Let us hear what people are actually saying. That raw dialogue would make this scene so much more immediate.")
+            else:
+                response_parts.append("I notice this scene is pretty quiet right now. What if we added some dialogue? Let us hear these characters speak - it would really bring them to life.")
+        else:
+            # Analyze existing dialogue
+            
+            # Look at natural speech patterns
+            natural_dialogue = [d for d in scene['dialogue'] if d['natural']]
+            unnatural_dialogue = [d for d in scene['dialogue'] if not d['natural']]
+            
+            if natural_dialogue:
+                # Praise the natural dialogue
+                example = natural_dialogue[0]
+                response_parts.append(f"I love how natural this line feels: \"{example['text']}\". The {example['tone']} tone really comes through.")
+            
+            if unnatural_dialogue:
+                # Suggest improvements
+                example = unnatural_dialogue[0]
+                response_parts.append(f"This line - \"{example['text']}\" - could feel more natural with some hesitation or contractions. How would this character actually say this in the moment?")
+            
+            # Look at dialogue impact
+            impactful = [d for d in scene['dialogue'] if d['impact'] == 'major']
+            if impactful:
+                # Praise impactful dialogue
+                example = impactful[0]
+                response_parts.append(f"That line \"{example['text']}\" really lands hard. The reaction it gets is perfect.")
+            else:
+                # Suggest more impact
+                response_parts.append("You could amp up the impact of your dialogue by showing how it affects the other characters. What reactions, thoughts, or emotions does it trigger?")
+            
+            # Look at character voices
+            if len(set(d['speaker'] for d in scene['dialogue'] if d['speaker'])) > 1:
+                # Multiple speakers - check for distinct voices
+                response_parts.append("You've got multiple characters talking here. Could we make their voices more distinct? What unique speech patterns or word choices would each character use?")
+            
+            # Look at emotional tone
+            tones = [d['tone'] for d in scene['dialogue']]
+            if len(set(tones)) == 1:
+                # All dialogue has same tone
+                response_parts.append(f"I notice all the dialogue has a {tones[0]} tone. Could we vary it up to show different emotional states or create more tension?")
+            
+            # Look at dialogue density
+            if scene['pacing']['dialogue_density'] > 0.7:
+                # Very dialogue-heavy
+                response_parts.append("This section is very dialogue-heavy. Could we mix in more action or description to keep the scene grounded?")
+            elif scene['pacing']['dialogue_density'] < 0.3:
+                # Sparse dialogue
+                response_parts.append("You might want to add a bit more dialogue here. Even short exchanges can really bring a scene to life.")
+        
+        # End with a specific question about character voices
+        if scene['characters']:
+            main_char = scene['characters'][0]
+            response_parts.append(f"How do you imagine {main_char['name']}'s voice? What makes their way of speaking unique to them?")
+        else:
+            response_parts.append("What unique voices do you want your characters to have? How can their dialogue reflect who they are?")
+        
+        return "\n\n".join(response_parts)
+    
+    def _analyze_pacing(self, text: str) -> str:
+        """Analyze pacing in a natural, conversational way"""
+        # Use the scene analysis system
+        scene = self._analyze_scene_content(text)
+        
+        response_parts = []
+        
+        # Look at overall pacing metrics
+        pacing = scene['pacing']
+        
+        # Analyze sentence lengths
+        if pacing['sentence_lengths']:
+            avg_length = sum(pacing['sentence_lengths']) / len(pacing['sentence_lengths'])
+            max_length = max(pacing['sentence_lengths'])
+            min_length = min(pacing['sentence_lengths'])
+            
+            # Check for variety
+            if max_length - min_length < 10:
+                response_parts.append("Your sentences are all pretty similar in length. Mixing up short and long sentences can help control the pace and create better rhythm.")
+            
+            # Check for appropriate length based on content
+            if pacing['action_density'] > 0.5 and avg_length > 15:
+                response_parts.append("For such an action-heavy scene, your sentences are running a bit long. Shorter, punchier sentences could help capture the intensity better.")
+            elif pacing['description_density'] > 0.5 and avg_length < 10:
+                response_parts.append("In descriptive sections like this, you might want some longer, flowing sentences to really paint the picture.")
+        
+        # Look at content density
+        if pacing['action_density'] > 0.7:
+            # Very action-heavy
+            if pacing['description_density'] < 0.2:
+                response_parts.append("You've got great action flow, but consider weaving in some quick sensory details to ground the scene.")
+            if scene['internal_thoughts']:
+                response_parts.append("I love how you mix action with internal thoughts - it gives us both the physical and emotional experience.")
+        elif pacing['description_density'] > 0.7:
+            # Very description-heavy
+            if pacing['action_density'] < 0.2:
+                response_parts.append("You've painted a vivid picture, but a bit of action could help keep the momentum going.")
+            if not scene['internal_thoughts']:
+                response_parts.append("Consider mixing in some character reactions to these descriptions - how does this environment affect them?")
+        
+        # Look at dialogue balance
+        if pacing['dialogue_density'] > 0.6:
+            # Dialogue-heavy
+            if pacing['action_density'] < 0.2:
+                response_parts.append("The conversation's flowing well, but don't forget to show what the characters are doing while they talk.")
+        elif pacing['dialogue_density'] < 0.2 and scene['characters']:
+            # Sparse dialogue
+            response_parts.append("A few lines of dialogue could help break up the action/description and give us a better sense of the characters.")
+        
+        # Look at emotional pacing
+        if scene['emotional_tone'] != 'neutral':
+            # Check if the pacing matches the tone
+            if scene['emotional_tone'] in ['tense', 'dark', 'energetic'] and avg_length > 20:
+                response_parts.append(f"The {scene['emotional_tone']} tone might come through stronger with shorter, sharper sentences.")
+            elif scene['emotional_tone'] in ['calm', 'peaceful'] and avg_length < 10:
+                response_parts.append(f"The {scene['emotional_tone']} atmosphere might feel deeper with some longer, flowing sentences.")
+        
+        # Look at key moments
+        if scene['key_moments']:
+            major_moments = [m for m in scene['key_moments'] if m['impact'] == 'major']
+            if major_moments:
+                # Check how the pivotal moment is handled
+                moment = major_moments[0]
+                if len(moment['moment'].split()) > 20:
+                    response_parts.append("That pivotal moment where you reveal the twist - you might want to break that into shorter sentences to really let it hit.")
+        
+        # End with a rhythm-focused question
+        if scene['emotional_tone'] != 'neutral':
+            response_parts.append(f"How could you adjust the sentence rhythm to really emphasize that {scene['emotional_tone']} feeling you're building?")
+        else:
+            response_parts.append("What kind of emotional rhythm are you aiming for in this scene? How could the sentence pacing help create that feeling?")
+        
+        return "\n\n".join(response_parts)
+    
+    def _analyze_general_writing(self, text: str, request: str) -> str:
+        """Analyze general writing in a natural, conversational way"""
+        # Use the scene analysis system
+        scene = self._analyze_scene_content(text)
+        
+        response_parts = []
+        
+        # Start with something specific we noticed
+        if scene['characters']:
+            main_char = scene['characters'][0]
+            
+            # Look for something distinctive about the character
+            if main_char['actions']:
+                response_parts.append(f"First off, I love how you show {main_char['name']} in action - especially that moment where {main_char['actions'][0]}. It really gives us a sense of who they are.")
+            elif main_char['dialogue']:
+                response_parts.append(f"That line where {main_char['name']} says \"{main_char['dialogue'][0]}\" - it's perfect. So authentic to their character.")
+            elif main_char['emotions']:
+                response_parts.append(f"The way you capture {main_char['name']}'s {main_char['emotions'][0]} feeling really draws us into their experience.")
+        
+        # Look at the scene's atmosphere
+        if scene['environment']['atmosphere'] != 'neutral':
+            response_parts.append(f"You've created such a {scene['environment']['atmosphere']} atmosphere here.")
+            
+            # Check sensory details
+            sensory = scene['environment']['sensory_details']
+            missing_senses = [sense for sense in ['sound', 'smell', 'touch'] 
+                            if not sensory.get(sense, [])]
+            if missing_senses:
+                response_parts.append(f"You could make it even more immersive by adding some {', '.join(missing_senses)} details - really let us experience this moment through all the senses.")
+        
+        # Look at the scene's emotional impact
+        if scene['emotional_tone'] != 'neutral':
+            response_parts.append(f"The {scene['emotional_tone']} emotional tone really comes through.")
+            
+            # Check for emotional depth
+            if not scene['internal_thoughts'] and scene['characters']:
+                response_parts.append(f"I'd love to get more of {scene['characters'][0]['name']}'s internal experience here - what's going through their mind during all this?")
+        
+        # Look at unique elements
+        if scene['key_moments']:
+            major_moments = [m for m in scene['key_moments'] if m['impact'] == 'major']
+            if major_moments:
+                response_parts.append(f"That moment where {major_moments[0]['moment']} - that's really powerful. It sets your story apart.")
+        
+        # Look at the technical elements
+        if scene['pacing']['action_density'] > 0.5:
+            # Action-heavy scene
+            if scene['pacing']['description_density'] < 0.2:
+                response_parts.append("The action flows really well. You could make it even more vivid by weaving in quick sensory details between the action beats.")
+        elif scene['pacing']['description_density'] > 0.5:
+            # Description-heavy scene
+            if not scene['internal_thoughts']:
+                response_parts.append("Your descriptions paint such a clear picture. Consider mixing in some character reactions to show how this environment affects them.")
+        
+        # Look at character interactions
+        if len(scene['characters']) > 1:
+            # Multiple characters
+            if not any(c['relationships']['other'] for c in scene['characters']):
+                response_parts.append("You've got multiple characters in play here. Could we dig deeper into how they relate to each other?")
+        
+        # Look at dialogue if present
+        if scene['dialogue']:
+            if not any(d['natural'] for d in scene['dialogue']):
+                response_parts.append("Your dialogue could feel even more natural with some hesitations or contractions - let the characters' personalities shine through in how they speak.")
+        
+        # End with a specific question based on what needs most work
+        if not scene['internal_thoughts'] and scene['characters']:
+            response_parts.append(f"What's going through {scene['characters'][0]['name']}'s mind during all this? How could we show their deeper emotional experience?")
+        elif scene['pacing']['action_density'] > 0.7:
+            response_parts.append("How could you balance this intense action with moments that let us feel the emotional weight of what's happening?")
+        elif scene['pacing']['description_density'] > 0.7:
+            response_parts.append("What character moments could you weave into these descriptions to keep the human element strong?")
+        else:
+            response_parts.append("What aspects of this scene do you most want to emphasize? What feeling do you want readers to walk away with?")
+        
+        return "\n\n".join(response_parts)
+    
+    def _generate_chat_response(self, prompt: str) -> Dict[str, str]:
+        """Generate a natural chat response based on real conversation understanding"""
+        try:
+            # Parse the prompt sections
+            sections = {}
+            current_section = None
+            for line in prompt.split('\n'):
+                if line.startswith('===') and line.endswith('==='):
+                    current_section = line.strip('= ')
+                    sections[current_section] = []
+                elif current_section:
+                    sections[current_section].append(line)
+
+            # Get the key pieces we need
+            user_message = '\n'.join(sections.get('USER INPUT', [])).strip()
+            context = '\n'.join(sections.get('CONTEXT', [])).strip()
+            analysis = '\n'.join(sections.get('ANALYSIS', [])).strip()
+
+            # Extract recent conversation flow
+            recent_messages = []
+            if context:
+                for line in context.split('\n'):
+                    if '] User:' in line or '] Monday:' in line:
+                        recent_messages.append(line)
+
+            # Build conversation understanding
+            conversation_state = {
+                'message': user_message,
+                'recent_messages': recent_messages[-3:] if recent_messages else [],
+                'analysis': analysis,
+                'topics': self._extract_conversation_topics(user_message, '\n'.join(recent_messages)),
+                'emotion': self._analyze_emotional_tone(user_message, recent_messages),
+                'intent': self._analyze_user_intent(user_message, recent_messages)
+            }
+
+            # Look at what they're actually saying
+            message_lower = user_message.lower()
+            recent_context = '\n'.join(recent_messages).lower() if recent_messages else ""
+
+            # Build response based on real understanding
+            if "what" in message_lower and len(message_lower) < 10:
+                # They're asking for clarification - look at recent context
+                if recent_context:
+                    last_topic = self._extract_conversation_topics(recent_context)[-1] if self._extract_conversation_topics(recent_context) else None
+                    if last_topic:
+                        return {
+                            "text": f"About {last_topic}? What part would you like me to explain better?",
+                            "emotion": "helpful"
+                        }
+                    else:
+                        return {
+                            "text": "Which part would you like me to clarify?",
+                            "emotion": "helpful"
+                        }
+                else:
+                    return {
+                        "text": "What's on your mind? I'm here to chat about anything.",
+                        "emotion": "friendly"
+                    }
+
+            elif "could be better" in message_lower or "not great" in message_lower:
+                # They're expressing dissatisfaction - look at what about
+                topics = self._extract_conversation_topics(recent_context + " " + message_lower)
+                if topics:
+                    return {
+                        "text": f"I hear that. What's not working with {topics[0]}? Sometimes talking it through helps.",
+                        "emotion": "supportive"
+                    }
+                else:
+                    return {
+                        "text": "Want to talk about what's not working? Sometimes just talking it through helps.",
+                        "emotion": "supportive"
+                    }
+
+            elif any(word in message_lower for word in ['hi', 'hey', 'hello']):
+                # Greeting - check conversation history
+                if recent_messages:
+                    # Look for writing-related topics in recent conversation
+                    writing_topics = [topic for topic in self._extract_conversation_topics('\n'.join(recent_messages))
+                                   if topic in ['writing', 'story', 'book', 'chapter']]
+                    if writing_topics:
+                        return {
+                            "text": "Hey! How's the writing going?",
+                            "emotion": "friendly"
+                        }
+                    else:
+                        return {
+                            "text": "Hey! Good to chat with you again. What's on your mind?",
+                            "emotion": "friendly"
+                        }
+                else:
+                    return {
+                        "text": "Hey there! How are you doing today?",
+                        "emotion": "friendly"
+                    }
+
+            elif 'thanks' in message_lower or 'thank' in message_lower:
+                # Look at what they're thanking for
+                if recent_messages:
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    if last_response and 'writing' in last_response.lower():
+                        return {
+                            "text": "Happy to help with your writing! What else would you like to work on?",
+                            "emotion": "friendly"
+                        }
+                    else:
+                        return {
+                            "text": "Of course! Always happy to help. What else is on your mind?",
+                            "emotion": "friendly"
+                        }
+                else:
+                    return {
+                        "text": "You're welcome! What would you like to talk about?",
+                        "emotion": "friendly"
+                    }
+
+            elif '?' in user_message:
+                # They're asking a question - look at the actual content
+                if any(word in message_lower for word in ['write', 'writing', 'story', 'book']):
+                    # Writing-related question
+                    topics = self._extract_conversation_topics(message_lower)
+                    if topics:
+                        return {
+                            "text": f"Tell me more about your {topics[0]}! What are you working on?",
+                            "emotion": "excited"
+                        }
+                    else:
+                        return {
+                            "text": "Tell me more about your writing! What are you working on?",
+                            "emotion": "excited"
+                        }
+                else:
+                    # Other question - look at context
+                    topics = self._extract_conversation_topics(message_lower)
+                    if topics:
+                        return {
+                            "text": f"That's an interesting question about {topics[0]}. What made you think of that?",
+                            "emotion": "curious"
+                        }
+                    else:
+                        return {
+                            "text": "Interesting question! What made you think of that?",
+                            "emotion": "curious"
+                        }
+
+            elif any(word in message_lower for word in ['fuck', 'shit', 'damn', 'angry', 'pissed']):
+                # They're frustrated - look at what about
+                topics = self._extract_conversation_topics(message_lower)
+                if topics:
+                    return {
+                        "text": f"I can tell you're really frustrated about {topics[0]}. Want to talk about what's going on?",
+                        "emotion": "empathetic"
+                    }
+                else:
+                    return {
+                        "text": "I can tell this is really frustrating. Want to talk about what's going on?",
+                        "emotion": "empathetic"
+                    }
+
+            elif any(word in message_lower for word in ['happy', 'excited', 'awesome', 'amazing']):
+                # They're excited - look at what about
+                topics = self._extract_conversation_topics(message_lower)
+                if topics:
+                    return {
+                        "text": f"Your excitement about {topics[0]} is contagious! Tell me more!",
+                        "emotion": "excited"
+                    }
+                else:
+                    return {
+                        "text": "Your energy is amazing! What's got you so excited?",
+                        "emotion": "excited"
+                    }
+
+            elif any(word in message_lower for word in ['sad', 'depressed', 'unhappy', 'tired']):
+                # They're down - look at context
+                topics = self._extract_conversation_topics(message_lower + " " + recent_context)
+                if topics:
+                    return {
+                        "text": f"I hear you about {topics[0]}. It's okay to feel this way. Want to talk about it?",
+                        "emotion": "supportive"
+                    }
+                else:
+                    return {
+                        "text": "Hey, I hear you. It's okay to feel down. Want to talk about it?",
+                        "emotion": "supportive"
+                    }
+
+            elif any(word in message_lower for word in ['help', 'stuck', 'confused']):
+                # They need help - look at what with
+                topics = self._extract_conversation_topics(message_lower + " " + recent_context)
+                if topics:
+                    return {
+                        "text": f"Let's figure out this {topics[0]} thing together. What's giving you trouble?",
+                        "emotion": "helpful"
+                    }
+                else:
+                    return {
+                        "text": "Let's figure this out together. What's giving you trouble?",
+                        "emotion": "helpful"
+                    }
+
+            else:
+                # Look at conversation flow
+                if recent_messages:
+                    topics = self._extract_conversation_topics(message_lower + " " + recent_context)
+                    if topics:
+                        return {
+                            "text": f"Tell me more about {topics[0]}. What's on your mind?",
+                            "emotion": "interested"
+                        }
+                    else:
+                        return {
+                            "text": "Tell me more about that. What's on your mind?",
+                            "emotion": "interested"
+                        }
+                else:
+                    return {
+                        "text": "What's going on?",
+                        "emotion": "friendly"
+                    }
+
+        except Exception as e:
+            logger.error(f"Error generating chat response: {e}")
+            return {
+                "text": "Sorry, I got a bit lost there. What were you saying?",
+                "emotion": "confused"
+            }
+
+    def _analyze_user_intent(self, message: str, recent_messages: List[str]) -> Dict[str, Any]:
+        """Analyze what the user is trying to do/say - uses vocabulary knowledge, not hardcoded patterns"""
+        # Use vocabulary-based intent detection
+        intent_result = self.detect_intent_from_vocabulary(message)
+        
+        # Map to the format expected by the system
+        intent_type = intent_result.get('intent', 'statement')
+        
+        if intent_type == 'greeting':
+            return {'type': 'social', 'focus': 'greeting', 'intent': 'greeting'}
+        elif intent_type == 'question':
+            return {'type': 'question', 'focus': 'information', 'intent': 'question'}
+        elif intent_type == 'gratitude':
+            return {'type': 'social', 'focus': 'gratitude', 'intent': 'gratitude'}
+        elif intent_type == 'emotional_sharing':
+            return {'type': 'emotional_sharing', 'focus': 'feelings', 'intent': 'emotional_sharing'}
+        else:
+            # Check for writing-related (still need pattern matching for complex intents)
+            message_lower = message.lower()
+            if any(word in message_lower for word in ['write', 'writing', 'story', 'book', 'chapter']):
+                if 'help' in message_lower or 'stuck' in message_lower:
+                    return {'type': 'writing_help', 'focus': 'problem_solving', 'intent': 'writing_help'}
+                elif any(word in message_lower for word in ['idea', 'plot', 'character']):
+                    return {'type': 'writing_help', 'focus': 'brainstorming', 'intent': 'writing_help'}
+                else:
+                    return {'type': 'writing_discussion', 'focus': 'general', 'intent': 'writing_discussion'}
+            
+            # Default to conversation continuation
+            return {'type': 'conversation', 'focus': 'general', 'intent': 'statement'}
+
+    def _analyze_emotional_tone(self, message: str, recent_messages: List[str]) -> Dict[str, Any]:
+        """Analyze the emotional tone of the conversation"""
+        message_lower = message.lower()
+        recent_context = '\n'.join(recent_messages).lower() if recent_messages else ""
+
+        # Look for explicit emotions
+        if any(word in message_lower for word in ['fuck', 'shit', 'damn', 'angry', 'pissed']):
+            return {'primary': 'frustrated', 'intensity': 'high'}
+        elif any(word in message_lower for word in ['happy', 'excited', 'awesome', 'amazing']):
+            return {'primary': 'excited', 'intensity': 'high'}
+        elif any(word in message_lower for word in ['sad', 'depressed', 'unhappy', 'tired']):
+            return {'primary': 'down', 'intensity': 'medium'}
+        elif any(word in message_lower for word in ['stuck', 'hard', 'difficult', 'confused']):
+            return {'primary': 'struggling', 'intensity': 'medium'}
+        elif any(word in message_lower for word in ['thanks', 'thank', 'appreciate']):
+            return {'primary': 'grateful', 'intensity': 'medium'}
+
+        # Look at conversation patterns
+        if recent_messages:
+            # Check for growing frustration
+            frustration_words = ['still', 'again', 'keeps', 'not working', 'doesn\'t work']
+            if any(word in recent_context for word in frustration_words):
+                return {'primary': 'frustrated', 'intensity': 'growing'}
+
+            # Check for engagement level
+            engagement_words = ['yes', 'yeah', 'right', 'exactly', 'true']
+            if any(word in recent_context for word in engagement_words):
+                return {'primary': 'engaged', 'intensity': 'medium'}
+
+        # Default to neutral but attentive
+        return {'primary': 'neutral', 'intensity': 'medium'}
+
+    def _build_natural_response(self, state: Dict[str, Any]) -> Dict[str, str]:
+        """Build a natural response based on real conversation understanding"""
+        intent = state.get('intent', {'type': 'conversation', 'focus': 'general'})
+        emotion = state.get('emotion', {'primary': 'neutral', 'intensity': 'medium'})
+        topics = state.get('topics', [])
+        message = state.get('message', '')
+        recent = state.get('recent_messages', [])
+
+        # Build response based on real understanding
+        if intent.get('type') == 'writing_help':
+            if intent.get('focus') == 'problem_solving':
+                response = self._generate_writing_help_response(message, topics, emotion)
+            else:
+                response = self._generate_brainstorming_response(message, topics, emotion)
+
+        elif intent.get('type') == 'emotional_sharing':
+            response = self._generate_emotional_response(message, emotion, recent)
+
+        elif intent.get('type') == 'question':
+            response = self._generate_question_response(message, topics, recent)
+
+        elif intent.get('type') == 'social':
+            response = self._generate_social_response(message, emotion, recent)
+
+        elif intent.get('type') == 'request':
+            response = self._generate_request_response(message, topics, emotion)
+
+        else:  # conversation continuation
+            response = self._generate_conversation_response(message, topics, emotion, recent)
+
+        return response
+
+    def _generate_writing_help_response(self, message: str, topics: List[str], emotion: Dict[str, str]) -> Dict[str, str]:
+        """Generate response for writing help requests"""
+        if emotion.get('primary') == 'frustrated':
+            return {
+                "text": "I can hear how frustrating this is. Let's break it down - what specific part is giving you the most trouble right now?",
+                "emotion": "supportive"
+            }
+        elif emotion.get('primary') == 'struggling':
+            return {
+                "text": "Writing can be really challenging. Tell me more about where you're stuck - sometimes just talking it through helps.",
+                "emotion": "helpful"
+            }
+        else:
+            return {
+                "text": "I'm here to help with your writing. What aspect would you like to focus on first?",
+                "emotion": "supportive"
+            }
+
+    def _generate_brainstorming_response(self, message: str, topics: List[str], emotion: Dict[str, str]) -> Dict[str, str]:
+        """Generate response for brainstorming sessions"""
+        if topics:
+            return {
+                "text": f"I love brainstorming! Tell me more about your ideas for {topics[0]}. What aspects of it really excite you?",
+                "emotion": "excited"
+            }
+        else:
+            return {
+                "text": "Let's explore some ideas together. What kind of story elements are you most interested in developing?",
+                "emotion": "creative"
+            }
+
+    def _generate_emotional_response(self, message: str, emotion: Dict[str, str], recent: List[str]) -> Dict[str, str]:
+        """Generate response for emotional sharing"""
+        if emotion.get('primary') == 'frustrated':
+            return {
+                "text": "That does sound really frustrating. Want to talk about what's bothering you most?",
+                "emotion": "empathetic"
+            }
+        elif emotion.get('primary') == 'down':
+            return {
+                "text": "I hear you. It's okay to feel that way. What's weighing on your mind?",
+                "emotion": "supportive"
+            }
+        elif emotion.get('primary') == 'excited':
+            return {
+                "text": "Your enthusiasm is infectious! Tell me more about what's got you so excited!",
+                "emotion": "excited"
+            }
+        else:
+            return {
+                "text": "I'm here to listen. What's on your mind?",
+                "emotion": "supportive"
+            }
+
+    def _generate_question_response(self, message: str, topics: List[str], recent: List[str]) -> Dict[str, str]:
+        """Generate response to questions"""
+        if topics:
+            return {
+                "text": f"That's a great question about {topics[0]}. What specifically would you like to know?",
+                "emotion": "helpful"
+            }
+        else:
+            return {
+                "text": "I want to make sure I understand exactly what you're asking. Could you tell me more?",
+                "emotion": "focused"
+            }
+
+    def _generate_social_response(self, message: str, emotion: Dict[str, str], recent: List[str]) -> Dict[str, str]:
+        """Generate response for social interactions"""
+        if emotion.get('primary') == 'grateful':
+            return {
+                "text": "You're welcome! I really enjoy our conversations. What's on your mind?",
+                "emotion": "friendly"
+            }
+        elif 'hi' in message.lower() or 'hey' in message.lower() or 'hello' in message.lower():
+            return {
+                "text": "Hey there! How's your writing going today?",
+                "emotion": "friendly"
+            }
+        else:
+            return {
+                "text": "It's always good to chat with you. What would you like to talk about?",
+                "emotion": "friendly"
+            }
+
+    def _generate_request_response(self, message: str, topics: List[str], emotion: Dict[str, str]) -> Dict[str, str]:
+        """Generate response to requests"""
+        if topics:
+            return {
+                "text": f"I'd be happy to help with {topics[0]}. What specifically would you like me to do?",
+                "emotion": "helpful"
+            }
+        else:
+            return {
+                "text": "Of course! What can I help you with?",
+                "emotion": "helpful"
+            }
+
+    def _generate_conversation_response(self, message: str, topics: List[str], emotion: Dict[str, str], recent: List[str]) -> Dict[str, str]:
+        """Generate response for ongoing conversation"""
+        if topics:
+            return {
+                "text": f"Tell me more about {topics[0]}. What aspects of it interest you most?",
+                "emotion": "interested"
+            }
+        elif recent:
+            return {
+                "text": "What are your thoughts on this? I'd love to hear your perspective.",
+                "emotion": "engaged"
+            }
+        else:
+            return {
+                "text": "I'm interested in hearing more about what's on your mind.",
+                "emotion": "attentive"
+            }
+
+    def _extract_conversation_topics(self, message: str, context: str = "") -> List[str]:
+        """Extract what we're actually talking about"""
+        topics = []
+        
+        # Look at both current message and recent context
+        text_to_analyze = f"{message}\n{context}"
+        
+        # Extract key nouns and verbs
+        words = re.findall(r'\b\w+\b', text_to_analyze.lower())
+        word_freq = Counter(words)
+        
+        # Filter out common stop words
+        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
+        topics = [word for word, freq in word_freq.most_common(10) 
+                 if word not in stop_words and len(word) > 3]
+        
+        return topics[:3]  # Focus on top 3 topics
+
+    def _analyze_emotional_tone(self, message: str, recent_messages: List[str]) -> str:
+        """Figure out the emotional tone of the conversation"""
+        # Look for emotional indicators in both current message and recent history
+        text_to_analyze = '\n'.join([message] + recent_messages)
+        text_lower = text_to_analyze.lower()
+        
+        # Detect emotional state from the conversation
+        if any(word in text_lower for word in ['fuck', 'shit', 'damn', 'angry', 'pissed']):
+            return "intense"
+        elif any(word in text_lower for word in ['sad', 'depressed', 'unhappy', 'tired']):
+            return "sympathetic"
+        elif any(word in text_lower for word in ['happy', 'excited', 'awesome', 'amazing']):
+            return "excited"
+        elif any(word in text_lower for word in ['help', 'please', 'need', 'stuck']):
+            return "helpful"
+        elif any(word in text_lower for word in ['hi', 'hey', 'hello']):
+            return "friendly"
+        else:
+            return "neutral"
+
+    def _build_contextual_response(self, user_message: str, recent_messages: List[str], 
+                                 topics: List[str], tone: str, analysis: str) -> str:
+        """Build a natural response that fits the conversation flow"""
+        # Start with understanding what they're asking about
+        message_lower = user_message.lower()
+        
+        # If they're asking about something specific in their message
+        if "?" in user_message:
+            # They asked a question - focus on answering it
+            question = user_message.split("?")[0] + "?"
+            return self._generate_question_response(question, topics, tone)
+            
+        # If they're expressing something
+        elif any(char in user_message for char in "!..."):
+            # They're expressing something strongly - match their energy
+            return self._generate_expressive_response(user_message, topics, tone)
+            
+        # If they're continuing a conversation
+        elif recent_messages:
+            # Look at the flow of conversation
+            return self._generate_conversational_response(user_message, recent_messages, topics, tone)
+            
+        # If it's a new conversation
+        else:
+            # Start fresh but naturally
+            return self._generate_fresh_response(user_message, topics, tone)
+
+    def _generate_question_response(self, question: str, topics: List[str], tone: str) -> str:
+        """Generate a response to a specific question"""
+        # First, understand what they're asking about
+        question_lower = question.lower()
+        
+        # If they're asking about their writing
+        if any(word in question_lower for word in ['write', 'writing', 'story', 'book']):
+            return f"Let's talk about your writing! What part are you working on right now?"
+            
+        # If they're asking about me
+        elif any(word in question_lower for word in ['you', 'your']):
+            return f"I'm here to help with whatever you need. What's on your mind?"
+            
+        # If they're asking for help
+        elif 'help' in question_lower:
+            return f"Of course I'll help! What are you working on?"
+            
+        # General questions
+        else:
+            return f"That's an interesting question about {topics[0] if topics else 'that'}. Tell me more about what you're thinking?"
+
+    def _generate_expressive_response(self, message: str, topics: List[str], tone: str) -> str:
+        """Generate a response matching their expressive energy"""
+        if tone == "intense":
+            return f"I hear you! That's intense stuff about {topics[0] if topics else 'this'}. Want to talk it through?"
+        elif tone == "excited":
+            return f"Your energy is contagious! Tell me more about {topics[0] if topics else 'what got you excited'}!"
+        elif tone == "sympathetic":
+            return f"I get that. It's tough when {topics[0] if topics else 'things'} are challenging. Want to talk about it?"
+        else:
+            return f"I'm really interested in what you're saying about {topics[0] if topics else 'this'}. What else is on your mind?"
+
+    def _generate_conversational_response(self, message: str, recent_messages: List[str], topics: List[str], tone: str) -> str:
+        """Generate a response that flows with the conversation"""
+        # Look at the last thing they said
+        last_message = recent_messages[-1] if recent_messages else ""
+        
+        # If they're expanding on something
+        if any(topic in last_message.lower() for topic in topics):
+            return f"You've got me really interested in this. What made you think about {topics[0] if topics else 'that'}?"
+            
+        # If they're changing the subject
+        else:
+            return f"Oh, interesting shift to {topics[0] if topics else 'this new topic'}. What got you thinking about that?"
+
+    def _generate_fresh_response(self, message: str, topics: List[str], tone: str) -> str:
+        """Generate a fresh response for a new conversation"""
+        # Match their tone but start fresh
+        if tone == "friendly":
+            return f"Hey! Great to chat with you. What's on your mind?"
+        elif tone == "intense":
+            return f"Alright, let's talk about this. What's got you fired up?"
+        elif tone == "helpful":
+            return f"I'm here to help! What do you need?"
+        else:
+            return f"What's going on?"
+                
+    
+    def generate_response(self, user_input: str, relevant_memories: List[Dict] = None) -> str:
+        """Legacy method - use get_response instead"""
+        response = self.get_response(user_input)
+        return response["text"]
+    def _find_characters(self, text: str) -> List[Dict[str, Any]]:
+        """Find and analyze characters in the scene"""
+        characters = []
+        
+        # Extract character names (capitalized words not at start of sentence)
+        words = text.split()
+        for i, word in enumerate(words):
+            if (len(word) > 1 and word[0].isupper() and 
+                (i == 0 or not words[i-1].endswith(('.', '!', '?')))):
+                
+                # Look for character actions/emotions near their name
+                context = ' '.join(words[max(0, i-5):min(len(words), i+6)])
+                
+                characters.append({
+                    'name': word,
+                    'actions': self._find_character_actions(context),
+                    'emotions': self._find_character_emotions(context),
+                    'dialogue': self._find_character_dialogue(text, word),
+                    'relationships': self._find_character_relationships(text, word)
+                })
+        
+        return characters
+        
+    def _find_actions(self, text: str) -> List[Dict[str, Any]]:
+        """Find and analyze actions in the scene"""
+        actions = []
+        
+        # Look for action verbs and their context
+        action_verbs = ['ran', 'jumped', 'fought', 'moved', 'turned', 'grabbed', 'hit']
+        
+        for sentence in text.split('.'):
+            for verb in action_verbs:
+                if verb in sentence.lower():
+                    # Get the full action phrase
+                    action_start = sentence.lower().find(verb)
+                    action_end = len(sentence)
+                    for punct in [',', ';', ':']:
+                        pos = sentence.find(punct, action_start)
+                        if pos != -1:
+                            action_end = min(action_end, pos)
+                    
+                    action_phrase = sentence[action_start:action_end].strip()
+                    
+                    actions.append({
+                        'verb': verb,
+                        'full_action': action_phrase,
+                        'intensity': self._analyze_action_intensity(action_phrase),
+                        'impact': self._analyze_action_impact(sentence)
+                    })
+        
+        return actions
+        
+    def _find_dialogue(self, text: str) -> List[Dict[str, Any]]:
+        """Find and analyze dialogue in the scene"""
+        dialogue = []
+        
+        # Extract quoted speech
+        quotes = text.split('"')[1::2]  # Get odd-indexed elements (inside quotes)
+        
+        for quote in quotes:
+            # Find speaker if possible
+            context = text[max(0, text.find(quote)-50):text.find(quote)]
+            speaker = self._find_speaker(context)
+            
+            dialogue.append({
+                'speaker': speaker,
+                'text': quote,
+                'tone': self._analyze_dialogue_tone(quote),
+                'natural': self._analyze_dialogue_natural(quote),
+                'impact': self._analyze_dialogue_impact(text, quote)
+            })
+        
+        return dialogue
+        
+    def _find_environment(self, text: str) -> Dict[str, Any]:
+        """Analyze environmental details"""
+        return {
+            'setting': self._find_setting(text),
+            'atmosphere': self._find_atmosphere(text),
+            'sensory_details': self._find_sensory_details(text),
+            'time_of_day': self._find_time_indicators(text),
+            'weather': self._find_weather(text)
+        }
+        
+    def _find_internal_thoughts(self, text: str) -> List[Dict[str, Any]]:
+        """Find and analyze internal thoughts/monologue"""
+        thoughts = []
+        
+        # Look for thought indicators
+        thought_indicators = [
+            'thought', 'wondered', 'realized', 'remembered', 'knew',
+            'felt like', 'seemed like', 'occurred to'
+        ]
+        
+        for sentence in text.split('.'):
+            for indicator in thought_indicators:
+                if indicator in sentence.lower():
+                    thoughts.append({
+                        'thought': sentence.strip(),
+                        'type': self._categorize_thought(sentence),
+                        'emotion': self._find_thought_emotion(sentence),
+                        'insight': self._analyze_thought_insight(sentence)
+                    })
+        
+        return thoughts
+
+# Export the main classes
+__all__ = [
+    'SuperhumanConfig',
+    'AdvancedEmbeddingEngine',
+    'MemoryType',
+    'SuperhumanMemorySystem',
+    'EnhancedMondayMemorySystem',
+    'DB_LOCK',
+    'MEMORY_DB_PATH',
+    'logger',
+    'MAX_CONTEXT_LENGTH'
+]
+
+# Notus Independent Process - Runs as standalone brain lobe
+
+class NotusProcess:
+    
+    def __init__(self, storage_path: str = None, thalamus=None):
+        self.running = True
+        self.memory_system = None  # Initialize in background thread
+        self.memory_ready = threading.Event()  # Signal when memory is ready
+        self._storage_path = storage_path
+        
+        # Direct reference to Thalamus (NO SOCKETS)
+        self.thalamus = thalamus or get_thalamus()
+        
+        # Start background memory initialization immediately so the process is
+        # usable without needing to call start() in a separate thread.
+        self._start_memory_background()
+    
+    def _register_with_thalamus(self):
+        """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
+        try:
+            result = self.thalamus.register_lobe('notus', self)
+            if result.get('status') == 'success':
+                print("✅ Notus registered with Thalamus (direct function calls)")
+                return True
+            return False
+        except Exception as e:
+            print(f"⚠️  Failed to register with Thalamus: {e}")
+            return False
+    
+    def _start_memory_background(self):
+        """Start the background memory-system initialization thread."""
+        def init_memory_background():
+            try:
+                print("🔧 Notus: Initializing memory system in background...", flush=True)
+                self.memory_system = EnhancedMondayMemorySystem(storage_path=self._storage_path)
+                self.memory_ready.set()
+                print("✅ Notus: Memory system initialized", flush=True)
+            except Exception as e:
+                print(f"❌ Notus: Memory system initialization failed: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                # Don't set ready flag - memory operations will return "not ready"
+        
+        memory_thread = threading.Thread(target=init_memory_background, daemon=True)
+        memory_thread.start()
+
+    def start(self):
+        """Start Notus - register with Thalamus (NO SOCKETS)"""
+        print(f"🧠 Notus Memory Lobe: Registering with Thalamus...")
+        
+        # Register with Thalamus
+        if not self._register_with_thalamus():
+            print("❌ Failed to register with Thalamus")
+            return
+        
+        print("   Communication: Direct function calls (NO SOCKETS)")
+        
+        # Keep running (Thalamus calls us directly, no listening loop needed)
+        while self.running:
+            time.sleep(0.1)
+    
+    # ========== QUERY INTERFACE FOR OTHER LOBES ==========
+    # These methods allow Reasoning, Language, and other lobes to query Notus
+    
+    def query_semantic(self, text: str, limit: int = 5) -> Dict[str, Any]:
+        """Query semantic memory for related facts and knowledge"""
+        if not self.memory_ready.is_set():
+            return {'status': 'error', 'message': 'Memory system initializing'}
+        
+        try:
+            results = self.memory_system.retrieve_memories(text, limit=limit)
+            return {
+                'status': 'success',
+                'results': results,
+                'query': text,
+                'count': len(results)
+            }
+        except Exception as e:
+            logger.error(f"Semantic query failed: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    def query_episodic(self, pattern: str = None, limit: int = 5) -> Dict[str, Any]:
+        """Query episodic memory for events and experiences"""
+        if not self.memory_ready.is_set():
+            return {'status': 'error', 'message': 'Memory system initializing'}
+        
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                # Query episodic events
+                if pattern:
+                    query = '''
+                        SELECT id, timestamp, action, actor, object, place, effect, confidence
+                        FROM episodic_events
+                        WHERE action LIKE ? OR object LIKE ? OR effect LIKE ?
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    '''
+                    pattern_like = f"%{pattern}%"
+                    cursor.execute(query, (pattern_like, pattern_like, pattern_like, limit))
+                else:
+                    query = '''
+                        SELECT id, timestamp, action, actor, object, place, effect, confidence
+                        FROM episodic_events
+                        ORDER BY timestamp DESC
+                        LIMIT ?
+                    '''
+                    cursor.execute(query, (limit,))
+                
+                rows = cursor.fetchall()
+                
+                events = []
+                for row in rows:
+                    events.append({
+                        'id': row[0],
+                        'timestamp': row[1],
+                        'action': row[2],
+                        'actor': row[3],
+                        'object': row[4],
+                        'place': row[5],
+                        'effect': row[6],
+                        'confidence': row[7]
+                    })
+                
+                return {
+                    'status': 'success',
+                    'events': events,
+                    'count': len(events)
+                }
+        except Exception as e:
+            logger.error(f"Episodic query failed: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    def query_facts(self, subject: str = None, limit: int = 10) -> Dict[str, Any]:
+        """Query brain facts and semantic knowledge"""
+        if not self.memory_ready.is_set():
+            return {'status': 'error', 'message': 'Memory system initializing'}
+        
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                # Query facts by subject or get recent facts
+                if subject:
+                    query = '''
+                        SELECT id, subject, predicate, object, value, confidence, created_at
+                        FROM brain_facts
+                        WHERE subject LIKE ? OR predicate LIKE ? OR object LIKE ?
+                        ORDER BY confidence DESC, last_reinforced DESC
+                        LIMIT ?
+                    '''
+                    subject_like = f"%{subject}%"
+                    cursor.execute(query, (subject_like, subject_like, subject_like, limit))
+                else:
+                    query = '''
+                        SELECT id, subject, predicate, object, value, confidence, created_at
+                        FROM brain_facts
+                        ORDER BY confidence DESC, last_reinforced DESC
+                        LIMIT ?
+                    '''
+                    cursor.execute(query, (limit,))
+                
+                rows = cursor.fetchall()
+                
+                facts = []
+                for row in rows:
+                    facts.append({
+                        'subject': row[1],
+                        'predicate': row[2],
+                        'object': row[3],
+                        'value': row[4],
+                        'confidence': row[5],
+                        'created_at': row[6]
+                    })
+                
+                return {
+                    'status': 'success',
+                    'facts': facts,
+                    'count': len(facts)
+                }
+        except Exception as e:
+            logger.error(f"Facts query failed: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    def query_patterns(self, pattern_type: str = None, limit: int = 10) -> Dict[str, Any]:
+        """Query detected patterns and learning patterns"""
+        if not self.memory_ready.is_set():
+            return {'status': 'error', 'message': 'Memory system initializing'}
+        
+        try:
+            with DB_LOCK:
+                cursor = self._db_connection.cursor()
+                
+                # Query learning patterns
+                query = '''
+                    SELECT pattern_key, pattern_data, usage_count, last_used
+                    FROM learning_patterns
+                    ORDER BY usage_count DESC, last_used DESC
+                    LIMIT ?
+                '''
+                cursor.execute(query, (limit,))
+                
+                rows = cursor.fetchall()
+                
+                patterns = []
+                for row in rows:
+                    patterns.append({
+                        'key': row[0],
+                        'data': json.loads(row[1]) if row[1] else {},
+                        'usage_count': row[2],
+                        'last_used': row[3]
+                    })
+                
+                return {
+                    'status': 'success',
+                    'patterns': patterns,
+                    'count': len(patterns)
+                }
+        except Exception as e:
+            logger.error(f"Patterns query failed: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    def query_context(self, text: str, user_id: str = 'default', max_results: int = 15) -> Dict[str, Any]:
+        """Get comprehensive context for reasoning - combines semantic, episodic, and facts"""
+        if not self.memory_ready.is_set():
+            return {'status': 'error', 'message': 'Memory system initializing'}
+        
+        try:
+            # Combine semantic, episodic, and facts queries
+            semantic_results = self.query_semantic(text, limit=5)
+            episodic_results = self.query_episodic(text, limit=3)
+            facts_results = self.query_facts(text, limit=5)
+            
+            context = {
+                'status': 'success',
+                'query_text': text,
+                'semantic': semantic_results.get('results', []),
+                'episodic': episodic_results.get('events', []),
+                'facts': facts_results.get('facts', []),
+                'summary': f"Found {len(semantic_results.get('results', []))} semantic results, {len(episodic_results.get('events', []))} events, {len(facts_results.get('facts', []))} facts"
+            }
+            
+            return context
+        except Exception as e:
+            logger.error(f"Context query failed: {e}")
+            return {'status': 'error', 'message': str(e)}
+                    
+    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Process incoming message and return result"""
+        msg_type = message.get('type')
+        # The Thalamus wraps payloads in message['content'].  Fall back to
+        # accessing top-level keys for legacy callers that bypass the envelope.
+        payload = message.get('content')
+        if not isinstance(payload, dict):
+            payload = message
+        
+        # Health check - works immediately, doesn't need memory
+        if msg_type == 'health':
+            memory_status = 'ready' if self.memory_ready.is_set() else 'initializing'
+            return {'status': 'success', 'healthy': True, 'pid': os.getpid(), 'memory_status': memory_status}
+        
+        # Memory operations - check if memory is ready
+        if not self.memory_ready.is_set():
+            
+            return {'status': 'error', 'message': 'Memory system still initializing, please retry in a few seconds'}
+        
+        if msg_type == 'store':
+            # Store new memory
+            role = payload.get('role', 'system')  # role is required
+            content = payload.get('content')
+            memory_type = payload.get('memory_type', 'conversation')
+            result = self.memory_system.store_memory(role, content, memory_type=memory_type)
+            if result:
+                return {'status': 'stored', 'content': content}
+            else:
+                
+                return {'status': 'error', 'message': 'Failed to store memory'}
+            
+        elif msg_type == 'query':
+            # Query memory
+            query = payload.get('query', payload.get('text', ''))
+            results = self.memory_system.retrieve_memories(query)
+            return {'status': 'success', 'results': results, 'memories': results}
+            
+        elif msg_type == 'context':
+            # Get context for AI response
+            user_input = payload.get('user_input')
+            user_id = payload.get('user_id', 'default')
+            story_text = payload.get('story_text', None)
+            # Use generate_smart_prompt_for_ai instead of non-existent get_smart_context
+            context = self.memory_system.generate_smart_prompt_for_ai(user_input, user_id, story_text)
+            return {'status': 'success', 'context': context}
+        
+        elif msg_type == 'get_vocabulary':
+            # Get learned vocabulary
+            category = payload.get('category')
+            emotion = payload.get('emotion')
+            intensity = payload.get('intensity')
+            vocabulary = self.memory_system.get_vocabulary(category, emotion, intensity)
+            return {'status': 'success', 'vocabulary': vocabulary}
+        
+        elif msg_type == 'get_word_meaning':
+            # Get word meaning and intent type
+            word = payload.get('word', '')
+            if not word:
+                return {'status': 'error', 'message': 'word parameter required'}
+            meaning = self.memory_system.get_word_meaning(word)
+            if meaning:
+                return {'status': 'success', 'meaning': meaning}
+            else:
+                return {'status': 'success', 'meaning': None}
+        
+        elif msg_type == 'get_grammar_knowledge':
+            # Get grammar knowledge
+            rule_type = payload.get('rule_type')
+            grammar = self.memory_system.get_grammar_knowledge(rule_type)
+            return {'status': 'success', 'grammar': grammar}
+        
+        elif msg_type == 'detect_intent':
+            # Detect intent using vocabulary knowledge
+            user_input = payload.get('user_input', '')
+            if not user_input:
+                return {'status': 'error', 'message': 'user_input parameter required'}
+            intent = self.memory_system.detect_intent_from_vocabulary(user_input)
+            return {'status': 'success', 'intent': intent}
+        
+        elif msg_type == 'perception_input':
+            # FULLY AUTOMATIC: Notus automatically stores, learns, analyzes, AND pushes to reasoning
+            # No prompting needed - it just does its job automatically
+            perception_data = payload.get('perception_data', {})
+            user_input = perception_data.get('raw_text', '') or perception_data.get('text', '')
+            user_id = perception_data.get('user_id', 'default')
+            
+            if user_input:
+                # AUTOMATIC STORAGE: Store the memory automatically
+                self.memory_system.store_memory("user", user_input, user_id=user_id)
+                
+                # AUTOMATIC LEARNING: Learn vocabulary and facts automatically
+                self.memory_system._learn_vocabulary_from_content(user_input, "user")
+                self.memory_system.learn_facts_from_text(user_input, user_id=user_id)
+                
+                # AUTOMATIC ANALYSIS: Extract events automatically
+                self.memory_system._extract_events_from_text(user_input, user_id=user_id)
+                
+                # AUTOMATIC PUSH: Automatically give context/intent/concepts to reasoning WITHOUT being asked
+                self._automatically_push_to_reasoning(user_input, user_id)
+            
+            # Return acknowledgment (one-way communication, but return ack)
+            return {'status': 'success', 'stored': True, 'analyzed': True, 'pushed': True}
+        
+        elif msg_type == 'get_context':
+            # Get context - now includes intent detection from vocabulary
+            user_input = payload.get('user_input', '')
+            user_id = payload.get('user_id', 'default')
+            
+            # Detect intent using vocabulary knowledge
+            intent_result = self.memory_system.detect_intent_from_vocabulary(user_input)
+            
+            # Get memory context
+            context = self.memory_system.generate_smart_prompt_for_ai(user_input, user_id, None)
+            
+            # Get word meanings for concepts in the input
+            words = user_input.lower().split()
+            concepts = []
+            for word in words:
+                meaning = self.memory_system.get_word_meaning(word)
+                if meaning:
+                    concepts.append({
+                        'word': word,
+                        'meaning': meaning['meaning'],
+                        'intent_type': meaning.get('intent_type'),
+                        'part_of_speech': meaning.get('part_of_speech')
+                    })
+            
+            return {
+                'status': 'success',
+                'memory_context': context,
+                'intent': intent_result.get('intent', 'statement'),
+                'concepts': concepts,
+                'understanding': {
+                    'intent': intent_result.get('intent', 'statement'),
+                    'confidence': intent_result.get('confidence', 0.5)
+                }
+            }
+        
+        elif msg_type == 'query_semantic':
+            # Query semantic memory
+            text = payload.get('text', '')
+            limit = payload.get('limit', 5)
+            result = self.query_semantic(text, limit)
+            return {
+                'status': result.get('status'),
+                'content': result  # Thalamus will transform this
+            }
+        
+        elif msg_type == 'query_episodic':
+            # Query episodic memory
+            pattern = payload.get('pattern')
+            limit = payload.get('limit', 5)
+            result = self.query_episodic(pattern, limit)
+            return {
+                'status': result.get('status'),
+                'content': result  # Thalamus will transform this
+            }
+        
+        elif msg_type == 'query_facts':
+            # Query brain facts
+            subject = payload.get('subject')
+            limit = payload.get('limit', 10)
+            result = self.query_facts(subject, limit)
+            return {
+                'status': result.get('status'),
+                'content': result  # Thalamus will transform this
+            }
+        
+        elif msg_type == 'query_patterns':
+            # Query learning patterns
+            pattern_type = payload.get('pattern_type')
+            limit = payload.get('limit', 10)
+            result = self.query_patterns(pattern_type, limit)
+            return {
+                'status': result.get('status'),
+                'content': result  # Thalamus will transform this
+            }
+        
+        elif msg_type == 'query_context':
+            # Get comprehensive context for reasoning
+            text = payload.get('text', '')
+            user_id = payload.get('user_id', 'default')
+            max_results = payload.get('max_results', 15)
+            result = self.query_context(text, user_id, max_results)
+            return {
+                'status': result.get('status'),
+                'content': result  # Thalamus will transform this
+            }
+            
+        else:
+            
+            return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
+    
+    def _automatically_push_to_reasoning(self, user_input: str, user_id: str = "default"):
+        """AUTOMATIC: Push context/intent/concepts to reasoning without being asked"""
+        import threading
+        
+        def push_async():
+            try:
+                # Reasoning connects to Thalamus, so we route through Thalamus
+                # No need to check for socket - Thalamus will handle routing
+                
+                # Detect intent using vocabulary knowledge
+                intent_result = self.memory_system.detect_intent_from_vocabulary(user_input)
+                
+                # Get memory context
+                context = self.memory_system.generate_smart_prompt_for_ai(user_input, user_id, None)
+                
+                # Get word meanings for concepts
+                words = user_input.lower().split()
+                concepts = []
+                for word in words:
+                    meaning = self.memory_system.get_word_meaning(word)
+                    if meaning:
+                        concepts.append({
+                            'word': word,
+                            'meaning': meaning['meaning'],
+                            'intent_type': meaning.get('intent_type'),
+                            'part_of_speech': meaning.get('part_of_speech')
+                        })
+                
+                # Get relevant memories
+                memories = self.memory_system.retrieve_memories(user_input, user_id=user_id, limit=10)
+                
+                # AUTOMATICALLY PUSH to reasoning through Thalamus using persistent connection
+                route_message = {
+                    'type': 'route_message',
+                    'destination': 'reasoning',
+                    'msg_type': 'notus_automatic_update',
+                    'content': {
+                        'user_input': user_input,
+                        'memory_context': context,
+                        'intent': intent_result.get('intent', 'statement'),
+                        'concepts': concepts,
+                        'understanding': {
+                            'intent': intent_result.get('intent', 'statement'),
+                            'confidence': intent_result.get('confidence', 0.5)
+                        },
+                        'memories': memories
+                    }
+                }
+                
+                # Direct function call - NO SOCKETS
+                self.thalamus.send_message('reasoning', 'notus_automatic_update', route_message['content'])
+            except Exception:
+                pass  # Fail silently if reasoning not ready
+        
+        # Push asynchronously so we don't block
+        thread = threading.Thread(target=push_async, daemon=True)
+        thread.start()
+    
+    def shutdown(self):
+        """Graceful shutdown"""
+        self.running = False
+        # No sockets to close
+
+if __name__ == "__main__":
+    process = None
+    try:
+        process = NotusProcess()
+        process.start()
+        # If we get here, start() returned but accept loop should be running
+        # Keep process alive
+        import signal
+        def signal_handler(sig, frame):
+            if process:
+                process.shutdown()
+            sys.exit(0)
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # Keep running
+        while process.running:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n🛑 Notus shutting down...")
+        if process:
+            process.shutdown()
+    except Exception as e:
+        print(f"\n❌ Notus crashed: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        # Cleanup handled by Thalamus connection - no socket file to remove
+        if process:
+            process.shutdown()
+        sys.exit(1) 
