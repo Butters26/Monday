@@ -11,6 +11,29 @@ from notus_memory import NotusMemorySystem
 class ActiveNotusMemorySystem(NotusMemorySystem):
     """Memory-only Notus used by run_abin."""
 
+    def _init_database(self) -> None:
+        # Let the historical memory engine create its PostgreSQL schema first.
+        super()._init_database()
+
+        # Add the memory-integrity fields before anything can use remember_fact.
+        self._ensure_memory_integrity_schema()
+
+        # Historical Notus created brain_facts.created_at as TEXT but
+        # last_reinforced as TIMESTAMP. PostgreSQL cannot COALESCE those two
+        # different types during recall, so normalize both columns here.
+        with self._db_connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE brain_facts "
+                "ALTER COLUMN created_at TYPE TIMESTAMP "
+                "USING created_at::timestamp"
+            )
+            cursor.execute(
+                "ALTER TABLE brain_facts "
+                "ALTER COLUMN last_reinforced TYPE TIMESTAMP "
+                "USING last_reinforced::timestamp"
+            )
+        self._db_connection.commit()
+
     def _seed_editor_knowledge(self, user_id: str = "default") -> None:
         return None
 
