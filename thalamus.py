@@ -792,6 +792,24 @@ class Thalamus:
             turn_intensity=turn_intensity,
             preloaded_aside=preloaded_aside,
         )
+        # Persist what she actually said — continuous someone, not user-only amnesia.
+        if isinstance(reply, str) and reply.strip():
+            try:
+                self.send_and_wait(
+                    "notus",
+                    "store",
+                    {
+                        "role": "monday",
+                        "content": reply.strip(),
+                        "user_id": user_id,
+                        "memory_type": "conversation",
+                        "tag": "Spoken",
+                        "importance": 6.5,
+                        "mode": "memory",
+                    },
+                )
+            except Exception:
+                pass
         return reply
 
     def _pop_speak_worthy_candidate(self) -> Optional[Dict[str, Any]]:

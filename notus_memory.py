@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import re
 import os
 import threading
 import uuid
@@ -32,6 +33,37 @@ from thalamus import get_thalamus
 
 class NotusMemorySystem(SuperhumanMemorySystem):
     """PostgreSQL-only memory lobe used by the active Monday core."""
+
+    # Clean single-speaker rows only — never combined transcript poison.
+    _ALLOWED_MEMORY_ROLES = frozenset(
+        {"user", "assistant", "monday", "abin", "fact", "note"}
+    )
+    _TRANSCRIPT_LINE = re.compile(
+        r"(?im)^\s*(?:user|assistant|monday|abin)\s*:"
+    )
+    _COMBINED_TRANSCRIPT = re.compile(
+        r"(?is)(?:^|\n)\s*(?:user|assistant|monday|abin)\s*:.*"
+        r"\n\s*(?:user|assistant|monday|abin)\s*:"
+    )
+
+    @classmethod
+    def _is_clean_memory_content(cls, role: Any, content: Any) -> bool:
+        """True when role is allowed and content is not transcript/experience poison."""
+        if not isinstance(role, str) or role.strip().lower() not in cls._ALLOWED_MEMORY_ROLES:
+            return False
+        if not isinstance(content, str):
+            return False
+        stripped = content.strip()
+        if not stripped:
+            return False
+        if "How it felt:" in stripped and "What it meant:" in stripped:
+            return False
+        if cls._COMBINED_TRANSCRIPT.search(stripped):
+            return False
+        if cls._TRANSCRIPT_LINE.match(stripped):
+            return False
+        return True
+
 
     def __init__(
         self,
@@ -170,12 +202,28 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         content: str,
         role: str = "",
     ) -> float:
-        """Keyword overlap first; weak cosine only as a tiny tie-break."""
+        """Keyword overlap first; weak cosine only as a tiny tie-break.
+
+        Stronger than pure OR spam: multi-token queries must clear a higher
+        overlap bar (majority of content tokens / significant AND).
+        """
         overlap = self._overlap_score(query_tokens, content)
-        if overlap <= 0.0 and str(role) != "fact":
-            return 0.0
-        # Fact rows get a second chance via readable predicate tokens.
         if overlap <= 0.0:
+            return 0.0
+        cand = self._content_tokens(content)
+        significant = {t for t in query_tokens if len(t) >= 4}
+        if len(query_tokens) >= 2:
+            # Require clear signal — not a single OR-hit from a long filler row.
+            min_needed = max(self._MIN_RELEVANCE, 0.5)
+            if overlap < min_needed:
+                # Allow fact rows that still hit every significant token (AND).
+                if not (
+                    str(role) == "fact"
+                    and significant
+                    and significant.issubset(cand)
+                ):
+                    return 0.0
+        elif significant and not (significant & cand):
             return 0.0
         cosine = 0.0
         try:
@@ -184,7 +232,10 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             )
         except Exception:
             cosine = 0.0
-        return 0.85 * overlap + 0.15 * max(0.0, cosine)
+        and_bonus = 0.0
+        if significant and significant.issubset(cand):
+            and_bonus = 0.08
+        return 0.85 * overlap + 0.15 * max(0.0, cosine) + and_bonus
 
     def retrieve_memories(
         self,
@@ -241,11 +292,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         scored: List[Dict[str, Any]] = []
         for row in rows:
             content = row[3] if isinstance(row[3], str) else ""
-            role = str(row[2] or "")
-            # Skip experience-poison even if it somehow matched tokens.
-            if "How it felt:" in content and (
-                role == "system" or "What it meant:" in content
-            ):
+            role = str(row[2] or "").strip().lower()
+            # Skip poison / disallowed roles even if tokens matched.
+            if not self._is_clean_memory_content(role, content):
                 continue
             score = self._score_memory_row(query, query_tokens, content, role=role)
             if score < self._MIN_RELEVANCE:
@@ -899,19 +948,21 @@ class NotusMemorySystem(SuperhumanMemorySystem):
 
         if msg_type == "store":
             content = payload.get("content")
-            role = payload.get("role", "user")
+            role = str(payload.get("role", "user") or "user").strip().lower()
+            # Normalize aliases onto the spoken-self role Monday uses elsewhere.
+            if role in {"assistant", "abin"}:
+                role = "monday"
             if not isinstance(content, str) or not content.strip():
                 return {"status": "error", "message": "content must be non-empty text"}
-            # Never persist experience-poison blobs into retrievable memory.
             stripped = content.strip()
-            if (
-                str(role) == "system"
-                and "How it felt:" in stripped
-                and "What it meant:" in stripped
-            ):
+            if not self._is_clean_memory_content(role, stripped):
                 return {
                     "status": "success",
-                    "content": {"stored": False, "skipped": "experience_poison"},
+                    "content": {
+                        "stored": False,
+                        "skipped": "unsafe_or_disallowed_memory",
+                        "role": role,
+                    },
                 }
             memory_id = self.store_memory(
                 role=str(role),

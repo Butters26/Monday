@@ -15,7 +15,12 @@ from runtime_paths import runtime_file
 from thalamus import get_thalamus
 
 
-_TRANSCRIPT_PREFIX = re.compile(r"^\s*(?:user|abin)\s*:", re.IGNORECASE)
+_TRANSCRIPT_PREFIX = re.compile(r"^\s*(?:user|abin|monday|assistant)\s*:", re.IGNORECASE)
+_COMBINED_TRANSCRIPT = re.compile(
+    r"(?is)(?:^|\n)\s*(?:user|abin|monday|assistant)\s*:.*\n\s*"
+    r"(?:user|abin|monday|assistant)\s*:"
+)
+_ALLOWED_MEMORY_ROLES = frozenset({"user", "fact", "note", "assistant", "monday", "abin"})
 _LEARNING_KEY_SAFE = re.compile(r"[^a-z0-9:_-]+")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 _UNSAFE_LEARNING = re.compile(
@@ -217,6 +222,30 @@ class DirectNotusProcess:
     def _initialize_fts(self) -> None:
         connection = self._require_connection()
         try:
+            existing = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table', 'trigger')"
+                ).fetchall()
+            }
+            needed = {
+                "memories_fts",
+                "brain_facts_fts",
+                "episodic_events_fts",
+                "memories_ai",
+                "memories_ad",
+                "memories_au",
+                "brain_facts_ai",
+                "brain_facts_ad",
+                "brain_facts_au",
+                "episodic_events_ai",
+                "episodic_events_ad",
+                "episodic_events_au",
+            }
+            if needed.issubset(existing):
+                self._fts_available = True
+                return
+
             connection.executescript(
                 """
                 DROP TRIGGER IF EXISTS memories_ai;
@@ -329,14 +358,21 @@ class DirectNotusProcess:
 
     @staticmethod
     def _is_safe_memory(role: Any, content: Any) -> bool:
-        """Reject legacy combined transcript rows before they reach a renderer."""
-        return (
-            isinstance(role, str)
-            and role in {"user", "fact", "note"}
-            and isinstance(content, str)
-            and bool(content.strip())
-            and not _TRANSCRIPT_PREFIX.match(content)
-        )
+        """Allow clean single-speaker rows including Monday's own speech."""
+        if not isinstance(role, str) or role.strip().lower() not in _ALLOWED_MEMORY_ROLES:
+            return False
+        if not isinstance(content, str):
+            return False
+        stripped = content.strip()
+        if not stripped:
+            return False
+        if "How it felt:" in stripped and "What it meant:" in stripped:
+            return False
+        if _COMBINED_TRANSCRIPT.search(stripped):
+            return False
+        if _TRANSCRIPT_PREFIX.match(stripped):
+            return False
+        return True
 
     @staticmethod
     def _clean_text(value: Any) -> str:
@@ -400,8 +436,12 @@ class DirectNotusProcess:
         ]
 
     @classmethod
-    def _fts_query(cls, query: str) -> str:
-        return " OR ".join(f'"{term}"' for term in cls._query_terms(query))
+    def _fts_query(cls, query: str, *, conjunction: str = "AND") -> str:
+        terms = cls._query_terms(query)[:8]
+        if not terms:
+            return ""
+        joiner = " AND " if conjunction.upper() == "AND" else " OR "
+        return joiner.join(f'"{term}"' for term in terms)
 
     @classmethod
     def _match_quality(cls, query: str, text: str) -> float:
@@ -461,11 +501,24 @@ class DirectNotusProcess:
         user_id: str,
         memory_type: Any,
     ) -> List[sqlite3.Row]:
+        # Empty means empty — never dump recent rows for a blank query.
+        if not (query or "").strip() or not self._query_terms(query):
+            return []
+
         connection = self._require_connection()
         type_sql, type_params = self._memory_type_filter(memory_type)
-        fts_query = self._fts_query(query)
+        role_sql = (
+            "AND m.role IN ('user', 'fact', 'note', 'monday', 'assistant', 'abin') "
+            "AND lower(trim(m.content)) NOT LIKE 'user:%' "
+            "AND lower(trim(m.content)) NOT LIKE 'abin:%' "
+            "AND lower(trim(m.content)) NOT LIKE 'monday:%' "
+            "AND lower(trim(m.content)) NOT LIKE 'assistant:%'"
+        )
 
-        if query.strip() and self._fts_available and fts_query:
+        def _fts(conjunction: str) -> List[sqlite3.Row]:
+            fts_query = self._fts_query(query, conjunction=conjunction)
+            if not (self._fts_available and fts_query):
+                return []
             try:
                 return connection.execute(
                     """
@@ -476,30 +529,40 @@ class DirectNotusProcess:
                     JOIN memories AS m ON m.id = memories_fts.rowid
                     WHERE memories_fts MATCH ?
                       AND m.user_id = ?
-                      AND m.role IN ('user', 'fact', 'note')
-                      AND lower(trim(m.content)) NOT LIKE 'user:%'
-                      AND lower(trim(m.content)) NOT LIKE 'abin:%'
                     """
+                    + role_sql
                     + type_sql,
                     [fts_query, user_id, *type_params],
                 ).fetchall()
             except sqlite3.OperationalError:
                 self._fts_available = False
+                return []
+
+        rows = _fts("AND")
+        if not rows:
+            rows = _fts("OR")
+        if rows:
+            return rows
 
         sql = (
             "SELECT m.id, m.role, m.content, m.user_id, m.memory_type, "
             "m.created_at, m.access_count, m.last_accessed, NULL AS fts_rank "
             "FROM memories AS m WHERE m.user_id = ? "
-            "AND m.role IN ('user', 'fact', 'note') "
-            "AND lower(trim(m.content)) NOT LIKE 'user:%' "
-            "AND lower(trim(m.content)) NOT LIKE 'abin:%'"
+            + role_sql
             + type_sql
         )
         params: List[Any] = [user_id, *type_params]
         terms = self._query_terms(query)
-        if terms:
-            sql += " AND (" + " OR ".join("lower(m.content) LIKE ?" for _ in terms) + ")"
-            params.extend(f"%{term}%" for term in terms)
+        # Prefer AND of significant terms; fall back to OR if that is empty.
+        significant = [t for t in terms if len(t) >= 4] or terms
+        if len(significant) >= 2:
+            and_sql = sql + " AND (" + " AND ".join("lower(m.content) LIKE ?" for _ in significant) + ")"
+            and_params = params + [f"%{term}%" for term in significant]
+            and_rows = connection.execute(and_sql, and_params).fetchall()
+            if and_rows:
+                return and_rows
+        sql += " AND (" + " OR ".join("lower(m.content) LIKE ?" for _ in terms) + ")"
+        params.extend(f"%{term}%" for term in terms)
         return connection.execute(sql, params).fetchall()
 
     def retrieve_memories(
@@ -512,8 +575,12 @@ class DirectNotusProcess:
         """Search all matching rows for a user, rank them, then apply the limit."""
         if not isinstance(user_id, str) or not user_id:
             return []
+        if not (query or "").strip() or not self._query_terms(query):
+            return []
 
         normalized_limit = self._normalise_limit(limit, 15)
+        terms = self._query_terms(query)
+        min_coverage = 0.34 if len(terms) <= 2 else 0.5
 
         with self._lock:
             connection = self._require_connection()
@@ -524,6 +591,10 @@ class DirectNotusProcess:
                 if not self._is_safe_memory(row["role"], row["content"]):
                     continue
                 score = self._match_quality(query, row["content"])
+                # coverage is score/10 before fts boost
+                coverage = min(1.0, score / 10.0)
+                if coverage < min_coverage:
+                    continue
                 if row["fts_rank"] is not None:
                     score += max(0.0, -float(row["fts_rank"]))
                 ranked.append((score, str(row["created_at"] or ""), row))
@@ -558,7 +629,9 @@ class DirectNotusProcess:
 
     def _store(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         content = payload.get("content")
-        role = payload.get("role", "user")
+        role = str(payload.get("role", "user") or "user").strip().lower()
+        if role in {"assistant", "abin"}:
+            role = "monday"
         user_id = payload.get("user_id", "default")
         if not self._is_safe_memory(role, content):
             return {"status": "error", "message": "Memory must be clean structured content"}
