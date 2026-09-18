@@ -29,6 +29,17 @@ def create_core_systems(
 
     `runtime_directory` is retained for mutable non-Notus runtime state and tests.
     Notus itself is PostgreSQL-only and does not use a local SQLite file.
+
+    Postgres env (ActiveNotusMemorySystem / notus_memory._connect_postgres):
+      NOTUS_POSTGRES_DSN   — full DSN; if set, wins over discrete vars
+      NOTUS_POSTGRES_DB    — default ``notus_memory``
+      NOTUS_POSTGRES_USER  — default ``$USER`` (e.g. box)
+      NOTUS_POSTGRES_PASSWORD — optional; needed for TCP auth when not trust/peer
+      NOTUS_POSTGRES_HOST  — default ``localhost``
+      NOTUS_POSTGRES_PORT  — default ``5432``
+    Related (not read by Notus connect, but used elsewhere):
+      MONDAY_RUNTIME_DIR   — runtime_paths.runtime_dir() override
+    There is no DATABASE_URL / PG* wiring in the active Notus path.
     """
     directory = Path(runtime_directory) if runtime_directory else runtime_dir()
     directory.mkdir(parents=True, exist_ok=True)

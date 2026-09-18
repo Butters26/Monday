@@ -413,6 +413,39 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                 "content": {"associations": associations, "count": len(associations)},
             }
 
+        if msg_type in {"get_recent", "get_recent_memories"}:
+            limit = max(1, min(int(payload.get("limit", 5)), 50))
+            with self._db_connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, timestamp, role, content, tag, importance_score,
+                           memory_type, conversation_id
+                    FROM superhuman_memories
+                    WHERE user_id = %s
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                    """,
+                    (user_id, limit),
+                )
+                rows = cursor.fetchall()
+            memories = [
+                {
+                    "id": row[0],
+                    "timestamp": row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1]),
+                    "role": row[2],
+                    "content": row[3],
+                    "tag": row[4],
+                    "importance": row[5],
+                    "memory_type": row[6],
+                    "conversation_id": row[7],
+                }
+                for row in rows
+            ]
+            return {
+                "status": "success",
+                "content": {"memories": memories, "results": memories, "count": len(memories)},
+            }
+
         if msg_type == "get_conversation_history":
             limit = max(1, min(int(payload.get("limit", 20)), 100))
             with self._db_connection.cursor() as cursor:

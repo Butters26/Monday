@@ -115,3 +115,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_fact_user ON brain_facts(subject, predicate
 CREATE INDEX IF NOT EXISTS idx_fact_conf ON brain_facts(confidence);
 CREATE INDEX IF NOT EXISTS idx_fact_last ON brain_facts(last_reinforced);
 
+
+-- Memory associations (Notus SuperhumanMemorySystem)
+CREATE TABLE IF NOT EXISTS memory_associations (
+    memory_id_a TEXT NOT NULL,
+    memory_id_b TEXT NOT NULL,
+    shared_concepts TEXT NOT NULL,
+    strength DOUBLE PRECISION DEFAULT 1.0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (memory_id_a, memory_id_b)
+);
+CREATE INDEX IF NOT EXISTS idx_assoc_a ON memory_associations(memory_id_a);
+CREATE INDEX IF NOT EXISTS idx_assoc_b ON memory_associations(memory_id_b);
+
+-- Contradiction integrity columns (ActiveNotusMemorySystem)
+ALTER TABLE brain_facts ADD COLUMN IF NOT EXISTS conflicts_with JSONB;
+ALTER TABLE brain_facts ADD COLUMN IF NOT EXISTS is_contradicted BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_fact_contradicted ON brain_facts(user_id, is_contradicted);

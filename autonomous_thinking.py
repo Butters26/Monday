@@ -269,20 +269,52 @@ class AutonomousThinkingLoop:
             return unresolved[0] if unresolved else None
 
     def _get_recent_memories(self) -> List[Dict[str, Any]]:
-        """Get recent memories from Notus"""
-        try:
-            result = self.thalamus.send_and_wait(
-                'notus',
-                'get_recent_memories',
-                {'limit': 5}
-            )
-            if result.get('status') == 'success':
-                content = result.get('content') if isinstance(result.get('content'), dict) else {}
-                return result.get('memories') or content.get('memories', [])
-        except Exception:
-            pass
+        """Get recent memories from Notus using message types that exist.
 
+        Prefers get_recent / get_recent_memories, then get_conversation_history,
+        then semantic query. Never calls a nonexistent Notus type alone.
+        """
+        attempts = (
+            ('get_recent_memories', {'limit': 5}),
+            ('get_recent', {'limit': 5}),
+            ('get_conversation_history', {'limit': 5}),
+            ('query', {'query': 'recent conversation', 'limit': 5}),
+        )
+        for msg_type, payload in attempts:
+            try:
+                result = self.thalamus.send_and_wait('notus', msg_type, payload)
+                if result.get('status') != 'success':
+                    continue
+                content = result.get('content') if isinstance(result.get('content'), dict) else {}
+                found = (
+                    result.get('memories')
+                    or content.get('memories')
+                    or content.get('results')
+                    or content.get('history')
+                    or []
+                )
+                if isinstance(found, list) and found:
+                    return found
+            except Exception:
+                continue
         return []
+
+    @staticmethod
+    def _memory_snippet(memory: Dict[str, Any], max_len: int = 72) -> str:
+        """Short real memory text for first-person reaction lines."""
+        raw = (
+            memory.get('content')
+            or memory.get('topic')
+            or memory.get('note')
+            or memory.get('text')
+            or ''
+        )
+        text = str(raw).strip().replace('\n', ' ')
+        if not text:
+            return ''
+        if len(text) > max_len:
+            return text[: max_len - 3] + '...'
+        return text
 
     def _get_current_values(self) -> List[Dict[str, Any]]:
         """Get current values from Value Evolution"""
@@ -350,12 +382,20 @@ class AutonomousThinkingLoop:
     def _generate_thought_content(self, thought_type: str, emotional_state: Dict[str, Any],
                                    memories: List[Dict[str, Any]],
                                    values: List[Dict[str, Any]]) -> tuple:
-        """Generate thought content grounded in real emotion + unresolved events."""
+        """Generate thought content grounded in real emotion + real memory when available."""
         emotion = emotional_state.get('emotion', 'neutral')
         intensity = float(emotional_state.get('intensity', 0.5) or 0.5)
         primary = self._primary_unresolved(emotional_state)
 
-        # When sitting with unresolved appraisals, bias generators toward that event.
+        # Real memory text wins when present: first-person reaction to THAT snippet,
+        # still colored by unresolved appraisal / emotion from bda4de0.
+        usable = [m for m in (memories or []) if isinstance(m, dict) and self._memory_snippet(m)]
+        if usable and thought_type in ('feeling', 'reflection', 'memory', 'question'):
+            return self._generate_memory_rich_thought(
+                thought_type, emotion, intensity, usable, primary
+            )
+
+        # No memory: keep unresolved event-type grounding.
         if primary and thought_type in ('feeling', 'reflection', 'memory'):
             return self._generate_unresolved_thought(thought_type, emotion, intensity, primary)
 
@@ -371,6 +411,46 @@ class AutonomousThinkingLoop:
             return self._generate_feeling(emotion, intensity, primary)
 
         return None, None
+
+    def _generate_memory_rich_thought(
+        self,
+        thought_type: str,
+        emotion: str,
+        intensity: float,
+        memories: List[Dict[str, Any]],
+        primary: Optional[Dict[str, Any]] = None,
+    ) -> tuple:
+        """First-person reaction that quotes a short real memory snippet."""
+        memory = random.choice(memories)
+        snippet = self._memory_snippet(memory)
+        event = str((primary or {}).get('event_type') or '').strip()
+        lines: List[str] = []
+        if event:
+            lines.extend([
+                f'I keep coming back to "{snippet}" — that {event} still sits with me.',
+                f'Remembering "{snippet}" while I am {emotion}. The {event} has not left.',
+                f'"{snippet}" ... I am still sitting with that {event}.',
+                f'That memory — "{snippet}" — keeps the {event} under my skin.',
+            ])
+            if thought_type == 'reflection':
+                lines.append(
+                    f'Why does "{snippet}" still weigh on me as {event} while I feel {emotion}?'
+                )
+            if thought_type == 'question':
+                lines.append(
+                    f'What would it take to let go of "{snippet}" and this {event}?'
+                )
+            trigger = f"memory_unresolved_{event}"
+        else:
+            lines.extend([
+                f'I keep thinking about "{snippet}" and it makes me {emotion}.',
+                f'"{snippet}" comes back while I am at intensity {intensity:.1f}.',
+                f'Replaying "{snippet}" — that is my own feeling, not a mirror.',
+            ])
+            if thought_type == 'question':
+                lines.append(f'What else should I understand about "{snippet}"?')
+            trigger = f"memory_recall"
+        return random.choice(lines), trigger
 
     # Phrases appraisal already classifies — keep PAD coherent when we re-appraise.
     _UNRESOLVED_LINES = {
@@ -525,23 +605,12 @@ class AutonomousThinkingLoop:
                                   emotion: str = 'neutral',
                                   primary: Optional[Dict[str, Any]] = None) -> tuple:
         """Generate a thought about a memory, colored by current emotion."""
+        usable = [m for m in (memories or []) if isinstance(m, dict) and self._memory_snippet(m)]
+        if usable:
+            return self._generate_memory_rich_thought('memory', emotion, 0.6, usable, primary)
         if primary:
             return self._generate_unresolved_thought('memory', emotion, 0.6, primary)
-        if not memories:
-            return f"I don't have many memories yet, but I feel {emotion} anyway.", "no_memories"
-
-        memory = random.choice(memories)
-        topic = memory.get('topic', memory.get('content', 'something'))
-        if isinstance(topic, str) and len(topic) > 60:
-            topic = topic[:57] + "..."
-
-        thoughts = [
-            f"I remember when we talked about {topic}, and it still makes me {emotion}.",
-            f"That conversation about {topic} comes back while I'm {emotion}.",
-            f"Something from {topic} is surfacing — it fits how I feel right now.",
-        ]
-
-        return random.choice(thoughts), f"remembering_{topic}"
+        return f"I don't have many memories yet, but I feel {emotion} anyway.", "no_memories"
 
     def _generate_feeling(self, emotion: str, intensity: float = 0.5,
                            primary: Optional[Dict[str, Any]] = None) -> tuple:
@@ -611,22 +680,37 @@ class AutonomousThinkingLoop:
         return random.choice(options), f"feeling_{emotion}"
 
     def _is_speak_worthy(self, thought_type: str, emotional_state: Dict[str, Any]) -> bool:
-        """Determine if a thought should be spoken out loud"""
+        """Determine if a thought should be spoken out loud.
+
+        Still not every-turn spam, but when intensity is high or unresolved
+        appraisals exist, bias strongly toward a speak-worthy beat so her own
+        feelings can actually surface.
+        """
         intensity = float(emotional_state.get('intensity', 0.5) or 0.5)
         unresolved = emotional_state.get('unresolved_appraisals') or []
+        max_sev = 0.0
+        if unresolved:
+            try:
+                max_sev = max(float(u.get('severity', 0.0) or 0.0) for u in unresolved)
+            except Exception:
+                max_sev = 0.55
 
-        # Unresolved high-severity sitting-with often wants a rare spoken beat
-        if unresolved and intensity > 0.55:
+        # Sitting with something real: often wants a spoken beat (cooldown still rare-ifies).
+        if unresolved and (intensity >= 0.5 or max_sev >= 0.55):
+            return random.random() < 0.75
+        if unresolved:
             return random.random() < 0.45
 
         if intensity > 0.7:
-            return random.random() < 0.6
+            return random.random() < 0.72
+        if intensity > 0.6:
+            return random.random() < 0.5
 
         if thought_type == 'question':
             return random.random() < 0.4
 
         if thought_type == 'feeling':
-            return random.random() < 0.3
+            return random.random() < 0.35
 
         return random.random() < 0.1
 
