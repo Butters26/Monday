@@ -282,6 +282,76 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         payload = message.get("content", message)
         return payload if isinstance(payload, dict) else {}
 
+    def _ingest_personal_facts_from_text(
+        self,
+        text: str,
+        user_id: str = "default",
+        source: str = "user",
+        confidence: float = 0.95,
+    ) -> List[Dict[str, Any]]:
+        """Parse personal facts, store triples, and mirror as role=fact memories."""
+        triples = self.extract_personal_fact_triples(text)
+        stored: List[Dict[str, Any]] = []
+        for subject, predicate, obj, value in triples:
+            fact_id = self.remember_fact(
+                subject=subject,
+                predicate=predicate,
+                obj=obj,
+                value=value,
+                confidence=confidence,
+                user_id=user_id,
+                source=source,
+                permanent=True,
+            )
+            if not fact_id:
+                continue
+            readable = self.format_personal_fact(subject, predicate, obj)
+            try:
+                self.store_memory(
+                    role="fact",
+                    content=readable,
+                    user_id=user_id,
+                    tag="Fact",
+                    importance=8.5,
+                    mode="memory",
+                    memory_type="fact",
+                    personality="neutral",
+                )
+            except Exception:
+                pass
+            stored.append(
+                {
+                    "id": fact_id,
+                    "role": "fact",
+                    "content": readable,
+                    "subject": subject,
+                    "predicate": predicate,
+                    "object": obj,
+                }
+            )
+        return stored
+
+    def _facts_as_memories(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Present durable facts in the same shape as conversation memories."""
+        out: List[Dict[str, Any]] = []
+        for fact in facts or []:
+            if not isinstance(fact, dict):
+                continue
+            subject = str(fact.get("subject", "") or "")
+            predicate = str(fact.get("predicate", "") or "")
+            obj = str(fact.get("object", "") or "")
+            if subject and predicate and obj:
+                readable = self.format_personal_fact(subject, predicate, obj)
+            else:
+                readable = fact.get("content") or fact.get("text")
+            if not readable:
+                continue
+            item = dict(fact)
+            item["role"] = "fact"
+            item["content"] = readable
+            out.append(item)
+        return out
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         payload = self._payload(message)
@@ -302,9 +372,20 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             role = payload.get("role", "user")
             if not isinstance(content, str) or not content.strip():
                 return {"status": "error", "message": "content must be non-empty text"}
+            # Never persist experience-poison blobs into retrievable memory.
+            stripped = content.strip()
+            if (
+                str(role) == "system"
+                and "How it felt:" in stripped
+                and "What it meant:" in stripped
+            ):
+                return {
+                    "status": "success",
+                    "content": {"stored": False, "skipped": "experience_poison"},
+                }
             memory_id = self.store_memory(
                 role=str(role),
-                content=content.strip(),
+                content=stripped,
                 user_id=user_id,
                 tag=str(payload.get("tag", "General")),
                 importance=float(payload.get("importance", 5.0)),
@@ -314,9 +395,21 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             )
             if not memory_id:
                 return {"status": "error", "message": "memory was not stored"}
+            learned: List[Dict[str, Any]] = []
+            if str(role) == "user":
+                learned = self._ingest_personal_facts_from_text(
+                    stripped,
+                    user_id=user_id,
+                    source=str(payload.get("source", message.get("source", "user"))),
+                )
             return {
                 "status": "success",
-                "content": {"stored": True, "id": memory_id, "content": content.strip()},
+                "content": {
+                    "stored": True,
+                    "id": memory_id,
+                    "content": stripped,
+                    "facts_learned": learned,
+                },
             }
 
         if msg_type in {"query", "query_semantic", "query_memories"}:
@@ -335,11 +428,21 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             facts = self.recall_facts(query, user_id=user_id, limit=limit)
             episodes = self.recall_episodes(query, user_id=user_id, limit=limit)
             self._update_working_set(facts, episodes)
+            fact_memories = self._facts_as_memories(facts)
+            # Put facts first so answer paths see durable knowledge before chatter.
+            combined = fact_memories + [
+                m for m in memories
+                if not (
+                    isinstance(m, dict)
+                    and str(m.get("role", "")) == "system"
+                    and "How it felt:" in str(m.get("content", ""))
+                )
+            ]
             return {
                 "status": "success",
                 "content": {
-                    "memories": memories,
-                    "semantic": memories,
+                    "memories": combined,
+                    "semantic": combined,
                     "facts": facts,
                     "episodic": episodes,
                     "working_set": self.get_working_set(),
@@ -347,18 +450,70 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             }
 
         if msg_type in {"remember_fact", "store_fact"}:
+            subject = str(payload.get("subject", "") or "")
+            predicate = str(payload.get("predicate", "") or "")
+            obj = str(payload.get("object", payload.get("obj", "")) or "")
+            source = str(payload.get("source", message.get("source", "user")))
+            confidence = float(payload.get("confidence", 0.9))
+            permanent = bool(payload.get("permanent", False))
+            # Schema bridge: learn_fact historically sent only {content}.
+            if (not subject or not predicate or not obj) and payload.get("content"):
+                learned = self._ingest_personal_facts_from_text(
+                    str(payload.get("content")),
+                    user_id=user_id,
+                    source=source,
+                    confidence=confidence,
+                )
+                if learned:
+                    return {
+                        "status": "success",
+                        "content": {
+                            "id": learned[0]["id"],
+                            "facts": learned,
+                            "count": len(learned),
+                        },
+                    }
+                # Fall back to generic learn_facts_from_text for non-personal content.
+                ids = self.learn_facts_from_text(
+                    str(payload.get("content")),
+                    user_id=user_id,
+                    default_conf=confidence,
+                )
+                if ids:
+                    return {
+                        "status": "success",
+                        "content": {"id": ids[0], "ids": ids, "count": len(ids)},
+                    }
+                return {
+                    "status": "error",
+                    "message": "could not extract subject/predicate/object from content",
+                }
             fact_id = self.remember_fact(
-                subject=str(payload.get("subject", "")),
-                predicate=str(payload.get("predicate", "")),
-                obj=str(payload.get("object", payload.get("obj", ""))),
+                subject=subject,
+                predicate=predicate,
+                obj=obj,
                 value=payload.get("value"),
-                confidence=float(payload.get("confidence", 0.9)),
+                confidence=confidence,
                 user_id=user_id,
-                source=str(payload.get("source", message.get("source", "user"))),
-                permanent=bool(payload.get("permanent", False)),
+                source=source,
+                permanent=permanent,
             )
             if not fact_id:
                 return {"status": "error", "message": "subject, predicate and object are required"}
+            try:
+                readable = self.format_personal_fact(subject, predicate, obj)
+                self.store_memory(
+                    role="fact",
+                    content=readable,
+                    user_id=user_id,
+                    tag="Fact",
+                    importance=8.5,
+                    mode="memory",
+                    memory_type="fact",
+                    personality="neutral",
+                )
+            except Exception:
+                pass
             return {"status": "success", "content": {"id": fact_id}}
 
         if msg_type == "query_facts":

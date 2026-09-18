@@ -19,6 +19,21 @@ _FAVORITE_FACT = re.compile(
     r"(?P<value>[a-z0-9][a-z0-9 -]{0,80}?)(?:[.!?]|$)",
     re.IGNORECASE,
 )
+_NAMED_FACT = re.compile(
+    r"\b(?:remember\s+(?:that\s+)?)?my\s+(?P<noun>[a-z][a-z ]{0,40}?)\s+is\s+named\s+"
+    r"(?P<value>[A-Za-z0-9][\w-]{0,40})\b",
+    re.IGNORECASE,
+)
+_NAME_IS_FACT = re.compile(
+    r"\b(?:remember\s+(?:that\s+)?)?my\s+(?P<noun>[a-z][a-z ]{0,40}?)(?:'s|s')\s+name\s+is\s+"
+    r"(?P<value>[A-Za-z0-9][\w-]{0,40})\b",
+    re.IGNORECASE,
+)
+_NAME_QUESTION = re.compile(
+    r"\bwhat(?:'s|\s+is)\s+my\s+(?P<noun>[a-z][a-z ]{0,40}?)(?:'s|s')?\s+name\b",
+    re.IGNORECASE,
+)
+_POISON_MARKERS = ("How it felt:", "What it meant:")
 _BASELINE_EVIDENCE = (
     "Gravity is the force of attraction between masses. It pulls objects toward each other, including objects toward Earth.",
     "Photosynthesis is the process by which plants use light energy to turn water and carbon dioxide into glucose, releasing oxygen.",
@@ -56,6 +71,12 @@ class DirectMaximumSophisticationAdapter:
             content = memory.get("content")
             if not isinstance(content, str) or not content.strip():
                 continue
+            role = str(memory.get("role", "") or "")
+            # Drop experience-poison blobs (role=system "How it felt:" rows).
+            if any(marker in content for marker in _POISON_MARKERS) and (
+                role == "system" or all(m in content for m in _POISON_MARKERS)
+            ):
+                continue
             # The current prompt is stored before reasoning. It is not evidence
             # for answering itself, but older user-scoped memories are.
             if content.strip().casefold() == user_input.strip().casefold():
@@ -72,26 +93,118 @@ class DirectMaximumSophisticationAdapter:
         value = match.group("value").strip(" .!?")
         return f"Your {attribute} is {value}." if value else None
 
+    @staticmethod
+    def _normalise_personal_fact(text: str) -> Optional[str]:
+        if not isinstance(text, str) or not text.strip():
+            return None
+        for pattern in (_NAME_IS_FACT, _NAMED_FACT):
+            match = pattern.search(text)
+            if match:
+                noun = " ".join(match.group("noun").lower().split())
+                value = match.group("value").strip(" .!?")
+                if noun and value:
+                    return f"Your {noun}'s name is {value}."
+        fav = DirectMaximumSophisticationAdapter._normalise_favorite_fact(text)
+        return fav
+
     @classmethod
     def _evidence(cls, memories: List[Dict[str, Any]], user_input: str) -> List[Dict[str, Any]]:
         evidence = []
         for memory in memories:
-            normalized = cls._normalise_favorite_fact(memory["content"])
+            content = memory.get("content", "")
+            normalized = cls._normalise_personal_fact(content) if isinstance(content, str) else None
             if normalized:
                 evidence.append({"role": "fact", "content": normalized})
+            elif str(memory.get("role", "")) == "fact":
+                evidence.append(dict(memory))
             else:
                 evidence.append(memory)
-        fact = cls._normalise_favorite_fact(user_input)
+        fact = cls._normalise_personal_fact(user_input)
         if fact:
             evidence.append({"role": "fact", "content": fact})
         return evidence
 
+    @classmethod
+    def _answer_from_facts(cls, evidence: List[Dict[str, Any]], user_input: str) -> Optional[str]:
+        """Answer simple personal questions directly from stored facts."""
+        facts = [
+            m.get("content", "").strip()
+            for m in evidence
+            if isinstance(m, dict)
+            and str(m.get("role", "")) == "fact"
+            and isinstance(m.get("content"), str)
+            and m.get("content").strip()
+        ]
+        if not facts:
+            return None
+        qmatch = _NAME_QUESTION.search(user_input or "")
+        if qmatch:
+            noun = " ".join(qmatch.group("noun").lower().split())
+            needle = f"your {noun}'s name is "
+            for fact in facts:
+                low = fact.casefold()
+                if needle in low:
+                    return fact if fact.endswith(".") else fact + "."
+                # Also accept "Your dog name is" style slips
+                if noun in low and "name is" in low:
+                    return fact if fact.endswith(".") else fact + "."
+        # Favorite questions
+        fav_q = re.search(
+            r"\bwhat(?:'s|\s+is)\s+my\s+(favorite\s+[a-z][a-z ]{0,40}?)\b",
+            user_input or "",
+            re.IGNORECASE,
+        )
+        if fav_q:
+            attr = " ".join(fav_q.group(1).lower().split())
+            needle = f"your {attr} is "
+            for fact in facts:
+                if needle in fact.casefold():
+                    return fact if fact.endswith(".") else fact + "."
+        return None
+
+    @classmethod
+    def _teaching_ack(cls, user_input: str) -> Optional[str]:
+        """Acknowledge remembered personal facts (hello-monday / DirectNotus idea)."""
+        fact = cls._normalise_personal_fact(user_input or "")
+        if not fact:
+            return None
+        # "Your dog's name is Pixel." -> "Got it — your dog's name is Pixel."
+        body = fact[0].lower() + fact[1:] if fact else fact
+        return f"Got it — {body}"
+
     @staticmethod
+    def _looks_like_raw_triple(text: str) -> bool:
+        t = (text or "").strip()
+        if re.match(r"^user\s+[\w]+\s+\S+$", t, re.IGNORECASE):
+            return True
+        if re.match(r"^[\w]+\s+[\w_]+\s+\S+$", t) and " " not in t.split()[-1]:
+            # e.g. "user dog_name Pixel" / "user favorite_color blue"
+            parts = t.split()
+            if len(parts) == 3 and "_" in parts[1]:
+                return True
+        return False
+
+    @classmethod
     def _usable_conclusion(
-        thinking: Dict[str, Any], understanding: Dict[str, Any]
+        cls,
+        thinking: Dict[str, Any],
+        understanding: Dict[str, Any],
+        user_input: str = "",
     ) -> Optional[str]:
         composed = thinking.get("composed_response")
         if not isinstance(composed, str) or not composed.strip():
+            return None
+        composed = composed.strip()
+        if cls._looks_like_raw_triple(composed):
+            return None
+        # Don't let an unrelated stored fact become the spoken answer to a
+        # check-in / social prompt.
+        social = re.search(
+            r"\b(?:are you okay|how are you|how(?:'s| is) it going|what(?:'s| is) up)\b",
+            user_input or "",
+            re.IGNORECASE,
+        )
+        if social and "name is" in composed.casefold():
             return None
         theories = thinking.get("theories", [])
         grounded = any(
@@ -99,7 +212,7 @@ class DirectMaximumSophisticationAdapter:
             for theory in theories
         )
         if grounded or understanding.get("intent") == "greeting":
-            return composed.strip()
+            return composed
         # Legacy composition can turn an evidence-free question into a word bag;
         # that is not a conclusion. Let Thalamus use its emergency fallback.
         return None
@@ -124,6 +237,29 @@ class DirectMaximumSophisticationAdapter:
             if isinstance(memory_context, dict)
             else []
         )
+        raw_facts = (
+            memory_context.get("facts", [])
+            if isinstance(memory_context, dict)
+            else []
+        )
+        # Fold durable facts into the memory list before cleaning.
+        if isinstance(raw_facts, list):
+            for fact in raw_facts:
+                if not isinstance(fact, dict):
+                    continue
+                content = fact.get("content") or fact.get("text")
+                if not content and fact.get("predicate") and fact.get("object"):
+                    pred = str(fact.get("predicate"))
+                    obj = str(fact.get("object"))
+                    if pred.endswith("_name"):
+                        noun = pred[:-5].replace("_", " ")
+                        content = f"Your {noun}'s name is {obj}."
+                    else:
+                        content = f"Your {pred.replace('_', ' ')} is {obj}."
+                if content:
+                    raw_memories = list(raw_memories) + [
+                        {"role": "fact", "content": content, **fact}
+                    ]
         memories = self._clean_memories(raw_memories, user_input)
         evidence = self._evidence(memories, user_input)
         emotional_state = direct_input.get("emotion_result", {})
@@ -142,10 +278,13 @@ class DirectMaximumSophisticationAdapter:
             "memory_context": {"memories": evidence},
             "understanding": understanding,
         }
+        # Prefer teaching ack / fact answers over legacy composition noise.
+        teaching = self._teaching_ack(user_input)
+        fact_answer = self._answer_from_facts(evidence, user_input)
         thinking = self.reasoner.think_about(legacy_input)
         if not isinstance(thinking, dict):
             thinking = {}
-        answer = self._usable_conclusion(thinking, understanding)
+        answer = teaching or fact_answer or self._usable_conclusion(thinking, understanding, user_input)
         semantic_input = {
             "intent": understanding.get("intent", "conversation"),
             "certainty": understanding.get("confidence", 0.5),

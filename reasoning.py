@@ -1,3 +1,4 @@
+import re
 #!/usr/bin/env python3
 """
 ABIN Reasoning System - Maximum Sophistication
@@ -1580,6 +1581,42 @@ class MaximumSophisticationReasoning:
             semantic_knowledge = []
         episodic_events = notus_context.get('episodic', [])
         known_facts = notus_context.get('facts', [])
+        # Surface durable facts as first-class evidence (was fetched then ignored).
+        for fact in known_facts:
+            if not isinstance(fact, dict):
+                continue
+            sub = str(fact.get('subject', '') or '').strip()
+            pred = str(fact.get('predicate', '') or '').strip()
+            obj = str(fact.get('object', '') or '').strip()
+            readable = None
+            if sub and pred and obj:
+                if pred.endswith('_name'):
+                    noun = pred[:-5].replace('_', ' ')
+                    readable = f"Your {noun}'s name is {obj}."
+                elif pred.startswith('favorite_') or pred.startswith('favourite_'):
+                    readable = f"Your {pred.replace('_', ' ')} is {obj}."
+                elif sub.lower() in {'user', 'i', 'me'}:
+                    readable = f"Your {pred.replace('_', ' ')} is {obj}."
+            if not readable:
+                readable = fact.get('content') or fact.get('text')
+            if readable and not re.match(r'^user\s+\w+\s+\S+$', str(readable).strip(), re.I):
+                semantic_knowledge.append({
+                    'role': 'fact',
+                    'content': readable,
+                    'subject': fact.get('subject'),
+                    'predicate': fact.get('predicate'),
+                    'object': fact.get('object'),
+                })
+            elif readable:
+                # Still keep a cleaned form rather than raw triple text.
+                if sub and pred and obj:
+                    semantic_knowledge.append({
+                        'role': 'fact',
+                        'content': f"Your {pred.replace('_', ' ')} is {obj}.",
+                        'subject': fact.get('subject'),
+                        'predicate': fact.get('predicate'),
+                        'object': fact.get('object'),
+                    })
         
         # CRITICAL: Query information about the user to inform decision-making
         user_info = self.query_user_information_from_notus(user_id)
@@ -2263,15 +2300,13 @@ class MaximumSophisticationReasoning:
         return False
     
     def _save_experience_to_memory(self, experience: Experience):
-        """Save experience to Notus"""
-        try:
-            self._query_memory('store', {
-                'role': 'system',
-                'content': f"{experience.what_happened}\nHow it felt: {experience.how_it_felt}\nWhat it meant: {experience.what_it_meant_to_me}",
-                'memory_type': 'episodic'
-            })
-        except Exception:
-            pass
+        """Persist experience without poisoning retrievable conversation memory.
+
+        Earlier builds stored "{user}\nHow it felt:..." as role=system rows in
+        superhuman_memories; those blobs were later retrieved as answers.
+        Keep the Experience object in-process only.
+        """
+        return None
     
     # ========================================================================
     # CAUSAL MODELING & THEORY BUILDING (from before, keeping these)
@@ -2474,7 +2509,7 @@ class MaximumSophisticationReasoning:
     # ========================================================================
     
     def learn_fact(self, content: str, confidence: float = 1.0, source: str = "told"):
-        """Learn with emotional response - saves to Notus"""
+        """Learn with emotional response - saves to Notus as durable triples."""
         
         fact = Fact(
             content=content,
@@ -2486,14 +2521,16 @@ class MaximumSophisticationReasoning:
         
         self.facts[content] = fact
         
-        # Save to Notus memory system
+        # Save to Notus: content-only payload; Notus extracts subject/predicate/object.
+        # (Previously this sent no triples, so store_fact rejected everything.)
         try:
             self._query_memory('store_fact', {
                 'content': content,
                 'confidence': confidence,
                 'source': source,
                 'timestamp': time.time(),
-                'emotional_weight': fact.emotional_weight
+                'emotional_weight': fact.emotional_weight,
+                'permanent': True,
             })
         except Exception:
             pass  # Continue even if Notus unavailable

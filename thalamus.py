@@ -653,9 +653,17 @@ class Thalamus:
         if memory["status"] != "success":
             return "I'm having trouble remembering that right now."
 
+        # Prefer query_context so durable facts ride with memories.
         memory_context = self.send_and_wait(
-            "notus", "query", {"query": user_input, "user_id": user_id, "limit": 15}
+            "notus",
+            "query_context",
+            {"query": user_input, "user_id": user_id, "limit": 15},
         )
+        if memory_context["status"] != "success":
+            # Fallback to plain query if an older Notus build lacks query_context.
+            memory_context = self.send_and_wait(
+                "notus", "query", {"query": user_input, "user_id": user_id, "limit": 15}
+            )
         if memory_context["status"] != "success":
             return "I'm having trouble retrieving context right now."
 
@@ -666,6 +674,41 @@ class Thalamus:
             return "I'm having trouble processing that right now."
         emotional_state = self._content(emotion)
 
+        ctx = self._content(memory_context)
+        memories = list(ctx.get("memories") or [])
+        # Ensure facts are visible even if a backend forgot to merge them.
+        for fact in ctx.get("facts") or []:
+            if not isinstance(fact, dict):
+                continue
+            content = fact.get("content") or fact.get("text")
+            if not content:
+                pred = str(fact.get("predicate", "") or "")
+                obj = str(fact.get("object", "") or "")
+                if pred.endswith("_name") and obj:
+                    noun = pred[:-5].replace("_", " ")
+                    content = f"Your {noun}'s name is {obj}."
+                elif pred and obj:
+                    content = f"Your {pred.replace('_', ' ')} is {obj}."
+            if not content:
+                continue
+            memories.append({"role": "fact", "content": content, **fact})
+        # Drop experience-poison blobs before they reach reasoning / provider.
+        memories = [
+            m
+            for m in memories
+            if not (
+                isinstance(m, dict)
+                and isinstance(m.get("content"), str)
+                and "How it felt:" in m["content"]
+                and (
+                    str(m.get("role", "")) == "system"
+                    or "What it meant:" in m["content"]
+                )
+            )
+        ]
+        ctx = dict(ctx)
+        ctx["memories"] = memories
+
         reasoning = self.send_and_wait(
             "reasoning",
             "think",
@@ -674,7 +717,7 @@ class Thalamus:
                     "user_input": user_input,
                     "user_id": user_id,
                     "understanding": understanding,
-                    "memory_context": self._content(memory_context),
+                    "memory_context": ctx,
                     "emotion_result": emotional_state,
                 },
             },
@@ -682,7 +725,6 @@ class Thalamus:
         if reasoning["status"] != "success":
             return "I'm having trouble thinking right now."
         semantic_input, reasoning_answer = self._reasoning_answer(reasoning)
-        memories = self._content(memory_context).get("memories", [])
         if reasoning_answer is None:
             try:
                 reasoning_answer = self.response_provider.render(

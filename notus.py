@@ -969,9 +969,17 @@ class SuperhumanMemorySystem:
         try:
             limit = limit or self.config.max_context_memories
             
-            # FAST PATH: Skip semantic search for simple greetings
-            if len(query) < 20 and any(w in query.lower() for w in ['hello', 'hi', 'hey', 'sup', 'yo']):
-                return []  # Empty memories for greetings
+            # FAST PATH: Skip semantic search only for whole-utterance greetings.
+            # Word-boundary / fullmatch — do NOT substring-match "hi" inside
+            # "hey, are you okay?" or similar.
+            _simple_greeting = re.compile(
+                r"^\s*(?:hello|hi|hey|sup|yo|hiya|howdy)"
+                r"(?:\s+(?:there|you|friend))?"
+                r"(?:\s*[!.,]*)?\s*$",
+                re.IGNORECASE,
+            )
+            if _simple_greeting.match(query or ""):
+                return []  # Empty memories for greetings only
             
             # Analyze query type to determine what memories are relevant
             query_type = self._analyze_query_type(query)
@@ -1001,7 +1009,19 @@ class SuperhumanMemorySystem:
                 filtered_memories = self._trim_memories_to_fit(filtered_memories, self.config.max_context_chars)
             
             print(f"🧠 Smart filtering: {len(base_memories)} -> {len(filtered_memories)} memories")
-            return filtered_memories[:limit]
+            # Drop experience-poison blobs that used to be stored as answers.
+            clean = []
+            for mem in filtered_memories[:limit]:
+                if not isinstance(mem, dict):
+                    continue
+                content = str(mem.get('content', '') or '')
+                role = str(mem.get('role', '') or '')
+                if 'How it felt:' in content and (
+                    role == 'system' or 'What it meant:' in content
+                ):
+                    continue
+                clean.append(mem)
+            return clean
             
         except Exception as e:
             print(f"❌ Error in smart memory retrieval: {e}")
@@ -1280,6 +1300,92 @@ class SuperhumanMemorySystem:
             logger.error(f"remember_fact failed: {e}")
             return None
 
+    @staticmethod
+    def extract_personal_fact_triples(text: str) -> List[Tuple[str, str, str, Optional[str]]]:
+        """Extract durable personal facts like dog names and favorites.
+
+        Returns (subject, predicate, object, value) tuples suitable for remember_fact.
+        """
+        if not text or not text.strip():
+            return []
+        t = text.strip()
+        out: List[Tuple[str, str, str, Optional[str]]] = []
+        seen = set()
+
+        def _slug(noun: str) -> str:
+            return re.sub(r"\s+", "_", noun.strip().lower())
+
+        def _add(sub: str, pred: str, obj: str) -> None:
+            key = (sub.lower(), pred.lower(), obj.lower())
+            if key in seen or not sub or not pred or not obj:
+                return
+            seen.add(key)
+            out.append((sub, pred, obj, None))
+
+        # my dog's name is Pixel / my dogs name is Pixel
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
+            r"([a-z][a-z\s]{0,40}?)(?:'s|s')\s+name\s+is\s+"
+            r"([A-Za-z0-9][\w-]{0,40})\b",
+            t,
+        ):
+            noun = m.group(1).strip()
+            val = m.group(2).strip()
+            _add("user", f"{_slug(noun)}_name", val)
+
+        # my dog is named Pixel
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
+            r"([a-z][a-z\s]{0,40}?)\s+is\s+named\s+"
+            r"([A-Za-z0-9][\w-]{0,40})\b",
+            t,
+        ):
+            noun = m.group(1).strip()
+            val = m.group(2).strip()
+            _add("user", f"{_slug(noun)}_name", val)
+
+        # my favorite color is blue
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
+            r"(favorite\s+[a-z][a-z\s]{0,30}?)\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            t,
+        ):
+            attr = m.group(1).strip()
+            val = m.group(2).strip(" .!?")
+            _add("user", _slug(attr), val)
+
+        # generic my X is Y (avoid named/name-is already handled)
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
+            r"([a-z][a-z\s]{0,40}?)\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            t,
+        ):
+            noun = m.group(1).strip()
+            val = m.group(2).strip(" .!?")
+            if noun.lower().startswith("favorite "):
+                continue
+            if val.lower().startswith("named "):
+                continue
+            _add("user", _slug(noun), val)
+
+        return out
+
+    @staticmethod
+    def format_personal_fact(subject: str, predicate: str, obj: str) -> str:
+        """Turn a stored triple into a short, answerable sentence."""
+        pred = (predicate or "").strip()
+        obj = (obj or "").strip()
+        if pred.endswith("_name"):
+            noun = pred[:-5].replace("_", " ").strip() or "thing"
+            return f"Your {noun}'s name is {obj}."
+        if pred.startswith("favorite_") or pred.startswith("favourite_"):
+            return f"Your {pred.replace('_', ' ')} is {obj}."
+        if (subject or "").lower() in {"user", "i", "me"}:
+            return f"Your {pred.replace('_', ' ')} is {obj}."
+        return f"{subject} {pred.replace('_', ' ')} {obj}".strip()
+
     def learn_facts_from_text(self, text: str, user_id: str = "default", default_conf: float = 0.85) -> List[str]:
         """Extract simple facts from text and store them. Returns list of fact IDs."""
         if not text or not text.strip():
@@ -1287,10 +1393,18 @@ class SuperhumanMemorySystem:
         facts: List[Tuple[str,str,str,Optional[str]]] = []
         t = text.strip()
         try:
-            # X is Y
+            # Personal "my X" facts first (dog name, favorite color, etc.)
+            personal = self.extract_personal_fact_triples(t)
+            facts.extend(personal)
+            # X is Y (skip if already captured as personal, and skip Remember-prefix junk)
             for m in re.finditer(r"\b([A-Za-z0-9_][A-Za-z0-9_\s]{0,50}?)\s+is\s+([A-Za-z0-9_\-][A-Za-z0-9_\-\s]{1,50})\b", t, re.IGNORECASE):
                 sub = m.group(1).strip()
                 obj = m.group(2).strip()
+                sub_l = sub.lower()
+                if sub_l.startswith('remember ') or sub_l.startswith('my '):
+                    continue
+                if obj.lower().startswith('named '):
+                    continue
                 facts.append((sub, "is", obj, None))
             # X = Y
             for m in re.finditer(r"\b([A-Za-z0-9_][A-Za-z0-9_\s]{0,50}?)\s*=\s*([A-Za-z0-9_\-][A-Za-z0-9_\-\s]{1,50})\b", t):
