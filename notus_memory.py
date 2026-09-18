@@ -149,6 +149,15 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             "evening", "week", "month", "year", "everything", "nothing",
         }
     )
+    # Secret/label nouns that are durable even without a leading "my".
+    _DURABLE_KEY_NOUNS = frozenset(
+        {
+            "codeword", "password", "passphrase", "passcode", "pin", "secret",
+            "callsign", "codename", "username", "nickname", "alias", "handle",
+            "birthday", "hometown", "timezone", "badge", "key", "token",
+            "access_code", "access code", "safe word", "safeword",
+        }
+    )
     _VAGUE_VALUE_PREFIXES = (
         "going", "feeling", "looking", "doing", "getting", "being", "having",
         "trying", "thinking", "wondering", "hoping", "wanting", "needing",
@@ -156,21 +165,38 @@ class NotusMemorySystem(SuperhumanMemorySystem):
     )
 
     @classmethod
-    def _content_tokens(cls, text: str) -> set:
+    def _stem_token(cls, w: str) -> str:
+        """Light stemming for ranking (possessives + simple plurals)."""
+        if w.endswith("'s") and len(w) > 3:
+            w = w[:-2]
+        elif w.endswith("s'") and len(w) > 3:
+            w = w[:-2]
+        # Very light plural fold: dogs->dog, names->name (keep ss/us/is).
+        if (
+            len(w) > 3
+            and w.endswith("s")
+            and not w.endswith(("ss", "us", "is", "ous", "ics"))
+        ):
+            w = w[:-1]
+        return w
+
+    @classmethod
+    def _content_token_list(cls, text: str) -> list:
+        """Ordered content tokens (stemmed) for phrase / AND scoring."""
         import re
 
         words = re.findall(r"[a-z0-9']+", (text or "").lower())
-        out = set()
+        out = []
         for w in words:
-            # Normalize possessives: dog's -> dog (keep short tokens meaningful).
-            if w.endswith("'s") and len(w) > 3:
-                w = w[:-2]
-            elif w.endswith("s'") and len(w) > 3:
-                w = w[:-2]
+            w = cls._stem_token(w)
             if w in cls._RETRIEVAL_STOPWORDS or len(w) <= 1:
                 continue
-            out.add(w)
+            out.append(w)
         return out
+
+    @classmethod
+    def _content_tokens(cls, text: str) -> set:
+        return set(cls._content_token_list(text))
 
     @classmethod
     def _overlap_score(cls, query_tokens: set, text: str) -> float:
@@ -180,6 +206,47 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         if not cand:
             return 0.0
         return len(query_tokens & cand) / float(len(query_tokens))
+
+    @classmethod
+    def _phrase_bonus(cls, query: str, text: str) -> float:
+        """Reward contiguous multi-word matches (dog name, favorite color, …)."""
+        q = cls._content_token_list(query)
+        if len(q) < 2:
+            return 0.0
+        c = cls._content_token_list(text)
+        if len(c) < 2:
+            return 0.0
+        cset_bigrams = {(c[i], c[i + 1]) for i in range(len(c) - 1)}
+        hits = 0
+        total = 0
+        for i in range(len(q) - 1):
+            total += 1
+            if (q[i], q[i + 1]) in cset_bigrams:
+                hits += 1
+        if total == 0:
+            return 0.0
+        return 0.12 * (hits / float(total))
+
+    @classmethod
+    def _is_fact_shaped_query(cls, query: str) -> bool:
+        import re
+
+        q = (query or "").strip()
+        if not q:
+            return False
+        return bool(
+            re.search(
+                r"(?i)\b(?:"
+                r"what(?:'s|s|\s+is|\s+was)|"
+                r"who(?:'s|s|\s+is|\s+was)|"
+                r"where(?:'s|s|\s+is|\s+was)|"
+                r"remind\s+me|tell\s+me|"
+                r"do\s+you\s+(?:remember|know)|"
+                r"what(?:'s|s)?\s+(?:my|the|our)\b"
+                r")",
+                q,
+            )
+        )
 
     @staticmethod
     def _simple_greeting(query: str) -> bool:
@@ -202,23 +269,24 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         content: str,
         role: str = "",
     ) -> float:
-        """Keyword overlap first; weak cosine only as a tiny tie-break.
+        """Coverage + phrase + AND bias; weak cosine only as a tiny tie-break.
 
-        Stronger than pure OR spam: multi-token queries must clear a higher
-        overlap bar (majority of content tokens / significant AND).
+        Multi-token queries must clear a higher overlap bar. Fact rows matching
+        every significant token still pass. Fact-shaped questions prefer facts.
         """
         overlap = self._overlap_score(query_tokens, content)
         if overlap <= 0.0:
             return 0.0
         cand = self._content_tokens(content)
         significant = {t for t in query_tokens if len(t) >= 4}
+        role_l = str(role or "").strip().lower()
         if len(query_tokens) >= 2:
             # Require clear signal — not a single OR-hit from a long filler row.
             min_needed = max(self._MIN_RELEVANCE, 0.5)
             if overlap < min_needed:
                 # Allow fact rows that still hit every significant token (AND).
                 if not (
-                    str(role) == "fact"
+                    role_l == "fact"
                     and significant
                     and significant.issubset(cand)
                 ):
@@ -234,8 +302,24 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             cosine = 0.0
         and_bonus = 0.0
         if significant and significant.issubset(cand):
-            and_bonus = 0.08
-        return 0.85 * overlap + 0.15 * max(0.0, cosine) + and_bonus
+            # Stronger AND bias so buried multi-word memories beat filler OR hits.
+            and_bonus = 0.14 if len(significant) >= 2 else 0.10
+        elif significant:
+            # Partial significant coverage still ranks above pure short-token noise.
+            and_bonus = 0.04 * (
+                len(significant & cand) / float(len(significant))
+            )
+        phrase = self._phrase_bonus(query, content)
+        fact_boost = 0.0
+        if role_l == "fact" and self._is_fact_shaped_query(query):
+            fact_boost = 0.12
+        return (
+            0.72 * overlap
+            + 0.12 * max(0.0, cosine)
+            + and_bonus
+            + phrase
+            + fact_boost
+        )
 
     def retrieve_memories(
         self,
@@ -410,11 +494,38 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             overlap = self._overlap_score(query_tokens, blob)
             if overlap < self._MIN_RELEVANCE:
                 continue
-            if not (query_tokens & self._content_tokens(blob)):
+            blob_tokens = self._content_tokens(blob)
+            if not (query_tokens & blob_tokens):
                 continue
+            significant = {t for t in query_tokens if len(t) >= 4}
+            # Multi-word fact questions: require majority / AND on significant tokens.
+            if len(query_tokens) >= 2 and significant:
+                if overlap < max(self._MIN_RELEVANCE, 0.5) and not significant.issubset(
+                    blob_tokens
+                ):
+                    continue
             conf = float(r[5] or 0.0)
             perm = 0.05 if (r[6] or 0) else 0.0
-            score = 0.8 * overlap + 0.15 * conf + perm
+            and_bonus = 0.0
+            if significant and significant.issubset(blob_tokens):
+                and_bonus = 0.14 if len(significant) >= 2 else 0.10
+            phrase = self._phrase_bonus(query, blob)
+            # Predicate slug tokens (dog_name -> dog name) already in blob via replace.
+            pred_boost = 0.0
+            pred_tokens = self._content_tokens(str(predicate or "").replace("_", " "))
+            if pred_tokens and pred_tokens.issubset(query_tokens | blob_tokens):
+                if pred_tokens & query_tokens:
+                    pred_boost = 0.08
+            fact_shaped = 0.06 if self._is_fact_shaped_query(query) else 0.0
+            score = (
+                0.70 * overlap
+                + 0.12 * conf
+                + perm
+                + and_bonus
+                + phrase
+                + pred_boost
+                + fact_shaped
+            )
             scored.append(
                 (
                     score,
@@ -689,8 +800,10 @@ class NotusMemorySystem(SuperhumanMemorySystem):
     def extract_personal_fact_triples(cls, text: str):
         """Durable personal facts only — not fragile chatter.
 
-        Keeps name / favorite / named patterns. Generic ``my X is Y`` only when
-        the noun looks durable and the value is not a vague clause.
+        Keeps name / favorite / named patterns. Also learns codeword/password-
+        style ``(the) X is Y`` and remember-taught durable claims. Generic
+        ``my X is Y`` only when the noun looks durable and the value is not a
+        vague clause.
         """
         import re
         from typing import List, Optional, Tuple
@@ -704,6 +817,29 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         def _slug(noun: str) -> str:
             return re.sub(r"\s+", "_", noun.strip().lower())
 
+        def _value_ok(val: str) -> bool:
+            v = (val or "").strip(" .!?")
+            if not v or len(v) > 80:
+                return False
+            if any(v.lower().startswith(p) for p in cls._VAGUE_VALUE_PREFIXES):
+                return False
+            if len(v.split()) > 6:
+                return False
+            if any(ch in v for ch in (",", ";", ":")) and len(v.split()) > 3:
+                return False
+            return True
+
+        def _noun_ok(noun: str, *, allow_fragile: bool = False) -> bool:
+            n = (noun or "").strip().lower()
+            if not n or len(n.split()) > 4:
+                return False
+            if not allow_fragile and n in cls._FRAGILE_FACT_NOUNS:
+                return False
+            # Reject pronoun / determiner-only leftovers.
+            if n in {"the", "a", "an", "this", "that", "it", "he", "she", "they"}:
+                return False
+            return True
+
         def _add(sub: str, pred: str, obj: str) -> None:
             key = (sub.lower(), pred.lower(), obj.lower())
             if key in seen or not sub or not pred or not obj:
@@ -712,6 +848,34 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                 return
             seen.add(key)
             out.append((sub, pred, obj, None))
+
+        def _is_durable_key(noun: str) -> bool:
+            n = re.sub(r"\s+", " ", (noun or "").strip().lower())
+            if n in cls._DURABLE_KEY_NOUNS:
+                return True
+            if n.replace(" ", "_") in {
+                x.replace(" ", "_") for x in cls._DURABLE_KEY_NOUNS
+            }:
+                return True
+            # Exact soft forms only — never substring-match inside a longer phrase.
+            return bool(
+                re.fullmatch(
+                    r"(?:code\s*word|password|pass\s*phrase|pass\s*code|"
+                    r"safe\s*word|access\s*code|call\s*sign|code\s*name|"
+                    r"secret|pin|token|badge|username|nickname|alias|handle)",
+                    n,
+                )
+            )
+
+        def _clean_noun(noun: str) -> str:
+            n = re.sub(r"\s+", " ", (noun or "").strip().lower())
+            # Drop leading teaching / determiner junk if a broader pattern caught it.
+            n = re.sub(
+                r"^(?:please\s+)?(?:remember\s+)?(?:that\s+)?(?:(?:my|the)\s+)+",
+                "",
+                n,
+            ).strip()
+            return n
 
         # my dog's name is Pixel / my dogs name is Pixel
         for m in re.finditer(
@@ -740,6 +904,40 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         ):
             _add("user", _slug(m.group(1)), m.group(2).strip(" .!?"))
 
+        # Codeword / password / passphrase style (with or without "the"/"my").
+        # "Remember the codeword is NebulaQuartz" / "codeword is Alpha"
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?(?:(?:my|the)\s+)?"
+            r"(code\s*word|password|pass\s*phrase|pass\s*code|safe\s*word|"
+            r"access\s*code|call\s*sign|code\s*name|secret|pin|token|badge|"
+            r"username|nickname|alias|handle)\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            t,
+        ):
+            noun = _clean_noun(m.group(1))
+            val = m.group(2).strip(" .!?")
+            if noun and _value_ok(val):
+                _add("user", _slug(noun), val)
+
+        # Explicit teaching without "my": remember (that) (the) X is Y
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?remember\s+(?:that\s+)?(?:the\s+)?"
+            r"([a-z][a-z\s]{0,40}?)\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            t,
+        ):
+            noun = _clean_noun(m.group(1))
+            val = m.group(2).strip(" .!?")
+            if not noun or noun.startswith("favorite "):
+                continue
+            if val.lower().startswith("named "):
+                continue
+            if not _noun_ok(noun):
+                continue
+            if not _value_ok(val):
+                continue
+            _add("user", _slug(noun), val)
+
         # Explicit teaching: remember my X is Y
         for m in re.finditer(
             r"(?i)\b(?:please\s+)?remember\s+(?:that\s+)?my\s+"
@@ -753,9 +951,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                 continue
             if val.lower().startswith("named "):
                 continue
-            if noun.lower() in cls._FRAGILE_FACT_NOUNS:
+            if not _noun_ok(noun):
                 continue
-            if any(val.lower().startswith(p) for p in cls._VAGUE_VALUE_PREFIXES):
+            if not _value_ok(val):
                 continue
             _add("user", _slug(noun), val)
 
@@ -773,17 +971,27 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                 continue
             if val.lower().startswith("named "):
                 continue
-            if noun_l in cls._FRAGILE_FACT_NOUNS:
+            if not _noun_ok(noun):
                 continue
-            # Reject multi-clause / chatty nouns.
-            if len(noun.split()) > 3:
+            if not _value_ok(val):
                 continue
-            if any(val.lower().startswith(p) for p in cls._VAGUE_VALUE_PREFIXES):
+            _add("user", _slug(noun), val)
+
+        # Bare / the X is Y for exact durable key nouns only (no chatter).
+        # Uses the specialized key regex above; this only backfills exact set hits
+        # that the soft-spaced regex may have missed (e.g. "pin").
+        for m in re.finditer(
+            r"(?i)\b(?:(?:my|the)\s+)?([a-z][a-z_]{1,40})\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            t,
+        ):
+            noun = _clean_noun(m.group(1))
+            val = m.group(2).strip(" .!?")
+            if not _is_durable_key(noun):
                 continue
-            # Require value to look like a concrete label (not a full clause).
-            if len(val.split()) > 6:
+            if not _noun_ok(noun):
                 continue
-            if any(ch in val for ch in (",", ";", ":")) and len(val.split()) > 3:
+            if not _value_ok(val):
                 continue
             _add("user", _slug(noun), val)
 
