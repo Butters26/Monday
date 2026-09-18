@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections import deque
 from datetime import datetime, timezone
 import re
+import time
 import threading
 import uuid
 from typing import Any, Dict, Iterable, Optional
@@ -78,6 +79,9 @@ class Thalamus:
         self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=100)
         self.response_provider = response_provider or DeterministicResponseProvider()
+        # Rate-limit rare speak-worthy asides attached to user-turn replies.
+        self._last_spoken_aside_time: float = 0.0
+        self._spoken_aside_cooldown_sec: float = 45.0
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -682,7 +686,96 @@ class Thalamus:
                 self.send_message("autonomous", "user_active", {}, source="thalamus")
             except Exception:
                 pass
+        # Rare second beat: speak-worthy inner thought may surface after the reply.
+        turn_intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
+        reply = self._maybe_attach_speak_worthy_aside(reply, turn_intensity=turn_intensity)
         return reply
+
+    def _maybe_attach_speak_worthy_aside(
+        self, reply: str, turn_intensity: float = 0.5
+    ) -> str:
+        """Optionally append one speak-worthy autonomous thought as a second beat.
+
+        Speak-worthy aside rule (keep rare — she must not dump every thought):
+        After a successful main reply, at most one pending speak-worthy thought may
+        append ("\n\n" + content) when (1) autonomous is registered, (2) the thought
+        intensity is >= 0.55 OR this turn's emotion intensity is >= 0.65, and
+        (3) we have not attached an aside within `_spoken_aside_cooldown_sec`
+        (~45s). Prefer autonomous.pop_spoken_aside / message type pop_spoken_aside.
+        Most thoughts stay internal.
+        """
+        with self.lobe_handlers_lock:
+            autonomous = self.lobe_handlers.get("autonomous")
+        if autonomous is None:
+            return reply
+        now = time.time()
+        if (now - float(getattr(self, "_last_spoken_aside_time", 0.0) or 0.0)) < float(
+            getattr(self, "_spoken_aside_cooldown_sec", 45.0)
+        ):
+            return reply
+
+        aside = None
+        pop = getattr(autonomous, "pop_spoken_aside", None) or getattr(
+            autonomous, "get_speak_worthy_thought", None
+        )
+        if callable(pop):
+            try:
+                aside = pop()
+            except Exception:
+                aside = None
+        if aside is None:
+            try:
+                result = self.send_message(
+                    "autonomous", "pop_spoken_aside", {}, source="thalamus"
+                )
+                if result.get("status") == "success":
+                    content = self._content(result)
+                    aside = (
+                        result.get("aside")
+                        or result.get("thought")
+                        or content.get("aside")
+                        or content.get("thought")
+                    )
+            except Exception:
+                aside = None
+        if not isinstance(aside, dict):
+            return reply
+        content = aside.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return reply
+        try:
+            thought_intensity = float(aside.get("intensity", 0.5) or 0.5)
+        except (TypeError, ValueError):
+            thought_intensity = 0.5
+        # Intensity gate: thought strong enough, or turn already emotionally hot.
+        if thought_intensity < 0.55 and turn_intensity < 0.65:
+            # Put it back if possible so a hotter turn can use it later.
+            queue = getattr(autonomous, "thought_queue", None)
+            rebuild = getattr(autonomous, "lock", None)
+            if queue is not None and hasattr(autonomous, "recent_thoughts"):
+                try:
+                    from autonomous_thinking import AutonomousThought
+
+                    thought_obj = AutonomousThought(
+                        id=str(aside.get("id", f"aside_{int(now)}")),
+                        content=content.strip(),
+                        thought_type=str(aside.get("thought_type", "feeling")),
+                        trigger=str(aside.get("trigger", "deferred")),
+                        intensity=thought_intensity,
+                        speak_worthy=True,
+                        timestamp=float(aside.get("timestamp", now)),
+                    )
+                    if rebuild is not None:
+                        with rebuild:
+                            queue.insert(0, thought_obj)
+                    else:
+                        queue.insert(0, thought_obj)
+                except Exception:
+                    pass
+            return reply
+
+        self._last_spoken_aside_time = now
+        return f"{reply.rstrip()}\n\n{content.strip()}"
 
     def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Small compatibility entry point for direct callers."""
@@ -699,6 +792,19 @@ class Thalamus:
             return {
                 "status": "success",
                 "content": {"thalamus_healthy": True, "lobes": self.lobe_status.copy()},
+            }
+        if msg_type == "pop_spoken_aside":
+            with self.lobe_handlers_lock:
+                autonomous = self.lobe_handlers.get("autonomous")
+            if autonomous is None:
+                return {"status": "error", "message": "autonomous not registered", "content": {}}
+            pop = getattr(autonomous, "pop_spoken_aside", None)
+            aside = pop() if callable(pop) else None
+            return {
+                "status": "success",
+                "aside": aside,
+                "thought": aside,
+                "content": {"aside": aside, "thought": aside},
             }
         return {"status": "error", "message": f"Unknown type: {msg_type}", "content": {}}
 

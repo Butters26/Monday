@@ -1849,7 +1849,24 @@ class EmotionalProcess:
                 return {'status': 'success', 'current_emotion': self.engine.current_emotion.value, 'intensity': self.engine.emotional_intensity}
                 
             elif msg_type == 'get_state':
-                return {'status': 'success', 'emotion': self.engine.current_emotion.value, 'intensity': self.engine.emotional_intensity, 'resonance': self.engine.emotional_resonance, 'summary': self.engine.get_emotional_summary()}
+                # Top-level emotion/intensity (not nested under 'state') so lobes
+                # reading get_state see real affect. Light extras for inner life.
+                unresolved = [
+                    {'event_type': et, 'severity': float(sev), 'timestamp': float(ts)}
+                    for (et, sev, ts) in getattr(self.engine, '_unresolved_appraisals', [])
+                ]
+                history = list(getattr(self.engine, '_event_history', [])[-10:])
+                last_event = history[-1] if history else None
+                return {
+                    'status': 'success',
+                    'emotion': self.engine.current_emotion.value,
+                    'intensity': self.engine.emotional_intensity,
+                    'resonance': self.engine.emotional_resonance,
+                    'summary': self.engine.get_emotional_summary(),
+                    'last_event_type': last_event,
+                    'unresolved_appraisals': unresolved,
+                    'event_history': history,
+                }
             
             elif msg_type == 'get_emotional_state':
                 # Return standardized emotional state output for other lobes
