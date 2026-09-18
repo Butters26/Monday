@@ -673,7 +673,16 @@ class Thalamus:
                 "preserve_text": True,
             },
         )
-        return self._content(output).get("text", response_text)
+        reply = self._content(output).get("text", response_text)
+        # Let autonomous inner-life know the user is present (own-feelings pacing).
+        with self.lobe_handlers_lock:
+            has_autonomous = "autonomous" in self.lobe_handlers
+        if has_autonomous:
+            try:
+                self.send_message("autonomous", "user_active", {}, source="thalamus")
+            except Exception:
+                pass
+        return reply
 
     def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Small compatibility entry point for direct callers."""

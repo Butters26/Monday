@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Start Monday's direct-call prompted core without sockets or background loops."""
+"""Start Monday's prompted core plus light autonomous inner-life for own feelings.
+
+Direct-call path (no sockets): six prompted lobes, plus AutonomousThinkingLoop so
+mood can move from inner thoughts without user text — not the full legacy socket stack.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from advanced_emotional_engine import EmotionalProcess
+from autonomous_thinking import AutonomousThinkingLoop
 from conversation import ConversationSystem
 from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
@@ -20,7 +25,7 @@ def create_core_systems(
     runtime_directory: Optional[str] = None,
     reasoning_factory: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Instantiate and register only the six prompted-path systems.
+    """Instantiate and register the six prompted-path systems plus autonomous thinking.
 
     `runtime_directory` is retained for mutable non-Notus runtime state and tests.
     Notus itself is PostgreSQL-only and does not use a local SQLite file.
@@ -46,11 +51,26 @@ def create_core_systems(
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
+
+    autonomous = AutonomousThinkingLoop(thalamus=thalamus)
+    result = thalamus.register_lobe("autonomous", autonomous)
+    if result["status"] != "success":
+        raise RuntimeError(f"Could not register autonomous: {result.get('message')}")
+    systems["autonomous"] = autonomous
+    autonomous.start_background()
     return systems
 
 
 def shutdown_core_systems(systems: Dict[str, Any]) -> None:
-    for name in ("output", "language", "reasoning", "emotion", "notus", "conversation"):
+    for name in (
+        "autonomous",
+        "output",
+        "language",
+        "reasoning",
+        "emotion",
+        "notus",
+        "conversation",
+    ):
         shutdown = getattr(systems.get(name), "shutdown", None)
         if callable(shutdown):
             shutdown()

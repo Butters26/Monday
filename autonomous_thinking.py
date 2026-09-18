@@ -29,17 +29,23 @@ class AutonomousThinkingLoop:
     Monday has an inner monologue.
     """
     
-    def __init__(self):
-        self.thalamus = get_thalamus()
+    def __init__(self, thalamus=None):
+        # Prefer an explicit Thalamus (core wiring); fall back to singleton for CLI.
+        self.thalamus = thalamus if thalamus is not None else get_thalamus()
         self.running = True
+        self._thinking_thread: Optional[threading.Thread] = None
         
         # Thought generation
         self.recent_thoughts: List[AutonomousThought] = []
         self.thought_queue: List[AutonomousThought] = []  # Thoughts waiting to be processed
         
-        # Timing
-        self.min_think_interval = 5.0  # Minimum seconds between thoughts
-        self.max_think_interval = 30.0  # Maximum seconds between thoughts
+        # Timing — lengthen when wired into core so own-feelings are not spammy
+        if thalamus is not None:
+            self.min_think_interval = 15.0
+            self.max_think_interval = 60.0
+        else:
+            self.min_think_interval = 5.0
+            self.max_think_interval = 30.0
         self.last_thought_time = 0.0
         
         # State
@@ -67,7 +73,17 @@ class AutonomousThinkingLoop:
             return False
     
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle incoming messages"""
+        """Handle incoming messages (unwrap Thalamus envelope like emotion does)."""
+        msg_type = message.get('type')
+        raw_content = message.get('content', message)
+        if isinstance(raw_content, dict):
+            message = {**raw_content, 'type': msg_type}
+        else:
+            message = {
+                **{k: v for k, v in message.items() if k != 'content'},
+                'type': msg_type,
+                'content': raw_content,
+            }
         msg_type = message.get('type')
         
         if msg_type == 'user_active':
@@ -402,14 +418,7 @@ class AutonomousThinkingLoop:
             thought = self._generate_thought()
             
             if thought:
-                with self.lock:
-                    self.recent_thoughts.append(thought)
-                    self.recent_thoughts = self.recent_thoughts[-100:]  # Keep last 100
-                    
-                    if thought.speak_worthy:
-                        self.thought_queue.append(thought)
-                
-                self.last_thought_time = time.time()
+                self._accept_thought(thought)
                 
                 # Log thought
                 speak_marker = "💬" if thought.speak_worthy else "💭"
@@ -423,14 +432,46 @@ class AutonomousThinkingLoop:
                 return asdict(thought)
         return None
     
+    def _accept_thought(self, thought: AutonomousThought) -> None:
+        """Store a generated thought and soft-fire own-feelings via emotion."""
+        with self.lock:
+            self.recent_thoughts.append(thought)
+            self.recent_thoughts = self.recent_thoughts[-100:]  # Keep last 100
+            if thought.speak_worthy:
+                self.thought_queue.append(thought)
+        self.last_thought_time = time.time()
+        self._notify_emotion_from_thought(thought)
+
+    def _notify_emotion_from_thought(self, thought: AutonomousThought) -> None:
+        """Route thought content into emotion own-feelings; fail soft if emotion missing."""
+        try:
+            self.thalamus.send_message(
+                'emotion',
+                'appraise_internal',
+                {
+                    'content': thought.content,
+                    'source': 'thought',
+                    'relevance': float(thought.intensity),
+                    'resolved': False,
+                },
+                source='autonomous',
+            )
+        except Exception:
+            pass
+
+    def start_background(self) -> None:
+        """Start the thinking daemon thread and return (non-blocking)."""
+        if self._thinking_thread is not None and self._thinking_thread.is_alive():
+            return
+        self.running = True
+        print("🧠 Autonomous Thinking Loop background starting...")
+        self._thinking_thread = threading.Thread(target=self._thinking_loop, daemon=True)
+        self._thinking_thread.start()
+
     def start(self):
-        """Start the autonomous thinking loop"""
+        """Start the autonomous thinking loop (blocking; for CLI)."""
         print("🧠 Autonomous Thinking Loop starting...")
-        
-        # Start thinking thread
-        thinking_thread = threading.Thread(target=self._thinking_loop, daemon=True)
-        thinking_thread.start()
-        
+        self.start_background()
         # Keep main thread alive
         while self.running:
             time.sleep(1)
