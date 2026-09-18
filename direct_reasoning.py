@@ -12,6 +12,7 @@ import re
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from reasoning import Fact, MaximumSophisticationReasoning
+from direct_response import answer_from_grounded_memories, content_tokens, relevance_score
 
 
 _FAVORITE_FACT = re.compile(
@@ -105,7 +106,42 @@ class DirectMaximumSophisticationAdapter:
                 if noun and value:
                     return f"Your {noun}'s name is {value}."
         fav = DirectMaximumSophisticationAdapter._normalise_favorite_fact(text)
-        return fav
+        if fav:
+            return fav
+        live = re.search(
+            r"\b(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            text,
+            re.IGNORECASE,
+        )
+        if live:
+            return f"You live in {live.group(1).strip(' .!?')}."
+        work = re.search(
+            r"\b(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            text,
+            re.IGNORECASE,
+        )
+        if work:
+            return f"You work {work.group(1).lower()} {work.group(2).strip(' .!?')}."
+        generic = re.search(
+            r"\b(?:remember\s+(?:that\s+)?)?my\s+([a-z][a-z ]{0,40}?)\s+is\s+"
+            r"([a-z0-9][a-z0-9 -]{0,80}?)(?:[.!?]|$)",
+            text,
+            re.IGNORECASE,
+        )
+        if generic:
+            noun = " ".join(generic.group(1).lower().split())
+            value = generic.group(2).strip(" .!?")
+            if (
+                noun
+                and value
+                and not noun.startswith("favorite ")
+                and "name" not in noun
+                and not value.lower().startswith("named ")
+            ):
+                return f"Your {noun} is {value}."
+        return None
 
     @classmethod
     def _evidence(cls, memories: List[Dict[str, Any]], user_input: str) -> List[Dict[str, Any]]:
@@ -126,41 +162,9 @@ class DirectMaximumSophisticationAdapter:
 
     @classmethod
     def _answer_from_facts(cls, evidence: List[Dict[str, Any]], user_input: str) -> Optional[str]:
-        """Answer simple personal questions directly from stored facts."""
-        facts = [
-            m.get("content", "").strip()
-            for m in evidence
-            if isinstance(m, dict)
-            and str(m.get("role", "")) == "fact"
-            and isinstance(m.get("content"), str)
-            and m.get("content").strip()
-        ]
-        if not facts:
-            return None
-        qmatch = _NAME_QUESTION.search(user_input or "")
-        if qmatch:
-            noun = " ".join(qmatch.group("noun").lower().split())
-            needle = f"your {noun}'s name is "
-            for fact in facts:
-                low = fact.casefold()
-                if needle in low:
-                    return fact if fact.endswith(".") else fact + "."
-                # Also accept "Your dog name is" style slips
-                if noun in low and "name is" in low:
-                    return fact if fact.endswith(".") else fact + "."
-        # Favorite questions
-        fav_q = re.search(
-            r"\bwhat(?:'s|\s+is)\s+my\s+(favorite\s+[a-z][a-z ]{0,40}?)\b",
-            user_input or "",
-            re.IGNORECASE,
-        )
-        if fav_q:
-            attr = " ".join(fav_q.group(1).lower().split())
-            needle = f"your {attr} is "
-            for fact in facts:
-                if needle in fact.casefold():
-                    return fact if fact.endswith(".") else fact + "."
-        return None
+        """Answer questions from stored facts and relevant user memories."""
+        return answer_from_grounded_memories(user_input or "", evidence)
+
 
     @classmethod
     def _teaching_ack(cls, user_input: str) -> Optional[str]:
@@ -204,14 +208,23 @@ class DirectMaximumSophisticationAdapter:
             user_input or "",
             re.IGNORECASE,
         )
-        if social and "name is" in composed.casefold():
+        if social and (
+            "name is" in composed.casefold() or composed.casefold().startswith("your ")
+        ):
             return None
         theories = thinking.get("theories", [])
         grounded = any(
             isinstance(theory, dict) and theory.get("components")
             for theory in theories
         )
-        if grounded or understanding.get("intent") == "greeting":
+        if understanding.get("intent") == "greeting":
+            return composed
+        if grounded:
+            # Require overlap so an unrelated stored fact cannot hijack the answer.
+            q_tokens = content_tokens(user_input or "")
+            if q_tokens and relevance_score(user_input or "", composed) < 0.34:
+                if not (q_tokens & content_tokens(composed)):
+                    return None
             return composed
         # Legacy composition can turn an evidence-free question into a word bag;
         # that is not a conclusion. Let Thalamus use its emergency fallback.

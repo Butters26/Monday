@@ -1978,11 +1978,24 @@ class MaximumSophisticationReasoning:
         if getattr(self, '_direct_core', False) and theories and isinstance(theories[0], dict):
             conclusion = theories[0].get('explanation')
             if isinstance(conclusion, str) and conclusion.strip() and theories[0].get('components'):
-                semantic_input.update({
-                    'answer': conclusion.strip(),
-                    'conclusion': conclusion.strip(),
-                    'propositions': [conclusion.strip()],
-                })
+                # Reject explanations that share no content tokens with the prompt.
+                _stop = {
+                    'a','an','the','is','are','was','were','be','been','am','i','my','me',
+                    'you','your','what','who','where','when','why','how','do','does','did',
+                    'can','could','would','should','please','remember','that','this','with',
+                    'from','about','tell','of','to','in','on','at','for','and','or','it',
+                    'have','has','had','will',
+                }
+                q_toks = {w for w in re.findall(r"[a-z0-9']+", user_input.lower()) if w not in _stop and len(w) > 1}
+                c_toks = {w for w in re.findall(r"[a-z0-9']+", conclusion.lower()) if w not in _stop and len(w) > 1}
+                if q_toks and not (q_toks & c_toks):
+                    conclusion = None
+                if conclusion:
+                    semantic_input.update({
+                        'answer': conclusion.strip(),
+                        'conclusion': conclusion.strip(),
+                        'propositions': [conclusion.strip()],
+                    })
         
         return semantic_input
     
@@ -2343,11 +2356,36 @@ class MaximumSophisticationReasoning:
         # USE MEMORIES FROM CONTEXT (passed but was ignored)
         memories = context.get('memories', [])
         memory_texts = [m.get('content', '') if isinstance(m, dict) else str(m) for m in memories[:10]]
-        
-        # Use facts from memories already provided - skip Notus query
+
+        # Keep only memories that actually overlap the question so unrelated
+        # stored facts cannot become the explanation/answer.
+        _stop = {
+            'a','an','the','is','are','was','were','be','been','am','i','my','me',
+            'you','your','what','who','where','when','why','how','do','does','did',
+            'can','could','would','should','please','remember','that','this','with',
+            'from','about','tell','of','to','in','on','at','for','and','or','it',
+            'have','has','had','will','just','also','so','as','if','but','not',
+        }
+        def _toks(s: str):
+            return {w for w in re.findall(r"[a-z0-9']+", (s or '').lower()) if w not in _stop and len(w) > 1}
+        q_toks = _toks(question)
         relevant_facts = []
         if memories:
-            relevant_facts = [m.get('content', '') if isinstance(m, dict) else str(m) for m in memories[:10]]
+            scored = []
+            for m in memories[:20]:
+                content = m.get('content', '') if isinstance(m, dict) else str(m)
+                if not content:
+                    continue
+                m_toks = _toks(content)
+                if not q_toks:
+                    continue
+                overlap = q_toks & m_toks
+                if not overlap:
+                    continue
+                score = len(overlap) / float(len(q_toks))
+                scored.append((score, content))
+            scored.sort(key=lambda x: -x[0])
+            relevant_facts = [c for s, c in scored if s >= 0.34][:10]
         
         # Also check local facts
         for concept in concepts:

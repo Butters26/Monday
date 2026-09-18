@@ -19,7 +19,13 @@ import threading
 import uuid
 from typing import Any, Dict, Iterable, Optional
 
-from direct_response import DeterministicResponseProvider, ResponseProvider
+from direct_response import (
+    DeterministicResponseProvider,
+    ResponseProvider,
+    answer_from_grounded_memories,
+    content_tokens,
+    relevance_score,
+)
 from learning.lobe_learning_store import LobeLearningStore
 
 
@@ -725,6 +731,13 @@ class Thalamus:
         if reasoning["status"] != "success":
             return "I'm having trouble thinking right now."
         semantic_input, reasoning_answer = self._reasoning_answer(reasoning)
+        # Drop reasoning answers that don't overlap the prompt (unrelated fact leak).
+        if isinstance(reasoning_answer, str) and reasoning_answer.strip():
+            q_toks = content_tokens(user_input)
+            if q_toks and relevance_score(user_input, reasoning_answer) < 0.34:
+                if not (q_toks & content_tokens(reasoning_answer)):
+                    grounded = answer_from_grounded_memories(user_input, memories)
+                    reasoning_answer = grounded
         if reasoning_answer is None:
             try:
                 reasoning_answer = self.response_provider.render(
