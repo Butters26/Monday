@@ -86,6 +86,410 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         self._db_connection.commit()
 
     # ------------------------------------------------------------------
+    # Whole-history retrieval (empty means empty)
+    # ------------------------------------------------------------------
+
+    _RETRIEVAL_STOPWORDS = frozenset(
+        {
+            "a", "an", "the", "is", "are", "was", "were", "be", "been", "am",
+            "i", "my", "me", "mine", "you", "your", "yours", "we", "our",
+            "what", "whats", "who", "whom", "where", "when", "why", "how",
+            "do", "does", "did", "can", "could", "would", "should", "please",
+            "remember", "that", "this", "these", "those", "with", "from",
+            "about", "tell", "of", "to", "in", "on", "at", "for", "and", "or",
+            "it", "its", "have", "has", "had", "will", "just", "also", "so",
+            "as", "if", "but", "not", "no", "yes", "ok", "okay", "hey", "hi",
+            "hello", "named", "name", "got", "know", "which", "whose",
+            "there", "here", "into", "over", "under", "again", "any", "some",
+        }
+    )
+    # Minimum share of query content-tokens that must appear in a hit.
+    _MIN_RELEVANCE = 0.34
+    # Hard cap so pathological corpora stay bounded; still far beyond the old ~50 window.
+    _CORPUS_SCAN_CAP = 5000
+
+    _FRAGILE_FACT_NOUNS = frozenset(
+        {
+            "day", "life", "mood", "feeling", "feelings", "time", "thing",
+            "stuff", "question", "answer", "message", "chat", "conversation",
+            "thought", "idea", "problem", "issue", "way", "point", "one",
+            "friend", "world", "today", "tonight", "morning", "afternoon",
+            "evening", "week", "month", "year", "everything", "nothing",
+        }
+    )
+    _VAGUE_VALUE_PREFIXES = (
+        "going", "feeling", "looking", "doing", "getting", "being", "having",
+        "trying", "thinking", "wondering", "hoping", "wanting", "needing",
+        "really", "just", "kinda", "kind of", "sort of", "pretty",
+    )
+
+    @classmethod
+    def _content_tokens(cls, text: str) -> set:
+        import re
+
+        words = re.findall(r"[a-z0-9']+", (text or "").lower())
+        out = set()
+        for w in words:
+            # Normalize possessives: dog's -> dog (keep short tokens meaningful).
+            if w.endswith("'s") and len(w) > 3:
+                w = w[:-2]
+            elif w.endswith("s'") and len(w) > 3:
+                w = w[:-2]
+            if w in cls._RETRIEVAL_STOPWORDS or len(w) <= 1:
+                continue
+            out.add(w)
+        return out
+
+    @classmethod
+    def _overlap_score(cls, query_tokens: set, text: str) -> float:
+        if not query_tokens:
+            return 0.0
+        cand = cls._content_tokens(text)
+        if not cand:
+            return 0.0
+        return len(query_tokens & cand) / float(len(query_tokens))
+
+    @staticmethod
+    def _simple_greeting(query: str) -> bool:
+        import re
+
+        return bool(
+            re.match(
+                r"^\s*(?:hello|hi|hey|sup|yo|hiya|howdy)"
+                r"(?:\s+(?:there|you|friend))?"
+                r"(?:\s*[!.,]*)?\s*$",
+                query or "",
+                re.IGNORECASE,
+            )
+        )
+
+    def _score_memory_row(
+        self,
+        query: str,
+        query_tokens: set,
+        content: str,
+        role: str = "",
+    ) -> float:
+        """Keyword overlap first; weak cosine only as a tiny tie-break."""
+        overlap = self._overlap_score(query_tokens, content)
+        if overlap <= 0.0 and str(role) != "fact":
+            return 0.0
+        # Fact rows get a second chance via readable predicate tokens.
+        if overlap <= 0.0:
+            return 0.0
+        cosine = 0.0
+        try:
+            cosine = float(
+                self.embedding_engine.calculate_similarity(query, content, "default")
+            )
+        except Exception:
+            cosine = 0.0
+        return 0.85 * overlap + 0.15 * max(0.0, cosine)
+
+    def retrieve_memories(
+        self,
+        query: str,
+        user_id: str = "default",
+        limit: int = None,
+    ) -> List[Dict[str, Any]]:
+        """Whole-corpus search over superhuman_memories.
+
+        Does not restrict to a tiny recent window. Returns [] when nothing is
+        relevant — never pads with unrelated recency.
+        """
+        limit = max(1, int(limit or getattr(self.config, "max_context_memories", 15)))
+        query = (query or "").strip()
+        if not query or self._simple_greeting(query):
+            return []
+        query_tokens = self._content_tokens(query)
+        if not query_tokens:
+            return []
+
+        user_id = (user_id or "default").strip()
+        tokens = sorted(query_tokens, key=len, reverse=True)[:12]
+        like_clauses = []
+        params: List[Any] = [user_id]
+        for tok in tokens:
+            like_clauses.append("lower(content) LIKE %s")
+            params.append(f"%{tok}%")
+        # Always include durable fact-role rows for this user (may use different wording).
+        where_text = " OR ".join(like_clauses) if like_clauses else "FALSE"
+        params.append(self._CORPUS_SCAN_CAP)
+
+        try:
+            with self._db_connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, timestamp, role, content, tag, importance_score, mode,
+                           personality, entities, concepts, semantic_hash, access_count,
+                           last_accessed, user_id, memory_type, conversation_id
+                    FROM superhuman_memories
+                    WHERE (user_id = %s OR user_id IS NULL)
+                      AND (
+                        role = 'fact'
+                        OR ({where_text})
+                      )
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = cursor.fetchall()
+        except Exception:
+            return []
+
+        scored: List[Dict[str, Any]] = []
+        for row in rows:
+            content = row[3] if isinstance(row[3], str) else ""
+            role = str(row[2] or "")
+            # Skip experience-poison even if it somehow matched tokens.
+            if "How it felt:" in content and (
+                role == "system" or "What it meant:" in content
+            ):
+                continue
+            score = self._score_memory_row(query, query_tokens, content, role=role)
+            if score < self._MIN_RELEVANCE:
+                continue
+            # Require at least one real token hit — no cosine-only invention.
+            if not (query_tokens & self._content_tokens(content)):
+                continue
+            scored.append(
+                {
+                    "id": row[0],
+                    "timestamp": row[1],
+                    "role": row[2],
+                    "content": content,
+                    "tag": row[4],
+                    "importance_score": row[5],
+                    "mode": row[6],
+                    "personality": row[7],
+                    "entities": json.loads(row[8]) if row[8] else {},
+                    "concepts": json.loads(row[9]) if row[9] else [],
+                    "semantic_hash": row[10],
+                    "access_count": row[11],
+                    "last_accessed": row[12],
+                    "user_id": row[13],
+                    "memory_type": row[14],
+                    "conversation_id": row[15],
+                    "similarity": score,
+                    "relevance": score,
+                }
+            )
+
+        scored.sort(
+            key=lambda m: (
+                float(m.get("similarity") or 0.0),
+                float(m.get("importance_score") or 0.0),
+                str(m.get("timestamp") or ""),
+            ),
+            reverse=True,
+        )
+        results = scored[:limit]
+        if results:
+            try:
+                self._update_access_counts([m["id"] for m in results if m.get("id")])
+            except Exception:
+                pass
+        return results
+
+    def retrieve_memories_smart(
+        self,
+        query: str,
+        user_id: str = "default",
+        limit: int = None,
+        story_text: str = None,
+    ) -> List[Dict[str, Any]]:
+        """Smart path that still searches the full corpus — never recency-fills."""
+        limit = max(1, int(limit or getattr(self.config, "max_context_memories", 15)))
+        if self._simple_greeting(query or ""):
+            return []
+        # Full-corpus keyword/relevance retrieval; ignore story/chat recency padding.
+        return self.retrieve_memories(query, user_id=user_id, limit=limit)
+
+    def recall_facts(
+        self,
+        query: str,
+        user_id: str = "default",
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Whole-corpus fact recall with hard relevance gate.
+
+        Empty means empty: unrelated high-confidence/recent facts are not returned.
+        Contradicted facts are suppressed.
+        """
+        limit = max(1, int(limit))
+        query = (query or "").strip()
+        if not query or self._simple_greeting(query):
+            return []
+        query_tokens = self._content_tokens(query)
+        if not query_tokens:
+            return []
+
+        user_id = (user_id or "default").strip()
+        try:
+            with self._db_connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, subject, predicate, object, value, confidence, permanent,
+                           usage_count, created_at, last_reinforced, user_id, source,
+                           COALESCE(is_contradicted, FALSE), conflicts_with
+                    FROM brain_facts
+                    WHERE (user_id = %s OR user_id IS NULL)
+                      AND COALESCE(is_contradicted, FALSE) = FALSE
+                    ORDER BY created_at ASC
+                    LIMIT %s
+                    """,
+                    (user_id, self._CORPUS_SCAN_CAP),
+                )
+                rows = cursor.fetchall()
+        except Exception:
+            return []
+
+        scored: List[tuple] = []
+        for r in rows:
+            subject, predicate, obj, value = r[1], r[2], r[3], r[4]
+            fact_text = f"{subject} {predicate} {obj}" + (f" = {value}" if value else "")
+            try:
+                readable = self.format_personal_fact(
+                    str(subject or ""), str(predicate or ""), str(obj or "")
+                )
+            except Exception:
+                readable = fact_text
+            blob = f"{fact_text} {readable}"
+            # Expand underscore predicates so dog_name matches query token "dog".
+            blob = blob.replace("_", " ")
+            overlap = self._overlap_score(query_tokens, blob)
+            if overlap < self._MIN_RELEVANCE:
+                continue
+            if not (query_tokens & self._content_tokens(blob)):
+                continue
+            conf = float(r[5] or 0.0)
+            perm = 0.05 if (r[6] or 0) else 0.0
+            score = 0.8 * overlap + 0.15 * conf + perm
+            scored.append(
+                (
+                    score,
+                    {
+                        "id": r[0],
+                        "subject": subject,
+                        "predicate": predicate,
+                        "object": obj,
+                        "value": value,
+                        "confidence": conf,
+                        "permanent": bool(r[6]),
+                        "usage_count": r[7],
+                        "created_at": r[8],
+                        "last_reinforced": r[9],
+                        "user_id": r[10],
+                        "source": r[11],
+                        "text": fact_text,
+                        "content": readable,
+                        "conflicts_with": r[13] or [],
+                        "relevance": score,
+                    },
+                )
+            )
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        results = [item for _, item in scored[:limit]]
+        if not results:
+            return []
+
+        # Only reinforce facts that actually matched — never invent usage on misses.
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            with self._db_connection.cursor() as cursor:
+                for fact in results:
+                    cursor.execute(
+                        """
+                        UPDATE brain_facts
+                        SET usage_count = COALESCE(usage_count, 0) + 1,
+                            confidence = LEAST(1.0, COALESCE(confidence, 0) + %s),
+                            last_reinforced = %s
+                        WHERE id = %s
+                        """,
+                        (
+                            float(getattr(self.config, "online_learning_rate", 0.01) or 0.01),
+                            now,
+                            fact["id"],
+                        ),
+                    )
+            self._db_connection.commit()
+        except Exception:
+            try:
+                self._db_connection.rollback()
+            except Exception:
+                pass
+        return results
+
+    def recall_episodes(
+        self,
+        query: str,
+        user_id: str = "default",
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Episodic recall with the same empty-means-empty discipline."""
+        limit = max(1, int(limit))
+        query = (query or "").strip()
+        if not query or self._simple_greeting(query):
+            return []
+        query_tokens = self._content_tokens(query)
+        if not query_tokens:
+            return []
+        user_id = (user_id or "default").strip()
+        try:
+            with self._db_connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, timestamp, actor, action, object, place, cause, effect,
+                           note, sentiment, confidence, source, usage_count
+                    FROM episodic_events
+                    WHERE user_id = %s OR user_id IS NULL
+                    ORDER BY timestamp ASC
+                    LIMIT %s
+                    """,
+                    (user_id, self._CORPUS_SCAN_CAP),
+                )
+                rows = cursor.fetchall()
+        except Exception:
+            return []
+
+        scored = []
+        for r in rows:
+            parts = [p for p in [r[2], r[3], r[4], r[5], r[6], r[7], r[8]] if p]
+            text_blob = " ".join(str(p) for p in parts)
+            overlap = self._overlap_score(query_tokens, text_blob)
+            if overlap < self._MIN_RELEVANCE:
+                continue
+            if not (query_tokens & self._content_tokens(text_blob)):
+                continue
+            conf = float(r[10] or 0.0)
+            score = 0.85 * overlap + 0.15 * conf
+            scored.append(
+                (
+                    score,
+                    {
+                        "id": r[0],
+                        "timestamp": r[1],
+                        "actor": r[2],
+                        "action": r[3],
+                        "object": r[4],
+                        "place": r[5],
+                        "cause": r[6],
+                        "effect": r[7],
+                        "note": r[8],
+                        "sentiment": r[9],
+                        "confidence": conf,
+                        "source": r[11],
+                        "usage_count": r[12],
+                        "relevance": score,
+                    },
+                )
+            )
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [item for _, item in scored[:limit]]
+
+    # ------------------------------------------------------------------
     # Durable facts with contradiction tracking
     # ------------------------------------------------------------------
 
@@ -228,46 +632,172 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         self._db_connection.commit()
         return str(fact_id)
 
-    def recall_facts(
-        self,
-        query: str,
-        user_id: str = "default",
-        limit: int = 10,
-    ) -> List[Dict[str, Any]]:
-        """Use the parent semantic ranking, but suppress contradicted facts."""
-        results = super().recall_facts(query, user_id=user_id, limit=max(limit * 3, 20))
-        if not results:
+    # ------------------------------------------------------------------
+    # Auto-extract discipline (tight, contradict/update via remember_fact)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def extract_personal_fact_triples(cls, text: str):
+        """Durable personal facts only — not fragile chatter.
+
+        Keeps name / favorite / named patterns. Generic ``my X is Y`` only when
+        the noun looks durable and the value is not a vague clause.
+        """
+        import re
+        from typing import List, Optional, Tuple
+
+        if not text or not text.strip():
             return []
+        t = text.strip()
+        out: List[Tuple[str, str, str, Optional[str]]] = []
+        seen = set()
 
-        ids = [str(item.get("id")) for item in results if item.get("id")]
-        if not ids:
-            return results[:limit]
+        def _slug(noun: str) -> str:
+            return re.sub(r"\s+", "_", noun.strip().lower())
 
-        with self._db_connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT id, COALESCE(is_contradicted, FALSE), conflicts_with "
-                "FROM brain_facts WHERE id = ANY(%s)",
-                (ids,),
-            )
-            integrity = {
-                str(row[0]): {
-                    "is_contradicted": bool(row[1]),
-                    "conflicts_with": row[2] or [],
-                }
-                for row in cursor.fetchall()
-            }
+        def _add(sub: str, pred: str, obj: str) -> None:
+            key = (sub.lower(), pred.lower(), obj.lower())
+            if key in seen or not sub or not pred or not obj:
+                return
+            if len(obj) > 80:
+                return
+            seen.add(key)
+            out.append((sub, pred, obj, None))
 
-        clean: List[Dict[str, Any]] = []
-        for item in results:
-            state = integrity.get(str(item.get("id")), {})
-            if state.get("is_contradicted"):
+        # my dog's name is Pixel / my dogs name is Pixel
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
+            r"([a-z][a-z\s]{0,40}?)(?:'s|s')\s+name\s+is\s+"
+            r"([A-Za-z0-9][\w-]{0,40})\b",
+            t,
+        ):
+            _add("user", f"{_slug(m.group(1))}_name", m.group(2).strip())
+
+        # my dog is named Pixel
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
+            r"([a-z][a-z\s]{0,40}?)\s+is\s+named\s+"
+            r"([A-Za-z0-9][\w-]{0,40})\b",
+            t,
+        ):
+            _add("user", f"{_slug(m.group(1))}_name", m.group(2).strip())
+
+        # my favorite color is blue
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
+            r"(favorite\s+[a-z][a-z\s]{0,30}?)\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            t,
+        ):
+            _add("user", _slug(m.group(1)), m.group(2).strip(" .!?"))
+
+        # Explicit teaching: remember my X is Y
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?remember\s+(?:that\s+)?my\s+"
+            r"([a-z][a-z\s]{0,40}?)\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            t,
+        ):
+            noun = m.group(1).strip()
+            val = m.group(2).strip(" .!?")
+            if noun.lower().startswith("favorite "):
                 continue
-            item = dict(item)
-            item["conflicts_with"] = state.get("conflicts_with", [])
-            clean.append(item)
-            if len(clean) >= max(1, int(limit)):
-                break
-        return clean
+            if val.lower().startswith("named "):
+                continue
+            if noun.lower() in cls._FRAGILE_FACT_NOUNS:
+                continue
+            if any(val.lower().startswith(p) for p in cls._VAGUE_VALUE_PREFIXES):
+                continue
+            _add("user", _slug(noun), val)
+
+        # Generic my X is Y — only short durable nouns, concrete values.
+        for m in re.finditer(
+            r"(?i)\bmy\s+"
+            r"([a-z][a-z\s]{0,30}?)\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            t,
+        ):
+            noun = m.group(1).strip()
+            val = m.group(2).strip(" .!?")
+            noun_l = noun.lower()
+            if noun_l.startswith("favorite "):
+                continue
+            if val.lower().startswith("named "):
+                continue
+            if noun_l in cls._FRAGILE_FACT_NOUNS:
+                continue
+            # Reject multi-clause / chatty nouns.
+            if len(noun.split()) > 3:
+                continue
+            if any(val.lower().startswith(p) for p in cls._VAGUE_VALUE_PREFIXES):
+                continue
+            # Require value to look like a concrete label (not a full clause).
+            if len(val.split()) > 6:
+                continue
+            if any(ch in val for ch in (",", ";", ":")) and len(val.split()) > 3:
+                continue
+            _add("user", _slug(noun), val)
+
+        # I live in / I work as|at|in — durable location/job.
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            t,
+        ):
+            _add("user", "lives_in", m.group(1).strip(" .!?"))
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            t,
+        ):
+            _add("user", f"work_{m.group(1).lower()}", m.group(2).strip(" .!?"))
+
+        return out
+
+    def learn_facts_from_text(
+        self,
+        text: str,
+        user_id: str = "default",
+        default_conf: float = 0.85,
+    ):
+        """Only durable personal facts — no eager X-is-Y / likes / math spam."""
+        if not text or not text.strip():
+            return []
+        ids = []
+        for sub, pred, obj, val in self.extract_personal_fact_triples(text):
+            fid = self.remember_fact(
+                sub,
+                pred,
+                obj,
+                value=val,
+                confidence=default_conf,
+                user_id=user_id,
+                source="learn_text",
+                permanent=True,
+            )
+            if fid:
+                ids.append(fid)
+        return ids
+
+
+    @staticmethod
+    def format_personal_fact(subject: str, predicate: str, obj: str) -> str:
+        """Turn a stored triple into a short, answerable sentence."""
+        pred = (predicate or "").strip()
+        obj = (obj or "").strip()
+        if pred.endswith("_name"):
+            noun = pred[:-5].replace("_", " ").strip() or "thing"
+            return f"Your {noun}'s name is {obj}."
+        if pred.startswith("favorite_") or pred.startswith("favourite_"):
+            return f"Your {pred.replace('_', ' ')} is {obj}."
+        if pred == "lives_in":
+            return f"You live in {obj}."
+        if pred.startswith("work_"):
+            prep = pred[5:] or "as"
+            return f"You work {prep} {obj}."
+        if (subject or "").lower() in {"user", "i", "me"}:
+            return f"Your {pred.replace('_', ' ')} is {obj}."
+        return f"{subject} {pred.replace('_', ' ')} {obj}".strip()
 
     # ------------------------------------------------------------------
     # Direct Thalamus interface

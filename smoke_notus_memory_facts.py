@@ -36,11 +36,18 @@ def main() -> int:
         failures.append(f"check-in returned poison/fact dump: {checkin!r}")
 
     gate_hi = len(notus.retrieve_memories_smart("hi", user_id=uid, limit=5))
+    # Check-in must not be classified as a greeting (may still be empty if nothing
+    # relevant — empty means empty). Pure "hi" stays blanked.
+    checkin_is_greeting = notus._simple_greeting("hey, are you okay?")
     gate_check = len(notus.retrieve_memories_smart("hey, are you okay?", user_id=uid, limit=5))
-    print("gate hi count=", gate_hi, "check-in count=", gate_check)
+    print(
+        "gate hi count=", gate_hi,
+        "check-in greeting?", checkin_is_greeting,
+        "check-in count=", gate_check,
+    )
     if gate_hi != 0:
         failures.append("simple 'hi' should still skip retrieval")
-    if gate_check == 0:
+    if checkin_is_greeting:
         failures.append("check-in must not be blanked by greeting gate")
 
     shutdown_core_systems(systems)
