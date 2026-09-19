@@ -1,6 +1,11 @@
 numpy
 psycopg2-binary
 pytest
+# Optional but intended: Notus + emotion semantic paraphrase support.
+# Model: all-MiniLM-L6-v2 (see notus.AdvancedEmbeddingEngine.SENTENCE_TRANSFORMER_MODEL).
+# Install into a venv when the OS blocks system pip (PEP 668), e.g.:
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# Force basic hash embeddings without uninstalling: MONDAY_EMBEDDING_FORCE_BASIC=1
 sentence-transformers
 torch
 pyttsx3

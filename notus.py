@@ -127,12 +127,38 @@ class AdvancedEmbeddingEngine:
         self.personalization_vectors = {}
         self._initialize_model()
         
-    def _initialize_model(self):
+    # Intended optional ST model (requirements.txt). Do not swap to arbitrary models at runtime.
+    SENTENCE_TRANSFORMER_MODEL = "all-MiniLM-L6-v2"
+
+    def _import_sentence_transformer(self):
+        """Import SentenceTransformer; optionally discover project .venv site-packages."""
         try:
             from sentence_transformers import SentenceTransformer
-            self.model = SentenceTransformer("all-MiniLM-L6-v2")
+            return SentenceTransformer
+        except ImportError:
+            # PEP 668 boxes often install optional deps into ./.venv — reuse that, no second framework.
+            root = os.path.dirname(os.path.abspath(__file__))
+            pattern = os.path.join(root, ".venv", "lib", "python*", "site-packages")
+            import glob
+            for sp in sorted(glob.glob(pattern)):
+                if sp not in sys.path:
+                    sys.path.insert(0, sp)
+            from sentence_transformers import SentenceTransformer
+            return SentenceTransformer
+
+    def _initialize_model(self):
+        # Ops/test escape hatch: force basic without uninstalling ST.
+        if os.environ.get("MONDAY_EMBEDDING_FORCE_BASIC", "").strip().lower() in ("1", "true", "yes"):
+            logger.info("MONDAY_EMBEDDING_FORCE_BASIC set — using basic hash embeddings")
+            self.model = None
+            self.model_type = 'basic'
+            return
+        try:
+            SentenceTransformer = self._import_sentence_transformer()
+            # Named project model only; first successful load may fetch that model's weights once.
+            self.model = SentenceTransformer(self.SENTENCE_TRANSFORMER_MODEL)
             self.model_type = "sentence_transformer"
-            logger.info("✅ Loaded sentence-transformers model")
+            logger.info(f"✅ Loaded sentence-transformers model ({self.SENTENCE_TRANSFORMER_MODEL})")
         except Exception as e:
             # Graceful fallback to basic embeddings if ST is unavailable
             logger.warning(f"sentence-transformers unavailable ({e}); falling back to basic embeddings")

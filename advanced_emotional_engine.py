@@ -1426,11 +1426,14 @@ class AdvancedEmotionalEngine:
         return self._embedding_engine
 
     # Meaning prototypes for semantic support (anchors — not proof-phrase special cases).
+    # Meaning anchors for paraphrase support (general event senses — not smoke-test phrases).
     _SEMANTIC_EVENT_PROTOTYPES: Dict[str, List[str]] = {
         'unfairness': [
             'I was treated unfairly or unjustly',
             'others got a chance while I was excluded',
             'someone took advantage of me or cheated me',
+            'I was cheated swindled or treated dishonestly',
+            'this situation is unfair and unjust',
         ],
         'conflict': [
             'I am angry frustrated or fed up',
@@ -1439,6 +1442,7 @@ class AdvancedEmotionalEngine:
         'rejection': [
             'I feel rejected unwanted or left out',
             'nobody wants me around and I feel sad',
+            'I feel sad downhearted or unhappy',
         ],
         'harm': [
             'that hurt me emotionally and caused pain',
@@ -1447,10 +1451,13 @@ class AdvancedEmotionalEngine:
         'threat': [
             'I am worried scared or have a bad feeling something will go wrong',
             'I feel threatened or unsafe',
+            'I feel uneasy or dread about what might happen',
         ],
         'success': [
             'I am proud happy and succeeded at what I did',
-            'things turned out well and I pulled it off',
+            'I accomplished my goal and it worked out',
+            'I am happy with a good outcome',
+            'I feel relieved that a stressful situation is over',
         ],
         'betrayal': [
             'someone betrayed my trust and lied to me',
@@ -1488,9 +1495,12 @@ class AdvancedEmotionalEngine:
         result['model_type'] = getattr(eng, 'model_type', self._embedding_model_type)
         self._embedding_model_type = result['model_type']
 
-        # ST: usable paraphrase matching. Basic: noisy — high eligibility bar only.
+        # ST: usable paraphrase matching (MiniLM cosine scale ≠ basic hash).
+        # Basic: noisy — keep high eligibility bar (do not lower casually).
+        # ST primary ~0.50 / support ~0.42 calibrated so true paraphrases support
+        # while weak wrong tops (e.g. third-party quotes ~0.48) stay ineligible as primary.
         if result['model_type'] == 'sentence_transformer':
-            primary_threshold = 0.42
+            primary_threshold = 0.50
         elif result['model_type'] == 'basic':
             primary_threshold = 0.65  # very low authority; almost never primary
         else:
@@ -1615,8 +1625,8 @@ class AdvancedEmotionalEngine:
             sem_conf = float(semantic.get('confidence') or 0.0)
             model = semantic.get('model_type') or self._embedding_model_type
             if sem_event and sem_event == event_type:
-                # Basic: require stronger agreement; ST may support at lower bar
-                support_bar = 0.55 if model == 'basic' else 0.38
+                # Basic: require stronger agreement; ST support bar on MiniLM cosine scale
+                support_bar = 0.55 if model == 'basic' else 0.42
                 if sem_conf >= support_bar and not appraisal.negated:
                     semantic_used = True
                     if model == 'sentence_transformer':
@@ -1628,6 +1638,7 @@ class AdvancedEmotionalEngine:
             and semantic.get('event_type')
             and not appraisal.negated
             and not appraisal.contrast_affected
+            and not appraisal.third_party
         ):
             # Semantic fills gaps only when eligible (ST normal bar; basic high bar).
             # Basic must not become primary on weak noisy matches.
