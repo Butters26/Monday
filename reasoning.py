@@ -547,13 +547,27 @@ class MaximumSophisticationReasoning:
             print(f"⚠️ Episodic query failed: {e}")
             return []
     
-    def query_facts_from_notus(self, subject: str = None, limit: int = 10) -> List[Dict[str, Any]]:
-        """Query brain facts from Notus"""
+    def query_facts_from_notus(
+        self,
+        subject: str = None,
+        limit: int = 10,
+        user_id: str = 'default',
+        query: str = '',
+    ) -> List[Dict[str, Any]]:
+        """Query brain facts from Notus (scoped by user_id)."""
         try:
+            content = {
+                'subject': subject,
+                'limit': limit,
+                'user_id': user_id,
+            }
+            if query:
+                content['query'] = query
+                content['text'] = query
             result = self.thalamus.send_message(
                 destination='notus',
                 msg_type='query_facts',
-                content={'subject': subject, 'limit': limit},
+                content=content,
                 source='reasoning'
             )
             if result.get('status') == 'success':
@@ -566,8 +580,15 @@ class MaximumSophisticationReasoning:
     def query_user_information_from_notus(self, user_id: str = 'default') -> Dict[str, Any]:
         """Query what we know about the user"""
         try:
-            # Query facts about the user
-            user_facts = self.query_facts_from_notus(subject=f"user_{user_id}", limit=20)
+            # Facts are stored with subject "user", scoped by user_id — NOT "user_{id}".
+            user_facts = self.query_facts_from_notus(
+                subject='user', limit=50, user_id=user_id
+            )
+            # Fallback: unfiltered active list for this user_id if subject filter misses.
+            if not user_facts:
+                user_facts = self.query_facts_from_notus(
+                    subject=None, limit=50, user_id=user_id
+                )
             
             # Query past interactions with user (episodic)
             user_events = self.query_episodic_from_notus(pattern=user_id, limit=10)
@@ -1575,10 +1596,12 @@ class MaximumSophisticationReasoning:
             or memory.get('content', '').strip().casefold() != user_input.strip().casefold()
         ]
         if getattr(self, '_direct_core', False):
-            # The adapter has already retrieved, scoped, and normalized this
-            # context.  Keep that evidence authoritative while still exercising
-            # the legacy Notus context query above.
-            semantic_knowledge = []
+            # Adapter evidence is authoritative for chatter memories, but durable
+            # Notus facts must still reach reasoning — do not wipe fact rows.
+            semantic_knowledge = [
+                m for m in semantic_knowledge
+                if isinstance(m, dict) and str(m.get('role', '')).lower() == 'fact'
+            ]
         episodic_events = notus_context.get('episodic', [])
         known_facts = notus_context.get('facts', [])
         # Surface durable facts as first-class evidence (was fetched then ignored).
@@ -1636,6 +1659,48 @@ class MaximumSophisticationReasoning:
         user_info = self.query_user_information_from_notus(user_id)
         user_facts = user_info.get('facts_about_user', [])
         user_interactions = user_info.get('past_interactions', [])
+
+        # Bridge: feed Notus user facts into live reasoning evidence + Fact store.
+        for fact in user_facts:
+            if not isinstance(fact, dict):
+                continue
+            readable = fact.get('content') or fact.get('text')
+            if not readable:
+                sub = str(fact.get('subject', '') or '').strip()
+                pred = str(fact.get('predicate', '') or '').strip()
+                obj = str(fact.get('object', '') or '').strip()
+                if pred and obj:
+                    try:
+                        from direct_response import format_predicate_fact
+                        readable = format_predicate_fact(pred, obj, sub or 'user')
+                    except Exception:
+                        readable = f"Your {pred.replace('_', ' ')} is {obj}."
+            if not readable:
+                continue
+            item = {
+                'role': 'fact',
+                'content': readable,
+                'subject': fact.get('subject'),
+                'predicate': fact.get('predicate'),
+                'object': fact.get('object'),
+            }
+            # Avoid dup lines already present from query_context.
+            if not any(
+                isinstance(m, dict)
+                and str(m.get('content', '')).strip().casefold() == str(readable).strip().casefold()
+                for m in semantic_knowledge
+            ):
+                semantic_knowledge.append(item)
+            try:
+                self.facts[str(readable)] = Fact(
+                    content=str(readable),
+                    confidence=float(fact.get('confidence', 0.9) or 0.9),
+                    source='notus_bridge',
+                    timestamp=time.time(),
+                    emotional_weight=0.5,
+                )
+            except Exception:
+                pass
         
         print(f"🧠 Reasoning pulled context: {notus_context.get('summary', 'no summary')}")
         print(f"🧠 Reasoning pulled user info: {user_info.get('summary', 'no user summary')}")

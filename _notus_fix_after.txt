@@ -1,0 +1,21 @@
+DESIGN_JOB: Notus live memory — poison rejection, reasoning↔notus bridge, name ranking/dedup, contradiction semantics (Denver current / Boulder not current).
+
+=== LIVE create_core_systems AFTER ===
+PASS poison_store_rejected | {'stored': False, 'skipped': 'unsafe_or_disallowed_memory', 'role': 'user'}
+PASS clean_speech_stored | {'stored': True, 'id': 'f654a2b6-aa1c-461b-8ff0-0f77a8c12ba9', 'content': 'hi there monday', 'facts_learned': []}
+PASS reasoning_sees_facts | n=5 summary=Have 5 facts about user and 0 recorded interactions
+PASS query_context_has_facts | 1
+PASS name_ranks_over_dog | first_mem='Your name is Matthew.' first_pred='name' contents=['Your name is Matthew.', 'Got it — your name is Matthew.', 'My name is Matthew', "My dog's name is Pixel"]
+PASS no_dog_before_name | ['Your name is Matthew.', 'Got it — your name is Matthew.', 'My name is Matthew', "My dog's name is Pixel"]
+PASS query_context_deduped | ['your name is matthew.', 'got it — your name is matthew.', 'my name is matthew', "my dog's name is pixel"]
+PASS denver_current_fact | ['Denver']
+PASS boulder_not_active_fact | ['Denver']
+PASS denver_in_context | You live in Denver.
+I live in Denver now
+PASS boulder_not_as_current | You live in Denver.
+I live in Denver now
+PASS user_isolation | []
+PASS health_postgresql_ready | {'healthy': True, 'backend': 'postgresql', 'ready': True}
+META user_id=after-proof-2c7f3fce-8328-4b21-8297-636e045df26f
+FAIL_COUNT=0
+RESULT=PASS

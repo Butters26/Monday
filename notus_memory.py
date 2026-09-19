@@ -46,6 +46,20 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         r"\n\s*(?:user|assistant|monday|abin)\s*:"
     )
 
+    # Experience / synthetic-summary / internal-state poison markers.
+    _POISON_MARKERS = (
+        "How it felt:",
+        "What it meant:",
+        "How this feels:",
+        "What I notice in myself:",
+        "Internal state:",
+        "Synthetic summary:",
+        "Experience digest:",
+    )
+    _ROLE_PREFIX_ANYWHERE = re.compile(
+        r"(?im)(?:^|\n)\s*(?:user|assistant|monday|abin|system)\s*:"
+    )
+
     @classmethod
     def _is_clean_memory_content(cls, role: Any, content: Any) -> bool:
         """True when role is allowed and content is not transcript/experience poison."""
@@ -56,11 +70,14 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         stripped = content.strip()
         if not stripped:
             return False
-        if "How it felt:" in stripped and "What it meant:" in stripped:
-            return False
+        # Reject experience / synthetic / internal-state contamination before persistence.
+        for marker in cls._POISON_MARKERS:
+            if marker in stripped:
+                return False
+        # Transcript-like: any role-prefixed line (start OR mid-blob), or multi-speaker.
         if cls._COMBINED_TRANSCRIPT.search(stripped):
             return False
-        if cls._TRANSCRIPT_LINE.match(stripped):
+        if cls._TRANSCRIPT_LINE.search(stripped) or cls._ROLE_PREFIX_ANYWHERE.search(stripped):
             return False
         return True
 
@@ -646,10 +663,29 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             phrase = self._phrase_bonus(query, blob)
             # Predicate slug tokens (dog_name -> dog name) already in blob via replace.
             pred_boost = 0.0
-            pred_tokens = self._content_tokens(str(predicate or "").replace("_", " "))
+            pred_l = str(predicate or "").strip().lower()
+            pred_tokens = self._content_tokens(pred_l.replace("_", " "))
             if pred_tokens and pred_tokens.issubset(query_tokens | blob_tokens):
                 if pred_tokens & query_tokens:
                     pred_boost = 0.08
+            # Identity name asks: exact predicate "name" beats dog_name / *_name.
+            identity_name_ask = bool(
+                re.search(
+                    r"(?i)\b(?:what(?:'s|s)?\s+my\s+name|what\s+is\s+my\s+name|"
+                    r"who\s+am\s+i|what\s+am\s+i\s+called|remind\s+me\s+(?:of\s+)?my\s+name)\b",
+                    query or "",
+                )
+            )
+            if identity_name_ask:
+                if pred_l == "name":
+                    pred_boost += 0.40
+                elif pred_l.endswith("_name"):
+                    noun = pred_l[: -len("_name")]
+                    noun_toks = self._content_tokens(noun.replace("_", " "))
+                    q_exp = self._expand_tokens(query_tokens)
+                    if noun_toks and not any(self._alias_set(t) & q_exp for t in noun_toks):
+                        # "What is my name?" must not rank dog_name first.
+                        continue
             fact_shaped = 0.06 if self._is_fact_shaped_query(query) else 0.0
             score = (
                 0.70 * overlap
@@ -1155,6 +1191,13 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             t,
         ):
             place = m.group(1).strip(" .!?")
+            # Drop trailing tense/hedge so "Denver now" -> "Denver".
+            place = re.sub(
+                r"(?i)\s+\b(?:now|currently|these\s+days|at\s+the\s+moment|"
+                r"these\s+days|anymore|again)\s*$",
+                "",
+                place,
+            ).strip(" .!?")
             if place and _value_ok(place):
                 _add("user", "lives_in", place)
         for m in re.finditer(
@@ -1296,6 +1339,174 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             out.append(item)
         return out
 
+
+    def list_active_facts(
+        self,
+        user_id: str = "default",
+        subject: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """List non-contradicted facts for a user (optionally filtered by subject).
+
+        Used by the Reasoning↔Notus bridge when Reasoning asks what is known
+        about the user without a free-text relevance query.
+        """
+        limit = max(1, min(int(limit), 200))
+        user_id = (user_id or "default").strip()
+        params: List[Any] = [user_id]
+        subject_clause = ""
+        if subject:
+            subject_clause = " AND lower(subject) = lower(%s)"
+            params.append(str(subject).strip())
+        params.append(limit)
+        try:
+            with self._db_connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT id, subject, predicate, object, value, confidence, permanent,
+                           usage_count, created_at, last_reinforced, user_id, source,
+                           COALESCE(is_contradicted, FALSE), conflicts_with
+                    FROM brain_facts
+                    WHERE (user_id = %s OR user_id IS NULL)
+                      AND COALESCE(is_contradicted, FALSE) = FALSE
+                      {subject_clause}
+                    ORDER BY created_at ASC
+                    LIMIT %s
+                    """,
+                    params,
+                )
+                rows = cursor.fetchall()
+        except Exception:
+            return []
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            subject_v, predicate, obj, value = r[1], r[2], r[3], r[4]
+            fact_text = f"{subject_v} {predicate} {obj}" + (f" = {value}" if value else "")
+            try:
+                readable = self.format_personal_fact(
+                    str(subject_v or ""), str(predicate or ""), str(obj or "")
+                )
+            except Exception:
+                readable = fact_text
+            out.append(
+                {
+                    "id": r[0],
+                    "subject": subject_v,
+                    "predicate": predicate,
+                    "object": obj,
+                    "value": value,
+                    "confidence": float(r[5] or 0.0),
+                    "permanent": bool(r[6]),
+                    "usage_count": r[7],
+                    "created_at": r[8],
+                    "last_reinforced": r[9],
+                    "user_id": r[10],
+                    "source": r[11],
+                    "text": fact_text,
+                    "content": readable,
+                    "conflicts_with": r[13] or [],
+                }
+            )
+        return out
+
+
+    @classmethod
+    def _is_identity_name_query(cls, query: str) -> bool:
+        return bool(
+            re.search(
+                r"(?i)\b(?:what(?:'s|s)?\s+my\s+name|what\s+is\s+my\s+name|"
+                r"who\s+am\s+i|what\s+am\s+i\s+called|remind\s+me\s+(?:of\s+)?my\s+name)\b",
+                query or "",
+            )
+        )
+
+    @classmethod
+    def _prefer_identity_name_rows(
+        cls, query: str, rows: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """For identity name asks, put exact name first; drop unrelated *_name lines."""
+        if not cls._is_identity_name_query(query):
+            return rows
+        name_rows: List[Dict[str, Any]] = []
+        other: List[Dict[str, Any]] = []
+        for m in rows or []:
+            if not isinstance(m, dict):
+                continue
+            pred = str(m.get("predicate") or "").strip().lower()
+            content = str(m.get("content") or m.get("text") or "")
+            content_l = content.casefold()
+            is_exact_name = pred == "name" or bool(
+                re.search(r"(?i)\byour\s+name\s+is\b", content)
+            )
+            is_other_named = (
+                pred.endswith("_name") and pred != "name"
+            ) or bool(
+                re.search(r"(?i)\byour\s+\w+(?:\s+\w+){0,2}'s\s+name\s+is\b", content)
+            )
+            if is_exact_name:
+                name_rows.append(m)
+            elif is_other_named:
+                # dog/cat/etc name is not the answer to "What is my name?"
+                continue
+            else:
+                other.append(m)
+        return name_rows + other
+
+    @staticmethod
+    def _dedupe_memory_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+        """Drop duplicate fact/memory lines (same normalized content)."""
+        seen = set()
+        out: List[Dict[str, Any]] = []
+        for m in rows or []:
+            if not isinstance(m, dict):
+                continue
+            content = str(m.get("content") or m.get("text") or "").strip()
+            key = re.sub(r"\s+", " ", content).casefold()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(m)
+        return out
+
+    def _filter_superseded_location_memories(
+        self,
+        memories: List[Dict[str, Any]],
+        facts: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """If an active lives_in fact exists, drop older location claims as current."""
+        active = {
+            str(f.get("object") or "").strip().casefold()
+            for f in (facts or [])
+            if isinstance(f, dict)
+            and str(f.get("predicate") or "").strip().lower() == "lives_in"
+            and str(f.get("object") or "").strip()
+        }
+        if not active:
+            return memories
+        loc_claim = re.compile(
+            r"(?i)\b(?:you\s+live\s+in|i\s+live\s+in|lives\s+in)\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60})"
+        )
+        out: List[Dict[str, Any]] = []
+        for m in memories or []:
+            if not isinstance(m, dict):
+                continue
+            content = str(m.get("content") or "")
+            match = loc_claim.search(content)
+            if match:
+                place = match.group(1).strip(" .!?")
+                place = re.sub(
+                    r"(?i)\s+\b(?:now|currently|these\s+days|at\s+the\s+moment)\s*$",
+                    "",
+                    place,
+                ).strip(" .!?")
+                if place and place.casefold() not in active:
+                    # Superseded location — keep out of CURRENT context.
+                    continue
+            out.append(m)
+        return out
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         payload = self._payload(message)
@@ -1384,6 +1595,12 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                     and "How it felt:" in str(m.get("content", ""))
                 )
             ]
+            # Drop superseded location chatter so Boulder cannot look CURRENT.
+            combined = self._filter_superseded_location_memories(combined, facts)
+            combined = self._dedupe_memory_rows(combined)
+            facts = self._dedupe_memory_rows(facts)
+            combined = self._prefer_identity_name_rows(query, combined)
+            facts = self._prefer_identity_name_rows(query, facts)
             return {
                 "status": "success",
                 "content": {
@@ -1464,11 +1681,24 @@ class NotusMemorySystem(SuperhumanMemorySystem):
 
         if msg_type == "query_facts":
             query = str(payload.get("query", payload.get("text", "")) or "")
-            facts = self.recall_facts(
-                query,
-                user_id=user_id,
-                limit=max(1, min(int(payload.get("limit", 10)), 100)),
-            )
+            subject = payload.get("subject")
+            limit = max(1, min(int(payload.get("limit", 10)), 100))
+            # Empty / subject-scoped listing feeds the Reasoning↔Notus bridge.
+            if not query.strip():
+                facts = self.list_active_facts(
+                    user_id=user_id,
+                    subject=str(subject).strip() if subject else None,
+                    limit=limit,
+                )
+            else:
+                facts = self.recall_facts(query, user_id=user_id, limit=limit)
+                # Optional subject filter when Reasoning scopes to "user".
+                if subject:
+                    sub_l = str(subject).strip().lower()
+                    facts = [
+                        f for f in facts
+                        if str(f.get("subject", "") or "").strip().lower() == sub_l
+                    ]
             return {"status": "success", "content": {"facts": facts, "count": len(facts)}}
 
         if msg_type in {"store_event", "remember_event"}:
