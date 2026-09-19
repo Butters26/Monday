@@ -113,21 +113,21 @@ EXPECT_USER_EMOTION = {
     "I'm furious": "angry",
     "I'm sad": "sad",
     "I'm worried": "worried",
-    "I actually pulled it off": "neutral",
+    # success event alone → unknown (not proud/happy/neutral-without-evidence)
+    "I actually pulled it off": "unknown",
     "I'm proud of what I did": "proud",
 }
 
+# Grammatical/logical negation only (not contrast supersession)
 EXPECT_NEGATION = {
     "I'm not angry",
     "I'm not sad anymore",
-    "I thought I'd be furious, but I'm actually relieved",
     "It's not unfair",
     "I'm not angry.",
     "I'm not happy about this.",
-    "I thought I'd be furious, but I'm actually relieved.",
-    "I was sad earlier, but I'm fine now.",
 }
 
+# Contrastive "but" current-state supersession (independent of negation)
 EXPECT_CONTRAST = {
     "I thought I'd be furious, but I'm actually relieved",
     "I thought I'd be furious, but I'm actually relieved.",
@@ -135,20 +135,38 @@ EXPECT_CONTRAST = {
     "I'm proud of finishing it, but I'm exhausted.",
 }
 
+# Cases where smoke prints the separation table row
+PROOF_CASES = [
+    "I'm relieved.",
+    "I thought I'd be furious, but I'm actually relieved.",
+    "I actually pulled it off.",
+    "I'm proud of finishing it, but I'm exhausted.",
+    "I'm not angry.",
+    "I'm really happy with how that turned out.",
+    "I was sad earlier, but I'm fine now.",
+]
+
 
 def fmt_cues(cues):
     nz = {k: round(v, 3) for k, v in cues.items() if v > 0}
     return nz if nz else "ALL_ZEROS"
 
 
-def dump_line(text: str, u) -> list[str]:
+def _unknown_vs_neutral(u) -> str:
+    emo = u.inferred_emotion
+    if emo == "unknown":
+        return "unknown (no reliable user-emotion evidence)"
+    if emo == "neutral":
+        if u.negation_affected:
+            return "neutral (negated self-report)"
+        if u.explicit_emotion == "neutral":
+            return "neutral (explicit fine/okay/calm)"
+        return "neutral (claimed)"
+    return f"n/a (user={emo})"
+
+
+def dump_line(text: str, u, monday_internal: str) -> list[str]:
     a = u.appraisal
-    changed = []
-    if u.negation_affected:
-        changed.append("negation")
-    if u.contrast_affected:
-        changed.append("contrast")
-    changed_s = "+".join(changed) if changed else "none"
     return [
         f"TEXT: {text}",
         f"  explicit/self-reported: {u.explicit_emotion}",
@@ -157,11 +175,14 @@ def dump_line(text: str, u) -> list[str]:
         f"  semantic candidate: event={u.semantic_event} emotion={u.semantic_emotion} "
         f"conf={u.semantic_confidence} used={u.semantic_used}",
         f"  keyword cues: {fmt_cues(u.keyword_cues)}",
-        f"  final user emotion: {u.inferred_emotion}",
+        f"  USER inferred emotion: {u.inferred_emotion}",
+        f"  Monday INTERNAL emotion: {monday_internal}",
         f"  final event: {u.event_type}",
         f"  confidence: {u.confidence:.3f}",
-        f"  negation/contrast changed result: {changed_s} "
-        f"(neg={u.negation_affected}, contrast={u.contrast_affected}, src={u.primary_source})",
+        f"  unknown vs neutral: {_unknown_vs_neutral(u)}",
+        f"  negated: {u.negation_affected}",
+        f"  contrast_affected: {u.contrast_affected}",
+        f"  primary_source: {u.primary_source}",
     ]
 
 
@@ -187,17 +208,24 @@ def main() -> int:
         lines.append(f"\n## {group}")
         for text in texts:
             u = eng._understand_emotional_text(text)
-            lines.extend(dump_line(text, u))
+            # Fresh engine so Monday INTERNAL reflects this utterance alone
+            live = AdvancedEmotionalEngine()
+            live.get_emotional_response(text)
+            monday_internal = live.current_emotion.value
+            lines.extend(dump_line(text, u, monday_internal))
             expected = EXPECT_EVENT.get(text)
             if expected is not None and u.event_type != expected:
                 fails.append(f"{text!r}: event {u.event_type} != {expected}")
             exp_emo = EXPECT_USER_EMOTION.get(text)
             if exp_emo is not None and u.inferred_emotion != exp_emo:
                 fails.append(f"{text!r}: user emotion {u.inferred_emotion} != {exp_emo}")
-            if text in EXPECT_NEGATION and not (u.negation_affected or u.contrast_affected):
-                fails.append(f"{text!r}: expected negation/contrast affected")
+            if text in EXPECT_NEGATION and not u.negation_affected:
+                fails.append(f"{text!r}: expected negation_affected")
             if text in EXPECT_CONTRAST and not u.contrast_affected:
                 fails.append(f"{text!r}: expected contrast_affected")
+            # Contrast-only must NOT set negation just because later clause supersedes
+            if text in EXPECT_CONTRAST and text not in EXPECT_NEGATION and u.negation_affected:
+                fails.append(f"{text!r}: contrast-only should have negated=False")
             if text in ("I'm not angry", "I'm not sad anymore", "I'm not angry.") and sum(
                 u.keyword_cues.values()
             ) > 0:
@@ -206,6 +234,25 @@ def main() -> int:
             if text in ("I'm furious", "I'm sad", "I'm worried", "I'm scared."):
                 if u.semantic_used and u.semantic_event and u.semantic_event != u.event_type:
                     fails.append(f"{text!r}: basic semantic overrode appraisal")
+
+    # Compact separation table for proof cases
+    lines.append("\n## SEPARATION TABLE (USER vs Monday INTERNAL)")
+    lines.append(
+        "TEXT | USER inferred | Monday INTERNAL | appraisal event | unknown_vs_neutral | negated | contrast"
+    )
+    lines.append("-" * 120)
+    for text in PROOF_CASES:
+        u = eng._understand_emotional_text(text)
+        live = AdvancedEmotionalEngine()
+        live.get_emotional_response(text)
+        monday_internal = live.current_emotion.value
+        # Also verify user-affect string is not forced through EmotionalState enum cast
+        ua = live._user_affect.inferred_emotion
+        lines.append(
+            f"{text} | {u.inferred_emotion} | {monday_internal} | {u.event_type} | "
+            f"{_unknown_vs_neutral(u)} | {u.negation_affected} | {u.contrast_affected}"
+        )
+        lines.append(f"  (user_affect model={ua!r}; Monday current_emotion enum={live.current_emotion!r})")
 
     report = "\n".join(lines) + "\n"
     with open("_emotion_cues_after.txt", "w", encoding="utf-8") as f:

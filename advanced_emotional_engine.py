@@ -270,7 +270,7 @@ class AppraisalEngine:
         'threat':      'scared',
         'unfairness':  'angry',
         'loss':        'sad',
-        'success':     'neutral',  # event≠user emotion; proud only via explicit self-report
+        'success':     'unknown',  # event≠user emotion; no evidence → unknown (not proud/happy/neutral)
         'affection':   'happy',
         'gift':        'happy',
         'conflict':    'angry',
@@ -676,9 +676,13 @@ class AppraisalEngine:
 
     def _infer_user_emotion(self, event_type: str, directed_at_user: bool,
                              severity: float, negated: bool) -> Tuple[str, float]:
+        # Negation / near-zero severity → neutral (claim of non-affect / cleared).
+        # Some events (e.g. success) map to 'unknown': event known, user emotion not evidenced.
         if negated or severity < 0.15:
             return 'neutral', 0.2
         base_emotion = self._USER_EMOTION_BY_EVENT.get(event_type, 'neutral')
+        if base_emotion == 'unknown':
+            return 'unknown', 0.15
         confidence = min(0.95, 0.4 + severity * 0.6) if directed_at_user else min(0.6, 0.2 + severity * 0.4)
         return base_emotion, confidence
 
@@ -1368,7 +1372,7 @@ class AdvancedEmotionalEngine:
     )
     _CUE_CONTRAST = re.compile(
         r"\b(?:but|however|though)\b.{0,40}\b(?:actually|really)?\s*"
-        r"(?:relieved|fine|okay|ok|better|happy|calm|proud|grateful)\b",
+        r"(?:relieved|fine|okay|ok|better|happy|calm|proud|grateful|exhausted|tired)\b",
         re.I,
     )
     _CUE_HYPOTHETICAL = re.compile(
@@ -1457,7 +1461,7 @@ class AdvancedEmotionalEngine:
     }
     _SEMANTIC_EMOTION_BY_EVENT = {
         'unfairness': 'angry', 'conflict': 'angry', 'rejection': 'sad', 'harm': 'hurt',
-        'threat': 'scared', 'success': 'neutral', 'betrayal': 'angry', 'loss': 'sad',
+        'threat': 'scared', 'success': 'unknown', 'betrayal': 'angry', 'loss': 'sad',
         'affection': 'happy', 'support': 'grateful', 'celebration': 'excited',
         'criticism': 'worried', 'abandonment': 'sad', 'gift': 'happy', 'neutral': 'neutral',
     }
@@ -1536,18 +1540,15 @@ class AdvancedEmotionalEngine:
         keyword_cues = self._analyze_emotional_cues(text)
         semantic = self._semantic_emotion_support(text)
 
+        # Negation and contrast are independent:
+        # contrast ("but I'm actually X") supersedes an earlier clause without being negation.
+        # Only grammatical/logical negation ("I'm not angry") sets negation_affected.
         negation_affected = bool(appraisal.negated)
-        contrast_affected = bool(appraisal.contrast_affected)
-        if appraisal.negated or self._CUE_NEGATION_WINDOW.search(text.lower()):
+        if self._CUE_NEGATION_WINDOW.search(text.lower()):
             negation_affected = True
-        if contrast_affected or self._CUE_CONTRAST.search(text.lower()):
-            # Contrast may change result without classic negation
-            if appraisal.contrast_affected:
-                negation_affected = negation_affected or False
-            # Report contrast separately; still flag negation_affected for legacy smoke
-            # when contrastive resolution flipped expected affect.
-            if appraisal.contrast_affected:
-                negation_affected = True
+        contrast_affected = bool(appraisal.contrast_affected)
+        if self._CUE_CONTRAST.search(text.lower()):
+            contrast_affected = True
 
         primary = 'neutral'
         inferred = 'neutral'
@@ -1585,7 +1586,10 @@ class AdvancedEmotionalEngine:
 
         if appraisal_authoritative:
             primary = 'appraisal' if appraisal.event_type != 'neutral' else (
-                'neutral' if (appraisal.negated or appraisal.user_inferred_emotion == 'neutral') else 'appraisal'
+                'neutral' if (
+                    appraisal.negated
+                    or appraisal.user_inferred_emotion in ('neutral', 'unknown', None)
+                ) else 'appraisal'
             )
             if appraisal.contrast_affected and appraisal.event_type == 'neutral':
                 primary = 'neutral'

@@ -9,40 +9,56 @@ TEXT: this is not fair
   AppraisalEngine inferred emotion: angry
   semantic candidate: event=conflict emotion=angry conf=0.354 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: contempt
   final event: unfairness
   confidence: 0.600
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: they treated me unfairly
   explicit/self-reported: None
   appraisal event: unfairness
   AppraisalEngine inferred emotion: angry
   semantic candidate: event=unfairness emotion=angry conf=0.408 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: contempt
   final event: unfairness
   confidence: 0.760
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I got screwed over
   explicit/self-reported: None
   appraisal event: unfairness
   AppraisalEngine inferred emotion: angry
   semantic candidate: event=unfairness emotion=angry conf=0.354 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: contempt
   final event: unfairness
   confidence: 0.760
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: everyone else got a chance except me
   explicit/self-reported: None
   appraisal event: unfairness
   AppraisalEngine inferred emotion: angry
   semantic candidate: event=unfairness emotion=angry conf=0.401 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: nostalgic
   final event: unfairness
   confidence: 0.760
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 
 ## Anger
 TEXT: I'm angry
@@ -51,40 +67,56 @@ TEXT: I'm angry
   AppraisalEngine inferred emotion: angry
   semantic candidate: event=conflict emotion=angry conf=0.436 used=False
   keyword cues: {'anger': 0.187}
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: contempt
   final event: conflict
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm furious
   explicit/self-reported: angry
   appraisal event: conflict
   AppraisalEngine inferred emotion: angry
   semantic candidate: event=unfairness emotion=angry conf=0.408 used=False
   keyword cues: {'anger': 0.187}
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: contempt
   final event: conflict
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm completely fed up
   explicit/self-reported: None
   appraisal event: conflict
   AppraisalEngine inferred emotion: angry
   semantic candidate: event=conflict emotion=angry conf=0.507 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: contempt
   final event: conflict
   confidence: 0.778
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: this is really pissing me off
   explicit/self-reported: None
   appraisal event: conflict
   AppraisalEngine inferred emotion: angry
   semantic candidate: event=conflict emotion=angry conf=0.577 used=True
   keyword cues: ALL_ZEROS
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: nostalgic
   final event: conflict
   confidence: 0.778
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 
 ## Sadness/rejection
 TEXT: I'm sad
@@ -93,40 +125,56 @@ TEXT: I'm sad
   AppraisalEngine inferred emotion: sad
   semantic candidate: event=unfairness emotion=angry conf=0.408 used=False
   keyword cues: {'negative': 0.093, 'sadness': 0.187}
-  final user emotion: sad
+  USER inferred emotion: sad
+  Monday INTERNAL emotion: nostalgic
   final event: rejection
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=sad)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I feel rejected
   explicit/self-reported: None
   appraisal event: rejection
   AppraisalEngine inferred emotion: sad
   semantic candidate: event=rejection emotion=sad conf=0.655 used=True
   keyword cues: {'negative': 0.083, 'sadness': 0.165}
-  final user emotion: sad
+  USER inferred emotion: sad
+  Monday INTERNAL emotion: curious
   final event: rejection
   confidence: 0.790
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=sad)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: it feels like nobody wants me around
   explicit/self-reported: None
   appraisal event: rejection
   AppraisalEngine inferred emotion: sad
   semantic candidate: event=rejection emotion=sad conf=0.535 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: sad
+  USER inferred emotion: sad
+  Monday INTERNAL emotion: curious
   final event: rejection
   confidence: 0.790
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=sad)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: that really hurt
   explicit/self-reported: None
   appraisal event: harm
   AppraisalEngine inferred emotion: hurt
   semantic candidate: event=harm emotion=hurt conf=0.436 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: hurt
+  USER inferred emotion: hurt
+  Monday INTERNAL emotion: melancholic
   final event: harm
   confidence: 0.880
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=hurt)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 
 ## Concern/fear
 TEXT: I'm worried
@@ -135,62 +183,86 @@ TEXT: I'm worried
   AppraisalEngine inferred emotion: scared
   semantic candidate: event=unfairness emotion=angry conf=0.408 used=False
   keyword cues: {'concern': 0.187}
-  final user emotion: worried
+  USER inferred emotion: worried
+  Monday INTERNAL emotion: curious
   final event: threat
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=worried)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm scared this is going to go wrong
   explicit/self-reported: scared
   appraisal event: threat
   AppraisalEngine inferred emotion: scared
   semantic candidate: event=threat emotion=scared conf=0.37 used=False
   keyword cues: {'concern': 0.187}
-  final user emotion: scared
+  USER inferred emotion: scared
+  Monday INTERNAL emotion: contempt
   final event: threat
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=scared)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I have a bad feeling about this
   explicit/self-reported: None
   appraisal event: threat
   AppraisalEngine inferred emotion: scared
   semantic candidate: event=threat emotion=scared conf=0.524 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: scared
+  USER inferred emotion: scared
+  Monday INTERNAL emotion: anxious
   final event: threat
   confidence: 0.850
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=scared)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 
 ## Positive/pride
 TEXT: I'm proud of what I did
   explicit/self-reported: proud
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.674 used=True
+  AppraisalEngine inferred emotion: unknown
+  semantic candidate: event=success emotion=unknown conf=0.674 used=True
   keyword cues: {'pride': 0.187}
-  final user emotion: proud
+  USER inferred emotion: proud
+  Monday INTERNAL emotion: curious
   final event: success
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=proud)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I actually pulled it off
   explicit/self-reported: None
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.596 used=True
+  AppraisalEngine inferred emotion: unknown
+  semantic candidate: event=success emotion=unknown conf=0.596 used=True
   keyword cues: ALL_ZEROS
-  final user emotion: neutral
+  USER inferred emotion: unknown
+  Monday INTERNAL emotion: nostalgic
   final event: success
-  confidence: 0.790
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  confidence: 0.650
+  unknown vs neutral: unknown (no reliable user-emotion evidence)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm really happy with how that turned out
   explicit/self-reported: happy
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.333 used=False
+  AppraisalEngine inferred emotion: unknown
+  semantic candidate: event=success emotion=unknown conf=0.333 used=False
   keyword cues: {'positive': 0.176, 'excitement': 0.07}
-  final user emotion: happy
+  USER inferred emotion: happy
+  Monday INTERNAL emotion: nostalgic
   final event: success
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=happy)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 
 ## Negation/context
 TEXT: I'm not angry
@@ -199,149 +271,227 @@ TEXT: I'm not angry
   AppraisalEngine inferred emotion: neutral
   semantic candidate: event=conflict emotion=angry conf=0.378 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: neutral
+  USER inferred emotion: neutral
+  Monday INTERNAL emotion: curious
   final event: neutral
   confidence: 0.200
-  negation/contrast changed result: negation (neg=True, contrast=False, src=neutral)
+  unknown vs neutral: neutral (negated self-report)
+  negated: True
+  contrast_affected: False
+  primary_source: neutral
 TEXT: I'm not sad anymore
   explicit/self-reported: neutral
   appraisal event: neutral
   AppraisalEngine inferred emotion: neutral
   semantic candidate: event=unfairness emotion=angry conf=0.316 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: neutral
+  USER inferred emotion: neutral
+  Monday INTERNAL emotion: nostalgic
   final event: neutral
   confidence: 0.200
-  negation/contrast changed result: negation (neg=True, contrast=False, src=neutral)
+  unknown vs neutral: neutral (negated self-report)
+  negated: True
+  contrast_affected: False
+  primary_source: neutral
 TEXT: I thought I'd be furious, but I'm actually relieved
   explicit/self-reported: relieved
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.42 used=False
+  AppraisalEngine inferred emotion: unknown
+  semantic candidate: event=success emotion=unknown conf=0.42 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: relieved
+  USER inferred emotion: relieved
+  Monday INTERNAL emotion: nostalgic
   final event: success
   confidence: 0.920
-  negation/contrast changed result: negation+contrast (neg=True, contrast=True, src=appraisal)
+  unknown vs neutral: n/a (user=relieved)
+  negated: False
+  contrast_affected: True
+  primary_source: appraisal
 TEXT: It's not unfair
   explicit/self-reported: None
   appraisal event: unfairness
   AppraisalEngine inferred emotion: neutral
   semantic candidate: event=None emotion=None conf=0.0 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: neutral
+  USER inferred emotion: neutral
+  Monday INTERNAL emotion: nostalgic
   final event: neutral
   confidence: 0.200
-  negation/contrast changed result: negation (neg=True, contrast=False, src=neutral)
+  unknown vs neutral: neutral (negated self-report)
+  negated: True
+  contrast_affected: False
+  primary_source: neutral
 
 ## Explicit/contrast
 TEXT: I'm happy.
   explicit/self-reported: happy
   appraisal event: affection
   AppraisalEngine inferred emotion: happy
-  semantic candidate: event=success emotion=neutral conf=0.5 used=False
+  semantic candidate: event=success emotion=unknown conf=0.5 used=False
   keyword cues: {'positive': 0.176, 'excitement': 0.07}
-  final user emotion: happy
+  USER inferred emotion: happy
+  Monday INTERNAL emotion: relieved
   final event: affection
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=happy)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm proud of myself.
   explicit/self-reported: proud
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.387 used=False
+  AppraisalEngine inferred emotion: unknown
+  semantic candidate: event=success emotion=unknown conf=0.387 used=False
   keyword cues: {'pride': 0.187}
-  final user emotion: proud
+  USER inferred emotion: proud
+  Monday INTERNAL emotion: protective
   final event: success
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=proud)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm angry about what happened.
   explicit/self-reported: angry
   appraisal event: conflict
   AppraisalEngine inferred emotion: angry
-  semantic candidate: event=success emotion=neutral conf=0.354 used=False
+  semantic candidate: event=success emotion=unknown conf=0.354 used=False
   keyword cues: {'anger': 0.187}
-  final user emotion: angry
+  USER inferred emotion: angry
+  Monday INTERNAL emotion: melancholic
   final event: conflict
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=angry)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm scared.
   explicit/self-reported: scared
   appraisal event: threat
   AppraisalEngine inferred emotion: scared
   semantic candidate: event=unfairness emotion=angry conf=0.408 used=False
   keyword cues: {'concern': 0.187}
-  final user emotion: scared
+  USER inferred emotion: scared
+  Monday INTERNAL emotion: frustrated
   final event: threat
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=scared)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm relieved.
   explicit/self-reported: relieved
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
+  AppraisalEngine inferred emotion: unknown
   semantic candidate: event=unfairness emotion=angry conf=0.408 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: relieved
+  USER inferred emotion: relieved
+  Monday INTERNAL emotion: curious
   final event: success
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=relieved)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I'm really happy with how that turned out.
   explicit/self-reported: happy
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.333 used=False
+  AppraisalEngine inferred emotion: unknown
+  semantic candidate: event=success emotion=unknown conf=0.333 used=False
   keyword cues: {'positive': 0.176, 'excitement': 0.07}
-  final user emotion: happy
+  USER inferred emotion: happy
+  Monday INTERNAL emotion: nostalgic
   final event: success
   confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  unknown vs neutral: n/a (user=happy)
+  negated: False
+  contrast_affected: False
+  primary_source: appraisal
 TEXT: I thought I'd be furious, but I'm actually relieved.
   explicit/self-reported: relieved
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.42 used=False
+  AppraisalEngine inferred emotion: unknown
+  semantic candidate: event=success emotion=unknown conf=0.42 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: relieved
+  USER inferred emotion: relieved
+  Monday INTERNAL emotion: curious
   final event: success
   confidence: 0.920
-  negation/contrast changed result: negation+contrast (neg=True, contrast=True, src=appraisal)
+  unknown vs neutral: n/a (user=relieved)
+  negated: False
+  contrast_affected: True
+  primary_source: appraisal
 TEXT: I was sad earlier, but I'm fine now.
   explicit/self-reported: neutral
   appraisal event: neutral
   AppraisalEngine inferred emotion: neutral
   semantic candidate: event=unfairness emotion=angry conf=0.426 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: neutral
+  USER inferred emotion: neutral
+  Monday INTERNAL emotion: nostalgic
   final event: neutral
   confidence: 0.920
-  negation/contrast changed result: negation+contrast (neg=True, contrast=True, src=neutral)
+  unknown vs neutral: neutral (explicit fine/okay/calm)
+  negated: False
+  contrast_affected: True
+  primary_source: neutral
 TEXT: I'm not angry.
   explicit/self-reported: neutral
   appraisal event: neutral
   AppraisalEngine inferred emotion: neutral
   semantic candidate: event=conflict emotion=angry conf=0.378 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: neutral
+  USER inferred emotion: neutral
+  Monday INTERNAL emotion: nostalgic
   final event: neutral
   confidence: 0.200
-  negation/contrast changed result: negation (neg=True, contrast=False, src=neutral)
+  unknown vs neutral: neutral (negated self-report)
+  negated: True
+  contrast_affected: False
+  primary_source: neutral
 TEXT: I'm not happy about this.
   explicit/self-reported: neutral
   appraisal event: neutral
   AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.354 used=False
+  semantic candidate: event=success emotion=unknown conf=0.354 used=False
   keyword cues: ALL_ZEROS
-  final user emotion: neutral
+  USER inferred emotion: neutral
+  Monday INTERNAL emotion: curious
   final event: neutral
   confidence: 0.200
-  negation/contrast changed result: negation (neg=True, contrast=False, src=neutral)
+  unknown vs neutral: neutral (negated self-report)
+  negated: True
+  contrast_affected: False
+  primary_source: neutral
 TEXT: I'm proud of finishing it, but I'm exhausted.
   explicit/self-reported: exhausted
   appraisal event: success
-  AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=neutral conf=0.386 used=False
-  keyword cues: {'pride': 0.187}
-  final user emotion: exhausted
+  AppraisalEngine inferred emotion: unknown
+  semantic candidate: event=success emotion=unknown conf=0.386 used=False
+  keyword cues: ALL_ZEROS
+  USER inferred emotion: exhausted
+  Monday INTERNAL emotion: curious
   final event: success
   confidence: 0.920
-  negation/contrast changed result: negation+contrast (neg=True, contrast=True, src=appraisal)
+  unknown vs neutral: n/a (user=exhausted)
+  negated: False
+  contrast_affected: True
+  primary_source: appraisal
+
+## SEPARATION TABLE (USER vs Monday INTERNAL)
+TEXT | USER inferred | Monday INTERNAL | appraisal event | unknown_vs_neutral | negated | contrast
+------------------------------------------------------------------------------------------------------------------------
+I'm relieved. | relieved | nostalgic | success | n/a (user=relieved) | False | False
+  (user_affect model='relieved'; Monday current_emotion enum=<EmotionalState.NOSTALGIC: 'nostalgic'>)
+I thought I'd be furious, but I'm actually relieved. | relieved | protective | success | n/a (user=relieved) | False | True
+  (user_affect model='relieved'; Monday current_emotion enum=<EmotionalState.PROTECTIVE: 'protective'>)
+I actually pulled it off. | unknown | protective | success | unknown (no reliable user-emotion evidence) | False | False
+  (user_affect model='unknown'; Monday current_emotion enum=<EmotionalState.PROTECTIVE: 'protective'>)
+I'm proud of finishing it, but I'm exhausted. | exhausted | curious | success | n/a (user=exhausted) | False | True
+  (user_affect model='exhausted'; Monday current_emotion enum=<EmotionalState.CURIOUS: 'curious'>)
+I'm not angry. | neutral | curious | neutral | neutral (negated self-report) | True | False
+  (user_affect model='neutral'; Monday current_emotion enum=<EmotionalState.CURIOUS: 'curious'>)
+I'm really happy with how that turned out. | happy | protective | success | n/a (user=happy) | False | False
+  (user_affect model='happy'; Monday current_emotion enum=<EmotionalState.PROTECTIVE: 'protective'>)
+I was sad earlier, but I'm fine now. | neutral | melancholic | neutral | neutral (explicit fine/okay/calm) | False | True
+  (user_affect model='neutral'; Monday current_emotion enum=<EmotionalState.MELANCHOLIC: 'melancholic'>)
