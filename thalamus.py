@@ -611,9 +611,30 @@ class Thalamus:
         return semantic_input, answer
 
     def process_user_input(self, user_input: str, user_id: str = "default") -> str:
-        """Run the sole prompted path: conversation → Notus → emotion → reasoning → language → output."""
+        """Run the sole prompted path: perception → conversation → Notus → emotion → reasoning → language → output."""
         if not isinstance(user_input, str) or not user_input.strip():
             return "Please send a message."
+
+        # Text perception first when registered: normalize + concepts before chat.
+        perception_payload: Dict[str, Any] = {}
+        with self.lobe_handlers_lock:
+            has_perception = "perception" in self.lobe_handlers
+        if has_perception:
+            perception = self.send_and_wait(
+                "perception",
+                "process_text",
+                {"text": user_input, "user_id": user_id},
+            )
+            if perception.get("status") != "success":
+                return "I'm having trouble perceiving that right now."
+            perception_payload = self._content(perception)
+            normalized = (
+                perception_payload.get("text")
+                or perception_payload.get("normalized_text")
+                or user_input
+            )
+            if isinstance(normalized, str) and normalized.strip():
+                user_input = normalized.strip()
 
         # Capture speak-worthy inner-life BEFORE this turn's emotion process_input
         # can wash intensity / unresolved context. Her own prior feelings stay eligible
@@ -655,7 +676,14 @@ class Thalamus:
             preloaded_aside = None
 
         conversation = self.send_and_wait(
-            "conversation", "understand", {"user_input": user_input, "user_id": user_id}
+            "conversation",
+            "understand",
+            {
+                "user_input": user_input,
+                "user_id": user_id,
+                "perception": perception_payload,
+                "context": {"perception": perception_payload},
+            },
         )
         if conversation["status"] != "success":
             return "I'm having trouble understanding right now."
@@ -763,6 +791,7 @@ class Thalamus:
                     "understanding": understanding,
                     "memory_context": ctx,
                     "emotion_result": emotional_state,
+                    "perception": perception_payload,
                 },
             },
         )

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Start Monday's prompted core plus light autonomous inner-life for own feelings.
 
-Direct-call path (no sockets): six prompted lobes, plus AutonomousThinkingLoop so
-mood can move from inner thoughts without user text — not the full legacy socket stack.
+Direct-call path (no sockets): prompted lobes including text perception, plus
+AutonomousThinkingLoop so mood can move from inner thoughts without user text —
+not the full legacy socket stack.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
 from notus_memory_core import ActiveNotusMemorySystem
 from output import OutputLobe
+from perception import PerceptionLobe
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -25,7 +27,7 @@ def create_core_systems(
     runtime_directory: Optional[str] = None,
     reasoning_factory: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """Instantiate and register the six prompted-path systems plus autonomous thinking.
+    """Instantiate and register prompted-path systems plus autonomous thinking.
 
     `runtime_directory` is retained for mutable non-Notus runtime state and tests.
     Notus itself is PostgreSQL-only and does not use a local SQLite file.
@@ -46,6 +48,7 @@ def create_core_systems(
     thalamus = Thalamus()
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
+        "perception": PerceptionLobe(thalamus=thalamus),
         "conversation": ConversationSystem(thalamus=thalamus),
         "notus": ActiveNotusMemorySystem(thalamus=thalamus),
         "emotion": EmotionalProcess(
@@ -58,7 +61,15 @@ def create_core_systems(
         "language": LanguageGenerator(thalamus=thalamus),
         "output": OutputLobe(thalamus=thalamus, enable_tts=False),
     }
-    for name in ("conversation", "notus", "emotion", "reasoning", "language", "output"):
+    for name in (
+        "perception",
+        "conversation",
+        "notus",
+        "emotion",
+        "reasoning",
+        "language",
+        "output",
+    ):
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
@@ -81,6 +92,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "emotion",
         "notus",
         "conversation",
+        "perception",
     ):
         shutdown = getattr(systems.get(name), "shutdown", None)
         if callable(shutdown):

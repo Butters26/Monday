@@ -1,630 +1,374 @@
 #!/usr/bin/env python3
-"""
-Perception Lobe - Sensory Input Processing
-Handles: Speech-to-text, text input, converts to concepts
+"""Perception Lobe — honest text input for the live path.
+
+Claimed modalities:
+  - text: implemented (normalize + extract concepts/entities)
+  - audio: disabled (no STT / microphone claimed)
+  - vision: disabled (no webcam / Haar / OpenCV claimed)
+
+Does not start autonomous hearing/vision loops and does not print fake
+"microphone initialized" / "webcam initialized" success lines.
 """
 
-import json
+from __future__ import annotations
+
 import os
-import threading
-import queue
+import re
 import time
-import sys
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Set
+
 from thalamus import get_thalamus
 
+
+_WHITESPACE_RE = re.compile(r"\s+")
+_PUNCT_STRIP = ".,!?;:\"'()[]{}"
+
+
 class PerceptionLobe:
-    """Perception system - processes all sensory input"""
-    
-    def __init__(self):
+    """Text perception: normalize input and extract simple concepts."""
+
+    # Explicit: do not claim senses we do not implement.
+    AUDIO_ENABLED = False
+    VISION_ENABLED = False
+    TEXT_ENABLED = True
+
+    def __init__(self, thalamus=None) -> None:
+        self.thalamus = thalamus if thalamus is not None else get_thalamus()
         self.running = True
-        
-        # Input queues
-        self.text_queue = queue.Queue()
-        self.audio_queue = queue.Queue()
-        self.visual_queue = queue.Queue()
-        
-        # Speech-to-text engine (will be initialized when needed)
-        self.stt_engine = None
+        self.seen_concepts: Set[str] = set()
+        self.seen_entities: Set[str] = set()
+        # Honest capability flags — never flipped by optional imports.
         self.stt_available = False
-        self.audio_thread = None
-        
-        # Visual processing
         self.vision_available = False
         self.camera = None
-        self.visual_thread = None
-        
-        # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
-        
-        # Track concepts we've seen before (for novelty detection)
-        self.seen_concepts = set()
-        self.seen_entities = set()
-        
-        # Register immediately so GUI can access it right away
-        self._register_with_thalamus()
-        
-        self._initialize_stt()
-        self._start_autonomous_vision()
-        self._start_autonomous_hearing()
-        
-    def _initialize_stt(self):
-        """Initialize speech-to-text engine"""
-        try:
-            import speech_recognition as sr
-            self.stt_engine = sr.Recognizer()
-            self.stt_available = True
-            print("✅ Speech-to-text engine initialized")
-        except ImportError:
-            print("⚠️  speech_recognition not available - voice input disabled")
-            print("   Install with: pip install SpeechRecognition pyaudio")
-            self.stt_available = False
-    
-    def _start_autonomous_vision(self):
-        """Start autonomous vision processing - runs constantly"""
-        try:
-            import cv2
-            self.camera = cv2.VideoCapture(0)
-            if self.camera.isOpened():
-                self.vision_available = True
-                print("✅ Webcam initialized - autonomous vision active")
-                
-                # Start vision processing thread
-                self.visual_thread = threading.Thread(target=self._vision_loop, daemon=True)
-                self.visual_thread.start()
-            else:
-                print("⚠️  Webcam not available")
-                self.vision_available = False
-        except ImportError:
-            print("⚠️  opencv-python not available - vision disabled")
-            print("   Install with: pip install opencv-python")
-            self.vision_available = False
-    
-    def _vision_loop(self):
-        """Continuously process visual input"""
-        import cv2
-        import time
-        
-        while self.running:
-            try:
-                ret, frame = self.camera.read()
-                if not ret:
-                    time.sleep(1)
-                    continue
-                
-                # Process frame
-                visual_data = self._process_frame(frame)
-                
-                # Add to queue if significant
-                if visual_data and visual_data.get('significant'):
-                    self.visual_queue.put(visual_data)
-                
-                # Process every 2 seconds
-                time.sleep(2)
-                
-            except Exception as e:
-                print(f"❌ Vision loop error: {e}")
-                time.sleep(5)
-    
-    def _process_frame(self, frame) -> Optional[Dict[str, Any]]:
-        """Process a video frame"""
-        import cv2
-        
-        height, width, channels = frame.shape
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # Detect faces
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-        
-        # Calculate brightness
-        brightness = float(gray.mean())
-        
-        # Check if anything significant
-        significant = len(faces) > 0 or brightness < 50 or brightness > 200
-        
-        visual_data = {
-            'faces_detected': len(faces),
-            'brightness': brightness,
-            'resolution': f"{width}x{height}",
-            'significant': significant,
-            'timestamp': time.time()
-        }
-        
-        return visual_data
-    
-    def _start_autonomous_hearing(self):
-        """Start autonomous audio processing - runs constantly"""
-        if not self.stt_available:
-            print("⚠️  Audio input not available - hearing disabled")
-            return
-        
-        print("✅ Microphone initialized - autonomous hearing active")
-        
-        # Start audio processing thread
-        self.audio_thread = threading.Thread(target=self._hearing_loop, daemon=True)
-        self.audio_thread.start()
-        
-        # Start audio queue processor thread - reads queue and sends to Thalamus
-        self.audio_processor_thread = threading.Thread(target=self._audio_queue_processor, daemon=True)
-        self.audio_processor_thread.start()
-    
-    def _hearing_loop(self):
-        """Continuously listen for audio"""
-        import speech_recognition as sr
-        import time
-        
-        while self.running:
-            try:
-                with sr.Microphone() as source:
-                    # Quick adjustment for ambient noise
-                    self.stt_engine.adjust_for_ambient_noise(source, duration=0.3)
-                    
-                    # Listen with timeout
-                    try:
-                        audio = self.stt_engine.listen(source, timeout=5, phrase_time_limit=10)
-                        
-                        # Convert to text
-                        text = self.stt_engine.recognize_google(audio)
-                        
-                        # Process as text and queue
-                        audio_data = self.process_text_input(text)
-                        audio_data['source'] = 'audio'
-                        audio_data['original_audio'] = True
-                        audio_data['confidence'] = 0.85  # Speech-to-text confidence (lower than direct text)
-                        self.audio_queue.put(audio_data)
-                        
-                        print(f"🎤 Heard: {text}")
-                        
-                    except sr.WaitTimeoutError:
-                        # No speech detected, keep listening
-                        pass
-                    except sr.UnknownValueError:
-                        # Could not understand, keep listening
-                        pass
-                
-                time.sleep(0.5)
-                
-            except Exception as e:
-                print(f"❌ Hearing loop error: {e}")
-                time.sleep(5)
-    
-    def _audio_queue_processor(self):
-        """Process audio queue and send to Thalamus using persistent connection"""
-        while self.running:
-            try:
-                # Get audio from queue (blocking with timeout)
-                try:
-                    audio_data = self.audio_queue.get(timeout=1.0)
-                except queue.Empty:
-                    continue
-                
-                # Send to Reasoning via Thalamus with standardized format
-                result = self.thalamus.send_message(
-                    destination='reasoning',
-                    msg_type='process_perception',
-                    content={
-                        'text': audio_data.get('text', ''),
-                        'confidence': audio_data.get('confidence', 0.85),
-                        'intent_hints': audio_data.get('intent_hints', []),
-                        'entities': audio_data.get('entities', []),
-                        'source': 'audio',
-                        'timestamp': audio_data.get('timestamp')
-                    },
-                    source='perception'
-                )
-                
-                if result and result.get('status') == 'success':
-                    print(f"📤 Sent audio to Reasoning: {audio_data.get('text', '')[:50]}")
-                    
-            except Exception as e:
-                print(f"❌ Audio queue processor error: {e}")
-                time.sleep(1)
-    
-    def _register_with_thalamus(self):
-        """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
-        try:
-            result = self.thalamus.register_lobe('perception', self)
-            if result.get('status') == 'success':
-                print("✅ Perception registered with Thalamus (direct function calls)")
-                return True
-            return False
-        except Exception as e:
-            print(f"⚠️  Failed to register with Thalamus: {e}")
-            return False
-    
-    def _send_to_thalamus(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Send message to Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
-        try:
-            msg_type = message.get('type')
-            if msg_type == 'route_message':
-                destination = message.get('destination')
-                route_msg_type = message.get('msg_type')
-                content = message.get('content', {})
-                return self.thalamus.send_message(destination, route_msg_type, content)
-            elif msg_type == 'broadcast_message':
-                destinations = message.get('destinations', [])
-                broadcast_msg_type = message.get('msg_type')
-                broadcast_content = message.get('content', {})
-                return self.thalamus.broadcast_message(destinations, broadcast_msg_type, broadcast_content)
-            else:
-                return self.thalamus.handle_request(message)
-        except Exception:
-            return None
-    
+        self.stt_engine = None
+
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """Collapse whitespace and strip edges; keep original casing for entities."""
+        if not isinstance(text, str):
+            return ""
+        return _WHITESPACE_RE.sub(" ", text).strip()
+
     def process_text_input(self, text: str) -> Dict[str, Any]:
-        """Process text input into concepts and return standardized format"""
-        # Extract concepts from text
-        concepts = self._extract_concepts(text)
-        
-        # Detect novelty in the input
-        self._detect_and_signal_novelty(text, concepts)
-        
+        """Normalize text, extract concepts/entities, optionally signal novelty."""
+        normalized = self.normalize_text(text)
+        concepts = self._extract_concepts(normalized)
+        self._maybe_signal_novelty(normalized, concepts)
         return {
-            'type': 'text_input',
-            'raw_text': text,
-            'text': text,  # Standardized key
-            'confidence': 0.95,  # High confidence for direct text input
-            'concepts': concepts,
-            'intent_hints': concepts.get('questions', []),
-            'entities': concepts.get('entities', []),
-            'input_type': 'text',
-            'timestamp': time.time()
+            "type": "text_input",
+            "raw_text": text if isinstance(text, str) else "",
+            "text": normalized,
+            "normalized_text": normalized,
+            "confidence": 1.0 if normalized else 0.0,
+            "concepts": concepts,
+            "intent_hints": list(concepts.get("questions") or []),
+            "entities": list(concepts.get("entities") or []),
+            "words": list(concepts.get("words") or []),
+            "sentiment": concepts.get("sentiment", "neutral"),
+            "emotions": list(concepts.get("emotions") or []),
+            "input_type": "text",
+            "source": "text",
+            "modalities": {
+                "text": True,
+                "audio": False,
+                "vision": False,
+            },
+            "timestamp": time.time(),
         }
-    
-    def _detect_and_signal_novelty(self, text: str, concepts: Dict[str, Any]):
-        """Detect novel concepts in the input and signal Novelty Lobe"""
-        # Check for novel entities (proper nouns, names, places)
-        novel_entities = []
-        for entity in concepts.get('entities', []):
-            if entity not in self.seen_entities:
-                novel_entities.append(entity)
-                self.seen_entities.add(entity)
-        
-        # Check for novel concepts/words
-        novel_concepts = []
-        for word in concepts.get('words', []):
-            word_lower = word.lower()
-            # Consider it novel if it's longer than 3 chars and not commonly seen
-            if len(word_lower) > 3 and word_lower not in self.seen_concepts:
-                # Skip common words
-                common = {'what', 'this', 'that', 'have', 'from', 'with', 'will', 'know', 'think', 'about', 'which'}
-                if word_lower not in common:
-                    novel_concepts.append(word)
-                    self.seen_concepts.add(word_lower)
-        
-        # Check for novel questions (if present)
-        novel_questions = bool(concepts.get('questions', []))
-        
-        # Send novelty signal if we found novel elements
-        if novel_entities or novel_concepts or (novel_questions and len(text) > 20):
-            try:
-                novelty_message = {
-                    'type': 'novelty_signal',
-                    'source': 'perception',
-                    'stimulus': text,
-                    'stimulus_type': 'text_input',
-                    'novel_entities': novel_entities,
-                    'novel_concepts': novel_concepts,
-                    'has_novel_questions': novel_questions,
-                    'confidence': min(0.95, (len(novel_entities) * 0.3 + len(novel_concepts) * 0.2 + (0.15 if novel_questions else 0)))
-                }
-                
-                # Send to Novelty Lobe
-                result = self.thalamus.send_message(
-                    destination='novelty',
-                    msg_type='novelty_signal',
-                    content=novelty_message,
-                    source='perception'
-                )
-                
-                if result and result.get('status') == 'success':
-                    print(f"✨ Detected novelty: {len(novel_entities)} entities, {len(novel_concepts)} concepts")
-                    
-            except Exception as e:
-                # Novelty Lobe might not be available, that's OK
-                pass
-    
-    def _broadcast_to_lobes(self, perception_data: Dict[str, Any]):
-        """Broadcast perception data to ALL lobes through Thalamus - DIRECT FUNCTION CALL"""
-        # Use Thalamus broadcast_message to send to ALL lobes at once
-        destinations = ['reasoning', 'emotion', 'pattern', 'notus', 'representation', 'language', 'output', 'voice', 'conversation']
-        self.thalamus.broadcast_message(destinations, 'perception_input', {
-            'perception_data': perception_data
-        })
-    
-    def process_audio_input(self) -> Optional[Dict[str, Any]]:
-        """Process audio input (speech-to-text) - returns standardized format"""
-        if not self.stt_available:
-            return None
-            
-        try:
-            import speech_recognition as sr
-            
-            # Listen for audio
-            with sr.Microphone() as source:
-                print("🎤 Listening...")
-                self.stt_engine.adjust_for_ambient_noise(source, duration=0.5)
-                audio = self.stt_engine.listen(source, timeout=5, phrase_time_limit=10)
-            
-            # Convert to text
-            print("🔄 Processing audio...")
-            text = self.stt_engine.recognize_google(audio)
-            print(f"📝 Heard: {text}")
-            
-            # Process as text and return standardized format
-            result = self.process_text_input(text)
-            result['source'] = 'audio'
-            result['confidence'] = 0.85  # Speech-to-text confidence
-            return result
-            
-        except sr.WaitTimeoutError:
-            print("⏱️  No speech detected")
-            return None
-        except sr.UnknownValueError:
-            print("❓ Could not understand audio")
-            return None
-        except Exception as e:
-            print(f"❌ Audio processing error: {e}")
-            return None
-    
-    def process_visual_input(self) -> Optional[Dict[str, Any]]:
-        """Process visual input from webcam"""
-        if not self.vision_available:
-            return None
-        
-        try:
-            import cv2
-            
-            # Capture frame
-            ret, frame = self.camera.read()
-            if not ret:
-                print("❌ Could not read from webcam")
-                return None
-            
-            print("📷 Processing visual input...")
-            
-            # Basic image analysis
-            height, width, channels = frame.shape
-            
-            # Convert to grayscale for analysis
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
-            # Detect faces (basic object detection)
-            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-            
-            # Extract visual concepts
-            visual_concepts = {
-                'type': 'visual_input',
-                'resolution': f"{width}x{height}",
-                'faces_detected': len(faces),
-                'brightness': float(gray.mean()),
-                'objects': []
-            }
-            
-            if len(faces) > 0:
-                visual_concepts['objects'].append('face')
-                print(f"👤 Detected {len(faces)} face(s)")
-            
-            return {
-                'type': 'visual_input',
-                'raw_data': 'frame_data',  # Don't send actual frame data
-                'concepts': visual_concepts,
-                'input_type': 'vision'
-            }
-            
-        except Exception as e:
-            print(f"❌ Visual processing error: {e}")
-            return None
-    
+
     def _extract_concepts(self, text: str) -> Dict[str, Any]:
-        """Extract concepts with proper language understanding"""
-        # Query Notus for known concepts/entities
-        known_concepts = []
+        """Simple concept/entity extraction — no remote STT, no vision."""
+        text_lower = text.lower()
+        words = text.split() if text else []
+
+        meaningful_words: List[str] = []
+        for word in words:
+            cleaned = word.lower().strip(_PUNCT_STRIP)
+            if len(cleaned) >= 2:
+                meaningful_words.append(cleaned)
+        if not meaningful_words and words:
+            meaningful_words = [w.lower().strip(_PUNCT_STRIP) for w in words if w.strip()]
+
+        concepts: Dict[str, Any] = {
+            "words": meaningful_words,
+            "length": len(text),
+            "questions": [],
+            "emotions": [],
+            "entities": [],
+            "negations": [],
+            "subject": None,
+            "verb": None,
+            "object": None,
+            "sentiment": "neutral",
+        }
+
+        question_words = ("what", "why", "how", "when", "where", "who", "which")
+        for word in question_words:
+            if word in text_lower.split() or (word in text_lower and "?" in text):
+                if word not in concepts["questions"]:
+                    concepts["questions"].append(word)
+        if text.endswith("?") and not concepts["questions"]:
+            concepts["questions"].append("?")
+
+        negation_words = {
+            "not",
+            "never",
+            "no",
+            "n't",
+            "dont",
+            "don't",
+            "cant",
+            "can't",
+            "wont",
+            "won't",
+        }
+        for i, word in enumerate(words):
+            if word.lower().strip(_PUNCT_STRIP) in negation_words and i + 1 < len(words):
+                concepts["negations"].append(words[i + 1].lower().strip(_PUNCT_STRIP))
+
+        emotion_words = {
+            "happy": ("happy", "joy", "great", "wonderful", "amazing", "glad", "pleased"),
+            "sad": ("sad", "unhappy", "depressed", "down", "miserable", "blue"),
+            "angry": ("angry", "mad", "furious", "hate", "pissed"),
+            "excited": ("excited", "thrilled", "pumped", "enthusiastic"),
+            "worried": ("worried", "anxious", "concerned", "scared", "nervous"),
+        }
+        for emotion, emo_list in emotion_words.items():
+            for emo_word in emo_list:
+                if emo_word in text_lower:
+                    if emo_word in concepts["negations"]:
+                        if emotion == "happy":
+                            concepts["emotions"].append("sad")
+                        elif emotion == "sad":
+                            concepts["emotions"].append("happy")
+                    else:
+                        concepts["emotions"].append(emotion)
+                    break
+
+        common_verbs = (
+            "is",
+            "are",
+            "was",
+            "were",
+            "feel",
+            "think",
+            "want",
+            "need",
+            "like",
+            "love",
+            "hate",
+            "have",
+            "had",
+            "am",
+        )
+        if words:
+            concepts["subject"] = words[0].strip(_PUNCT_STRIP) or None
+            for i, word in enumerate(words):
+                if word.lower().strip(_PUNCT_STRIP) in common_verbs:
+                    concepts["verb"] = word.strip(_PUNCT_STRIP)
+                    if i + 1 < len(words):
+                        concepts["object"] = " ".join(
+                            w.strip(_PUNCT_STRIP) for w in words[i + 1 :]
+                        )
+                    break
+
+        positive_words = {
+            "good",
+            "great",
+            "wonderful",
+            "amazing",
+            "love",
+            "like",
+            "happy",
+            "excellent",
+        }
+        negative_words = {
+            "bad",
+            "terrible",
+            "awful",
+            "hate",
+            "dislike",
+            "sad",
+            "horrible",
+        }
+        tokens = text_lower.split()
+        pos_count = sum(
+            1 for w in tokens if w.strip(_PUNCT_STRIP) in positive_words and w not in concepts["negations"]
+        )
+        neg_count = sum(
+            1 for w in tokens if w.strip(_PUNCT_STRIP) in negative_words and w not in concepts["negations"]
+        )
+        if pos_count > neg_count:
+            concepts["sentiment"] = "positive"
+        elif neg_count > pos_count:
+            concepts["sentiment"] = "negative"
+
+        # Proper-noun-ish entities: capitalized tokens after the first word,
+        # plus consecutive Capitalized Name sequences.
+        entity_parts: List[str] = []
+        for i, word in enumerate(words):
+            bare = word.strip(_PUNCT_STRIP)
+            if not bare:
+                continue
+            if i > 0 and len(bare) > 1 and bare[0].isupper() and not bare.isupper():
+                entity_parts.append(bare)
+            elif entity_parts:
+                concepts["entities"].append(" ".join(entity_parts))
+                entity_parts = []
+        if entity_parts:
+            concepts["entities"].append(" ".join(entity_parts))
+
+        # Deduplicate while preserving order
+        seen: Set[str] = set()
+        unique_entities: List[str] = []
+        for ent in concepts["entities"]:
+            key = ent.lower()
+            if key not in seen:
+                seen.add(key)
+                unique_entities.append(ent)
+        concepts["entities"] = unique_entities
+
+        return concepts
+
+    def _maybe_signal_novelty(self, text: str, concepts: Dict[str, Any]) -> None:
+        """Best-effort novelty signal only if a novelty lobe is registered."""
+        with self.thalamus.lobe_handlers_lock:
+            has_novelty = "novelty" in self.thalamus.lobe_handlers
+        if not has_novelty:
+            return
+
+        novel_entities: List[str] = []
+        for entity in concepts.get("entities") or []:
+            key = entity.lower()
+            if key not in self.seen_entities:
+                novel_entities.append(entity)
+                self.seen_entities.add(key)
+
+        novel_concepts: List[str] = []
+        common = {
+            "what",
+            "this",
+            "that",
+            "have",
+            "from",
+            "with",
+            "will",
+            "know",
+            "think",
+            "about",
+            "which",
+            "your",
+            "their",
+            "them",
+            "then",
+            "than",
+        }
+        for word in concepts.get("words") or []:
+            word_lower = word.lower()
+            if len(word_lower) > 3 and word_lower not in self.seen_concepts and word_lower not in common:
+                novel_concepts.append(word)
+                self.seen_concepts.add(word_lower)
+
+        novel_questions = bool(concepts.get("questions"))
+        if not (novel_entities or novel_concepts or (novel_questions and len(text) > 20)):
+            return
+
+        confidence = min(
+            0.95,
+            len(novel_entities) * 0.3
+            + len(novel_concepts) * 0.2
+            + (0.15 if novel_questions else 0),
+        )
         try:
-            notus_concepts = self._send_to_thalamus({
-                'type': 'route_message',
-                'destination': 'notus',
-                'msg_type': 'query',
-                'content': {'type': 'get_known_concepts', 'text': text}
-            })
-            if notus_concepts and notus_concepts.get('status') == 'success':
-                known_concepts = notus_concepts.get('concepts', [])
+            self.thalamus.send_message(
+                destination="novelty",
+                msg_type="novelty_signal",
+                content={
+                    "type": "novelty_signal",
+                    "source": "perception",
+                    "stimulus": text,
+                    "stimulus_type": "text_input",
+                    "novel_entities": novel_entities,
+                    "novel_concepts": novel_concepts,
+                    "has_novel_questions": novel_questions,
+                    "confidence": confidence,
+                },
+                source="perception",
+            )
         except Exception:
             pass
-        
-        text_lower = text.lower()
-        words = text.split()
-        
-        # Ensure we always have meaningful words, even for simple inputs
-        meaningful_words = []
-        for word in words:
-            word_clean = word.lower().strip('.,!?;:')
-            if len(word_clean) >= 2:  # Include short words like "hi", "I", "am"
-                meaningful_words.append(word_clean)
-        
-        # If no meaningful words extracted, use the original words
-        if not meaningful_words:
-            meaningful_words = [w.lower().strip('.,!?;:') for w in words if w.strip()]
-        
-        concepts = {
-            'words': meaningful_words,  # Use meaningful_words instead of raw words
-            'length': len(text),
-            'questions': [],
-            'emotions': [],
-            'entities': [],
-            'negations': [],
-            'subject': None,
-            'verb': None,
-            'object': None,
-            'sentiment': 'neutral'
+
+    def process_audio_input(self) -> Optional[Dict[str, Any]]:
+        """Audio is not implemented — never claim STT success."""
+        return None
+
+    def process_visual_input(self) -> Optional[Dict[str, Any]]:
+        """Vision is not implemented — never claim webcam/Haar success."""
+        return None
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "text_input": True,
+            "stt_available": False,
+            "vision_available": False,
+            "audio_enabled": False,
+            "vision_enabled": False,
+            "claimed_modalities": ["text"],
         }
-        
-        # Detect questions
-        question_words = ['what', 'why', 'how', 'when', 'where', 'who', 'which']
-        for word in question_words:
-            if word in text_lower:
-                concepts['questions'].append(word)
-        
-        # Detect negations (not, never, no, etc)
-        negation_words = ['not', 'never', 'no', "n't", 'dont', "don't", 'cant', "can't", 'wont', "won't"]
-        for i, word in enumerate(words):
-            word_lower = word.lower()
-            if word_lower in negation_words:
-                # Track what's being negated
-                if i + 1 < len(words):
-                    negated_word = words[i+1]
-                    concepts['negations'].append(negated_word.lower())
-        
-        # Detect emotions with negation awareness
-        emotion_words = {
-            'happy': ['happy', 'joy', 'great', 'wonderful', 'amazing', 'glad', 'pleased'],
-            'sad': ['sad', 'unhappy', 'depressed', 'down', 'miserable', 'blue'],
-            'angry': ['angry', 'mad', 'furious', 'hate', 'pissed'],
-            'excited': ['excited', 'thrilled', 'pumped', 'enthusiastic'],
-            'worried': ['worried', 'anxious', 'concerned', 'scared', 'nervous']
-        }
-        
-        for emotion, emotion_word_list in emotion_words.items():
-            for emo_word in emotion_word_list:
-                if emo_word in text_lower:
-                    # Check if negated
-                    if emo_word in concepts['negations']:
-                        # Inverted emotion
-                        if emotion == 'happy':
-                            concepts['emotions'].append('sad')
-                        elif emotion == 'sad':
-                            concepts['emotions'].append('happy')
-                        # Don't add the negated emotion
-                    else:
-                        concepts['emotions'].append(emotion)
-                    break
-        
-        # Simple subject-verb-object extraction
-        if len(words) >= 3:
-            # Very basic SVO
-            concepts['subject'] = words[0]
-            # Look for common verbs
-            common_verbs = ['is', 'are', 'was', 'were', 'feel', 'think', 'want', 'need', 'like', 'love', 'hate']
-            for i, word in enumerate(words):
-                if word.lower() in common_verbs:
-                    concepts['verb'] = word
-                    if i + 1 < len(words):
-                        concepts['object'] = ' '.join(words[i+1:])
-                    break
-        
-        # Sentiment analysis
-        positive_words = ['good', 'great', 'wonderful', 'amazing', 'love', 'like', 'happy', 'excellent']
-        negative_words = ['bad', 'terrible', 'awful', 'hate', 'dislike', 'sad', 'horrible']
-        
-        pos_count = sum(1 for w in text_lower.split() if w in positive_words and w not in concepts['negations'])
-        neg_count = sum(1 for w in text_lower.split() if w in negative_words and w not in concepts['negations'])
-        
-        if pos_count > neg_count:
-            concepts['sentiment'] = 'positive'
-        elif neg_count > pos_count:
-            concepts['sentiment'] = 'negative'
-        
-        # Entity detection
-        for i, word in enumerate(words):
-            if len(word) > 1 and word[0].isupper() and i > 0:
-                concepts['entities'].append(word)
-        
-        return concepts
-    
-    def start(self):
-        """Start perception - register with Thalamus (NO SOCKETS)"""
-        print(f"👁️  Perception Lobe: Registering with Thalamus...")
-        if self.stt_available:
-            print("   🎤 Voice input: enabled")
-        else:
-            print("   🎤 Voice input: disabled")
-        if self.vision_available:
-            print("   📷 Vision input: enabled")
-        else:
-            print("   📷 Vision input: disabled")
-        print("   ⌨️  Text input: enabled")
-        print("   Communication: Direct function calls (NO SOCKETS)")
-        
-        # Already registered in __init__, but verify
-        if 'perception' not in self.thalamus.lobe_handlers:
-            if not self._register_with_thalamus():
-                print("❌ Failed to register with Thalamus")
-                return
-        
-        # Keep running (Thalamus calls us directly, no listening loop needed)
+
+    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        msg_type = message.get("type")
+        payload = message.get("content", message)
+        if not isinstance(payload, dict):
+            payload = {}
+
+        if msg_type == "health":
+            return {"status": "success", "healthy": True, "pid": os.getpid()}
+
+        if msg_type in ("process_text", "user_input", "perceive"):
+            text = payload.get("text") or payload.get("user_input") or ""
+            result = self.process_text_input(text if isinstance(text, str) else "")
+            return {"status": "success", "content": result}
+
+        if msg_type == "listen_audio":
+            return {
+                "status": "error",
+                "message": "Audio perception disabled — text only",
+                "content": {"audio_enabled": False},
+            }
+
+        if msg_type == "capture_visual":
+            return {
+                "status": "error",
+                "message": "Vision perception disabled — text only",
+                "content": {"vision_enabled": False},
+            }
+
+        if msg_type == "get_status":
+            status = self.get_status()
+            return {"status": "success", "content": status, **status}
+
+        return {"status": "error", "message": f"Unknown message type: {msg_type}"}
+
+    def start(self) -> None:
+        """CLI helper — register and idle. No hearing/vision threads."""
+        print("Perception Lobe: text only (audio/vision disabled)")
+        result = self.thalamus.register_lobe("perception", self)
+        if result.get("status") != "success":
+            print("Failed to register with Thalamus")
+            return
         while self.running:
             time.sleep(0.1)
-    
-    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Process incoming message"""
-        msg_type = message.get('type')
-        
-        # FIX: add health probe
-        if msg_type == 'health':
-            return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
-        
-        if msg_type == 'process_text' or msg_type == 'user_input':
-            # Process text input (from GUI or other sources)
-            text = message.get('text') or message.get('user_input', '')
-            result = self.process_text_input(text)
-            
-            # Return standardized perception output
-            return {
-                'status': 'success',
-                'content': result  # Thalamus will transform this
-            }
-            
-        elif msg_type == 'listen_audio':
-            # Listen for audio input
-            result = self.process_audio_input()
-            if result:
-                return {
-                    'status': 'success',
-                    'content': result  # Thalamus will transform this
-                }
-            else:
-                return {'status': 'no_input', 'message': 'No audio detected'}
-                
-        elif msg_type == 'capture_visual':
-            # Capture visual input from webcam
-            result = self.process_visual_input()
-            if result:
-                return {
-                    'status': 'success',
-                    'content': result  # Thalamus will transform this
-                }
-            else:
-                return {'status': 'no_input', 'message': 'No visual input'}
-                
-        elif msg_type == 'get_status':
-            # Get perception system status
-            return {
-                'status': 'success',
-                'stt_available': self.stt_available,
-                'vision_available': self.vision_available,
-                'text_input': True
-            }
-            
-        else:
-            return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
-    
-    def shutdown(self):
-        """Graceful shutdown"""
+
+    def shutdown(self) -> None:
         self.running = False
-        if self.camera:
-            try:
-                self.camera.release()
-            except Exception:
-                pass
-        # No sockets to close
+
 
 if __name__ == "__main__":
     lobe = PerceptionLobe()
     try:
         lobe.start()
     except KeyboardInterrupt:
-        print("\n🛑 Perception lobe shutting down...")
+        print("\nPerception lobe shutting down...")
         lobe.shutdown()
-

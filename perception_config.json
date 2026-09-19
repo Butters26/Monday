@@ -1,7 +1,8 @@
 {
   "perception": {
-    "socket_path": "/tmp/perception.sock",
-    
+    "socket_path": null,
+    "notes": "Live path uses direct-call PerceptionLobe (text only). Audio/vision disabled — no STT/webcam claims.",
+
     "input_types": {
       "text": {
         "enabled": true,
@@ -9,24 +10,24 @@
       },
       "audio": {
         "enabled": false,
-        "require_speech_recognition": true,
+        "require_speech_recognition": false,
         "timeout_seconds": 5,
         "phrase_time_limit_seconds": 10
       },
       "visual": {
         "enabled": false,
-        "require_opencv": true,
+        "require_opencv": false,
         "camera_index": 0
       }
     },
-    
+
     "text_processing": {
       "extract_concepts": true,
       "detect_questions": true,
       "detect_emotions": true,
-      "min_word_length": 3
+      "min_word_length": 2
     },
-    
+
     "question_words": [
       "what",
       "why",
@@ -36,7 +37,7 @@
       "who",
       "which"
     ],
-    
+
     "emotion_keywords": {
       "happy": ["happy", "joy", "great", "wonderful", "amazing"],
       "sad": ["sad", "unhappy", "depressed", "down"],
@@ -44,7 +45,7 @@
       "excited": ["excited", "thrilled", "amazing"],
       "worried": ["worried", "anxious", "concerned", "scared"]
     },
-    
+
     "entity_detection": {
       "enabled": true,
       "detect_capitalized": true,
@@ -52,4 +53,3 @@
     }
   }
 }
-

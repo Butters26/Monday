@@ -242,9 +242,28 @@ class ConversationSystem:
         elif msg_type == 'understand':
             user_input = payload.get('user_input', '')
             context = payload.get('context', {})
-            
+            if not isinstance(context, dict):
+                context = {}
+            # Live path may pass perception at top level or inside context.
+            perception = payload.get('perception')
+            if isinstance(perception, dict):
+                context = dict(context)
+                context['perception'] = perception
+
             understanding = self.understand(user_input, context)
-            
+            # Fold perception entities/concepts into understanding when present.
+            perc = context.get('perception') if isinstance(context.get('perception'), dict) else {}
+            if perc:
+                entities = list(understanding.get('entities') or [])
+                for ent in perc.get('entities') or []:
+                    if ent and ent not in entities:
+                        entities.append(ent)
+                understanding['entities'] = entities
+                understanding['perception_concepts'] = perc.get('concepts') or perc.get('words') or []
+                understanding['perception_words'] = perc.get('words') or []
+                if perc.get('sentiment') and understanding.get('sentiment') in (None, 'neutral'):
+                    understanding['sentiment'] = perc.get('sentiment')
+
             return {
                 'status': 'success',
                 'content': {
