@@ -42,6 +42,7 @@ class EmotionalState(Enum):
     PROUD = "proud"
     SCARED = "scared"
     RELIEVED = "relieved"
+    EXHAUSTED = "exhausted"
     SURPRISED = "surprised"
     DISGUSTED = "disgusted"
     CONTEMPT = "contempt"
@@ -269,7 +270,7 @@ class AppraisalEngine:
         'threat':      'scared',
         'unfairness':  'angry',
         'loss':        'sad',
-        'success':     'proud',
+        'success':     'neutral',  # event≠user emotion; proud only via explicit self-report
         'affection':   'happy',
         'gift':        'happy',
         'conflict':    'angry',
@@ -510,12 +511,12 @@ class AppraisalEngine:
         'worried': 'worried', 'anxious': 'worried', 'concerned': 'worried',
         'relieved': 'relieved',
         'proud': 'proud',
+        'exhausted': 'exhausted', 'tired': 'exhausted',
         'fine': 'neutral', 'okay': 'neutral', 'ok': 'neutral', 'better': 'neutral',
         'calm': 'calm',
     }
-    # After "but" these name a state but do not override a prior explicit emotion
-    # (no matching EmotionalState / not an affect correction).
-    _CONTRAST_NON_OVERRIDE = frozenset({'exhausted', 'tired', 'busy', 'hungry', 'sleepy'})
+    # After "but" these name a non-affect state and do not override prior explicit emotion.
+    _CONTRAST_NON_OVERRIDE = frozenset({'busy', 'hungry', 'sleepy'})
 
     # Soft event when appraisal is otherwise neutral but user explicitly self-reports.
     _EXPLICIT_SOFT_EVENT: Dict[str, Tuple[str, float]] = {
@@ -587,7 +588,8 @@ class AppraisalEngine:
         aff = re.search(
             r"\bi(?:'m| am)\s+(?:so |really |completely |totally |very )?"
             r"(happy|glad|joyful|angry|furious|mad|livid|sad|heartbroken|depressed|miserable|"
-            r"scared|afraid|terrified|worried|anxious|concerned|relieved|proud|fine|okay|ok|calm)\b",
+            r"scared|afraid|terrified|worried|anxious|concerned|relieved|proud|exhausted|tired|"
+            r"fine|okay|ok|calm)\b",
             scan,
         )
         if aff:
@@ -595,7 +597,7 @@ class AppraisalEngine:
         feel = re.search(
             r"\bi feel\s+(?:so |really )?"
             r"(happy|glad|angry|furious|mad|sad|heartbroken|depressed|miserable|"
-            r"scared|afraid|worried|anxious|proud|relieved)\b",
+            r"scared|afraid|worried|anxious|proud|relieved|exhausted|tired)\b",
             scan,
         )
         if feel:
@@ -722,6 +724,7 @@ class AdvancedEmotionalEngine:
             EmotionalState.PROUD: ( 0.50,  0.40,  0.70),
             EmotionalState.SCARED:(-0.70,  0.80, -0.70),
             EmotionalState.RELIEVED:( 0.55, -0.25,  0.35),
+            EmotionalState.EXHAUSTED:(-0.20, -0.55, -0.25),
             EmotionalState.SURPRISED:(0.20,  0.90,  0.10),
             EmotionalState.DISGUSTED:(-0.80, 0.30,  0.40),
             EmotionalState.CONTEMPT:(-0.50, 0.20,  0.60),
@@ -1454,7 +1457,7 @@ class AdvancedEmotionalEngine:
     }
     _SEMANTIC_EMOTION_BY_EVENT = {
         'unfairness': 'angry', 'conflict': 'angry', 'rejection': 'sad', 'harm': 'hurt',
-        'threat': 'scared', 'success': 'proud', 'betrayal': 'angry', 'loss': 'sad',
+        'threat': 'scared', 'success': 'neutral', 'betrayal': 'angry', 'loss': 'sad',
         'affection': 'happy', 'support': 'grateful', 'celebration': 'excited',
         'criticism': 'worried', 'abandonment': 'sad', 'gift': 'happy', 'neutral': 'neutral',
     }
@@ -1485,7 +1488,7 @@ class AdvancedEmotionalEngine:
         if result['model_type'] == 'sentence_transformer':
             primary_threshold = 0.42
         elif result['model_type'] == 'basic':
-            primary_threshold = 0.58  # low authority; rarely primary
+            primary_threshold = 0.65  # very low authority; almost never primary
         else:
             primary_threshold = 0.99
 
@@ -1608,7 +1611,8 @@ class AdvancedEmotionalEngine:
             sem_conf = float(semantic.get('confidence') or 0.0)
             model = semantic.get('model_type') or self._embedding_model_type
             if sem_event and sem_event == event_type:
-                support_bar = 0.40 if model == 'basic' else 0.38
+                # Basic: require stronger agreement; ST may support at lower bar
+                support_bar = 0.55 if model == 'basic' else 0.38
                 if sem_conf >= support_bar and not appraisal.negated:
                     semantic_used = True
                     if model == 'sentence_transformer':
@@ -1624,7 +1628,7 @@ class AdvancedEmotionalEngine:
             # Semantic fills gaps only when eligible (ST normal bar; basic high bar).
             # Basic must not become primary on weak noisy matches.
             model = semantic.get('model_type') or self._embedding_model_type
-            if model == 'basic' and float(semantic.get('confidence') or 0.0) < 0.58:
+            if model == 'basic' and float(semantic.get('confidence') or 0.0) < 0.65:
                 # fall through to keyword below by not entering — handled via flag
                 pass
             else:
@@ -1846,6 +1850,13 @@ class AdvancedEmotionalEngine:
                 "I'm glad that settled; I feel relieved.",
                 "Relief is settling in.",
                 "I'm breathing easier now.",
+            ],
+            EmotionalState.EXHAUSTED: [
+                "I'm worn out.",
+                "I feel drained right now.",
+                "I'm exhausted — running on empty.",
+                "That took a lot out of me.",
+                "I'm tired down to the bone.",
             ],
             EmotionalState.ANGRY: [
                 "I'm feeling really angry about this.",

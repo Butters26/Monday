@@ -1,6 +1,6 @@
 === AFTER: emotion text-understanding comparative ===
 sentence-transformers: UNAVAILABLE (embedding model_type=basic)
-capability loss: paraphrase-only matches rely more on AppraisalEngine meaning phrases; basic hash embeddings have LOW authority (support-only when agreeing; must not override confident appraisal).
+capability loss: paraphrase-only matches rely more on AppraisalEngine meaning phrases; basic hash embeddings have VERY LOW authority (support-only when strongly agreeing; must not override confident appraisal).
 
 ## Unfairness
 TEXT: this is not fair
@@ -17,7 +17,7 @@ TEXT: they treated me unfairly
   explicit/self-reported: None
   appraisal event: unfairness
   AppraisalEngine inferred emotion: angry
-  semantic candidate: event=unfairness emotion=angry conf=0.408 used=True
+  semantic candidate: event=unfairness emotion=angry conf=0.408 used=False
   keyword cues: ALL_ZEROS
   final user emotion: angry
   final event: unfairness
@@ -37,7 +37,7 @@ TEXT: everyone else got a chance except me
   explicit/self-reported: None
   appraisal event: unfairness
   AppraisalEngine inferred emotion: angry
-  semantic candidate: event=unfairness emotion=angry conf=0.401 used=True
+  semantic candidate: event=unfairness emotion=angry conf=0.401 used=False
   keyword cues: ALL_ZEROS
   final user emotion: angry
   final event: unfairness
@@ -49,7 +49,7 @@ TEXT: I'm angry
   explicit/self-reported: angry
   appraisal event: conflict
   AppraisalEngine inferred emotion: angry
-  semantic candidate: event=conflict emotion=angry conf=0.436 used=True
+  semantic candidate: event=conflict emotion=angry conf=0.436 used=False
   keyword cues: {'anger': 0.187}
   final user emotion: angry
   final event: conflict
@@ -69,7 +69,7 @@ TEXT: I'm completely fed up
   explicit/self-reported: None
   appraisal event: conflict
   AppraisalEngine inferred emotion: angry
-  semantic candidate: event=conflict emotion=angry conf=0.507 used=True
+  semantic candidate: event=conflict emotion=angry conf=0.507 used=False
   keyword cues: ALL_ZEROS
   final user emotion: angry
   final event: conflict
@@ -111,7 +111,7 @@ TEXT: it feels like nobody wants me around
   explicit/self-reported: None
   appraisal event: rejection
   AppraisalEngine inferred emotion: sad
-  semantic candidate: event=rejection emotion=sad conf=0.535 used=True
+  semantic candidate: event=rejection emotion=sad conf=0.535 used=False
   keyword cues: ALL_ZEROS
   final user emotion: sad
   final event: rejection
@@ -121,7 +121,7 @@ TEXT: that really hurt
   explicit/self-reported: None
   appraisal event: harm
   AppraisalEngine inferred emotion: hurt
-  semantic candidate: event=harm emotion=hurt conf=0.436 used=True
+  semantic candidate: event=harm emotion=hurt conf=0.436 used=False
   keyword cues: ALL_ZEROS
   final user emotion: hurt
   final event: harm
@@ -153,7 +153,7 @@ TEXT: I have a bad feeling about this
   explicit/self-reported: None
   appraisal event: threat
   AppraisalEngine inferred emotion: scared
-  semantic candidate: event=threat emotion=scared conf=0.524 used=True
+  semantic candidate: event=threat emotion=scared conf=0.524 used=False
   keyword cues: ALL_ZEROS
   final user emotion: scared
   final event: threat
@@ -164,8 +164,8 @@ TEXT: I have a bad feeling about this
 TEXT: I'm proud of what I did
   explicit/self-reported: proud
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
-  semantic candidate: event=success emotion=proud conf=0.674 used=True
+  AppraisalEngine inferred emotion: neutral
+  semantic candidate: event=success emotion=neutral conf=0.674 used=True
   keyword cues: {'pride': 0.187}
   final user emotion: proud
   final event: success
@@ -174,18 +174,18 @@ TEXT: I'm proud of what I did
 TEXT: I actually pulled it off
   explicit/self-reported: None
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
-  semantic candidate: event=success emotion=proud conf=0.596 used=True
+  AppraisalEngine inferred emotion: neutral
+  semantic candidate: event=success emotion=neutral conf=0.596 used=True
   keyword cues: ALL_ZEROS
-  final user emotion: proud
+  final user emotion: neutral
   final event: success
   confidence: 0.790
   negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
 TEXT: I'm really happy with how that turned out
   explicit/self-reported: happy
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
-  semantic candidate: event=success emotion=proud conf=0.333 used=False
+  AppraisalEngine inferred emotion: neutral
+  semantic candidate: event=success emotion=neutral conf=0.333 used=False
   keyword cues: {'positive': 0.176, 'excitement': 0.07}
   final user emotion: happy
   final event: success
@@ -216,8 +216,8 @@ TEXT: I'm not sad anymore
 TEXT: I thought I'd be furious, but I'm actually relieved
   explicit/self-reported: relieved
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
-  semantic candidate: event=success emotion=proud conf=0.42 used=True
+  AppraisalEngine inferred emotion: neutral
+  semantic candidate: event=success emotion=neutral conf=0.42 used=False
   keyword cues: ALL_ZEROS
   final user emotion: relieved
   final event: success
@@ -239,7 +239,7 @@ TEXT: I'm happy.
   explicit/self-reported: happy
   appraisal event: affection
   AppraisalEngine inferred emotion: happy
-  semantic candidate: event=success emotion=proud conf=0.5 used=False
+  semantic candidate: event=success emotion=neutral conf=0.5 used=False
   keyword cues: {'positive': 0.176, 'excitement': 0.07}
   final user emotion: happy
   final event: affection
@@ -248,8 +248,8 @@ TEXT: I'm happy.
 TEXT: I'm proud of myself.
   explicit/self-reported: proud
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
-  semantic candidate: event=success emotion=proud conf=0.387 used=False
+  AppraisalEngine inferred emotion: neutral
+  semantic candidate: event=success emotion=neutral conf=0.387 used=False
   keyword cues: {'pride': 0.187}
   final user emotion: proud
   final event: success
@@ -259,7 +259,7 @@ TEXT: I'm angry about what happened.
   explicit/self-reported: angry
   appraisal event: conflict
   AppraisalEngine inferred emotion: angry
-  semantic candidate: event=success emotion=proud conf=0.354 used=False
+  semantic candidate: event=success emotion=neutral conf=0.354 used=False
   keyword cues: {'anger': 0.187}
   final user emotion: angry
   final event: conflict
@@ -278,7 +278,7 @@ TEXT: I'm scared.
 TEXT: I'm relieved.
   explicit/self-reported: relieved
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
+  AppraisalEngine inferred emotion: neutral
   semantic candidate: event=unfairness emotion=angry conf=0.408 used=False
   keyword cues: ALL_ZEROS
   final user emotion: relieved
@@ -288,8 +288,8 @@ TEXT: I'm relieved.
 TEXT: I'm really happy with how that turned out.
   explicit/self-reported: happy
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
-  semantic candidate: event=success emotion=proud conf=0.333 used=False
+  AppraisalEngine inferred emotion: neutral
+  semantic candidate: event=success emotion=neutral conf=0.333 used=False
   keyword cues: {'positive': 0.176, 'excitement': 0.07}
   final user emotion: happy
   final event: success
@@ -298,8 +298,8 @@ TEXT: I'm really happy with how that turned out.
 TEXT: I thought I'd be furious, but I'm actually relieved.
   explicit/self-reported: relieved
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
-  semantic candidate: event=success emotion=proud conf=0.42 used=True
+  AppraisalEngine inferred emotion: neutral
+  semantic candidate: event=success emotion=neutral conf=0.42 used=False
   keyword cues: ALL_ZEROS
   final user emotion: relieved
   final event: success
@@ -329,19 +329,19 @@ TEXT: I'm not happy about this.
   explicit/self-reported: neutral
   appraisal event: neutral
   AppraisalEngine inferred emotion: neutral
-  semantic candidate: event=success emotion=proud conf=0.354 used=False
+  semantic candidate: event=success emotion=neutral conf=0.354 used=False
   keyword cues: ALL_ZEROS
   final user emotion: neutral
   final event: neutral
   confidence: 0.200
   negation/contrast changed result: negation (neg=True, contrast=False, src=neutral)
 TEXT: I'm proud of finishing it, but I'm exhausted.
-  explicit/self-reported: proud
+  explicit/self-reported: exhausted
   appraisal event: success
-  AppraisalEngine inferred emotion: proud
-  semantic candidate: event=success emotion=proud conf=0.386 used=False
+  AppraisalEngine inferred emotion: neutral
+  semantic candidate: event=success emotion=neutral conf=0.386 used=False
   keyword cues: {'pride': 0.187}
-  final user emotion: proud
+  final user emotion: exhausted
   final event: success
-  confidence: 0.900
-  negation/contrast changed result: none (neg=False, contrast=False, src=appraisal)
+  confidence: 0.920
+  negation/contrast changed result: negation+contrast (neg=True, contrast=True, src=appraisal)

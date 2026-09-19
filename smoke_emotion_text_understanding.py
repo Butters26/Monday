@@ -103,7 +103,7 @@ EXPECT_USER_EMOTION = {
     "I was sad earlier, but I'm fine now.": "neutral",
     "I'm not angry.": "neutral",
     "I'm not happy about this.": "neutral",
-    "I'm proud of finishing it, but I'm exhausted.": "proud",
+    "I'm proud of finishing it, but I'm exhausted.": "exhausted",
     "I'm really happy with how that turned out": "happy",
     "I thought I'd be furious, but I'm actually relieved": "relieved",
     "I'm not angry": "neutral",
@@ -113,6 +113,8 @@ EXPECT_USER_EMOTION = {
     "I'm furious": "angry",
     "I'm sad": "sad",
     "I'm worried": "worried",
+    "I actually pulled it off": "neutral",
+    "I'm proud of what I did": "proud",
 }
 
 EXPECT_NEGATION = {
@@ -130,6 +132,7 @@ EXPECT_CONTRAST = {
     "I thought I'd be furious, but I'm actually relieved",
     "I thought I'd be furious, but I'm actually relieved.",
     "I was sad earlier, but I'm fine now.",
+    "I'm proud of finishing it, but I'm exhausted.",
 }
 
 
@@ -175,8 +178,8 @@ def main() -> int:
     if not st_available:
         lines.append(
             "capability loss: paraphrase-only matches rely more on AppraisalEngine "
-            "meaning phrases; basic hash embeddings have LOW authority "
-            "(support-only when agreeing; must not override confident appraisal)."
+            "meaning phrases; basic hash embeddings have VERY LOW authority "
+            "(support-only when strongly agreeing; must not override confident appraisal)."
         )
 
     fails = []
