@@ -1,0 +1,22 @@
+[17:30:10] START runtime=/tmp/respike-proof-fxv_1dm5
+[17:30:16] === CASE A: neutral self-state / quiet observation ===
+[17:30:16] A_BEFORE {'emotion': 'calm', 'intensity': 0.1}
+[17:30:16] A_SIGNIFICANCE 0.0
+[17:30:16] A_UNGATED_WITNESS after={'emotion': 'curious', 'intensity': 0.8874041523142415} result_emo=curious (shows old path can spike)
+[17:30:16] A_AFTER_GATED {'emotion': 'calm', 'intensity': 0.1}
+[17:30:16] A_TRACE emo=calm@0.1->calm@0.1
+[17:30:16] A_DELTA_INTENSITY 0.0000 SPIKED=False
+[17:30:16] A_PASS True
+[17:30:16] A2_SPONTANEOUS before={'emotion': 'calm', 'intensity': 0.1} after={'emotion': 'calm', 'intensity': 0.1} sig=0.0
+[17:30:16] === CASE B: grounded betrayal / unresolved emotional thought ===
+[17:30:19] B_SEED reply='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.\n\nWhat would help with this betrayal - or is t'
+[17:30:19] B_MOOD_AFTER_SEED {'emotion': 'frustrated', 'intensity': 0.9204049944457173}
+[17:30:19] B_BEFORE_THOUGHT {'emotion': 'calm', 'intensity': 0.1}
+[17:30:19] B_SIGNIFICANCE 0.85
+[17:30:19] B_AFTER {'emotion': 'melancholic', 'intensity': 0.9519770312527789}
+[17:30:19] B_TRACE emo=calm@0.1->melancholic@0.9519770312527789
+[17:30:19] B_SHIFTED=True
+[17:30:19] B_PASS True
+[17:30:19] SUMMARY A_PASS=True B_PASS=True OVERALL=True
+[17:30:19] INTERPRETATION: gated path skips appraise_internal for self_state/spontaneous (sig=0); unresolved/grounded betrayal thoughts still notify and can shift mood.
+[17:30:19] SHUTDOWN ok

@@ -1020,14 +1020,76 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         self.last_thought_time = time.time()
         self._write_trace(trace)
 
-    def _notify_emotion_from_thought(self, thought: AutonomousThought) -> None:
-        """Route thought into emotion own-feelings; only bind prior appraisal when on-topic.
+    def _thought_emotional_significance(self, thought: AutonomousThought) -> float:
+        """0..1: how much this autonomous thought should move mood via appraise_internal.
 
-        Do NOT inject "(still sitting with that X)" into off-topic thoughts — that was
-        re-anchoring every cycle to the same appraisal and blocking mood-attention split.
-        PAD/emotion inertia is preserved; we never reset emotion on topic resolve.
+        Harmless self-observation / quiet / spontaneous beats must not be re-interpreted
+        as fresh emotional events. Grounded unresolved / emotionally loaded material still
+        can. This does NOT disable appraise_internal globally — only gates the notify path.
+        """
+        mode = (thought.mode or "").strip().lower()
+        ttype = (thought.thought_type or "").strip().lower()
+        topic = (thought.topic_key or "").strip().lower()
+        trigger = (thought.trigger or "").strip().lower()
+        content = (thought.content or "").lower()
+
+        # Pure self-weather / idle quiet: ZERO impact (the calm→melancholic re-spike case).
+        if mode in ("self_state", "spontaneous") or topic in ("self:state", "spontaneous"):
+            return 0.0
+        if trigger in ("self_state", "spontaneous"):
+            return 0.0
+        if ttype == "observation" and mode in ("", "self_state", "spontaneous"):
+            return 0.0
+
+        sig = 0.0
+        if thought.source_appraisal:
+            sig = max(sig, 0.75)
+        if topic.startswith("app:"):
+            sig = max(sig, 0.85)
+        if trigger.startswith(("unresolved_", "appraisal_")):
+            sig = max(sig, 0.85)
+        if mode in ("emotional_reaction", "replay_recall", "cause_effect"):
+            sig = max(sig, 0.65)
+        if mode == "interpretation" and (thought.source_appraisal or topic.startswith(("app:", "mem:"))):
+            sig = max(sig, 0.55)
+        if thought.source_memory_id and mode in (
+            "emotional_reaction", "replay_recall", "letting_go", "connection", "uncertainty"
+        ):
+            sig = max(sig, 0.5)
+
+        emotional_cues = (
+            "betray", "betrayed", "hurt", "trust", "abandon", "reject", "afraid",
+            "angry", "grief", "loss", "broke my", "behind my back", "ashamed",
+        )
+        grounded = bool(
+            thought.source_memory_id
+            or thought.source_appraisal
+            or topic.startswith(("mem:", "app:"))
+        )
+        if grounded and any(c in content for c in emotional_cues):
+            sig = max(sig, 0.7)
+
+        # Soft post-cool modes without appraisal: tiny nudge at most.
+        if mode in ("letting_go", "next_action", "goal_need", "connection") and not thought.source_appraisal:
+            if not grounded:
+                return 0.0
+            sig = min(sig, 0.25) if sig else 0.12
+
+        return float(min(1.0, max(0.0, sig)))
+
+    def _notify_emotion_from_thought(self, thought: AutonomousThought) -> None:
+        """Route emotionally significant thoughts into emotion own-feelings.
+
+        Neutral / self-observational / quiet / spontaneous thoughts have ZERO impact
+        (skip appraise_internal) so calm self-state cannot re-spike melancholic.
+        On-topic unresolved / grounded emotional material still notifies with scaled
+        relevance. Do NOT inject stale appraisal anchors into off-topic thoughts.
         """
         try:
+            significance = self._thought_emotional_significance(thought)
+            if significance <= 0.05:
+                return
+
             emotional_state = self._get_emotional_state()
             primary = self._primary_unresolved(emotional_state)
             prior = None
@@ -1046,10 +1108,14 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
                 elif (thought.trigger or "").startswith(("unresolved_", "appraisal_")):
                     on_topic = True
                     prior = prior_et
+            # Scale relevance by emotional significance — never treat quiet self-talk
+            # as a full-strength internal event.
+            base_rel = float(thought.intensity) if thought.intensity is not None else 0.5
+            relevance = max(0.08, min(1.0, base_rel * significance))
             payload = {
                 'content': content,
                 'source': 'thought' if thought.thought_type != 'memory' else 'memory',
-                'relevance': float(thought.intensity),
+                'relevance': relevance,
                 'resolved': False,
             }
             if prior and on_topic:

@@ -320,18 +320,21 @@ class AutonomousSelectionMixin:
             })
 
         self_key = "self:state"
-        self_w = 0.22 + 0.15 * abs(intensity - 0.5)
-        if emotion not in ("neutral", "calm"):
-            self_w += 0.12
-        if candidates and max(c["weight"] for c in candidates) < 0.35:
-            self_w += 0.18
+        self_sat = self._think_sat(self_key)
+        # Quieter base; do not let self-state become the default idle monologue.
+        self_w = 0.14 + 0.10 * abs(intensity - 0.5)
+        if emotion not in ("neutral", "calm") and intensity >= 0.45:
+            self_w += 0.08
+        if candidates and max(c["weight"] for c in candidates) < 0.28:
+            self_w += 0.10
         # Soft boost once other topics have been chewed — then apply satiation on the total.
         if any(self._topic_select_count.get(c["topic_key"], 0) >= 2 for c in candidates):
-            self_w += 0.12
-        self_w *= max(0.08, 1.0 - self._think_sat(self_key) * 0.9)
+            self_w += 0.06
+        # Strong satiation: repeated self-state must yield to other grounded topics.
+        self_w *= max(0.03, 1.0 - self_sat * 0.97)
         sel_self = self._topic_select_count.get(self_key, 0)
-        if sel_self >= 3:
-            self_w *= max(0.06, 0.6 ** (sel_self - 2))
+        if sel_self >= 2:
+            self_w *= max(0.04, 0.55 ** (sel_self - 1))
         candidates.append({
             "kind": "self_state", "topic_key": self_key, "weight": self_w,
             "appraisal": None, "memory": None, "severe": False,
@@ -341,22 +344,44 @@ class AutonomousSelectionMixin:
             v = values[0]
             vname = str(v.get("name") or "value")
             gkey = f"goal:{vname}"
-            gw = 0.18 * max(0.15, 1.0 - self._think_sat(gkey))
+            gw = 0.22 * max(0.18, 1.0 - self._think_sat(gkey))
+            # When self-state is satiated in a quiet stretch, goals should compete.
+            if self_sat >= 0.45 and not unresolved:
+                gw = max(gw, 0.42)
             candidates.append({
                 "kind": "goal", "topic_key": gkey, "weight": gw,
                 "appraisal": None, "memory": None, "value": v, "severe": False,
             })
 
+        # When self-state is satiated, lift other grounded memories so quiet
+        # does not collapse into self:state-rumination.
+        spont_sat = self._think_sat("spontaneous")
+        if self_sat >= 0.45 and not unresolved:
+            for c in candidates:
+                if c.get("kind") == "memory":
+                    c["weight"] = float(c.get("weight", 0.0) or 0.0) * 1.45 + 0.12
+        # If spontaneous is also chewed, push memories/goals even harder.
+        if spont_sat >= 0.55 and self_sat >= 0.40 and not unresolved:
+            for c in candidates:
+                if c.get("kind") in ("memory", "goal"):
+                    c["weight"] = float(c.get("weight", 0.0) or 0.0) * 1.55 + 0.15
+
         spont_key = "spontaneous"
-        sw = 0.12
+        sw = 0.16
         if not unresolved and intensity < 0.45:
-            sw = 0.45
+            sw = 0.42
         elif candidates and max(c["weight"] for c in candidates) < 0.28:
-            sw = 0.40
-        # When self-state is satiated, quiet spontaneous should win the idle stretch.
-        if self._think_sat("self:state") >= 0.55 and not unresolved:
+            sw = 0.38
+        # When self-state is satiated, allow spontaneous a turn — but satiate it too.
+        if self_sat >= 0.40 and not unresolved:
+            sw = max(sw, 0.48)
+        if self_sat >= 0.70 and not unresolved and spont_sat < 0.45:
             sw = max(sw, 0.58)
-        sw *= max(0.2, 1.0 - self._think_sat(spont_key) * 0.7)
+        # Strong spontaneous satiation so quiet does not become spont-monologue either.
+        sw *= max(0.05, 1.0 - spont_sat * 0.92)
+        sel_spont = self._topic_select_count.get(spont_key, 0)
+        if sel_spont >= 2:
+            sw *= max(0.05, 0.55 ** (sel_spont - 1))
         candidates.append({
             "kind": "spontaneous", "topic_key": spont_key, "weight": sw,
             "appraisal": None, "memory": None, "severe": False,
