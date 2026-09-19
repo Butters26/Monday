@@ -770,22 +770,34 @@ class Thalamus:
             return "I'm having trouble thinking right now."
         semantic_input, reasoning_answer = self._reasoning_answer(reasoning)
         # Drop reasoning answers that don't overlap the prompt / asked attribute.
+        # Empathic / teaching acks are allowed without token overlap.
         if isinstance(reasoning_answer, str) and reasoning_answer.strip():
             q_toks = content_tokens(user_input)
             attr = _attribute_asked(user_input)
             bad = False
+            low_ans = reasoning_answer.lstrip().lower()
+            empathic_ok = low_ans.startswith(
+                ("that sounds", "i hear", "i can feel", "i'm here", "i am here", "got it")
+            ) or "i am sitting with" in low_ans or "i'm sitting with" in low_ans
             if attr and not _fact_covers_attribute(reasoning_answer, attr):
                 bad = True
-            elif q_toks and relevance_score(user_input, reasoning_answer) < 0.34:
+            elif (
+                not empathic_ok
+                and q_toks
+                and relevance_score(user_input, reasoning_answer) < 0.34
+            ):
                 if not (q_toks & content_tokens(reasoning_answer)):
                     bad = True
             if bad:
                 grounded = answer_from_grounded_memories(user_input, memories)
                 reasoning_answer = grounded
         if reasoning_answer is None:
+            # Provider fallback — pass emotion so empathic path can fire.
             try:
+                understanding_with_emotion = dict(understanding) if isinstance(understanding, dict) else {}
+                understanding_with_emotion["emotion_result"] = emotional_state
                 reasoning_answer = self.response_provider.render(
-                    user_input, understanding, memories
+                    user_input, understanding_with_emotion, memories
                 )
             except Exception:
                 reasoning_answer = None
@@ -1008,6 +1020,9 @@ class Thalamus:
         emotional_state = emotional_state if isinstance(emotional_state, dict) else {}
         understanding = understanding if isinstance(understanding, dict) else {}
         force = bool(getattr(self, "_force_curiosity_follow_up", False))
+        # Teaching ack already grounded — do not invent a follow-up about the fact itself.
+        if not force and reply.lstrip().lower().startswith("got it"):
+            return reply
 
         now = time.time()
         if not force and (now - float(getattr(self, "_last_curiosity_time", 0.0) or 0.0)) < float(

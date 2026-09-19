@@ -263,9 +263,11 @@ class AppraisalEngine:
         # Rejection
         (['rejected', 'turned me down', 'said no', 'not interested', 'dumped', 'broke up with me',
           'fired me', 'not good enough', "didn't pick me", "wasn't chosen"], 'rejection', 0.65),
-        # Loss
+        # Loss / disappearance
         (['died', 'passed away', 'lost my', 'grief', 'mourning', 'funeral', 'gone forever',
-          'will never see', 'lost everything', 'miscarriage', 'accident killed'], 'loss', 0.85),
+          'will never see', 'lost everything', 'miscarriage', 'accident killed',
+          'vanished', 'disappeared', 'went missing', 'is missing', 'are missing',
+          'has gone missing', 'missing person'], 'loss', 0.85),
         # Harm / hurt (includes insults / hate aimed at Monday or the listener)
         (['hurt me', 'hit me', 'attacked', 'abused', 'mistreated', 'treated me like garbage',
           'treated me like trash', 'treated me like dirt', 'made me feel worthless',
@@ -274,9 +276,11 @@ class AppraisalEngine:
           'i despise you', 'loath you', 'loathe you', 'you suck', 'you are worthless',
           "you're worthless", 'you are stupid', "you're stupid", 'you idiot', 'fuck you',
           'screw you'], 'harm', 0.80),
-        # Threat
+        # Threat / fear
         (['threatened', 'going to hurt', 'going to kill', 'warned me', 'scared of',
-          "don't feel safe", 'feel unsafe', 'in danger'], 'threat', 0.75),
+          "don't feel safe", 'feel unsafe', 'in danger', 'i am terrified', "i'm terrified",
+          'i am scared', "i'm scared", 'i am afraid', "i'm afraid", 'cannot sleep',
+          "can't sleep", 'can not sleep', 'panic', 'panicking'], 'threat', 0.75),
         # Unfairness
         (['not fair', "isn't fair", 'unfair', 'should not have', 'got away with',
           'blamed me for', 'scapegoated', 'punished for something', 'wrong person',

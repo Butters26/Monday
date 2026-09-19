@@ -15,7 +15,10 @@ from reasoning import Fact, MaximumSophisticationReasoning
 from direct_response import (
     answer_from_grounded_memories,
     content_tokens,
+    empathic_grounded_reply,
     format_predicate_fact,
+    looks_like_teaching_turn,
+    looks_questionish,
     relevance_score,
     _attribute_asked,
     _fact_covers_attribute,
@@ -28,12 +31,12 @@ _FAVORITE_FACT = re.compile(
     re.IGNORECASE,
 )
 _NAMED_FACT = re.compile(
-    r"\b(?:remember\s+(?:that\s+)?)?my\s+(?P<noun>[a-z][a-z ]{0,40}?)\s+is\s+named\s+"
+    r"\b(?:remember\s+(?:that\s+)?)?my\s+(?P<noun>[a-z]+(?:\s+[a-z]+){0,3})\s+is\s+named\s+"
     r"(?P<value>[A-Za-z0-9][\w-]{0,40})\b",
     re.IGNORECASE,
 )
 _NAME_IS_FACT = re.compile(
-    r"\b(?:remember\s+(?:that\s+)?)?my\s+(?P<noun>[a-z][a-z ]{0,40}?)(?:'s|s')\s+name\s+is\s+"
+    r"\b(?:remember\s+(?:that\s+)?)?my\s+(?P<noun>[a-z]+(?:\s+[a-z]+){0,3})(?:'s|s')\s+name\s+is\s+"
     r"(?P<value>[A-Za-z0-9][\w-]{0,40})\b",
     re.IGNORECASE,
 )
@@ -102,68 +105,104 @@ class DirectMaximumSophisticationAdapter:
         return f"Your {attribute} is {value}." if value else None
 
     @staticmethod
-    def _normalise_personal_fact(text: str) -> Optional[str]:
+    def _normalise_personal_facts(text: str) -> List[str]:
+        """Extract one or more clean fact sentences from teaching / memory text."""
         if not isinstance(text, str) or not text.strip():
-            return None
+            return []
+        parts: List[str] = []
+        own_name = re.search(
+            r"(?i)\b(?:remember\s+(?:that\s+)?)?my\s+name\s+is\s+"
+            r"([A-Za-z][\w-]{0,40})(?=\s+and\b|[.!?,]|$)",
+            text,
+        )
+        if own_name:
+            parts.append(f"Your name is {own_name.group(1).strip()}.")
         for pattern in (_NAME_IS_FACT, _NAMED_FACT):
             match = pattern.search(text)
             if match:
                 noun = " ".join(match.group("noun").lower().split())
                 value = match.group("value").strip(" .!?")
-                if noun and value:
-                    return f"Your {noun}'s name is {value}."
+                if noun and value and not re.search(r"\b(?:is|are|and|named)\b", noun):
+                    parts.append(f"Your {noun}'s name is {value}.")
         fav = DirectMaximumSophisticationAdapter._normalise_favorite_fact(text)
         if fav:
-            return fav
+            parts.append(fav)
         live = re.search(
-            r"\b(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
-            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            r"(?i)\b(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?=\s+and\s+i\b|[.!?]|$)",
             text,
-            re.IGNORECASE,
         )
         if live:
-            return f"You live in {live.group(1).strip(' .!?')}."
+            place = live.group(1).strip(" .!?")
+            if place and not re.search(r"(?i)\band\s+i\b", place):
+                parts.append(f"You live in {place}.")
         work = re.search(
-            r"\b(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
-            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            r"(?i)\b(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?=\s+and\s+i\b|[.!?]|$)",
             text,
-            re.IGNORECASE,
         )
         if work:
-            return f"You work {work.group(1).lower()} {work.group(2).strip(' .!?')}."
-        generic = re.search(
-            r"\b(?:remember\s+(?:that\s+)?)?my\s+([a-z][a-z ]{0,40}?)\s+is\s+"
-            r"([a-z0-9][a-z0-9 -]{0,80}?)(?:[.!?]|$)",
-            text,
-            re.IGNORECASE,
-        )
-        if generic:
-            noun = " ".join(generic.group(1).lower().split())
-            value = generic.group(2).strip(" .!?")
-            if (
-                noun
-                and value
-                and not noun.startswith("favorite ")
-                and "name" not in noun
-                and not value.lower().startswith("named ")
-            ):
-                return f"Your {noun} is {value}."
-        return None
+            job = work.group(2).strip(" .!?")
+            if job and not re.search(r"(?i)\band\s+i\b", job):
+                parts.append(f"You work {work.group(1).lower()} {job}.")
+        if not parts:
+            generic = re.search(
+                r"(?i)\b(?:remember\s+(?:that\s+)?)?my\s+([a-z]+(?:\s+[a-z]+){0,3})\s+is\s+"
+                r"([a-z0-9][a-z0-9 -]{0,80}?)(?=\s+and\s+(?:i|my)\b|[.!?]|$)",
+                text,
+            )
+            if generic:
+                noun = " ".join(generic.group(1).lower().split())
+                value = generic.group(2).strip(" .!?")
+                if (
+                    noun
+                    and value
+                    and not noun.startswith("favorite ")
+                    and "name" not in noun
+                    and not value.lower().startswith("named ")
+                    and not re.search(r"\b(?:is|are|and|named)\b", noun)
+                ):
+                    parts.append(f"Your {noun} is {value}.")
+        # Dedup
+        seen = set()
+        out = []
+        for p in parts:
+            key = p.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
+        return out
+
+    @staticmethod
+    def _normalise_personal_fact(text: str) -> Optional[str]:
+        facts = DirectMaximumSophisticationAdapter._normalise_personal_facts(text)
+        if not facts:
+            return None
+        if len(facts) == 1:
+            return facts[0]
+        # Combine two clean facts for compound teaching acks.
+        a = facts[0].rstrip(".")
+        b = facts[1][0].lower() + facts[1][1:] if facts[1] else facts[1]
+        return f"{a}, and {b}"
 
     @classmethod
     def _evidence(cls, memories: List[Dict[str, Any]], user_input: str) -> List[Dict[str, Any]]:
         evidence = []
         for memory in memories:
             content = memory.get("content", "")
-            normalized = cls._normalise_personal_fact(content) if isinstance(content, str) else None
-            if normalized:
-                evidence.append({"role": "fact", "content": normalized})
+            if isinstance(content, str):
+                norms = cls._normalise_personal_facts(content)
+            else:
+                norms = []
+            if norms:
+                for normalized in norms:
+                    evidence.append({"role": "fact", "content": normalized})
             elif str(memory.get("role", "")) == "fact":
                 evidence.append(dict(memory))
             else:
                 evidence.append(memory)
-        fact = cls._normalise_personal_fact(user_input)
-        if fact:
+        for fact in cls._normalise_personal_facts(user_input):
             evidence.append({"role": "fact", "content": fact})
         return evidence
 
@@ -305,7 +344,34 @@ class DirectMaximumSophisticationAdapter:
         thinking = self.reasoner.think_about(legacy_input)
         if not isinstance(thinking, dict):
             thinking = {}
-        answer = teaching or fact_answer or self._usable_conclusion(thinking, understanding, user_input)
+        usable = self._usable_conclusion(thinking, understanding, user_input)
+        # Never echo prior user filler / chatter as the answer on non-questions.
+        if (
+            usable
+            and not looks_questionish(user_input)
+            and not teaching
+            and not looks_like_teaching_turn(user_input)
+        ):
+            # Drop near-duplicate prior user lines (filler soak failure mode).
+            u_low = usable.strip().casefold()
+            for mem in memories:
+                if str(mem.get("role", "")).lower() != "user":
+                    continue
+                prior = str(mem.get("content") or "").strip()
+                if prior and prior.casefold() == u_low:
+                    usable = None
+                    break
+                if prior and u_low and (
+                    prior.casefold() in u_low or u_low in prior.casefold()
+                ):
+                    # Same filler family ("Just chatting filler number N…")
+                    if "filler" in u_low or "weather is fine" in u_low:
+                        usable = None
+                        break
+        empathic = None
+        if not teaching and not fact_answer:
+            empathic = empathic_grounded_reply(user_input, emotional_state)
+        answer = teaching or fact_answer or empathic or usable
         semantic_input = {
             "intent": understanding.get("intent", "conversation"),
             "certainty": understanding.get("confidence", 0.5),

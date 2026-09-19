@@ -29,7 +29,10 @@ _STOPWORDS = frozenset(
 )
 
 _QUESTIONISH = re.compile(
-    r"\b(?:tell me|explain|what|who|where|when|why|how|which|do you remember|"
+    # "tell me" only as a real ask — not "nobody will tell me anything".
+    r"(?:^\s*(?:please\s+)?tell me\b)|"
+    r"\b(?:can you|could you)\s+tell me\b|"
+    r"\b(?:explain|what|who|where|when|why|how|which|do you remember|"
     r"can you remember|remind me|did i|do i|have i)\b|\?",
     re.IGNORECASE,
 )
@@ -119,6 +122,80 @@ def honest_curiosity_question(
         f"I am feeling {emotion} about this and I do not want to invent an answer - "
         f"what am I missing?"
     )
+
+
+
+_DISTRESS_RE = re.compile(
+    r"\b(?:terrified|scared|afraid|panic|anxious|worried|heartbroken|"
+    r"devastated|grieving|mourning|vanished|missing|disappeared|cannot sleep|"
+    r"can'?t sleep|lost my|passed away|died|hurt|alone|help me)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_teaching_turn(user_input: str) -> bool:
+    """True when the user is clearly teaching a durable personal fact."""
+    text = (user_input or "").strip()
+    if not text:
+        return False
+    if re.search(
+        r"(?i)\b(?:remember\s+(?:that\s+)?)?(?:my\s+(?:favorite\s+)?[a-z]+|"
+        r"my\s+name|i\s+live\s+in|i\s+work\s+(?:as|at|in))\b",
+        text,
+    ):
+        if re.search(r"(?i)\b(?:is\s+named|name\s+is|\bis\b|live\s+in|work\s+(?:as|at|in))\b", text):
+            return True
+    return False
+
+
+def empathic_grounded_reply(
+    user_input: str,
+    emotional_state: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Brief empathic acknowledge for distress / hot affect — never invent facts."""
+    state = emotional_state if isinstance(emotional_state, dict) else {}
+    text = (user_input or "").strip()
+    if not text or looks_questionish(text) or looks_like_teaching_turn(text):
+        return None
+    if is_mild_social_turn(text):
+        return None
+    try:
+        intensity = float(state.get("intensity", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        intensity = 0.0
+    unresolved = state.get("unresolved_appraisals") or []
+    emo_resp = state.get("response")
+    distress = bool(_DISTRESS_RE.search(text))
+    hot = intensity >= 0.55 or bool(unresolved) or distress
+    if not hot:
+        return None
+    # Prefer emotion lobe's own line when it is a real sentence (not poison).
+    if isinstance(emo_resp, str):
+        cleaned = emo_resp.strip()
+        if (
+            cleaned
+            and "How it felt:" not in cleaned
+            and "What it meant:" not in cleaned
+            and len(cleaned) >= 12
+            and not cleaned.lower().startswith("i do not have enough grounded")
+        ):
+            return cleaned
+    emotion = str(
+        state.get("current_emotion") or state.get("emotion") or ""
+    ).strip().lower()
+    if distress or unresolved:
+        if emotion in {"sad", "worried", "fearful", "anxious", "nostalgic"}:
+            return (
+                "That sounds heavy — I am sitting with how frightening this is for you. "
+                "I am here."
+            )
+        return (
+            "I hear how hard this is. I do not want to invent details — "
+            "I am here with you in it."
+        )
+    if intensity >= 0.70:
+        return "I can feel how much this matters. Tell me what you need from me right now."
+    return None
 
 
 
@@ -743,12 +820,12 @@ class DeterministicResponseProvider:
         re.IGNORECASE,
     )
     _named_fact: re.Pattern[str] = re.compile(
-        r"\b(?:remember\s+(?:that\s+)?)?my\s+([a-z][a-z ]{0,40}?)\s+is\s+named\s+"
+        r"\b(?:remember\s+(?:that\s+)?)?my\s+([a-z]+(?:\s+[a-z]+){0,3})\s+is\s+named\s+"
         r"([A-Za-z0-9][\w-]{0,40})\b",
         re.IGNORECASE,
     )
     _name_is_fact: re.Pattern[str] = re.compile(
-        r"\b(?:remember\s+(?:that\s+)?)?my\s+([a-z][a-z ]{0,40}?)(?:'s|s')\s+name\s+is\s+"
+        r"\b(?:remember\s+(?:that\s+)?)?my\s+([a-z]+(?:\s+[a-z]+){0,3})(?:'s|s')\s+name\s+is\s+"
         r"([A-Za-z0-9][\w-]{0,40})\b",
         re.IGNORECASE,
     )
@@ -783,6 +860,17 @@ class DeterministicResponseProvider:
 
     def _teaching_ack(self, user_input: str) -> Optional[str]:
         text = user_input or ""
+        parts: List[str] = []
+
+        # Compound-safe: my name is X (stop before "and …")
+        own_name = re.search(
+            r"(?i)\b(?:remember\s+(?:that\s+)?)?my\s+name\s+is\s+"
+            r"([A-Za-z][\w-]{0,40})(?=\s+and\b|[.!?,]|$)",
+            text,
+        )
+        if own_name:
+            parts.append(f"your name is {own_name.group(1).strip()}")
+
         for pattern, kind in (
             (self._name_is_fact, "name"),
             (self._named_fact, "name"),
@@ -793,59 +881,81 @@ class DeterministicResponseProvider:
                 continue
             if kind == "name":
                 noun = " ".join(match.group(1).lower().split())
+                if re.search(r"\b(?:is|are|and|named)\b", noun):
+                    continue
                 value = match.group(2).strip(" .!?")
-                return f"Got it — your {noun}'s name is {value}."
-            attr = " ".join(match.group(1).lower().split())
-            value = match.group(2).strip(" .!?")
-            return f"Got it — your {attr} is {value}."
+                parts.append(f"your {noun}'s name is {value}")
+            else:
+                attr = " ".join(match.group(1).lower().split())
+                value = match.group(2).strip(" .!?")
+                if re.search(r"(?i)\band\s+(?:i|my)\b", value):
+                    value = re.split(r"(?i)\s+and\s+(?:i|my)\b", value, maxsplit=1)[0].strip()
+                parts.append(f"your {attr} is {value}")
 
         live = re.search(
-            r"\b(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
-            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            r"(?i)\b(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?=\s+and\s+i\b|[.!?]|$)",
             text,
-            re.IGNORECASE,
         )
         if live:
-            return f"Got it — you live in {live.group(1).strip(' .!?')}."
+            place = live.group(1).strip(" .!?")
+            if place and not re.search(r"(?i)\band\s+i\b", place):
+                parts.append(f"you live in {place}")
 
         work = re.search(
-            r"\b(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
-            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            r"(?i)\b(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?=\s+and\s+i\b|[.!?]|$)",
             text,
-            re.IGNORECASE,
         )
         if work:
-            return f"Got it — you work {work.group(1).lower()} {work.group(2).strip(' .!?')}."
+            job = work.group(2).strip(" .!?")
+            if job and not re.search(r"(?i)\band\s+i\b", job):
+                parts.append(f"you work {work.group(1).lower()} {job}")
 
-        generic = re.search(
-            r"\b(?:remember\s+(?:that\s+)?)?my\s+([a-z][a-z ]{0,40}?)\s+is\s+"
-            r"([a-z0-9][a-z0-9 -]{0,80}?)(?:[.!?]|$)",
-            text,
-            re.IGNORECASE,
-        )
-        if generic:
-            noun = " ".join(generic.group(1).lower().split())
-            value = generic.group(2).strip(" .!?")
-            fragile = {
-                "day", "life", "mood", "feeling", "feelings", "time", "thing",
-                "stuff", "question", "answer", "message", "chat", "conversation",
-                "thought", "idea", "problem", "issue", "way", "point", "one",
-            }
-            if (
-                noun
-                and value
-                and not noun.startswith("favorite ")
-                and " name" not in noun
-                and not value.lower().startswith("named ")
-                and noun not in fragile
-                and not any(value.lower().startswith(p) for p in (
-                    "going", "feeling", "looking", "doing", "getting", "being",
-                    "really", "just", "kinda", "kind of", "sort of", "pretty",
-                    "great", "good", "bad", "fine", "okay", "ok",
-                ))
-            ):
-                return f"Got it — your {noun} is {value}."
-        return None
+        if not parts:
+            generic = re.search(
+                r"(?i)\b(?:remember\s+(?:that\s+)?)?my\s+([a-z]+(?:\s+[a-z]+){0,3})\s+is\s+"
+                r"([a-z0-9][a-z0-9 -]{0,80}?)(?=\s+and\s+(?:i|my)\b|[.!?]|$)",
+                text,
+            )
+            if generic:
+                noun = " ".join(generic.group(1).lower().split())
+                value = generic.group(2).strip(" .!?")
+                fragile = {
+                    "day", "life", "mood", "feeling", "feelings", "time", "thing",
+                    "stuff", "question", "answer", "message", "chat", "conversation",
+                    "thought", "idea", "problem", "issue", "way", "point", "one",
+                }
+                if (
+                    noun
+                    and value
+                    and not noun.startswith("favorite ")
+                    and " name" not in noun
+                    and not value.lower().startswith("named ")
+                    and noun not in fragile
+                    and not re.search(r"\b(?:is|are|and|named)\b", noun)
+                    and not any(value.lower().startswith(p) for p in (
+                        "going", "feeling", "looking", "doing", "getting", "being",
+                        "really", "just", "kinda", "kind of", "sort of", "pretty",
+                        "great", "good", "bad", "fine", "okay", "ok",
+                    ))
+                ):
+                    parts.append(f"your {noun} is {value}")
+
+        if not parts:
+            return None
+        # Dedup while preserving order
+        seen = set()
+        clean = []
+        for p in parts:
+            key = p.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            clean.append(p)
+        if len(clean) == 1:
+            return f"Got it — {clean[0]}."
+        return f"Got it — {clean[0]}, and {clean[1]}."
 
     def render(
         self,
@@ -883,6 +993,13 @@ class DeterministicResponseProvider:
             return "Memory is information retained so it can be retrieved and used later."
 
         intent = understanding.get("intent") if isinstance(understanding, dict) else None
+        emo_state = None
+        if isinstance(understanding, dict):
+            emo_state = understanding.get("emotion_result") or understanding.get("emotional_state")
+        empathic = empathic_grounded_reply(user_input or "", emo_state if isinstance(emo_state, dict) else None)
+        if empathic:
+            return empathic
+
         if intent in {"question", "request"} or looks_questionish(user_input or ""):
             return (
                 "I do not have enough grounded information to answer that. "

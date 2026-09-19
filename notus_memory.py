@@ -898,6 +898,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                 return False
             if any(v.lower().startswith(p) for p in cls._VAGUE_VALUE_PREFIXES):
                 return False
+            # Compound-clause bleed: "Boulder and I work as…" / "Matthew and my dog…"
+            if re.search(r"\b(?:and\s+(?:i|my|you|we|he|she|they)\b)", v, re.I):
+                return False
             if len(v.split()) > 6:
                 return False
             if any(ch in v for ch in (",", ";", ":")) and len(v.split()) > 3:
@@ -907,6 +910,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         def _noun_ok(noun: str, *, allow_fragile: bool = False) -> bool:
             n = (noun or "").strip().lower()
             if not n or len(n.split()) > 4:
+                return False
+            # Reject clause bleed through noun groups ("name is Matthew and my dog").
+            if re.search(r"\b(?:is|are|was|were|and|or|named)\b", n):
                 return False
             if not allow_fragile and n in cls._FRAGILE_FACT_NOUNS:
                 return False
@@ -952,32 +958,44 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             ).strip()
             return n
 
-        # my dog's name is Pixel / my dogs name is Pixel
+        # my dog's name is Pixel / my dogs name is Pixel (tight noun — no "is"/"and")
         for m in re.finditer(
             r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
-            r"([a-z][a-z\s]{0,40}?)(?:'s|s')\s+name\s+is\s+"
+            r"([a-z]+(?:\s+[a-z]+){0,3})(?:'s|s')\s+name\s+is\s+"
             r"([A-Za-z0-9][\w-]{0,40})\b",
             t,
         ):
-            _add("user", f"{_slug(m.group(1))}_name", m.group(2).strip())
+            if _noun_ok(m.group(1), allow_fragile=True):
+                _add("user", f"{_slug(m.group(1))}_name", m.group(2).strip())
 
-        # my dog is named Pixel
+        # my dog is named Pixel (tight noun — no clause bleed)
         for m in re.finditer(
             r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
-            r"([a-z][a-z\s]{0,40}?)\s+is\s+named\s+"
+            r"([a-z]+(?:\s+[a-z]+){0,3})\s+is\s+named\s+"
             r"([A-Za-z0-9][\w-]{0,40})\b",
             t,
         ):
-            _add("user", f"{_slug(m.group(1))}_name", m.group(2).strip())
+            if _noun_ok(m.group(1), allow_fragile=True):
+                _add("user", f"{_slug(m.group(1))}_name", m.group(2).strip())
 
-        # my favorite color is blue
+        # my name is Matthew (stop before compound "and …")
         for m in re.finditer(
-            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
-            r"(favorite\s+[a-z][a-z\s]{0,30}?)\s+is\s+"
-            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+name\s+is\s+"
+            r"([A-Za-z][\w-]{0,40})(?=\s+and\b|[.!?,]|$)",
             t,
         ):
-            _add("user", _slug(m.group(1)), m.group(2).strip(" .!?"))
+            _add("user", "name", m.group(1).strip())
+
+        # my favorite color is blue (value stops before compound "and I/my")
+        for m in re.finditer(
+            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
+            r"(favorite\s+[a-z]+(?:\s+[a-z]+){0,3})\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?=\s+and\s+(?:i|my)\b|[.!?]|$)",
+            t,
+        ):
+            val = m.group(2).strip(" .!?")
+            if _value_ok(val):
+                _add("user", _slug(m.group(1)), val)
 
         # Codeword / password / passphrase style (with or without "the"/"my").
         # "Remember the codeword is NebulaQuartz" / "codeword is Alpha"
@@ -1035,8 +1053,8 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         # Generic my X is Y — only short durable nouns, concrete values.
         for m in re.finditer(
             r"(?i)\bmy\s+"
-            r"([a-z][a-z\s]{0,30}?)\s+is\s+"
-            r"([A-Za-z0-9][\w\s-]{0,60}?)(?:[.!?]|\s*$)",
+            r"([a-z]+(?:\s+[a-z]+){0,3})\s+is\s+"
+            r"([A-Za-z0-9][\w\s-]{0,60}?)(?=\s+and\s+(?:i|my)\b|[.!?]|$)",
             t,
         ):
             noun = m.group(1).strip()
@@ -1071,18 +1089,23 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             _add("user", _slug(noun), val)
 
         # I live in / I work as|at|in — durable location/job.
+        # Stop before compound clauses ("… and I work as …").
         for m in re.finditer(
             r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
-            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?=\s+and\s+i\b|[.!?]|$)",
             t,
         ):
-            _add("user", "lives_in", m.group(1).strip(" .!?"))
+            place = m.group(1).strip(" .!?")
+            if place and _value_ok(place):
+                _add("user", "lives_in", place)
         for m in re.finditer(
             r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
-            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?:[.!?]|$)",
+            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?=\s+and\s+i\b|[.!?]|$)",
             t,
         ):
-            _add("user", f"work_{m.group(1).lower()}", m.group(2).strip(" .!?"))
+            job = m.group(2).strip(" .!?")
+            if job and _value_ok(job):
+                _add("user", f"work_{m.group(1).lower()}", job)
 
         return out
 

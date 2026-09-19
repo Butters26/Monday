@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import re
 from thalamus import get_thalamus
-from direct_response import honest_curiosity_question, is_mild_social_turn
+from direct_response import honest_curiosity_question, is_mild_social_turn, looks_like_teaching_turn
 import random
 
 @dataclass
@@ -301,6 +301,9 @@ class ConversationSystem:
         intent = understanding.get("intent")
 
         if is_mild_social_turn(user_input, intent) and not force:
+            return None
+        # Clear fact-teaching turns must not get "what did you mean by …" spam.
+        if looks_like_teaching_turn(user_input) and not force:
             return None
 
         try:
