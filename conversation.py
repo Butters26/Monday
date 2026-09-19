@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import re
 from thalamus import get_thalamus
+from direct_response import honest_curiosity_question, is_mild_social_turn
+import random
 
 @dataclass
 class ConversationState:
@@ -34,7 +36,7 @@ class ConversationSystem:
         # Direct reference to Thalamus (NO SOCKETS)
         self.thalamus = thalamus or get_thalamus()
         
-        # Novelty Lobe integration (lazy-loaded when first used)
+        # novelty_lobe left unused on the live six-path (curiosity owned elsewhere)
         self.novelty_lobe = None
         
     def understand(self, user_input: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -65,12 +67,8 @@ class ConversationSystem:
         # Sentiment
         sentiment = self._detect_sentiment(text_lower)
         
-        # Check if we have emotional context (from Emotion Engine)
-        novelty_question = None
-        if 'emotion' in context or 'emotional_context' in context:
-            emotional_context = context.get('emotional_context', context)
-            novelty_question = self._trigger_novelty(user_input, emotional_context)
-        
+        # Curiosity is owned by emotion/conversation/direct_response — not novelty_lobe.
+        # Live six-path attaches via Thalamus after emotion; understand only notes intent.
         understanding = {
             'intent': intent,
             'confidence': confidence,
@@ -78,7 +76,7 @@ class ConversationSystem:
             'topic': topic,
             'sentiment': sentiment,
             'context_length': len(self.state.history),
-            'novelty_question': novelty_question  # Add novelty question if generated
+            'curiosity_question': None,
         }
         
         return understanding
@@ -286,44 +284,62 @@ class ConversationSystem:
         else:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
     
-    def _get_novelty_lobe(self):
-        """Get novelty lobe from Thalamus (lazy load)"""
-        if self.novelty_lobe is None:
-            try:
-                with self.thalamus.lobe_handlers_lock:
-                    if 'novelty' in self.thalamus.lobe_handlers:
-                        self.novelty_lobe = self.thalamus.lobe_handlers['novelty']
-            except Exception:
-                return None
-        return self.novelty_lobe
-    
-    def _trigger_novelty(self, user_input: str, emotional_context: Dict[str, Any]) -> Optional[str]:
+    def maybe_curiosity_follow_up(
+        self,
+        user_input: str,
+        emotional_context: Optional[Dict[str, Any]] = None,
+        understanding: Optional[Dict[str, Any]] = None,
+        *,
+        force: bool = False,
+    ) -> Optional[str]:
+        """Maybe one honest follow-up when affect is hot or unresolved.
+
+        Mild social turns never force a question. Does not use novelty_lobe.
         """
-        Trigger novelty detection if emotion is strong enough.
-        Called when we have emotional context from Emotion Engine.
-        Returns a novelty question if one is generated.
-        """
-        novelty = self._get_novelty_lobe()
-        if not novelty:
+        emotional_context = emotional_context if isinstance(emotional_context, dict) else {}
+        understanding = understanding if isinstance(understanding, dict) else {}
+        intent = understanding.get("intent")
+
+        if is_mild_social_turn(user_input, intent) and not force:
             return None
-        
+
         try:
-            # Process through novelty lobe using the correct message type
-            result = novelty.process_message({
-                'type': 'emotional_response_to_novelty',
-                'stimulus': user_input,
-                'emotion': emotional_context.get('emotion'),
-                'intensity': emotional_context.get('intensity', 0.0),
-                'valence': emotional_context.get('valence', 0.0)
-            })
-            
-            if result.get('status') == 'asking':
-                # Return the question to be asked
-                return novelty.get_question_to_ask_user(user_input)
+            intensity = float(emotional_context.get("intensity", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            intensity = 0.0
+        unresolved = emotional_context.get("unresolved_appraisals") or []
+        if not isinstance(unresolved, list):
+            unresolved = []
+        max_sev = 0.0
+        if unresolved:
+            try:
+                max_sev = max(
+                    float(u.get("severity", 0.0) or 0.0)
+                    for u in unresolved
+                    if isinstance(u, dict)
+                )
+            except Exception:
+                max_sev = 0.55
+
+        eligible = bool(force) or bool(unresolved) or intensity >= 0.70
+        if not eligible:
+            return None
+
+        if not force:
+            # Sometimes — bias toward asking when unresolved / hot, never spam.
+            if unresolved and (intensity >= 0.50 or max_sev >= 0.55):
+                if random.random() >= 0.88:
+                    return None
+            elif intensity >= 0.70:
+                if random.random() >= 0.55:
+                    return None
+            else:
+                return None
+
+        try:
+            return honest_curiosity_question(user_input, emotional_context)
         except Exception:
-            pass
-        
-        return None
+            return None
     
     def shutdown(self):
         """Graceful shutdown"""

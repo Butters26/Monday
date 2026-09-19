@@ -38,6 +38,90 @@ _SPEAKER_ROLES = frozenset({"user", "fact", "note", "monday", "assistant", "abin
 _MONDAY_ROLES = frozenset({"monday", "assistant", "abin"})
 
 
+_MILD_SOCIAL_EXACT = frozenset(
+    {
+        "hi", "hello", "hey", "yo", "sup", "hiya", "howdy", "greetings",
+        "good morning", "good afternoon", "good evening",
+        "hello there", "hi there", "hey there", "hello!", "hi!", "hey!",
+        "hello.", "hi.", "hey.",
+    }
+)
+_MILD_SOCIAL_RE = re.compile(
+    r"^\s*(?:hi|hello|hey|yo|sup|hiya|howdy|greetings|"
+    r"good\s+(?:morning|afternoon|evening))\b[\s!.]*$",
+    re.IGNORECASE,
+)
+
+
+def is_mild_social_turn(user_input: str, intent: Optional[str] = None) -> bool:
+    """True for short greetings / social filler that must not force curiosity spam."""
+    text = (user_input or "").strip()
+    if not text:
+        return True
+    lower = text.lower().rstrip()
+    bare = lower.rstrip("!.?")
+    if bare in _MILD_SOCIAL_EXACT or lower in _MILD_SOCIAL_EXACT:
+        return True
+    if _MILD_SOCIAL_RE.match(text):
+        return True
+    if intent == "greeting" and len(text.split()) <= 5:
+        return True
+    return False
+
+
+def honest_curiosity_question(
+    user_input: str,
+    emotional_state: Optional[Dict[str, Any]] = None,
+) -> str:
+    """One honest follow-up that asks instead of inventing facts.
+
+    Owned by the live emotion/conversation/direct_response path — not novelty_lobe.
+    """
+    state = emotional_state if isinstance(emotional_state, dict) else {}
+    unresolved = state.get("unresolved_appraisals") or []
+    emotion = str(
+        state.get("current_emotion")
+        or state.get("emotion")
+        or "this"
+    ).strip() or "this"
+    text = (user_input or "").strip()
+
+    primary = None
+    if isinstance(unresolved, list) and unresolved:
+        try:
+            primary = max(
+                (u for u in unresolved if isinstance(u, dict)),
+                key=lambda u: float(u.get("severity", 0.0) or 0.0),
+                default=None,
+            )
+        except Exception:
+            primary = next((u for u in unresolved if isinstance(u, dict)), None)
+
+    if isinstance(primary, dict):
+        et = str(primary.get("event_type") or "feeling").replace("_", " ").strip()
+        return (
+            f"What would help with this {et} - or is there more I should understand "
+            f"before I guess?"
+        )
+
+    snippet = text
+    if len(snippet) > 72:
+        cut = snippet[:69].rsplit(" ", 1)[0]
+        snippet = (cut or snippet[:69]) + "..."
+    if snippet:
+        # Ask about their words; do not invent missing details.
+        safe = snippet.replace('"', "'")
+        return (
+            f'I do not want to invent details - can you tell me more about what you '
+            f'meant by "{safe}"?'
+        )
+    return (
+        f"I am feeling {emotion} about this and I do not want to invent an answer - "
+        f"what am I missing?"
+    )
+
+
+
 def _token_stems(token: str) -> set:
     """Light stems so hike↔hiking and similar still overlap."""
     t = (token or "").lower()

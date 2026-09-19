@@ -24,6 +24,8 @@ from direct_response import (
     ResponseProvider,
     answer_from_grounded_memories,
     content_tokens,
+    honest_curiosity_question,
+    is_mild_social_turn,
     relevance_score,
     _attribute_asked,
     _fact_covers_attribute,
@@ -90,6 +92,10 @@ class Thalamus:
         # Rate-limit rare speak-worthy asides attached to user-turn replies.
         self._last_spoken_aside_time: float = 0.0
         self._spoken_aside_cooldown_sec: float = 45.0
+        # Curiosity follow-ups (emotion/conversation/direct_response — not novelty_lobe).
+        self._last_curiosity_time: float = 0.0
+        self._curiosity_cooldown_sec: float = 25.0
+        self._force_curiosity_follow_up: bool = False
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -681,6 +687,22 @@ class Thalamus:
         if emotion["status"] != "success":
             return "I'm having trouble processing that right now."
         emotional_state = self._content(emotion)
+        # Ensure unresolved appraisals are visible for curiosity gating.
+        if not (emotional_state.get("unresolved_appraisals") or []):
+            try:
+                st = self.send_and_wait("emotion", "get_state", {})
+                if st.get("status") == "success":
+                    body = self._content(st)
+                    unresolved = (
+                        st.get("unresolved_appraisals")
+                        or body.get("unresolved_appraisals")
+                        or []
+                    )
+                    if unresolved:
+                        emotional_state = dict(emotional_state)
+                        emotional_state["unresolved_appraisals"] = unresolved
+            except Exception:
+                pass
 
         ctx = self._content(memory_context)
         memories = list(ctx.get("memories") or [])
@@ -813,6 +835,12 @@ class Thalamus:
             reply,
             turn_intensity=turn_intensity,
             preloaded_aside=preloaded_aside,
+        )
+        reply = self._maybe_attach_curiosity_follow_up(
+            reply,
+            user_input=user_input,
+            emotional_state=emotional_state,
+            understanding=understanding,
         )
         # Persist what she actually said — continuous someone, not user-only amnesia.
         if isinstance(reply, str) and reply.strip():
@@ -961,6 +989,81 @@ class Thalamus:
 
         self._last_spoken_aside_time = now
         return f"{reply.rstrip()}\n\n{content.strip()}"
+
+
+    def _maybe_attach_curiosity_follow_up(
+        self,
+        reply: str,
+        user_input: str = "",
+        emotional_state: Optional[Dict[str, Any]] = None,
+        understanding: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Append at most one honest curiosity question when affect warrants it.
+
+        Owned by emotion/conversation/direct_response — novelty_lobe is not consulted.
+        Mild hello/social turns never force a question. Missing novelty must not matter.
+        """
+        if not isinstance(reply, str) or not reply.strip():
+            return reply
+        emotional_state = emotional_state if isinstance(emotional_state, dict) else {}
+        understanding = understanding if isinstance(understanding, dict) else {}
+        force = bool(getattr(self, "_force_curiosity_follow_up", False))
+
+        now = time.time()
+        if not force and (now - float(getattr(self, "_last_curiosity_time", 0.0) or 0.0)) < float(
+            getattr(self, "_curiosity_cooldown_sec", 25.0)
+        ):
+            return reply
+
+        question = None
+        with self.lobe_handlers_lock:
+            conversation = self.lobe_handlers.get("conversation")
+        maybe = getattr(conversation, "maybe_curiosity_follow_up", None) if conversation else None
+        if callable(maybe):
+            try:
+                question = maybe(
+                    user_input,
+                    emotional_state,
+                    understanding,
+                    force=force,
+                )
+            except Exception:
+                question = None
+        if not question:
+            # Fallback without conversation lobe (stubbed smokes still prove path).
+            intent = understanding.get("intent")
+            try:
+                intensity = float(emotional_state.get("intensity", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                intensity = 0.0
+            unresolved = emotional_state.get("unresolved_appraisals") or []
+            if force or (
+                not is_mild_social_turn(user_input, intent)
+                and (unresolved or intensity >= 0.70)
+            ):
+                if force or unresolved:
+                    try:
+                        question = honest_curiosity_question(user_input, emotional_state)
+                    except Exception:
+                        question = None
+
+        if not isinstance(question, str) or not question.strip():
+            return reply
+        q = question.strip()
+        if q in reply:
+            return reply
+        # Avoid stacking a second question if the main reply already ends with one
+        # unless we were forced (smoke / unresolved proof).
+        if not force and reply.rstrip().endswith("?") and not (
+            emotional_state.get("unresolved_appraisals") or []
+        ):
+            return reply
+
+        self._last_curiosity_time = now
+        if force:
+            self._force_curiosity_follow_up = False
+        return f"{reply.rstrip()}" + "\n\n" + q
+
 
     def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Small compatibility entry point for direct callers."""

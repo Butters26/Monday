@@ -1818,6 +1818,10 @@ class EmotionalProcess:
                 if intensity > 0.6:
                     self._notify_novelty_lobe(user_input, emotion, intensity)
                 
+                unresolved = [
+                    {'event_type': et, 'severity': float(sev), 'timestamp': float(ts)}
+                    for (et, sev, ts) in getattr(self.engine, '_unresolved_appraisals', [])
+                ]
                 return {
                     'status': 'success',
                     'response': response,
@@ -1826,7 +1830,8 @@ class EmotionalProcess:
                     'resonance': self.engine.emotional_resonance,
                     'worry': self.engine.internal.worry,
                     'tension': self.engine.internal.tension,
-                    'autonomy_level': self.engine.autonomy_level
+                    'autonomy_level': self.engine.autonomy_level,
+                    'unresolved_appraisals': unresolved,
                 }
                 
             elif msg_type == 'feel_emotion':
@@ -1974,27 +1979,37 @@ class EmotionalProcess:
     
     def _notify_novelty_lobe(self, stimulus: str, emotion: str, intensity: float):
         """
-        Tell Novelty Lobe about strong emotional response.
-        This is how Novelty Lobe detects that something matters.
+        Optionally tell Novelty Lobe about strong affect.
+
+        Live six-path does not register novelty_lobe — silence and return when
+        missing so notify errors never break chat. Curiosity is owned elsewhere.
         """
         try:
-            print(f"🔔 Emotion notifying Novelty Lobe: '{stimulus[:50]}...' ({emotion}, {intensity:.2f})")
-            
-            # Calculate valence from emotion
+            thalamus = getattr(self, 'thalamus', None)
+            if thalamus is None:
+                return
+            handlers = getattr(thalamus, 'lobe_handlers', None)
+            lock = getattr(thalamus, 'lobe_handlers_lock', None)
+            if handlers is None:
+                return
+            if lock is not None:
+                with lock:
+                    has_novelty = 'novelty' in handlers
+            else:
+                has_novelty = 'novelty' in handlers
+            if not has_novelty:
+                return  # novelty_lobe dead / unregistered — do not spam or fail
+
             positive_emotions = ['happy', 'excited', 'curious', 'proud', 'euphoric', 'playful']
             negative_emotions = ['sad', 'angry', 'disgusted', 'scared', 'worried', 'anxious']
-            
             if emotion in positive_emotions:
-                valence = 0.5 + (intensity * 0.5)  # 0.5 to 1.0
+                valence = 0.5 + (intensity * 0.5)
             elif emotion in negative_emotions:
-                valence = -(0.5 + (intensity * 0.5))  # -0.5 to -1.0
+                valence = -(0.5 + (intensity * 0.5))
             else:
-                valence = 0.0  # Neutral
-            
-            print(f"   Valence: {valence:.2f}")
-            
-            # Use self.thalamus, not self.engine.thalamus
-            result = self.thalamus.send_message(
+                valence = 0.0
+
+            thalamus.send_message(
                 'novelty',
                 'emotional_response_to_novelty',
                 {
@@ -2002,15 +2017,12 @@ class EmotionalProcess:
                     'emotion': emotion,
                     'intensity': intensity,
                     'valence': valence,
-                    'timestamp': time.time()
-                }
+                    'timestamp': time.time(),
+                },
             )
-            
-            print(f"   Result: {result.get('status', 'unknown')}")
-            
-        except Exception as e:
-            # Novelty lobe may not be running - that's okay
-            print(f"   ⚠️  Failed to notify novelty: {e}")
+        except Exception:
+            # Never let novelty notify errors break emotion / chat.
+            return
 
     def shutdown(self):
         """Graceful shutdown"""
