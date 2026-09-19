@@ -12,7 +12,14 @@ import re
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from reasoning import Fact, MaximumSophisticationReasoning
-from direct_response import answer_from_grounded_memories, content_tokens, relevance_score
+from direct_response import (
+    answer_from_grounded_memories,
+    content_tokens,
+    format_predicate_fact,
+    relevance_score,
+    _attribute_asked,
+    _fact_covers_attribute,
+)
 
 
 _FAVORITE_FACT = re.compile(
@@ -225,6 +232,9 @@ class DirectMaximumSophisticationAdapter:
             if q_tokens and relevance_score(user_input or "", composed) < 0.34:
                 if not (q_tokens & content_tokens(composed)):
                     return None
+            attr = _attribute_asked(user_input or "")
+            if attr and not _fact_covers_attribute(composed, attr):
+                return None
             return composed
         # Legacy composition can turn an evidence-free question into a word bag;
         # that is not a conclusion. Let Thalamus use its emergency fallback.
@@ -261,17 +271,15 @@ class DirectMaximumSophisticationAdapter:
                 if not isinstance(fact, dict):
                     continue
                 content = fact.get("content") or fact.get("text")
-                if not content and fact.get("predicate") and fact.get("object"):
-                    pred = str(fact.get("predicate"))
-                    obj = str(fact.get("object"))
-                    if pred.endswith("_name"):
-                        noun = pred[:-5].replace("_", " ")
-                        content = f"Your {noun}'s name is {obj}."
-                    else:
-                        content = f"Your {pred.replace('_', ' ')} is {obj}."
+                pred = str(fact.get("predicate", "") or "")
+                obj = str(fact.get("object", "") or "")
+                sub = str(fact.get("subject", "") or "user")
+                if pred and obj:
+                    # Always prefer correct readable formatting over mangled rows.
+                    content = format_predicate_fact(pred, obj, sub)
                 if content:
                     raw_memories = list(raw_memories) + [
-                        {"role": "fact", "content": content, **fact}
+                        {**fact, "role": "fact", "content": content}
                     ]
         memories = self._clean_memories(raw_memories, user_input)
         evidence = self._evidence(memories, user_input)

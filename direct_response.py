@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Protocol
 
 
 
+
 _STOPWORDS = frozenset(
     {
         "a", "an", "the", "is", "are", "was", "were", "be", "been", "am",
@@ -22,15 +23,43 @@ _STOPWORDS = frozenset(
         "about", "tell", "of", "to", "in", "on", "at", "for", "and", "or",
         "it", "its", "have", "has", "had", "will", "just", "also", "so",
         "as", "if", "but", "not", "no", "yes", "ok", "okay", "hey", "hi",
-        "hello", "named", "name", "got", "know",
+        "hello", "named", "name", "got", "know", "say", "said", "just",
+        "there", "here", "into", "over", "under", "again", "more",
     }
 )
 
 _QUESTIONISH = re.compile(
     r"\b(?:tell me|explain|what|who|where|when|why|how|which|do you remember|"
-    r"can you remember|remind me)\b|\?",
+    r"can you remember|remind me|did i|do i|have i)\b|\?",
     re.IGNORECASE,
 )
+
+_SPEAKER_ROLES = frozenset({"user", "fact", "note", "monday", "assistant", "abin"})
+_MONDAY_ROLES = frozenset({"monday", "assistant", "abin"})
+
+
+def _token_stems(token: str) -> set:
+    """Light stems so hike↔hiking and similar still overlap."""
+    t = (token or "").lower()
+    out = {t}
+    if len(t) <= 3:
+        return out
+    if t.endswith("ing") and len(t) > 5:
+        base = t[:-3]
+        out.add(base)
+        out.add(base + "e")  # hiking -> hike
+        if base.endswith(base[-1:]) and len(base) > 2:
+            out.add(base[:-1])  # running -> run
+    if t.endswith("ied") and len(t) > 4:
+        out.add(t[:-3] + "y")
+    if t.endswith("ed") and len(t) > 4:
+        out.add(t[:-2])
+        out.add(t[:-1])
+    if t.endswith("es") and len(t) > 4:
+        out.add(t[:-2])
+    elif t.endswith("s") and len(t) > 3 and not t.endswith("ss"):
+        out.add(t[:-1])
+    return out
 
 
 def content_tokens(text: str) -> set:
@@ -39,27 +68,100 @@ def content_tokens(text: str) -> set:
     return {w for w in words if w not in _STOPWORDS and len(w) > 1}
 
 
+def _stem_set(tokens: set) -> set:
+    out = set()
+    for t in tokens or set():
+        out |= _token_stems(t)
+    return out
+
+
 def relevance_score(query: str, candidate: str) -> float:
-    """Fraction of query content tokens that appear in the candidate."""
+    """Fraction of query content tokens that appear in the candidate (stem-aware)."""
     qt = content_tokens(query)
-    mt = content_tokens(candidate)
+    mt = _stem_set(content_tokens(candidate))
     if not qt or not mt:
         return 0.0
-    return len(qt & mt) / float(len(qt))
+    hits = sum(1 for q in qt if _token_stems(q) & mt)
+    return hits / float(len(qt))
 
 
 def looks_questionish(text: str) -> bool:
     return bool(_QUESTIONISH.search(text or ""))
 
 
+def _looks_like_question_memory(text: str) -> bool:
+    """Prior user/monday questions are not answer evidence."""
+    t = (text or "").strip()
+    if not t:
+        return True
+    if t.endswith("?"):
+        return True
+    if re.match(
+        r"^(?:what|who|where|when|why|how|which|do|does|did|is|are|can|could|"
+        r"would|should|tell|remind)\b",
+        t,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
+def format_predicate_fact(predicate: str, obj: str, subject: str = "user") -> str:
+    """Readable sentence for a stored triple — never 'Your lives in is …'."""
+    pred = (predicate or "").strip()
+    obj = (obj or "").strip()
+    if not pred or not obj:
+        return ""
+    if pred.endswith("_name"):
+        noun = pred[:-5].replace("_", " ").strip() or "thing"
+        return f"Your {noun}'s name is {obj}."
+    if pred.startswith("favorite_") or pred.startswith("favourite_"):
+        return f"Your {pred.replace('_', ' ')} is {obj}."
+    if pred == "lives_in":
+        return f"You live in {obj}."
+    if pred.startswith("work_"):
+        prep = pred[5:] or "as"
+        if prep == "as" and obj and obj[0].isalpha() and not obj.lower().startswith(
+            ("a ", "an ", "the ")
+        ):
+            article = "an" if obj[0].lower() in "aeiou" else "a"
+            return f"You work as {article} {obj}."
+        return f"You work {prep} {obj}."
+    if pred in {"codeword", "password", "passcode"}:
+        return f"Your {pred} is {obj}."
+    if (subject or "").lower() in {"user", "i", "me", ""}:
+        return f"Your {pred.replace('_', ' ')} is {obj}."
+    return f"{subject} {pred.replace('_', ' ')} {obj}".strip()
+
+
+def _repair_mangled_fact(content: str) -> str:
+    """Fix legacy mangled lines like 'Your lives in is Boulder.'"""
+    text = (content or "").strip()
+    m = re.match(r"^your\s+lives\s+in\s+is\s+(.+)$", text, re.IGNORECASE)
+    if m:
+        return f"You live in {m.group(1).strip(' .!?')}."
+    m = re.match(r"^your\s+work\s+(as|at|in)\s+is\s+(.+)$", text, re.IGNORECASE)
+    if m:
+        return f"You work {m.group(1).lower()} {m.group(2).strip(' .!?')}."
+    return text
+
+
 def rephrase_user_memory(content: str) -> str:
     """Turn a first-person user memory into a second-person answerable line."""
-    text = (content or "").strip()
+    text = _repair_mangled_fact((content or "").strip())
     if not text:
         return text
     text = re.sub(r"^(?:please\s+)?remember\s+(?:that\s+)?", "", text, flags=re.I).strip()
     m = re.match(
         r"^i\s+(live|work|am|was|have|had|like|love|hate|prefer)\s+(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        return f"You {m.group(1).lower()} {m.group(2).strip(' .!?')}."
+    m = re.match(
+        r"^i\s+(went|did|saw|met|bought|made|took|hiked|visited|ate|drank|"
+        r"played|watched|read|wrote|drove|flew|walked|ran)\s+(.+)$",
         text,
         re.IGNORECASE,
     )
@@ -74,6 +176,167 @@ def rephrase_user_memory(content: str) -> str:
     return text + "."
 
 
+def _normalize_snippet_content(memory: Dict[str, Any]) -> Optional[str]:
+    """Build one clean snippet line from a memory/fact row."""
+    if not isinstance(memory, dict):
+        return None
+    role = str(memory.get("role", "") or "").lower()
+    if role not in _SPEAKER_ROLES:
+        return None
+    content = memory.get("content")
+    if not isinstance(content, str):
+        content = ""
+    content = content.strip()
+    if "How it felt:" in content or "What it meant:" in content:
+        return None
+    if re.match(r"^\s*(?:user|abin|monday|assistant)\s*:", content, re.IGNORECASE):
+        return None
+    pred = str(memory.get("predicate", "") or "")
+    obj = str(memory.get("object", "") or "")
+    sub = str(memory.get("subject", "") or "")
+    if pred and obj and (role == "fact" or sub.lower() in {"user", "i", "me", ""}):
+        formatted = format_predicate_fact(pred, obj, sub or "user")
+        if formatted:
+            content = formatted
+    elif content:
+        content = _repair_mangled_fact(content)
+    if not content:
+        return None
+    return content.strip()
+
+
+def _attribute_asked(query: str) -> Optional[str]:
+    """Return normalized 'favorite color' / 'dog' style attribute if asked."""
+    q = (query or "").strip()
+    fav = re.search(
+        r"\bwhat(?:'s|\s+is)\s+my\s+(favorite\s+[a-z][a-z ]{0,40}?)\b",
+        q,
+        re.IGNORECASE,
+    )
+    if fav:
+        return " ".join(fav.group(1).lower().split())
+    name = re.search(
+        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)(?:'s|s')?\s+name\b",
+        q,
+        re.IGNORECASE,
+    )
+    if name:
+        return " ".join(name.group(1).lower().split()) + " name"
+    my_attr = re.search(
+        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z0-9 ]{0,40}?)\s*\??\s*$",
+        q,
+        re.IGNORECASE,
+    )
+    if my_attr:
+        return " ".join(my_attr.group(1).lower().split())
+    return None
+
+
+def _fact_covers_attribute(fact: str, attr: str) -> bool:
+    low = (fact or "").casefold()
+    attr = (attr or "").strip().casefold()
+    if not attr:
+        return True
+    if attr.endswith(" name"):
+        noun = attr[:-5].strip()
+        return f"your {noun}'s name is " in low or (
+            noun in low and "name is" in low
+        )
+    needle = f"your {attr} is "
+    if needle in low:
+        return True
+    # Do not let favorite color answer favorite food.
+    if attr.startswith("favorite ") or attr.startswith("favourite "):
+        return needle in low
+    return attr in low and (" is " in low or low.startswith("you "))
+
+
+def _narrative_answer(query: str, snippets: List[tuple]) -> Optional[str]:
+    """Answer where/who/when from a non-patterned user narrative memory."""
+    q = query or ""
+    narratives = []
+    for role, text in snippets:
+        if role in _MONDAY_ROLES:
+            continue
+        if _looks_like_question_memory(text):
+            continue
+        if relevance_score(q, text) < 0.25 and not (
+            _stem_set(content_tokens(q)) & _stem_set(content_tokens(text))
+        ):
+            continue
+        narratives.append(text)
+    if not narratives:
+        return None
+    # Prefer the most overlapping narrative.
+    narratives.sort(key=lambda t: (-relevance_score(q, t), len(t)))
+    raw = narratives[0]
+    you = rephrase_user_memory(raw)
+
+    if re.search(r"\bwhere\s+(?:did|do)\s+i\b", q, re.IGNORECASE) or re.search(
+        r"\bwhere\s+did\s+i\s+go\b", q, re.IGNORECASE
+    ):
+        m = re.search(
+            r"\b(?:hiking|went|visited|was)\s+(?:on|at|to|in)\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s'-]{1,60}?)(?=\s+(?:last|with|on|at|,|\.|$))",
+            raw,
+            re.IGNORECASE,
+        )
+        if m:
+            place = m.group(1).strip(" .!?")
+            return f"You went to {place}." if place else you
+        m = re.search(
+            r"\b(?:on|at|to|in)\s+([A-Z][A-Za-z0-9\s'-]{1,60}?)(?=\s+(?:last|with|,|\.|$))",
+            raw,
+        )
+        if m:
+            return f"You went to {m.group(1).strip(' .!?')}."
+        return you
+
+    if re.search(r"\bwho\s+did\s+i\b", q, re.IGNORECASE) or re.search(
+        r"\b(?:who|whom)\s+.+\bwith\b", q, re.IGNORECASE
+    ):
+        m = re.search(r"\bwith\s+([A-Za-z0-9][\w'-]*)", raw, re.IGNORECASE)
+        if m:
+            return f"You were with {m.group(1)}."
+        return None
+
+    if re.search(r"\bwhen\s+did\s+i\b", q, re.IGNORECASE):
+        m = re.search(
+            r"\b(last\s+\w+|yesterday|today|this\s+\w+|on\s+\w+day|"
+            r"\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b",
+            raw,
+            re.IGNORECASE,
+        )
+        if m:
+            return f"You went {m.group(1)}." if not m.group(1).lower().startswith("on ") else f"You went {m.group(1)}."
+        return None
+
+    return None
+
+
+def _monday_speech_answer(query: str, snippets: List[tuple]) -> Optional[str]:
+    """Use stored Monday speech for 'what did you say about X'."""
+    q = query or ""
+    if not re.search(
+        r"\b(?:what did you (?:just )?say|what you said|you said about)\b",
+        q,
+        re.IGNORECASE,
+    ):
+        return None
+    monday = [
+        (relevance_score(q, text), text)
+        for role, text in snippets
+        if role in _MONDAY_ROLES and not _looks_like_question_memory(text)
+    ]
+    monday = [(s, t) for s, t in monday if s >= 0.2 or (content_tokens(q) & content_tokens(t))]
+    if not monday:
+        # Fall back to any grounded fact that overlaps the topic tokens.
+        return None
+    monday.sort(key=lambda item: (-item[0], item[1]))
+    best = monday[0][1]
+    return best if best.endswith((".", "!", "?")) else best + "."
+
+
 def answer_from_grounded_memories(
     user_input: str,
     memories: Iterable[Dict[str, Any]],
@@ -85,95 +348,73 @@ def answer_from_grounded_memories(
     if not q:
         return None
 
-    snippets = []
+    snippets: List[tuple] = []
     seen = set()
     for memory in memories or []:
-        if not isinstance(memory, dict):
+        content = _normalize_snippet_content(memory)
+        if not content:
             continue
-        role = str(memory.get("role", "") or "")
-        if role not in {"user", "fact", "note"}:
-            continue
-        content = memory.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        if "How it felt:" in content or "What it meant:" in content:
-            continue
-        if re.match(r"^\s*(?:user|abin)\s*:", content, re.IGNORECASE):
-            continue
-        pred = str(memory.get("predicate", "") or "")
-        obj = str(memory.get("object", "") or "")
-        sub = str(memory.get("subject", "") or "")
-        if pred and obj and (role == "fact" or sub.lower() in {"user", "i", "me"}):
-            if pred.endswith("_name"):
-                noun = pred[:-5].replace("_", " ").strip() or "thing"
-                content = f"Your {noun}'s name is {obj}."
-            elif pred.startswith("favorite_") or pred.startswith("favourite_"):
-                content = f"Your {pred.replace('_', ' ')} is {obj}."
-            elif pred == "lives_in":
-                content = f"You live in {obj}."
-            elif pred.startswith("work_"):
-                prep = pred[5:] or "as"
-                content = f"You work {prep} {obj}."
-            elif content.lower().startswith(("your ", "you ")):
-                pass  # keep already well-formed readable content
-            else:
-                content = f"Your {pred.replace('_', ' ')} is {obj}."
-        key = content.strip().casefold()
+        role = str(memory.get("role", "") or "user").lower()
+        if role in {"assistant", "abin"}:
+            role = "monday"
+        key = content.casefold()
         if key in seen or key == q.casefold():
             continue
         seen.add(key)
-        snippets.append((role if role else "user", content.strip()))
+        snippets.append((role if role else "user", content))
 
     if not snippets:
         return None
 
-    name_q = re.search(
-        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)(?:'s|s')?\s+name\b",
-        q,
-        re.IGNORECASE,
-    )
-    if name_q:
+
+    # Prefer Monday's own prior speech when asked what she said.
+    monday_ans = _monday_speech_answer(q, snippets)
+    if monday_ans:
+        return monday_ans
+
+    def _name_answer() -> Optional[str]:
+        name_q = re.search(
+            r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)(?:'s|s')?\s+name\b",
+            q,
+            re.IGNORECASE,
+        )
+        if not name_q:
+            return None
         noun = " ".join(name_q.group(1).lower().split())
         needle = f"your {noun}'s name is "
         for _role, fact in snippets:
             low = fact.casefold()
             if needle in low or (noun in low and "name is" in low):
                 return fact if fact.endswith(".") else fact + "."
+        return ""  # asked, missing
 
-    fav_q = re.search(
-        r"\bwhat(?:'s|\s+is)\s+my\s+(favorite\s+[a-z][a-z ]{0,40}?)\b",
-        q,
-        re.IGNORECASE,
-    )
-    if fav_q:
+    def _fav_answer() -> Optional[str]:
+        fav_q = re.search(
+            r"\bwhat(?:'s|\s+is)\s+my\s+(favorite\s+[a-z][a-z ]{0,40}?)\b",
+            q,
+            re.IGNORECASE,
+        )
+        if not fav_q:
+            return None
         attr = " ".join(fav_q.group(1).lower().split())
         needle = f"your {attr} is "
         for _role, fact in snippets:
             if needle in fact.casefold():
                 return fact if fact.endswith(".") else fact + "."
+        return ""  # asked, missing — do not substitute another favorite
 
-    my_attr = re.search(
-        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z0-9 ]{0,40}?)\s*\??\s*$",
-        q,
-        re.IGNORECASE,
-    )
-    if my_attr:
-        attr = " ".join(my_attr.group(1).lower().split())
-        if attr and not attr.endswith(" name"):
-            needle = f"your {attr} is "
-            for _role, fact in snippets:
-                if needle in fact.casefold():
-                    return fact if fact.endswith(".") else fact + "."
-            for _role, fact in snippets:
-                low = fact.casefold()
-                if low.startswith(f"my {attr} is ") or low.startswith(f"your {attr} is "):
-                    return rephrase_user_memory(fact)
-
-    if re.search(r"\bwhere\s+do\s+i\s+live\b", q, re.IGNORECASE) or re.search(
-        r"\bwhat(?:'s|\s+is)\s+my\s+(?:city|hometown|address|location)\b",
-        q,
-        re.IGNORECASE,
-    ):
+    def _live_answer() -> Optional[str]:
+        if not (
+            re.search(r"\bwhere\s+do\s+i\s+live\b", q, re.IGNORECASE)
+            or re.search(
+                r"\bwhat(?:'s|\s+is)\s+my\s+(?:city|hometown|address|location)\b",
+                q,
+                re.IGNORECASE,
+            )
+            or re.search(r"\blive(?:s)?\s+with\s+me\s+in\b", q, re.IGNORECASE)
+            or re.search(r"\bwhere\s+i\s+live\b", q, re.IGNORECASE)
+        ):
+            return None
         for _role, fact in snippets:
             low = fact.casefold()
             if any(
@@ -188,12 +429,18 @@ def answer_from_grounded_memories(
                 )
             ):
                 return rephrase_user_memory(fact)
+        return ""
 
-    if re.search(r"\bwhere\s+do\s+i\s+work\b", q, re.IGNORECASE) or re.search(
-        r"\bwhat(?:'s|\s+is)\s+my\s+(?:job|work|occupation|profession)\b",
-        q,
-        re.IGNORECASE,
-    ):
+    def _job_answer() -> Optional[str]:
+        if not (
+            re.search(r"\bwhere\s+do\s+i\s+work\b", q, re.IGNORECASE)
+            or re.search(
+                r"\bwhat(?:'s|\s+is)\s+my\s+(?:job|work|occupation|profession)\b",
+                q,
+                re.IGNORECASE,
+            )
+        ):
+            return None
         for _role, fact in snippets:
             low = fact.casefold()
             if any(
@@ -208,24 +455,174 @@ def answer_from_grounded_memories(
                 )
             ):
                 return rephrase_user_memory(fact)
+        return ""
+
+    def _dog_answer() -> Optional[str]:
+        if not re.search(r"\b(?:my\s+)?dog\b", q, re.IGNORECASE):
+            return None
+        # Prefer name fact when dog is mentioned.
+        for _role, fact in snippets:
+            low = fact.casefold()
+            if "dog" in low and "name is" in low:
+                return fact if fact.endswith(".") else fact + "."
+        return None  # dog mentioned but no forced empty
+
+    def _codeword_answer() -> Optional[str]:
+        if not re.search(r"\bcodeword\b", q, re.IGNORECASE):
+            return None
+        for _role, fact in snippets:
+            low = fact.casefold()
+            if "codeword is" in low:
+                return fact if fact.endswith(".") else fact + "."
+        return ""
+
+    def _generic_my_attr() -> Optional[str]:
+        my_attr = re.search(
+            r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z0-9 ]{0,40}?)\s*\??\s*$",
+            q,
+            re.IGNORECASE,
+        )
+        if not my_attr:
+            return None
+        attr = " ".join(my_attr.group(1).lower().split())
+        if not attr or attr.endswith(" name") or attr.startswith("favorite"):
+            return None
+        if attr in {"job", "work", "occupation", "profession", "city", "hometown", "location", "address"}:
+            return None  # handled by job/live
+        needle = f"your {attr} is "
+        for _role, fact in snippets:
+            if needle in fact.casefold():
+                return fact if fact.endswith(".") else fact + "."
+        for _role, fact in snippets:
+            low = fact.casefold()
+            if low.startswith(f"my {attr} is ") or low.startswith(f"your {attr} is "):
+                return rephrase_user_memory(fact)
+        return ""  # asked specific attr, missing
+
+    slot_fns = (
+        _name_answer,
+        _fav_answer,
+        _live_answer,
+        _job_answer,
+        _dog_answer,
+        _codeword_answer,
+        _generic_my_attr,
+    )
+    slot_hits = []
+    slot_miss_forced = False
+    for fn in slot_fns:
+        got = fn()
+        if got is None:
+            continue
+        if got == "":
+            # Pattern matched the question but no grounded fact — honest empty
+            # unless other slots still fill a compound question.
+            slot_miss_forced = True
+            continue
+        key = got.casefold()
+        if key not in {s.casefold() for s in slot_hits}:
+            slot_hits.append(got if got.endswith((".", "!", "?")) else got + ".")
+
+    if len(slot_hits) >= 2:
+        joined = " ".join(slot_hits)
+        if re.match(r"^(?:do|does|did|is|are|have)\b", q, re.IGNORECASE):
+            return f"Yes — {joined[0].lower() + joined[1:]}"
+        return joined
+    if len(slot_hits) == 1:
+        # Single slot hit. If another slot was explicitly asked and missed, stay honest
+        # only when the hit is unrelated to a forced miss on a sole attribute question.
+        if slot_miss_forced and not re.search(r"\b(?:and|&|both|also|who|with)\b", q, re.IGNORECASE):
+            # e.g. favorite food missed — do not return an unrelated live/job hit.
+            # But name/fav miss with only one hit from another fn shouldn't happen often.
+            only_attr = _attribute_asked(q)
+            if only_attr and not _fact_covers_attribute(slot_hits[0], only_attr):
+                return None
+        return slot_hits[0]
+    if slot_miss_forced and not slot_hits:
+        return None
+
+    # Narrative where/who/when from non-patterned user memories.
+    narr = _narrative_answer(q, snippets)
+    if narr:
+        return narr
 
     if not looks_questionish(q):
         return None
 
+    attr = _attribute_asked(q)
+    q_tokens = content_tokens(q)
+    q_stems = _stem_set(q_tokens)
     ranked = []
     for role, text_snip in snippets:
+        if _looks_like_question_memory(text_snip):
+            continue
+        if attr and not _fact_covers_attribute(text_snip, attr):
+            continue
         score = relevance_score(q, text_snip)
-        if role == "fact" and score > 0:
+        if role == "fact":
             score += 0.05
+        if role in _MONDAY_ROLES:
+            score += 0.02
+        # Require real stem overlap — no cosine-style invention.
+        if not (q_stems & _stem_set(content_tokens(text_snip))):
+            continue
         if score >= min_score:
             ranked.append((score, 0 if role == "fact" else 1, text_snip, role))
+
     if not ranked:
         return None
+
+    # Compound questions: combine distinct grounded facts when several match.
+    compound = bool(
+        re.search(r"\b(?:and|&)\b", q, re.IGNORECASE)
+        or re.search(r"\b(?:both|also)\b", q, re.IGNORECASE)
+    )
     ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
+    if compound and len(ranked) >= 2:
+        chosen = []
+        seen_keys = set()
+        for score, _prio, text_snip, role in ranked:
+            if score < min_score:
+                continue
+            key = text_snip.casefold()
+            # Dedup near-identical / same-slot facts.
+            slot = key
+            for marker in ("live in", "work as", "work at", "name is", "favorite "):
+                if marker in key:
+                    slot = marker
+                    break
+            if slot in seen_keys:
+                continue
+            seen_keys.add(slot)
+            line = (
+                text_snip
+                if (role == "fact" or text_snip.casefold().startswith("your ")
+                    or text_snip.casefold().startswith("you "))
+                else rephrase_user_memory(text_snip)
+            )
+            if not line.endswith((".", "!", "?")):
+                line += "."
+            chosen.append(line)
+            if len(chosen) >= 3:
+                break
+        if len(chosen) >= 2:
+            joined = " ".join(chosen)
+            if re.match(r"^(?:do|does|did|is|are|have)\b", q, re.IGNORECASE):
+                return f"Yes — {joined[0].lower() + joined[1:]}" if joined else joined
+            return joined
+        if chosen:
+            return chosen[0]
+
     _best_score, _, best_text, best_role = ranked[0]
-    if not (content_tokens(q) & content_tokens(best_text)):
-        return None
-    if best_role == "fact" or best_text.casefold().startswith("your "):
+    # Strict attribute questions already returned None above when uncovered.
+    # For general ranked hits, require majority token coverage when ≥2 tokens.
+    if len(q_tokens) >= 2 and _best_score < 0.5:
+        # Allow if every significant (≥4) query token is covered.
+        significant = {t for t in q_tokens if len(t) >= 4}
+        cand_stems = _stem_set(content_tokens(best_text))
+        if significant and not all(_token_stems(t) & cand_stems for t in significant):
+            return None
+    if best_role == "fact" or best_text.casefold().startswith(("your ", "you ")):
         return best_text if best_text.endswith(".") else best_text + "."
     return rephrase_user_memory(best_text)
 
@@ -282,15 +679,17 @@ class DeterministicResponseProvider:
         for memory in memories:
             if not isinstance(memory, dict):
                 continue
-            role = memory.get("role")
+            role = str(memory.get("role", "") or "").lower()
             content = memory.get("content")
-            if role not in {"user", "fact", "note"}:
+            if role not in _SPEAKER_ROLES:
                 continue
             if not isinstance(content, str) or not content.strip():
+                # Keep fact triples that only have predicate/object.
+                if not (memory.get("predicate") and memory.get("object")):
+                    continue
+            if isinstance(content, str) and "How it felt:" in content:
                 continue
-            if "How it felt:" in content:
-                continue
-            if self._transcript.match(content):
+            if isinstance(content, str) and self._transcript.match(content):
                 continue
             clean.append(memory)
         return clean

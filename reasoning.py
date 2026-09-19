@@ -1590,13 +1590,22 @@ class MaximumSophisticationReasoning:
             obj = str(fact.get('object', '') or '').strip()
             readable = None
             if sub and pred and obj:
-                if pred.endswith('_name'):
-                    noun = pred[:-5].replace('_', ' ')
-                    readable = f"Your {noun}'s name is {obj}."
-                elif pred.startswith('favorite_') or pred.startswith('favourite_'):
-                    readable = f"Your {pred.replace('_', ' ')} is {obj}."
-                elif sub.lower() in {'user', 'i', 'me'}:
-                    readable = f"Your {pred.replace('_', ' ')} is {obj}."
+                try:
+                    from direct_response import format_predicate_fact
+                    readable = format_predicate_fact(pred, obj, sub)
+                except Exception:
+                    if pred.endswith('_name'):
+                        noun = pred[:-5].replace('_', ' ')
+                        readable = f"Your {noun}'s name is {obj}."
+                    elif pred == 'lives_in':
+                        readable = f"You live in {obj}."
+                    elif pred.startswith('work_'):
+                        prep = pred[5:] or 'as'
+                        readable = f"You work {prep} {obj}."
+                    elif pred.startswith('favorite_') or pred.startswith('favourite_'):
+                        readable = f"Your {pred.replace('_', ' ')} is {obj}."
+                    elif sub.lower() in {'user', 'i', 'me'}:
+                        readable = f"Your {pred.replace('_', ' ')} is {obj}."
             if not readable:
                 readable = fact.get('content') or fact.get('text')
             if readable and not re.match(r'^user\s+\w+\s+\S+$', str(readable).strip(), re.I):
@@ -1610,9 +1619,14 @@ class MaximumSophisticationReasoning:
             elif readable:
                 # Still keep a cleaned form rather than raw triple text.
                 if sub and pred and obj:
+                    try:
+                        from direct_response import format_predicate_fact
+                        cleaned = format_predicate_fact(pred, obj, sub)
+                    except Exception:
+                        cleaned = f"Your {pred.replace('_', ' ')} is {obj}."
                     semantic_knowledge.append({
                         'role': 'fact',
-                        'content': f"Your {pred.replace('_', ' ')} is {obj}.",
+                        'content': cleaned,
                         'subject': fact.get('subject'),
                         'predicate': fact.get('predicate'),
                         'object': fact.get('object'),

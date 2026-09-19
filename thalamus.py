@@ -25,6 +25,8 @@ from direct_response import (
     answer_from_grounded_memories,
     content_tokens,
     relevance_score,
+    _attribute_asked,
+    _fact_covers_attribute,
 )
 from learning.lobe_learning_store import LobeLearningStore
 
@@ -711,7 +713,7 @@ class Thalamus:
                             content = f"Your {pred.replace('_', ' ')} is {obj}."
             if not content:
                 continue
-            memories.append({"role": "fact", "content": content, **fact})
+            memories.append({**fact, "role": "fact", "content": content})
         # Drop experience-poison blobs before they reach reasoning / provider.
         memories = [
             m
@@ -745,13 +747,19 @@ class Thalamus:
         if reasoning["status"] != "success":
             return "I'm having trouble thinking right now."
         semantic_input, reasoning_answer = self._reasoning_answer(reasoning)
-        # Drop reasoning answers that don't overlap the prompt (unrelated fact leak).
+        # Drop reasoning answers that don't overlap the prompt / asked attribute.
         if isinstance(reasoning_answer, str) and reasoning_answer.strip():
             q_toks = content_tokens(user_input)
-            if q_toks and relevance_score(user_input, reasoning_answer) < 0.34:
+            attr = _attribute_asked(user_input)
+            bad = False
+            if attr and not _fact_covers_attribute(reasoning_answer, attr):
+                bad = True
+            elif q_toks and relevance_score(user_input, reasoning_answer) < 0.34:
                 if not (q_toks & content_tokens(reasoning_answer)):
-                    grounded = answer_from_grounded_memories(user_input, memories)
-                    reasoning_answer = grounded
+                    bad = True
+            if bad:
+                grounded = answer_from_grounded_memories(user_input, memories)
+                reasoning_answer = grounded
         if reasoning_answer is None:
             try:
                 reasoning_answer = self.response_provider.render(

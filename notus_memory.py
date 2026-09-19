@@ -175,6 +175,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         "hometown": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
         "city": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
         "location": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
+        "hike": frozenset({"hike", "hiking", "hiked"}),
+        "hiking": frozenset({"hike", "hiking", "hiked"}),
+        "hiked": frozenset({"hike", "hiking", "hiked"}),
     }
 
     @classmethod
@@ -190,11 +193,32 @@ class NotusMemorySystem(SuperhumanMemorySystem):
 
     @classmethod
     def _stem_token(cls, w: str) -> str:
-        """Light stemming for ranking (possessives + simple plurals)."""
+        """Light stemming for ranking (possessives, -ing/-ed, simple plurals)."""
         if w.endswith("'s") and len(w) > 3:
             w = w[:-2]
         elif w.endswith("s'") and len(w) > 3:
             w = w[:-2]
+        short_ing = {
+            "going": "go",
+            "being": "be",
+            "doing": "do",
+            "having": "have",
+            "nothing": "nothing",
+        }
+        if w in short_ing:
+            return short_ing[w]
+        if len(w) > 5 and w.endswith("ing"):
+            base = w[:-3]
+            if len(base) >= 3 and base[-1] == base[-2] and base[-1] not in "aeiou":
+                w = base[:-1]  # running -> run
+            else:
+                w = base + "e"  # hiking -> hike
+        elif len(w) > 4 and w.endswith("ed") and not w.endswith(("eed", "ied")):
+            base = w[:-2]
+            if len(base) >= 3 and base[-1] == base[-2] and base[-1] not in "aeiou":
+                w = base[:-1]
+            else:
+                w = base + "e" if not base.endswith("e") else base  # hiked -> hike
         # Very light plural fold: dogs->dog, names->name (keep ss/us/is).
         if (
             len(w) > 3
@@ -322,8 +346,13 @@ class NotusMemorySystem(SuperhumanMemorySystem):
 
         if len(query_tokens) >= 2:
             # Require clear signal — not a single OR-hit from a long filler row.
+            # Multi-significant queries (favorite food vs favorite color) need AND
+            # coverage, not a 50% OR hit on the shared adjective.
             min_needed = max(self._MIN_RELEVANCE, 0.5)
-            if overlap < min_needed:
+            if significant and len(significant) >= 2 and not _sig_covered(significant):
+                if overlap < 0.75:
+                    return 0.0
+            elif overlap < min_needed:
                 # Allow fact rows that still hit every significant token (AND).
                 if not (role_l == "fact" and _sig_covered(significant)):
                     return 0.0
@@ -545,6 +574,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                 sig_covered = all(
                     self._alias_set(t) & blob_exp for t in significant
                 )
+                # favorite food must not retrieve favorite_color (50% OR on "favorite")
+                if len(significant) >= 2 and not sig_covered and overlap < 0.75:
+                    continue
                 if overlap < max(self._MIN_RELEVANCE, 0.5) and not sig_covered:
                     continue
             conf = float(r[5] or 0.0)
