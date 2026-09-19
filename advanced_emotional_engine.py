@@ -586,6 +586,7 @@ class AdvancedEmotionalEngine:
             return None
     
     def feel_emotion(self, emotion: EmotionalState, intensity: float, trigger: str, context: str = "") -> None:
+        prior = self.current_emotion
         blend = self._check_emotional_blending(emotion, intensity)
         if blend:
             self._create_emotional_blend(blend, trigger, context)
@@ -603,6 +604,9 @@ class AdvancedEmotionalEngine:
             self.current_emotion = emotion
             self.emotional_intensity = mem.intensity
             self.mood_history.append((mem.timestamp, emotion, mem.intensity))
+        if self.current_emotion != prior:
+            self._last_primary = self.current_emotion
+            self._last_switch_time = time.time()
         self._update_emotional_patterns(emotion, trigger)
         if len(self.mood_history) > 200:
             self.mood_history = self.mood_history[-200:]
@@ -1505,7 +1509,12 @@ class AdvancedEmotionalEngine:
         return (emo, max(0.1, min(1.0, intensity)))
 
     def _pad_margin_ok(self, candidate: EmotionalState) -> bool:
-        # More lenient hysteresis for better emotion switching
+        # Refractory: block unwanted flips too soon after the last emotion switch.
+        if candidate != self.current_emotion and self._last_switch_time > 0.0:
+            elapsed = time.time() - self._last_switch_time
+            if elapsed < float(self.personality.refractory_sec):
+                return False
+        # Hysteresis: require enough PAD distance improvement to switch.
         cv, ca, cd = self._PAD_PROTOS[self.current_emotion]
         nv, na, nd = self._PAD_PROTOS[candidate]
         cur_dist = ((self.pad.v - cv)**2 + (self.pad.a - ca)**2 + (self.pad.d - cd)**2) ** 0.5
@@ -1970,23 +1979,64 @@ class EmotionalProcess:
                 }
                 
             elif msg_type == 'feel_emotion':
-                emotion_str = message.get('emotion')
+                # Canonical live contract matches AdvancedEmotionalEngine.feel_emotion:
+                #   emotion   (required): EmotionalState value string
+                #   intensity (optional, default 0.5)
+                #   trigger   (optional, default "External trigger";
+                #              aliases: text / user_input when emotion is present)
+                #   context   (optional)
+                # Free-text appraisal is process_input / appraise_internal — not feel_emotion.
+                emotion_raw = message.get('emotion')
+                if emotion_raw is None or (isinstance(emotion_raw, str) and not str(emotion_raw).strip()):
+                    keys = sorted(k for k in message.keys() if k != 'type')
+                    return {
+                        'status': 'error',
+                        'message': (
+                            "feel_emotion requires 'emotion' (EmotionalState value), "
+                            f"optional intensity/trigger; got keys {keys}. "
+                            "For text appraisal use process_input or appraise_internal."
+                        ),
+                    }
+                if isinstance(emotion_raw, EmotionalState):
+                    emotion = emotion_raw
+                    emotion_str = emotion.value
+                else:
+                    emotion_str = str(emotion_raw).strip().lower()
+                    try:
+                        emotion = EmotionalState(emotion_str)
+                    except Exception:
+                        return {'status': 'error', 'message': f'Unknown emotion: {emotion_str}'}
+
                 intensity = float(message.get('intensity', 0.5))
-                trigger = message.get('trigger', 'External trigger')
-                
-                # FIX: safe enum conversion
-                try:
-                    emotion = EmotionalState(emotion_str)
-                except Exception:
-                    return {'status': 'error', 'message': f'Unknown emotion: {emotion_str}'}
-                
-                self.engine.feel_emotion(emotion, intensity, trigger)
-                
-                # If strong emotion, notify Novelty Lobe
+                trigger = message.get('trigger')
+                if not (isinstance(trigger, str) and trigger.strip()):
+                    alt = message.get('text', message.get('user_input', 'External trigger'))
+                    trigger = alt if isinstance(alt, str) and alt.strip() else 'External trigger'
+                context = message.get('context', '')
+                if not isinstance(context, str):
+                    context = str(context or '')
+
+                before_emotion = self.engine.current_emotion.value
+                before_intensity = float(self.engine.emotional_intensity)
+                before_mems = len(self.engine.emotional_memories)
+
+                self.engine.feel_emotion(emotion, intensity, trigger, context)
+
                 if intensity > 0.6:
                     self._notify_novelty_lobe(trigger, emotion_str, intensity)
-                
-                return {'status': 'success', 'current_emotion': self.engine.current_emotion.value, 'intensity': self.engine.emotional_intensity}
+
+                return {
+                    'status': 'success',
+                    'current_emotion': self.engine.current_emotion.value,
+                    'intensity': self.engine.emotional_intensity,
+                    'emotion_changed': (
+                        self.engine.current_emotion.value != before_emotion
+                        or abs(float(self.engine.emotional_intensity) - before_intensity) > 1e-9
+                    ),
+                    'memory_count': len(self.engine.emotional_memories),
+                    'memories_added': len(self.engine.emotional_memories) - before_mems,
+                    'trigger': trigger,
+                }
                 
             elif msg_type == 'get_state':
                 # Top-level emotion/intensity (not nested under 'state') so lobes
