@@ -1,0 +1,125 @@
+=== AFTER: emotion text-understanding comparative ===
+sentence-transformers: UNAVAILABLE (embedding model_type=basic)
+capability loss: paraphrase-only matches rely more on AppraisalEngine meaning phrases; basic hash embeddings give weaker semantic support.
+
+## Unfairness
+TEXT: this is not fair
+  AppraisalEngine: event=unfairness severity=0.6 negated=False user_emotion=angry conf=0.440
+  semantic: not decisive (used=False, model=basic)
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=unfairness emotion=angry severity=0.600 confidence=0.600 negation_affected=False
+TEXT: they treated me unfairly
+  AppraisalEngine: event=unfairness severity=0.6 negated=False user_emotion=angry conf=0.760
+  semantic: used event=unfairness emotion=angry conf=0.408 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=unfairness emotion=angry severity=0.600 confidence=0.760 negation_affected=False
+TEXT: I got screwed over
+  AppraisalEngine: event=unfairness severity=0.6 negated=False user_emotion=angry conf=0.760
+  semantic: not decisive (used=False, model=basic)
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=unfairness emotion=angry severity=0.600 confidence=0.760 negation_affected=False
+TEXT: everyone else got a chance except me
+  AppraisalEngine: event=unfairness severity=0.6 negated=False user_emotion=angry conf=0.760
+  semantic: used event=unfairness emotion=angry conf=0.401 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=unfairness emotion=angry severity=0.600 confidence=0.760 negation_affected=False
+
+## Anger
+TEXT: I'm angry
+  AppraisalEngine: event=conflict severity=0.55 negated=False user_emotion=angry conf=0.730
+  semantic: used event=conflict emotion=angry conf=0.436 model=basic
+  keyword/cue: {'anger': 0.187}
+  final combined: source=appraisal event=conflict emotion=angry severity=0.550 confidence=0.730 negation_affected=False
+TEXT: I'm furious
+  AppraisalEngine: event=conflict severity=0.55 negated=False user_emotion=angry conf=0.730
+  semantic: used event=unfairness emotion=angry conf=0.408 model=basic
+  keyword/cue: {'anger': 0.187}
+  final combined: source=appraisal event=conflict emotion=angry severity=0.550 confidence=0.730 negation_affected=False
+TEXT: I'm completely fed up
+  AppraisalEngine: event=conflict severity=0.63 negated=False user_emotion=angry conf=0.778
+  semantic: used event=conflict emotion=angry conf=0.507 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=conflict emotion=angry severity=0.630 confidence=0.778 negation_affected=False
+TEXT: this is really pissing me off
+  AppraisalEngine: event=conflict severity=0.63 negated=False user_emotion=angry conf=0.778
+  semantic: used event=conflict emotion=angry conf=0.577 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=conflict emotion=angry severity=0.630 confidence=0.778 negation_affected=False
+
+## Sadness/rejection
+TEXT: I'm sad
+  AppraisalEngine: event=rejection severity=0.65 negated=False user_emotion=sad conf=0.790
+  semantic: used event=unfairness emotion=angry conf=0.408 model=basic
+  keyword/cue: {'negative': 0.093, 'sadness': 0.187}
+  final combined: source=appraisal event=rejection emotion=sad severity=0.650 confidence=0.790 negation_affected=False
+TEXT: I feel rejected
+  AppraisalEngine: event=rejection severity=0.65 negated=False user_emotion=sad conf=0.790
+  semantic: used event=rejection emotion=sad conf=0.655 model=basic
+  keyword/cue: {'negative': 0.083, 'sadness': 0.165}
+  final combined: source=appraisal event=rejection emotion=sad severity=0.650 confidence=0.790 negation_affected=False
+TEXT: it feels like nobody wants me around
+  AppraisalEngine: event=rejection severity=0.65 negated=False user_emotion=sad conf=0.790
+  semantic: used event=rejection emotion=sad conf=0.535 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=rejection emotion=sad severity=0.650 confidence=0.790 negation_affected=False
+TEXT: that really hurt
+  AppraisalEngine: event=harm severity=0.88 negated=False user_emotion=hurt conf=0.552
+  semantic: used event=harm emotion=hurt conf=0.436 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=harm emotion=hurt severity=0.880 confidence=0.880 negation_affected=False
+
+## Concern/fear
+TEXT: I'm worried
+  AppraisalEngine: event=threat severity=0.75 negated=False user_emotion=scared conf=0.850
+  semantic: used event=unfairness emotion=angry conf=0.408 model=basic
+  keyword/cue: {'concern': 0.187}
+  final combined: source=appraisal event=threat emotion=worried severity=0.750 confidence=0.850 negation_affected=False
+TEXT: I'm scared this is going to go wrong
+  AppraisalEngine: event=threat severity=0.75 negated=False user_emotion=scared conf=0.850
+  semantic: not decisive (used=False, model=basic)
+  keyword/cue: {'concern': 0.187}
+  final combined: source=appraisal event=threat emotion=scared severity=0.750 confidence=0.850 negation_affected=False
+TEXT: I have a bad feeling about this
+  AppraisalEngine: event=threat severity=0.75 negated=False user_emotion=scared conf=0.850
+  semantic: used event=threat emotion=scared conf=0.524 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=threat emotion=scared severity=0.750 confidence=0.850 negation_affected=False
+
+## Positive/pride
+TEXT: I'm proud of what I did
+  AppraisalEngine: event=success severity=0.65 negated=False user_emotion=proud conf=0.790
+  semantic: used event=success emotion=proud conf=0.674 model=basic
+  keyword/cue: {'pride': 0.187}
+  final combined: source=appraisal event=success emotion=proud severity=0.650 confidence=0.790 negation_affected=False
+TEXT: I actually pulled it off
+  AppraisalEngine: event=success severity=0.65 negated=False user_emotion=proud conf=0.790
+  semantic: used event=success emotion=proud conf=0.596 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=success emotion=proud severity=0.650 confidence=0.790 negation_affected=False
+TEXT: I'm really happy with how that turned out
+  AppraisalEngine: event=success severity=0.73 negated=False user_emotion=proud conf=0.838
+  semantic: not decisive (used=False, model=basic)
+  keyword/cue: {'positive': 0.176, 'excitement': 0.07}
+  final combined: source=appraisal event=success emotion=proud severity=0.730 confidence=0.838 negation_affected=False
+
+## Negation/context
+TEXT: I'm not angry
+  AppraisalEngine: event=neutral severity=0.025 negated=True user_emotion=neutral conf=0.200
+  semantic: not decisive (used=False, model=basic)
+  keyword/cue: ALL_ZEROS
+  final combined: source=neutral event=neutral emotion=neutral severity=0.025 confidence=0.200 negation_affected=True
+TEXT: I'm not sad anymore
+  AppraisalEngine: event=neutral severity=0.025 negated=True user_emotion=neutral conf=0.200
+  semantic: not decisive (used=False, model=basic)
+  keyword/cue: ALL_ZEROS
+  final combined: source=neutral event=neutral emotion=neutral severity=0.025 confidence=0.200 negation_affected=True
+TEXT: I thought I'd be furious, but I'm actually relieved
+  AppraisalEngine: event=success severity=0.55 negated=False user_emotion=proud conf=0.730
+  semantic: used event=success emotion=proud conf=0.42 model=basic
+  keyword/cue: ALL_ZEROS
+  final combined: source=appraisal event=success emotion=proud severity=0.550 confidence=0.730 negation_affected=True
+TEXT: It's not unfair
+  AppraisalEngine: event=unfairness severity=0.15 negated=True user_emotion=neutral conf=0.200
+  semantic: not decisive (used=False, model=basic)
+  keyword/cue: ALL_ZEROS
+  final combined: source=neutral event=neutral emotion=neutral severity=0.150 confidence=0.200 negation_affected=True

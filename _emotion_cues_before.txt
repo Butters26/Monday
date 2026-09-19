@@ -1,0 +1,124 @@
+=== BEFORE baseline: cue/appraisal outputs ===
+sentence-transformers: unavailable (basic embeddings fallback expected)
+
+## Unfairness
+TEXT: this is not fair
+  AppraisalEngine: event=unfairness severity=0.6 negated=False sarcasm=False directed_user=False user_emotion=angry conf=0.440 pad=(-0.3, 0.36, 0.06)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: they treated me unfairly
+  AppraisalEngine: event=unfairness severity=0.6 negated=False sarcasm=False directed_user=True user_emotion=angry conf=0.760 pad=(-0.3, 0.36, 0.06)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I got screwed over
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: everyone else got a chance except me
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+
+## Anger
+TEXT: I'm angry
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'anger': 0.08}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I'm furious
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'anger': 0.08}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I'm completely fed up
+  AppraisalEngine: event=neutral severity=0.18 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.508 pad=(0.0, 0.0, 0.0)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: this is really pissing me off
+  AppraisalEngine: event=neutral severity=0.18 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.508 pad=(0.0, 0.0, 0.0)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+
+## Sadness/rejection
+TEXT: I'm sad
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'negative': 0.08, 'sadness': 0.006}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I feel rejected
+  AppraisalEngine: event=rejection severity=0.65 negated=False sarcasm=False directed_user=True user_emotion=sad conf=0.790 pad=(-0.351, 0.215, -0.26)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: it feels like nobody wants me around
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'concern': 0.2, 'sadness': 0.15}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: that really hurt
+  AppraisalEngine: event=neutral severity=0.18 negated=False sarcasm=False directed_user=False user_emotion=neutral conf=0.272 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'concern': 0.12, 'sadness': 0.18}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+
+## Concern/fear
+TEXT: I'm worried
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'concern': 0.06}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I'm scared this is going to go wrong
+  AppraisalEngine: event=threat severity=0.75 negated=False sarcasm=False directed_user=True user_emotion=scared conf=0.850 pad=(-0.405, 0.577, -0.225)
+  keyword/cue: {'negative': 0.08, 'concern': 0.06, 'sadness': 0.006}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I have a bad feeling about this
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'negative': 0.08, 'sadness': 0.006}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+
+## Positive/pride
+TEXT: I'm proud of what I did
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'pride': 0.07}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I actually pulled it off
+  AppraisalEngine: event=success severity=0.65 negated=False sarcasm=False directed_user=True user_emotion=proud conf=0.790 pad=(0.39, 0.26, 0.195)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I'm really happy with how that turned out
+  AppraisalEngine: event=neutral severity=0.18 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.508 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'positive': 0.05}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+
+## Negation/context
+TEXT: I'm not angry
+  AppraisalEngine: event=neutral severity=0.025 negated=True sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'anger': 0.08}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I'm not sad anymore
+  AppraisalEngine: event=neutral severity=0.025 negated=True sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'negative': 0.08, 'sadness': 0.006}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: I thought I'd be furious, but I'm actually relieved
+  AppraisalEngine: event=neutral severity=0.1 negated=False sarcasm=False directed_user=True user_emotion=neutral conf=0.200 pad=(0.0, 0.0, 0.0)
+  keyword/cue: {'anger': 0.08}
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
+TEXT: It's not unfair
+  AppraisalEngine: event=unfairness severity=0.15 negated=True sarcasm=False directed_user=False user_emotion=neutral conf=0.200 pad=(-0.075, 0.09, 0.015)
+  keyword/cue: ALL_ZEROS
+  semantic: (not used yet)
+  final combined: (legacy: appraisal drives PAD; cues only resonance)
