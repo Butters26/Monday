@@ -690,11 +690,25 @@ class Thalamus:
             if not content:
                 pred = str(fact.get("predicate", "") or "")
                 obj = str(fact.get("object", "") or "")
-                if pred.endswith("_name") and obj:
-                    noun = pred[:-5].replace("_", " ")
-                    content = f"Your {noun}'s name is {obj}."
-                elif pred and obj:
-                    content = f"Your {pred.replace('_', ' ')} is {obj}."
+                sub = str(fact.get("subject", "") or "user")
+                if pred and obj:
+                    try:
+                        from notus_memory import NotusMemorySystem
+
+                        content = NotusMemorySystem.format_personal_fact(
+                            sub, pred, obj
+                        )
+                    except Exception:
+                        if pred.endswith("_name"):
+                            noun = pred[:-5].replace("_", " ")
+                            content = f"Your {noun}'s name is {obj}."
+                        elif pred == "lives_in":
+                            content = f"You live in {obj}."
+                        elif pred.startswith("work_"):
+                            prep = pred[5:] or "as"
+                            content = f"You work {prep} {obj}."
+                        else:
+                            content = f"Your {pred.replace('_', ' ')} is {obj}."
             if not content:
                 continue
             memories.append({"role": "fact", "content": content, **fact})

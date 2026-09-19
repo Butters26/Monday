@@ -109,7 +109,14 @@ def answer_from_grounded_memories(
                 content = f"Your {noun}'s name is {obj}."
             elif pred.startswith("favorite_") or pred.startswith("favourite_"):
                 content = f"Your {pred.replace('_', ' ')} is {obj}."
-            elif not content.lower().startswith("your "):
+            elif pred == "lives_in":
+                content = f"You live in {obj}."
+            elif pred.startswith("work_"):
+                prep = pred[5:] or "as"
+                content = f"You work {prep} {obj}."
+            elif content.lower().startswith(("your ", "you ")):
+                pass  # keep already well-formed readable content
+            else:
                 content = f"Your {pred.replace('_', ' ')} is {obj}."
         key = content.strip().casefold()
         if key in seen or key == q.casefold():
@@ -336,12 +343,23 @@ class DeterministicResponseProvider:
         if generic:
             noun = " ".join(generic.group(1).lower().split())
             value = generic.group(2).strip(" .!?")
+            fragile = {
+                "day", "life", "mood", "feeling", "feelings", "time", "thing",
+                "stuff", "question", "answer", "message", "chat", "conversation",
+                "thought", "idea", "problem", "issue", "way", "point", "one",
+            }
             if (
                 noun
                 and value
                 and not noun.startswith("favorite ")
                 and " name" not in noun
                 and not value.lower().startswith("named ")
+                and noun not in fragile
+                and not any(value.lower().startswith(p) for p in (
+                    "going", "feeling", "looking", "doing", "getting", "being",
+                    "really", "just", "kinda", "kind of", "sort of", "pretty",
+                    "great", "good", "bad", "fine", "okay", "ok",
+                ))
             ):
                 return f"Got it — your {noun} is {value}."
         return None

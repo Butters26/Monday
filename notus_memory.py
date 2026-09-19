@@ -163,6 +163,30 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         "trying", "thinking", "wondering", "hoping", "wanting", "needing",
         "really", "just", "kinda", "kind of", "sort of", "pretty",
     )
+    # Bidirectional aliases so "job" finds work_as facts / "live" finds lives_in.
+    _TOKEN_ALIASES = {
+        "job": frozenset({"job", "work", "occupation", "profession"}),
+        "work": frozenset({"job", "work", "occupation", "profession"}),
+        "occupation": frozenset({"job", "work", "occupation", "profession"}),
+        "profession": frozenset({"job", "work", "occupation", "profession"}),
+        "live": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
+        "lives": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
+        "living": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
+        "hometown": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
+        "city": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
+        "location": frozenset({"live", "lives", "living", "hometown", "city", "location"}),
+    }
+
+    @classmethod
+    def _alias_set(cls, token: str) -> set:
+        return set(cls._TOKEN_ALIASES.get(token, frozenset())) | {token}
+
+    @classmethod
+    def _expand_tokens(cls, tokens: set) -> set:
+        out = set(tokens or set())
+        for t in list(out):
+            out |= cls._alias_set(t)
+        return out
 
     @classmethod
     def _stem_token(cls, w: str) -> str:
@@ -200,12 +224,18 @@ class NotusMemorySystem(SuperhumanMemorySystem):
 
     @classmethod
     def _overlap_score(cls, query_tokens: set, text: str) -> float:
+        """Fraction of query tokens covered, counting durable aliases as hits."""
         if not query_tokens:
             return 0.0
         cand = cls._content_tokens(text)
         if not cand:
             return 0.0
-        return len(query_tokens & cand) / float(len(query_tokens))
+        cand_exp = cls._expand_tokens(cand)
+        hits = 0
+        for qt in query_tokens:
+            if cls._alias_set(qt) & cand_exp:
+                hits += 1
+        return hits / float(len(query_tokens))
 
     @classmethod
     def _phrase_bonus(cls, query: str, text: str) -> float:
@@ -278,20 +308,26 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         if overlap <= 0.0:
             return 0.0
         cand = self._content_tokens(content)
+        cand_exp = self._expand_tokens(cand)
         significant = {t for t in query_tokens if len(t) >= 4}
         role_l = str(role or "").strip().lower()
+
+        def _sig_covered(tokens: set) -> bool:
+            return bool(tokens) and all(
+                self._alias_set(t) & cand_exp for t in tokens
+            )
+
+        def _sig_hit_count(tokens: set) -> int:
+            return sum(1 for t in tokens if self._alias_set(t) & cand_exp)
+
         if len(query_tokens) >= 2:
             # Require clear signal — not a single OR-hit from a long filler row.
             min_needed = max(self._MIN_RELEVANCE, 0.5)
             if overlap < min_needed:
                 # Allow fact rows that still hit every significant token (AND).
-                if not (
-                    role_l == "fact"
-                    and significant
-                    and significant.issubset(cand)
-                ):
+                if not (role_l == "fact" and _sig_covered(significant)):
                     return 0.0
-        elif significant and not (significant & cand):
+        elif significant and not _sig_hit_count(significant):
             return 0.0
         cosine = 0.0
         try:
@@ -301,13 +337,13 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         except Exception:
             cosine = 0.0
         and_bonus = 0.0
-        if significant and significant.issubset(cand):
+        if _sig_covered(significant):
             # Stronger AND bias so buried multi-word memories beat filler OR hits.
             and_bonus = 0.14 if len(significant) >= 2 else 0.10
         elif significant:
             # Partial significant coverage still ranks above pure short-token noise.
             and_bonus = 0.04 * (
-                len(significant & cand) / float(len(significant))
+                _sig_hit_count(significant) / float(len(significant))
             )
         phrase = self._phrase_bonus(query, content)
         fact_boost = 0.0
@@ -341,7 +377,10 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             return []
 
         user_id = (user_id or "default").strip()
-        tokens = sorted(query_tokens, key=len, reverse=True)[:12]
+        # Expand LIKE tokens so "job" also scans rows containing "work".
+        tokens = sorted(
+            self._expand_tokens(query_tokens), key=len, reverse=True
+        )[:12]
         like_clauses = []
         params: List[Any] = [user_id]
         for tok in tokens:
@@ -384,7 +423,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             if score < self._MIN_RELEVANCE:
                 continue
             # Require at least one real token hit — no cosine-only invention.
-            if not (query_tokens & self._content_tokens(content)):
+            # Alias coverage counts (job↔work, live↔lives).
+            content_tokens = self._expand_tokens(self._content_tokens(content))
+            if not any(self._alias_set(qt) & content_tokens for qt in query_tokens):
                 continue
             scored.append(
                 {
@@ -495,19 +536,21 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             if overlap < self._MIN_RELEVANCE:
                 continue
             blob_tokens = self._content_tokens(blob)
-            if not (query_tokens & blob_tokens):
+            blob_exp = self._expand_tokens(blob_tokens)
+            if not any(self._alias_set(qt) & blob_exp for qt in query_tokens):
                 continue
             significant = {t for t in query_tokens if len(t) >= 4}
             # Multi-word fact questions: require majority / AND on significant tokens.
             if len(query_tokens) >= 2 and significant:
-                if overlap < max(self._MIN_RELEVANCE, 0.5) and not significant.issubset(
-                    blob_tokens
-                ):
+                sig_covered = all(
+                    self._alias_set(t) & blob_exp for t in significant
+                )
+                if overlap < max(self._MIN_RELEVANCE, 0.5) and not sig_covered:
                     continue
             conf = float(r[5] or 0.0)
             perm = 0.05 if (r[6] or 0) else 0.0
             and_bonus = 0.0
-            if significant and significant.issubset(blob_tokens):
+            if significant and all(self._alias_set(t) & blob_exp for t in significant):
                 and_bonus = 0.14 if len(significant) >= 2 else 0.10
             phrase = self._phrase_bonus(query, blob)
             # Predicate slug tokens (dog_name -> dog name) already in blob via replace.
