@@ -1,0 +1,141 @@
+=== Emotion explicit/contrast — before/after notes ===
+Date: Sat Sep 19, 2026 (America/Denver)
+embedding model_type=basic
+
+PRIORITY PRESERVED: AppraisalEngine -> semantic support -> keyword/cue fallback
+
+## What changed
+1) Basic semantic authority limited
+   - model_type=basic: primary eligibility bar raised (0.58); candidates still reported.
+   - When AppraisalEngine is authoritative (strong OR contrast-authored), semantic may
+     SUPPORT only if event AGREES; conflicts are IGNORE (semantic_used=False).
+   - Basic semantic must not override confident appraisal (I'm furious/sad/worried).
+
+2) Explicit self-report vs appraisal event separated
+   - _extract_explicit_user_emotion reads I'm happy/angry/sad/scared/relieved/proud
+     (with negation/contrast). Sets user emotion independently of event_type.
+   - event_inferred_emotion keeps event→emotion mapping (e.g. success→proud).
+   - Example: 'I'm really happy with how that turned out' → user=happy, event=success.
+
+3) Relieved
+   - Added EmotionalState.RELIEVED with PAD (0.55, -0.25, 0.35).
+   - Not silently mapped to proud; success appraisal may still exist separately.
+
+4) Contrast
+   - Clause after 'but' / current-state outranks earlier/hypothetical affect for USER emotion.
+   - Contrast-authored results are appraisal-authoritative so noisy basic semantic cannot fill.
+   - Additive 'but I'm exhausted' does not override prior proud (exhausted not an emotion state).
+
+5) Negation preserved
+   - I'm not angry / I'm not sad anymore / It's not unfair → neutral.
+
+## Comparative table (listed tests)
+
+TEXT                                                 | FIELD                        | BEFORE                       | AFTER
+--------------------------------------------------------------------------------------------------------------------------
+I'm happy.                                           | explicit/self-reported       | None                         | happy
+                                                     | appraisal event              | neutral                      | affection
+                                                     | AppraisalEngine inferred     | neutral                      | happy
+                                                     | semantic candidate           | success/proud/0.5/used       | success/proud/0.5/used=False
+                                                     | final user emotion           | proud                        | happy
+                                                     | final event                  | success                      | affection
+                                                     | confidence                   | 0.500                        | 0.900
+                                                     | negation/contrast changed    | none                         | none
+
+I'm proud of myself.                                 | explicit/self-reported       | None                         | proud
+                                                     | appraisal event              | success                      | success
+                                                     | AppraisalEngine inferred     | proud                        | proud
+                                                     | semantic candidate           | success/proud/0.387/used     | success/proud/0.387/used=False
+                                                     | final user emotion           | proud                        | proud
+                                                     | final event                  | success                      | success
+                                                     | confidence                   | 0.790                        | 0.900
+                                                     | negation/contrast changed    | none                         | none
+
+I'm angry about what happened.                       | explicit/self-reported       | None                         | angry
+                                                     | appraisal event              | conflict                     | conflict
+                                                     | AppraisalEngine inferred     | angry                        | angry
+                                                     | semantic candidate           | None/used=False              | success/proud/0.354/used=False
+                                                     | final user emotion           | angry                        | angry
+                                                     | final event                  | conflict                     | conflict
+                                                     | confidence                   | 0.730                        | 0.900
+                                                     | negation/contrast changed    | none                         | none
+
+I'm scared.                                          | explicit/self-reported       | None                         | scared
+                                                     | appraisal event              | threat                       | threat
+                                                     | AppraisalEngine inferred     | scared                       | scared
+                                                     | semantic candidate           | unfairness/angry/0.408/used  | unfairness/angry/0.408/used=False
+                                                     | final user emotion           | scared                       | scared
+                                                     | final event                  | threat                       | threat
+                                                     | confidence                   | 0.850                        | 0.900
+                                                     | negation/contrast changed    | none                         | none
+
+I'm relieved.                                        | explicit/self-reported       | None                         | relieved
+                                                     | appraisal event              | success                      | success
+                                                     | AppraisalEngine inferred     | proud                        | proud
+                                                     | semantic candidate           | unfairness/angry/0.408/used  | unfairness/angry/0.408/used=False
+                                                     | final user emotion           | proud                        | relieved
+                                                     | final event                  | success                      | success
+                                                     | confidence                   | 0.790                        | 0.900
+                                                     | negation/contrast changed    | none                         | none
+
+I'm really happy with how that turned out.           | explicit/self-reported       | None                         | happy
+                                                     | appraisal event              | success                      | success
+                                                     | AppraisalEngine inferred     | proud                        | proud
+                                                     | semantic candidate           | None/used=False              | success/proud/0.333/used=False
+                                                     | final user emotion           | proud                        | happy
+                                                     | final event                  | success                      | success
+                                                     | confidence                   | 0.838                        | 0.900
+                                                     | negation/contrast changed    | none                         | none
+
+I thought I'd be furious, but I'm actually relieved. | explicit/self-reported       | None                         | relieved
+                                                     | appraisal event              | success                      | success
+                                                     | AppraisalEngine inferred     | proud                        | proud
+                                                     | semantic candidate           | success/proud/0.42/used      | success/proud/0.42/used=True
+                                                     | final user emotion           | proud                        | relieved
+                                                     | final event                  | success                      | success
+                                                     | confidence                   | 0.730                        | 0.920
+                                                     | negation/contrast changed    | negation                     | negation+contrast
+
+I was sad earlier, but I'm fine now.                 | explicit/self-reported       | None                         | neutral
+                                                     | appraisal event              | neutral                      | neutral
+                                                     | AppraisalEngine inferred     | neutral                      | neutral
+                                                     | semantic candidate           | unfairness/angry/0.426/used  | unfairness/angry/0.426/used=False
+                                                     | final user emotion           | angry                        | neutral
+                                                     | final event                  | unfairness                   | neutral
+                                                     | confidence                   | 0.426                        | 0.920
+                                                     | negation/contrast changed    | negation                     | negation+contrast
+
+I'm not angry.                                       | explicit/self-reported       | None                         | neutral
+                                                     | appraisal event              | neutral                      | neutral
+                                                     | AppraisalEngine inferred     | neutral                      | neutral
+                                                     | semantic candidate           | None/used=False              | conflict/angry/0.378/used=False
+                                                     | final user emotion           | neutral                      | neutral
+                                                     | final event                  | neutral                      | neutral
+                                                     | confidence                   | 0.200                        | 0.200
+                                                     | negation/contrast changed    | negation                     | negation
+
+I'm not happy about this.                            | explicit/self-reported       | None                         | neutral
+                                                     | appraisal event              | neutral                      | neutral
+                                                     | AppraisalEngine inferred     | neutral                      | neutral
+                                                     | semantic candidate           | None/used=False              | success/proud/0.354/used=False
+                                                     | final user emotion           | neutral                      | neutral
+                                                     | final event                  | neutral                      | neutral
+                                                     | confidence                   | 0.200                        | 0.200
+                                                     | negation/contrast changed    | negation                     | negation
+
+I'm proud of finishing it, but I'm exhausted.        | explicit/self-reported       | None                         | proud
+                                                     | appraisal event              | success                      | success
+                                                     | AppraisalEngine inferred     | proud                        | proud
+                                                     | semantic candidate           | success/proud/0.386/used     | success/proud/0.386/used=False
+                                                     | final user emotion           | proud                        | proud
+                                                     | final event                  | success                      | success
+                                                     | confidence                   | 0.790                        | 0.900
+                                                     | negation/contrast changed    | none                         | none
+
+## Remaining weak cases
+- Basic embeddings still propose noisy candidates (e.g. I'm scared → unfairness); gated off, but ST would help paraphrases.
+- 'I'm proud of finishing it, but I'm exhausted': exhausted is not an EmotionalState; proud kept (additive contrast).
+- 'I actually pulled it off' still maps user emotion via success→proud (no explicit self-report word).
+- Soft event for bare 'I'm happy.' is affection (not celebration); acceptable separation of emotion vs event.
+- Keyword cue list intentionally not expanded; paraphrases without appraisal/ST may still ALL_ZEROS on cues.
+
