@@ -141,6 +141,7 @@ class OutputLobe:
         self.voice_profiles = VOICE_PROFILES
         self.text_to_phonemes = TEXT_TO_PHONEMES
         
+        self.last_emotion_meta = {}
         self.last_output = None
         if enable_tts:
             self._initialize_tts()
@@ -477,7 +478,22 @@ class OutputLobe:
                     'text': content['text'],
                     'emotion': content.get('emotion'),
                     'intensity': content.get('intensity', 0.5),
+                    'voice_prosody': content.get('voice_prosody') or {},
+                    'emotional_tone': content.get('emotional_tone'),
+                    'emphasis': content.get('emphasis') or [],
+                    'expression': content.get('expression') or {},
+                    'pleasure': content.get('pleasure'),
+                    'arousal': content.get('arousal'),
+                    'dominance': content.get('dominance'),
                     'formatted': False,
+                }
+                self.last_emotion_meta = {
+                    'emotion': formatted.get('emotion'),
+                    'intensity': formatted.get('intensity'),
+                    'voice_prosody': formatted.get('voice_prosody'),
+                    'emotional_tone': formatted.get('emotional_tone'),
+                    'emphasis': formatted.get('emphasis'),
+                    'expression': formatted.get('expression'),
                 }
             else:
                 formatted = self.format_output(content)

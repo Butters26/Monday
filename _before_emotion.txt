@@ -1,0 +1,50 @@
+2026-09-19 09:35:16,590 - WARNING - sentence-transformers unavailable (No module named 'sentence_transformers'); falling back to basic embeddings
+2026-09-19 09:35:16,595 - INFO - 🧠 Fixed Superhuman Memory System initialized
+2026-09-19 09:35:16,595 - INFO - 🌱 Background seeding started
+2026-09-19 09:35:16,701 - INFO - 💾 Stored memory: user - That loss still sits heavy with me....
+2026-09-19 09:35:16,776 - INFO - 💾 Stored memory: monday - I'm here to ...help...
+
+I keep coming back to "I'm...
+2026-09-19 09:35:16,800 - INFO - 💾 Stored memory: user - Hello Monday, how are you feeling about us today?...
+2026-09-19 09:35:16,857 - INFO - 💾 Stored memory: monday - I'm here — thanks for checking in. How are you?...
+=== smoke_emotion_engine_full ===
+DESIGN JOB: On the live path, EmotionalProcess must appraise user and inner-life events into PAD-driven emotion (hysteresis/refractory), update attachment/needs/internal loops, record memories and learn trigger patterns, surface expression flags plus EmotionalStateOutput (tone/prosody/emphasis) into thalamus→output, and persist/reload that full state.
+runtime: /tmp/monday-emotion-smoke-aent30ci
+✅ Autonomous Thinking Loop registered with Thalamus
+🧠 Autonomous Thinking Loop background starting...
+[PASS] create_core_systems
+[PASS] emotion registered
+[PASS] appraisal moves emotion + unresolved — emotion='frustrated' unresolved=[{'event_type': 'betrayal', 'severity': 0.8, 'timestamp': 1789832116.603417}] was='calm'
+[FAIL] PAD exposed and moved — before=(0.0, 0.0, 0.0) now=(-0.534331225127432, 0.19460563005248543, -0.034529716622037236) pi_exposes=False ges_pad=(-0.12435984781991459,0.04190793283126131,0.12611833145295986)
+[FAIL] attachment+needs update and exposed — hurt 0.0->0.63 belonging 0.8->0.8 safety 0.7->0.7 exposed_ok=False
+[PASS] autonomous inner life moves emotion — before=anxious@0.853 after=anxious@0.848 pad (-0.46510256715860804, 0.23143579489035904, -0.0273532696096397)
+[PASS] memories recorded — before=0 after=3 last='Direct trigger: You hurt me badly — that betrayal and reject'
+[FAIL] pattern learning — before=0 after=0 exposed=False sample=[]
+🧠 Reasoning: think_about started
+🧠 Reasoning: user_input = 'That loss still sits heavy with me.'
+🧠 Reasoning pulled context: no summary
+🧠 Reasoning pulled user info: Have 0 facts about user and 0 recorded interactions
+[FAIL] expressions into output — prosody=True tone='tense' emphasis=['strong'] expr={'tears': True, 'voice_shake': True, 'withdraw': True} contract_ok=False live_delivered=False out_routes=1 reply_len=239
+✅ Loaded emotional state from /tmp/monday-emotion-smoke-aent30ci/persist_check.json
+[FAIL] persistence save/load full state — emotion=contempt pad_ok=False attach_ok=False loaded_pad=(0.0, 0.0, 0.0) loaded_hurt=0.0
+🧠 Reasoning: think_about started
+🧠 Reasoning: user_input = 'Hello Monday, how are you feeling about us today?'
+🧠 Reasoning pulled context: no summary
+🧠 Reasoning pulled user info: Have 0 facts about user and 0 recorded interactions
+[FAIL] live chat hits emotion process_input — hit=False reply_len=47
+🛑 Autonomous Thinking Loop shutdown
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+---
+PASS: create_core_systems
+PASS: emotion registered
+PASS: appraisal moves emotion + unresolved — emotion='frustrated' unresolved=[{'event_type': 'betrayal', 'severity': 0.8, 'timestamp': 1789832116.603417}] was='calm'
+FAIL: PAD exposed and moved — before=(0.0, 0.0, 0.0) now=(-0.534331225127432, 0.19460563005248543, -0.034529716622037236) pi_exposes=False ges_pad=(-0.12435984781991459,0.04190793283126131,0.12611833145295986)
+FAIL: attachment+needs update and exposed — hurt 0.0->0.63 belonging 0.8->0.8 safety 0.7->0.7 exposed_ok=False
+PASS: autonomous inner life moves emotion — before=anxious@0.853 after=anxious@0.848 pad (-0.46510256715860804, 0.23143579489035904, -0.0273532696096397)
+PASS: memories recorded — before=0 after=3 last='Direct trigger: You hurt me badly — that betrayal and reject'
+FAIL: pattern learning — before=0 after=0 exposed=False sample=[]
+FAIL: expressions into output — prosody=True tone='tense' emphasis=['strong'] expr={'tears': True, 'voice_shake': True, 'withdraw': True} contract_ok=False live_delivered=False out_routes=1 reply_len=239
+FAIL: persistence save/load full state — emotion=contempt pad_ok=False attach_ok=False loaded_pad=(0.0, 0.0, 0.0) loaded_hurt=0.0
+FAIL: live chat hits emotion process_input — hit=False reply_len=47
+RESULT: FAIL (6 failed)

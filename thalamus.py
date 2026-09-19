@@ -1002,8 +1002,17 @@ class Thalamus:
             "generate_output",
             {
                 "text": response_text,
-                "emotion": emotional_state.get("current_emotion", "neutral"),
+                "emotion": emotional_state.get(
+                    "current_emotion", emotional_state.get("emotion", "neutral")
+                ),
                 "intensity": emotional_state.get("intensity", 0.5),
+                "voice_prosody": emotional_state.get("voice_prosody") or {},
+                "emotional_tone": emotional_state.get("emotional_tone"),
+                "emphasis": emotional_state.get("emphasis") or [],
+                "expression": emotional_state.get("expression") or {},
+                "pleasure": emotional_state.get("pleasure"),
+                "arousal": emotional_state.get("arousal"),
+                "dominance": emotional_state.get("dominance"),
                 "user_input": user_input,
                 "user_id": user_id,
                 "preserve_text": True,

@@ -800,6 +800,12 @@ class AdvancedEmotionalEngine:
                 'inferred_need': self._user_affect.inferred_need,
                 'last_updated': self._user_affect.last_updated,
             },
+            'pad': {'v': self.pad.v, 'a': self.pad.a, 'd': self.pad.d},
+            'attachment': asdict(self.attachment),
+            'needs': asdict(self.needs),
+            'internal': asdict(self.internal),
+            'expression': asdict(self.expression),
+            'autonomy_level': self.autonomy_level,
             'updated_at': time.time(),
         }
         data.setdefault('created_at', time.time())
@@ -855,6 +861,37 @@ class AdvancedEmotionalEngine:
                 inferred_need=ua.get('inferred_need', 'neutral'),
                 last_updated=float(ua.get('last_updated', 0.0)),
             )
+        pad_obj = obj.get('pad')
+        if isinstance(pad_obj, dict):
+            self.pad = PAD(
+                v=float(pad_obj.get('v', self.pad.v)),
+                a=float(pad_obj.get('a', self.pad.a)),
+                d=float(pad_obj.get('d', self.pad.d)),
+            )
+        att = obj.get('attachment')
+        if isinstance(att, dict):
+            self.attachment = AttachmentModel(**{
+                k: float(att[k]) for k in AttachmentModel.__dataclass_fields__ if k in att
+            })
+        needs = obj.get('needs')
+        if isinstance(needs, dict):
+            self.needs = InternalNeeds(**{
+                k: float(needs[k]) for k in InternalNeeds.__dataclass_fields__ if k in needs
+            })
+        internal = obj.get('internal')
+        if isinstance(internal, dict):
+            self.internal = InternalState(**{
+                k: float(internal[k]) for k in InternalState.__dataclass_fields__ if k in internal
+            })
+        expr = obj.get('expression')
+        if isinstance(expr, dict):
+            self.expression = ExpressionState(
+                tears=bool(expr.get('tears', False)),
+                voice_shake=bool(expr.get('voice_shake', False)),
+                withdraw=bool(expr.get('withdraw', False)),
+            )
+        if 'autonomy_level' in obj:
+            self.autonomy_level = float(obj.get('autonomy_level', self.autonomy_level))
 
     # --------------- Internals ---------------
     def _check_emotional_blending(self, new_emotion: EmotionalState, intensity: float) -> Optional[EmotionalBlend]:
@@ -920,6 +957,8 @@ class AdvancedEmotionalEngine:
         """
         self._update_internal_from_time(dt=1.0)
         self._update_attachment_from_input(appraisal.raw_text)
+        self._update_attachment_from_appraisal(appraisal)
+        self._update_needs_from_appraisal(appraisal)
 
         # 1. Update user affect model
         self._user_affect = UserAffectModel(
@@ -985,8 +1024,9 @@ class AdvancedEmotionalEngine:
         else:
             self._attention_bias = None
 
-        # 7. Learn: update event-type sensitivity
+        # 7. Learn: update event-type sensitivity + trigger→emotion patterns
         self._update_event_sensitivity(appraisal)
+        self._update_emotional_patterns(self.current_emotion, appraisal.raw_text)
 
         # 8. Store event to Notus for cross-session memory (graceful no-op if unsupported)
         try:
@@ -1336,6 +1376,49 @@ class AdvancedEmotionalEngine:
             self.attachment.guilt = max(0.0, self.attachment.guilt - 0.2)
         self.attachment.abandonment_fear = max(0.0, min(1.0, self.attachment.abandonment_fear + 0.3*self.attachment.hurt - 0.05))
 
+    def _update_attachment_from_appraisal(self, appraisal: AppraisalResult) -> None:
+        """Attachment drifts from appraised event meaning, not only yelling keywords."""
+        et = appraisal.event_type
+        sev = float(max(0.0, min(1.0, appraisal.severity)))
+        sens = float(self.attachment.sensitivity)
+        if et in ('betrayal', 'rejection', 'abandonment', 'harm', 'loss'):
+            self.attachment.hurt = min(1.0, self.attachment.hurt + 0.28 * sev * sens)
+            self.attachment.abandonment_fear = min(
+                1.0, self.attachment.abandonment_fear + 0.22 * sev
+            )
+            if et == 'abandonment':
+                self.attachment.abandonment_fear = min(
+                    1.0, self.attachment.abandonment_fear + 0.12 * sev
+                )
+            self.attachment.security = max(0.0, self.attachment.security - 0.08 * sev)
+        elif et in ('affection', 'support', 'gift', 'celebration'):
+            self.attachment.hurt = max(0.0, self.attachment.hurt - 0.18 * sev)
+            self.attachment.abandonment_fear = max(
+                0.0, self.attachment.abandonment_fear - 0.10 * sev
+            )
+            self.attachment.security = min(1.0, self.attachment.security + 0.06 * sev)
+            self.attachment.guilt = max(0.0, self.attachment.guilt - 0.05 * sev)
+
+    def _update_needs_from_appraisal(self, appraisal: AppraisalResult) -> None:
+        """Internal needs shift with appraised events so autonomy/belonging/safety are live."""
+        et = appraisal.event_type
+        sev = float(max(0.0, min(1.0, appraisal.severity)))
+        if et in ('harm', 'threat', 'abandonment'):
+            self.needs.safety = max(0.0, self.needs.safety - 0.18 * sev)
+        if et in ('rejection', 'betrayal', 'abandonment', 'loss'):
+            self.needs.belonging = max(0.0, self.needs.belonging - 0.18 * sev)
+        if et == 'criticism' and appraisal.directed_at_monday:
+            self.needs.competence = max(0.0, self.needs.competence - 0.12 * sev)
+        if et in ('conflict', 'unfairness'):
+            self.needs.autonomy = max(0.0, self.needs.autonomy - 0.08 * sev)
+        if et in ('affection', 'support', 'gift'):
+            self.needs.belonging = min(1.0, self.needs.belonging + 0.12 * sev)
+            self.needs.safety = min(1.0, self.needs.safety + 0.06 * sev)
+        if et in ('success', 'celebration'):
+            self.needs.competence = min(1.0, self.needs.competence + 0.12 * sev)
+        if et in ('gift', 'celebration', 'affection'):
+            self.needs.stimulation = min(1.0, self.needs.stimulation + 0.05 * sev)
+
     def _pad_from_internal(self) -> PAD:
         V = (+0.7*self.internal.hope -0.8*self.internal.worry -0.6*self.attachment.hurt -0.5*self.attachment.guilt)
         A = (+0.8*self.internal.worry +0.5*self.internal.tension -0.5*self.internal.fatigue)
@@ -1455,6 +1538,7 @@ class AdvancedEmotionalEngine:
         )
         self.emotional_memories.append(mem)
         self.mood_history.append((mem.timestamp, emotion, intensity))
+        self._update_emotional_patterns(emotion, trigger)
         self._last_primary = emotion
         self._last_switch_time = time.time()
 
@@ -1790,6 +1874,39 @@ class EmotionalProcess:
         
         return output
     
+    def _affect_snapshot(self) -> Dict[str, Any]:
+        """Live-path affect contract: PAD, attachment/needs, expression, patterns, prosody."""
+        emo_out = self.get_emotional_state_output()
+        patterns_summary = {
+            k: [e.value for e in v[-3:]]
+            for k, v in list(self.engine.emotional_patterns.items())[-20:]
+        }
+        return {
+            'current_emotion': self.engine.current_emotion.value,
+            'emotion': self.engine.current_emotion.value,
+            'intensity': self.engine.emotional_intensity,
+            'resonance': self.engine.emotional_resonance,
+            'pleasure': self.engine.pad.v,
+            'arousal': self.engine.pad.a,
+            'dominance': self.engine.pad.d,
+            'pad': {
+                'v': self.engine.pad.v,
+                'a': self.engine.pad.a,
+                'd': self.engine.pad.d,
+            },
+            'attachment': asdict(self.engine.attachment),
+            'needs': asdict(self.engine.needs),
+            'internal': asdict(self.engine.internal),
+            'expression': asdict(self.engine.expression),
+            'emotional_tone': emo_out.emotional_tone,
+            'emphasis': list(emo_out.emphasis),
+            'voice_prosody': dict(emo_out.voice_prosody),
+            'autonomy_level': self.engine.autonomy_level,
+            'memory_count': len(self.engine.emotional_memories),
+            'patterns': patterns_summary,
+            'emotional_patterns': patterns_summary,
+        }
+
     def process_message_safe(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Safe dispatcher with validation (FIX)"""
         with self.engine.engine_lock:
@@ -1826,16 +1943,30 @@ class EmotionalProcess:
                     {'event_type': et, 'severity': float(sev), 'timestamp': float(ts)}
                     for (et, sev, ts) in getattr(self.engine, '_unresolved_appraisals', [])
                 ]
+                snap = self._affect_snapshot()
                 return {
                     'status': 'success',
                     'response': response,
-                    'current_emotion': self.engine.current_emotion.value,
-                    'intensity': self.engine.emotional_intensity,
-                    'resonance': self.engine.emotional_resonance,
+                    'current_emotion': snap['current_emotion'],
+                    'intensity': snap['intensity'],
+                    'resonance': snap['resonance'],
                     'worry': self.engine.internal.worry,
                     'tension': self.engine.internal.tension,
-                    'autonomy_level': self.engine.autonomy_level,
+                    'autonomy_level': snap['autonomy_level'],
                     'unresolved_appraisals': unresolved,
+                    'pleasure': snap['pleasure'],
+                    'arousal': snap['arousal'],
+                    'dominance': snap['dominance'],
+                    'pad': snap['pad'],
+                    'attachment': snap['attachment'],
+                    'needs': snap['needs'],
+                    'internal': snap['internal'],
+                    'expression': snap['expression'],
+                    'emotional_tone': snap['emotional_tone'],
+                    'emphasis': snap['emphasis'],
+                    'voice_prosody': snap['voice_prosody'],
+                    'memory_count': snap['memory_count'],
+                    'patterns': snap['patterns'],
                 }
                 
             elif msg_type == 'feel_emotion':
@@ -1859,22 +1990,38 @@ class EmotionalProcess:
                 
             elif msg_type == 'get_state':
                 # Top-level emotion/intensity (not nested under 'state') so lobes
-                # reading get_state see real affect. Light extras for inner life.
+                # reading get_state see real affect. Full affect contract for live path.
                 unresolved = [
                     {'event_type': et, 'severity': float(sev), 'timestamp': float(ts)}
                     for (et, sev, ts) in getattr(self.engine, '_unresolved_appraisals', [])
                 ]
                 history = list(getattr(self.engine, '_event_history', [])[-10:])
                 last_event = history[-1] if history else None
+                snap = self._affect_snapshot()
                 return {
                     'status': 'success',
-                    'emotion': self.engine.current_emotion.value,
-                    'intensity': self.engine.emotional_intensity,
-                    'resonance': self.engine.emotional_resonance,
+                    'emotion': snap['emotion'],
+                    'intensity': snap['intensity'],
+                    'resonance': snap['resonance'],
                     'summary': self.engine.get_emotional_summary(),
                     'last_event_type': last_event,
                     'unresolved_appraisals': unresolved,
                     'event_history': history,
+                    'pleasure': snap['pleasure'],
+                    'arousal': snap['arousal'],
+                    'dominance': snap['dominance'],
+                    'pad': snap['pad'],
+                    'attachment': snap['attachment'],
+                    'needs': snap['needs'],
+                    'internal': snap['internal'],
+                    'expression': snap['expression'],
+                    'emotional_tone': snap['emotional_tone'],
+                    'emphasis': snap['emphasis'],
+                    'voice_prosody': snap['voice_prosody'],
+                    'memory_count': snap['memory_count'],
+                    'patterns': snap['patterns'],
+                    'emotional_patterns': snap['emotional_patterns'],
+                    'autonomy_level': snap['autonomy_level'],
                 }
             
             elif msg_type == 'get_emotional_state':
