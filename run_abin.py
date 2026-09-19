@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Start Monday's prompted core plus light autonomous inner-life for own feelings.
 
-Direct-call path (no sockets): prompted lobes including text perception, plus
+Direct-call path (no sockets): prompted lobes including PerceptionLobe
+(text always; audio/vision when devices really open), plus
 AutonomousThinkingLoop so mood can move from inner thoughts without user text —
 not the full legacy socket stack.
 """

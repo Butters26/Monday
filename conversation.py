@@ -259,8 +259,16 @@ class ConversationSystem:
                     if ent and ent not in entities:
                         entities.append(ent)
                 understanding['entities'] = entities
-                understanding['perception_concepts'] = perc.get('concepts') or perc.get('words') or []
-                understanding['perception_words'] = perc.get('words') or []
+                concepts = perc.get('concepts')
+                if isinstance(concepts, dict):
+                    concept_list = list(concepts.get('words') or [])
+                    understanding['perception_words'] = concept_list
+                else:
+                    concept_list = list(concepts or perc.get('words') or [])
+                    understanding['perception_words'] = list(perc.get('words') or concept_list)
+                understanding['perception_concepts'] = concept_list
+                understanding['perception_modality'] = perc.get('modality') or 'text'
+                understanding['perception_novelty_flags'] = list(perc.get('novelty_flags') or [])
                 if perc.get('sentiment') and understanding.get('sentiment') in (None, 'neutral'):
                     understanding['sentiment'] = perc.get('sentiment')
 

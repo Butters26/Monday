@@ -81,9 +81,9 @@ class ABINLauncher:
         # Start all lobes
         print("\n🚀 Starting brain lobes...")
         
-        # Perception is text-only on the live direct-call path (run_abin).
-        # Do not spawn perception.py as a socket lobe — it no longer creates
-        # /tmp/perception.sock and must not print fake STT/webcam success.
+        # Perception lives on the live direct-call path (run_abin), not sockets.
+        # Do not spawn perception.py as a socket lobe — no /tmp/perception.sock,
+        # no autonomous STT/webcam theater that fakes device success.
         lobes = [
             ("Representation", "representation.py", "/tmp/representation.sock"),
             ("Pattern Recognition", "pattern_recognition.py", "/tmp/pattern.sock"),

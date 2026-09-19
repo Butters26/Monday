@@ -622,7 +622,7 @@ class Thalamus:
         if has_perception:
             perception = self.send_and_wait(
                 "perception",
-                "process_text",
+                "perceive_text",
                 {"text": user_input, "user_id": user_id},
             )
             if perception.get("status") != "success":

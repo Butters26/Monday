@@ -1,7 +1,7 @@
 {
   "perception": {
     "socket_path": null,
-    "notes": "Live path uses direct-call PerceptionLobe (text only). Audio/vision disabled — no STT/webcam claims.",
+    "notes": "Live path: PerceptionLobe senses (text required; audio/vision when device open succeeds). Unified thalamus shape. No autonomous theater loops.",
 
     "input_types": {
       "text": {
@@ -9,17 +9,36 @@
         "default": true
       },
       "audio": {
-        "enabled": false,
-        "require_speech_recognition": false,
+        "enabled": "when_available",
+        "require_speech_recognition": true,
+        "require_microphone_open": true,
         "timeout_seconds": 5,
         "phrase_time_limit_seconds": 10
       },
       "visual": {
-        "enabled": false,
-        "require_opencv": false,
+        "enabled": "when_available",
+        "require_opencv": true,
+        "require_camera_open": true,
         "camera_index": 0
       }
     },
+
+    "unified_output": [
+      "modality",
+      "text",
+      "concepts",
+      "entities",
+      "novelty_flags",
+      "confidence",
+      "raw_meta"
+    ],
+
+    "message_types": [
+      "perceive_text",
+      "perceive_audio",
+      "perceive_vision",
+      "get_status"
+    ],
 
     "text_processing": {
       "extract_concepts": true,
