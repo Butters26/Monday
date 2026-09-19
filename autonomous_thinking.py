@@ -8,9 +8,12 @@ import time
 import threading
 import random
 import re
+import hashlib
+import json
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 from thalamus import get_thalamus
+from autonomous_selection import AutonomousSelectionMixin, _LIGHT_TURN_RE
 
 @dataclass
 class AutonomousThought:
@@ -22,9 +25,22 @@ class AutonomousThought:
     intensity: float  # 0-1 how strong/important
     speak_worthy: bool  # Should this be said out loud?
     timestamp: float
+    # Instrumentation / gating metadata
+    mode: str = ""
+    topic_key: str = ""
+    source_memory_id: str = None
+    source_appraisal: str = None
+    satiation_score: float = 0.0
+    speak_satiation_score: float = 0.0
+    emotion_before: str = ""
+    intensity_before: float = 0.0
+    emotion_after: str = ""
+    intensity_after: float = 0.0
+    relevance_gate_reason: str = ""
+    selection_weight: float = 0.0
 
 
-class AutonomousThinkingLoop:
+class AutonomousThinkingLoop(AutonomousSelectionMixin):
     """
     Background process that generates thoughts without prompting.
     Monday has an inner monologue.
@@ -56,7 +72,31 @@ class AutonomousThinkingLoop:
         self.user_last_message_time = 0.0
         # Active conversation user — Notus memories are per-user; ground thoughts there.
         self.current_user_id = "default"
-        
+        self.last_user_text = ""
+        self.current_conversation_topic = ""
+
+        # Per-topic think/speak satiation (loop-local only; never deletes Notus memory)
+        self._think_satiation = {}
+        self._think_sat_updated = {}
+        self._speak_satiation = {}
+        self._speak_sat_updated = {}
+        self._topic_last_modes = {}
+        self._topic_select_count = {}
+        self._topic_last_severity = {}
+        self._topic_resolved_at = {}
+        self._topic_reactivated_at = {}
+        self.thought_traces = []
+        self.trace_log_path = None
+
+        # Satiation / gate tunables
+        self._THINK_SAT_STEP = 0.28
+        self._THINK_SAT_DECAY_HALFLIFE = 180.0
+        self._THINK_SAT_SEVERE_CAP = 0.35
+        self._SPEAK_SAT_STEP = 0.55
+        self._SPEAK_SAT_DECAY_HALFLIFE = 300.0
+        self._SPEAK_COOLDOWN_SEC = 120.0
+        self._RESOLUTION_DEMOTE = 0.12
+
         # Register with Thalamus
         self._register_with_thalamus()
         
@@ -95,6 +135,14 @@ class AutonomousThinkingLoop:
             uid = message.get('user_id')
             if isinstance(uid, str) and uid.strip():
                 self.current_user_id = uid.strip()
+            text = message.get('text') or message.get('user_input')
+            if isinstance(text, str) and text.strip():
+                self._note_user_turn(text.strip())
+            elif isinstance(message.get('content'), str) and message.get('content').strip():
+                # only treat content as text when it looks like user prose, not an envelope
+                c = message.get('content').strip()
+                if len(c) > 1 and c[0] not in '{[':
+                    self._note_user_turn(c)
             return {'status': 'success'}
         
         elif msg_type == 'user_inactive':
@@ -121,6 +169,18 @@ class AutonomousThinkingLoop:
         elif msg_type == 'get_recent_thoughts':
             return self._get_recent_thoughts(message.get('limit', 10))
         
+        elif msg_type == 'get_thought_traces':
+            limit = int(message.get('limit', 50) or 50)
+            with self.lock:
+                traces = list(self.thought_traces[-limit:])
+            return {'status': 'success', 'traces': traces, 'count': len(traces)}
+
+        elif msg_type == 'aside_relevance_gate':
+            aside = message.get('aside') or {}
+            user_text = message.get('user_text') or message.get('text') or self.last_user_text
+            ok, reason = self.aside_passes_relevance_gate(aside, user_text=user_text)
+            return {'status': 'success', 'allowed': ok, 'reason': reason}
+
         elif msg_type == 'health':
             return {'status': 'success', 'healthy': True}
         
@@ -151,41 +211,83 @@ class AutonomousThinkingLoop:
     def _generate_thought(self) -> Optional[AutonomousThought]:
         """
         Generate an autonomous thought.
-        This is the heart of the inner monologue.
+        Score-driven topic selection + mode progression; randomness only breaks ties.
         """
-        # Get context from other lobes
         emotional_state = self._get_emotional_state()
+        emotion_before = str(emotional_state.get("emotion") or "neutral")
+        try:
+            intensity_before = float(emotional_state.get("intensity", 0.5) or 0.5)
+        except (TypeError, ValueError):
+            intensity_before = 0.5
+
+        self._update_resolution_tracking(emotional_state)
         recent_memories = self._get_recent_memories()
         current_values = self._get_current_values()
-        
-        # Decide what type of thought to generate
-        thought_type = self._decide_thought_type(emotional_state)
-        
-        # Generate thought content based on type
-        content, trigger = self._generate_thought_content(
-            thought_type, emotional_state, recent_memories, current_values
+
+        candidate = self._select_thought_candidate(
+            emotional_state, recent_memories, current_values
         )
-        
+        if not candidate:
+            return None
+
+        mode = self._select_mode_for_candidate(candidate, emotional_state)
+        content, trigger, thought_type = self._generate_mode_content(
+            mode, candidate, emotional_state, recent_memories, current_values
+        )
         if not content:
             return None
-        
-        # Determine if this should be spoken
-        speak_worthy = self._is_speak_worthy(thought_type, emotional_state)
-        
-        thought = AutonomousThought(
+
+        topic_key = candidate.get("topic_key") or ""
+        think_sat = self._think_sat(topic_key) if topic_key else 0.0
+        speak_sat = self._speak_sat(topic_key) if topic_key else 0.0
+
+        speak_worthy, gate_reason = self._evaluate_speak_worthy(
+            thought_type=thought_type,
+            mode=mode,
+            topic_key=topic_key,
+            content=content,
+            emotional_state=emotional_state,
+            candidate=candidate,
+            user_text=self.last_user_text,
+        )
+
+        try:
+            intensity = max(
+                float(emotional_state.get("intensity", 0.5) or 0.5),
+                0.55 if (
+                    (emotional_state.get("unresolved_appraisals") or [])
+                    and candidate.get("kind") == "appraisal"
+                ) else 0.0,
+            )
+        except (TypeError, ValueError):
+            intensity = 0.5
+
+        mem = candidate.get("memory") if isinstance(candidate.get("memory"), dict) else {}
+        appraisal = candidate.get("appraisal") if isinstance(candidate.get("appraisal"), dict) else {}
+        source_mem_id = None
+        if mem:
+            source_mem_id = str(mem.get("id") or mem.get("memory_id") or "") or None
+        source_app = str(appraisal.get("event_type") or "") or None if appraisal else None
+
+        return AutonomousThought(
             id=f"thought_{int(time.time() * 1000)}",
             content=content,
             thought_type=thought_type,
             trigger=trigger,
-            intensity=max(
-                float(emotional_state.get('intensity', 0.5) or 0.5),
-                0.55 if (emotional_state.get('unresolved_appraisals') or []) else 0.0,
-            ),
+            intensity=intensity,
             speak_worthy=speak_worthy,
-            timestamp=time.time()
+            timestamp=time.time(),
+            mode=mode,
+            topic_key=topic_key,
+            source_memory_id=source_mem_id,
+            source_appraisal=source_app,
+            satiation_score=think_sat,
+            speak_satiation_score=speak_sat,
+            emotion_before=emotion_before,
+            intensity_before=intensity_before,
+            relevance_gate_reason=gate_reason,
+            selection_weight=float(candidate.get("weight", 0.0) or 0.0),
         )
-        
-        return thought
     
     def _get_emotional_state(self) -> Dict[str, Any]:
         """Get current emotional state from Emotion lobe.
@@ -490,7 +592,8 @@ class AutonomousThinkingLoop:
                 if any(w in low for w in theme_words):
                     themed.append(m)
             if themed:
-                return themed
+                # Prefer themed but keep others available so satiation can diversify.
+                return themed + [m for m in pool if m not in themed]
         return pool
 
 
@@ -820,7 +923,11 @@ class AutonomousThinkingLoop:
                 
                 # Log thought
                 speak_marker = "💬" if thought.speak_worthy else "💭"
-                print(f"{speak_marker} [{thought.thought_type}] {thought.content}")
+                print(
+                    f"{speak_marker} [{thought.thought_type}/{thought.mode}] "
+                    f"sat={thought.satiation_score:.2f} w={thought.selection_weight:.2f} "
+                    f"{thought.content}"
+                )
     
     def get_speak_worthy_thought(self) -> Optional[Dict[str, Any]]:
         """Public method to get a thought to speak (pops from speak-worthy queue)."""
@@ -832,41 +939,120 @@ class AutonomousThinkingLoop:
             while self.thought_queue:
                 thought = self.thought_queue.pop(0)
                 if thought.speak_worthy:
+                    self._bump_speak_satiation(thought.topic_key or "")
                     return asdict(thought)
         return None
 
     def _accept_thought(self, thought: AutonomousThought) -> None:
-        """Store a generated thought and soft-fire own-feelings via emotion."""
+        """Store a generated thought, bump think-satiation, soft-fire own-feelings."""
+        topic_key = thought.topic_key or ""
+        severe = False
+        if thought.source_appraisal:
+            st = self._get_emotional_state()
+            for u in (st.get("unresolved_appraisals") or []):
+                if isinstance(u, dict) and str(u.get("event_type") or "") == thought.source_appraisal:
+                    try:
+                        severe = float(u.get("severity", 0) or 0) >= 0.65
+                    except (TypeError, ValueError):
+                        severe = False
+                    break
+        if topic_key:
+            self._bump_think_satiation(topic_key, unresolved_severe=severe)
+            modes = self._topic_last_modes.setdefault(topic_key, [])
+            if thought.mode:
+                modes.append(thought.mode)
+                self._topic_last_modes[topic_key] = modes[-8:]
+            # Soft cross-satiate linked appraisal/memory so they cannot tag-team dominate.
+            if thought.source_appraisal:
+                for k in list(self._think_satiation.keys()) + [
+                    self._topic_key_for_appraisal({"event_type": thought.source_appraisal})
+                ]:
+                    if k != topic_key and (
+                        k.startswith(f"app:{thought.source_appraisal}")
+                        or (topic_key.startswith("mem:") and k.startswith("app:"))
+                    ):
+                        cur = self._think_sat(k)
+                        self._think_satiation[k] = min(1.0, cur + self._THINK_SAT_STEP * 0.35)
+                        self._think_sat_updated[k] = time.time()
+
+        self._notify_emotion_from_thought(thought)
+
+        try:
+            after = self._get_emotional_state()
+            thought.emotion_after = str(after.get("emotion") or "")
+            thought.intensity_after = float(after.get("intensity", 0.0) or 0.0)
+        except Exception:
+            thought.emotion_after = thought.emotion_before
+            thought.intensity_after = thought.intensity_before
+
+        # Refresh satiation scores after bump for the trace
+        thought.satiation_score = self._think_sat(topic_key) if topic_key else thought.satiation_score
+
+        trace = {
+            "timestamp": thought.timestamp,
+            "ts_local": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(thought.timestamp)),
+            "user_id": self.current_user_id,
+            "thought_type": thought.thought_type,
+            "mode": thought.mode,
+            "trigger": thought.trigger,
+            "source_memory_id": thought.source_memory_id,
+            "source_appraisal": thought.source_appraisal,
+            "topic_key": thought.topic_key,
+            "satiation_score": thought.satiation_score,
+            "speak_satiation_score": thought.speak_satiation_score,
+            "selection_weight": thought.selection_weight,
+            "emotion_before": thought.emotion_before,
+            "intensity_before": thought.intensity_before,
+            "emotion_after": thought.emotion_after,
+            "intensity_after": thought.intensity_after,
+            "speak_worthy": thought.speak_worthy,
+            "relevance_gate_reason": thought.relevance_gate_reason,
+            "content": thought.content,
+        }
+
         with self.lock:
             self.recent_thoughts.append(thought)
-            self.recent_thoughts = self.recent_thoughts[-100:]  # Keep last 100
+            self.recent_thoughts = self.recent_thoughts[-100:]
+            self.thought_traces.append(trace)
+            self.thought_traces = self.thought_traces[-200:]
             if thought.speak_worthy:
                 self.thought_queue.append(thought)
         self.last_thought_time = time.time()
-        self._notify_emotion_from_thought(thought)
+        self._write_trace(trace)
 
     def _notify_emotion_from_thought(self, thought: AutonomousThought) -> None:
-        """Route thought into emotion own-feelings; match unresolved event when possible."""
+        """Route thought into emotion own-feelings; only bind prior appraisal when on-topic.
+
+        Do NOT inject "(still sitting with that X)" into off-topic thoughts — that was
+        re-anchoring every cycle to the same appraisal and blocking mood-attention split.
+        PAD/emotion inertia is preserved; we never reset emotion on topic resolve.
+        """
         try:
             emotional_state = self._get_emotional_state()
             primary = self._primary_unresolved(emotional_state)
             prior = None
             content = thought.content
+            on_topic = False
             if primary:
-                prior = primary.get('event_type')
-                # Prefer content already about the unresolved event (trigger prefix).
-                if thought.trigger.startswith('unresolved_') and prior:
-                    content = thought.content
-                elif prior and prior not in (thought.content or '').lower():
-                    # Nudge wording so appraisal PAD moves coherently with what she sits with.
-                    content = f"{thought.content} (still sitting with that {prior})"
+                prior_et = primary.get('event_type')
+                app_key = self._topic_key_for_appraisal(primary)
+                if thought.topic_key and (
+                    thought.topic_key == app_key
+                    or thought.topic_key.startswith(f"app:{prior_et}")
+                    or (thought.source_appraisal and thought.source_appraisal == prior_et)
+                ):
+                    on_topic = True
+                    prior = prior_et
+                elif (thought.trigger or "").startswith(("unresolved_", "appraisal_")):
+                    on_topic = True
+                    prior = prior_et
             payload = {
                 'content': content,
                 'source': 'thought' if thought.thought_type != 'memory' else 'memory',
                 'relevance': float(thought.intensity),
                 'resolved': False,
             }
-            if prior:
+            if prior and on_topic:
                 payload['prior_appraisal_event_type'] = prior
             self.thalamus.send_message(
                 'emotion',

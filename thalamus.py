@@ -792,7 +792,10 @@ class Thalamus:
         if _has_auto_early:
             try:
                 self.send_message(
-                    "autonomous", "user_active", {"user_id": user_id}, source="thalamus"
+                    "autonomous",
+                    "user_active",
+                    {"user_id": user_id, "text": user_input},
+                    source="thalamus",
                 )
             except Exception:
                 pass
@@ -1071,7 +1074,12 @@ class Thalamus:
             has_autonomous = "autonomous" in self.lobe_handlers
         if has_autonomous:
             try:
-                self.send_message("autonomous", "user_active", {"user_id": user_id}, source="thalamus")
+                self.send_message(
+                    "autonomous",
+                    "user_active",
+                    {"user_id": user_id, "text": user_input},
+                    source="thalamus",
+                )
             except Exception:
                 pass
         # Rare second beat: speak-worthy inner thought may surface after the reply.
@@ -1085,6 +1093,7 @@ class Thalamus:
             reply,
             turn_intensity=turn_intensity,
             preloaded_aside=preloaded_aside,
+            user_input=user_input,
         )
         reply = self._maybe_attach_curiosity_follow_up(
             reply,
@@ -1112,7 +1121,53 @@ class Thalamus:
                 pass
         return reply
 
+    def _requeue_speak_worthy(self, autonomous, aside: Dict[str, Any], now: float = 0.0) -> None:
+        """Put a speak-worthy aside back on the autonomous queue if possible."""
+        if autonomous is None or not isinstance(aside, dict):
+            return
+        try:
+            lock = getattr(autonomous, "lock", None)
+            queue = getattr(autonomous, "thought_queue", None)
+            if queue is None:
+                return
+            # Rebuild a lightweight thought-like object if the queue expects dataclasses.
+            ThoughtCls = None
+            try:
+                from autonomous_thinking import AutonomousThought
+                ThoughtCls = AutonomousThought
+            except Exception:
+                ThoughtCls = None
+            item = aside
+            if ThoughtCls is not None:
+                try:
+                    item = ThoughtCls(
+                        id=str(aside.get("id") or f"aside_{int(now*1000)}"),
+                        content=str(aside.get("content") or ""),
+                        thought_type=str(aside.get("thought_type") or "feeling"),
+                        trigger=str(aside.get("trigger") or ""),
+                        intensity=float(aside.get("intensity", 0.5) or 0.5),
+                        speak_worthy=True,
+                        timestamp=float(aside.get("timestamp") or now or time.time()),
+                        mode=str(aside.get("mode") or ""),
+                        topic_key=str(aside.get("topic_key") or ""),
+                        source_memory_id=aside.get("source_memory_id"),
+                        source_appraisal=aside.get("source_appraisal"),
+                        satiation_score=float(aside.get("satiation_score", 0.0) or 0.0),
+                        speak_satiation_score=float(aside.get("speak_satiation_score", 0.0) or 0.0),
+                        relevance_gate_reason=str(aside.get("relevance_gate_reason") or ""),
+                    )
+                except Exception:
+                    item = aside
+            if lock is not None:
+                with lock:
+                    queue.insert(0, item)
+            else:
+                queue.insert(0, item)
+        except Exception:
+            pass
+
     def _pop_speak_worthy_candidate(self) -> Optional[Dict[str, Any]]:
+
         """Pop one pending speak-worthy thought without attaching it yet."""
         with self.lobe_handlers_lock:
             autonomous = self.lobe_handlers.get("autonomous")
@@ -1143,11 +1198,12 @@ class Thalamus:
             thought = generate()
             if thought is None:
                 return None
-            # Ensure it can surface — unresolved mint path is deliberately speak-worthy.
+            # Do not force speak_worthy — relevance gate at attach time decides.
+            # Only bump intensity slightly if unresolved mint and already speak-eligible.
             try:
-                thought.speak_worthy = True
-                if float(getattr(thought, "intensity", 0.0) or 0.0) < 0.55:
-                    thought.intensity = 0.7
+                if getattr(thought, "speak_worthy", False):
+                    if float(getattr(thought, "intensity", 0.0) or 0.0) < 0.55:
+                        thought.intensity = 0.6
             except Exception:
                 pass
             if callable(accept):
@@ -1168,6 +1224,7 @@ class Thalamus:
     def _maybe_attach_speak_worthy_aside(
         self, reply: str, turn_intensity: float = 0.5,
         preloaded_aside: Optional[Dict[str, Any]] = None,
+        user_input: str = "",
     ) -> str:
         """Optionally append one speak-worthy autonomous thought as a second beat.
 
@@ -1236,6 +1293,40 @@ class Thalamus:
             if autonomous is not None:
                 self._requeue_speak_worthy(autonomous, aside, now)
             return reply
+
+        # Hard relevance gate: light/unrelated turns must not drag stale rumination.
+        gate_fn = getattr(autonomous, "aside_passes_relevance_gate", None) if autonomous else None
+        if callable(gate_fn):
+            try:
+                allowed, gate_reason = gate_fn(aside, user_text=user_input or "")
+            except Exception:
+                allowed, gate_reason = True, "gate_error_allow"
+            if not allowed:
+                demote = getattr(autonomous, "demote_aside_to_internal", None)
+                if callable(demote):
+                    try:
+                        demote(aside)
+                    except Exception:
+                        pass
+                # Do not requeue as speak-worthy — keep internal.
+                try:
+                    aside["speak_worthy"] = False
+                    aside["relevance_gate_reason"] = gate_reason
+                except Exception:
+                    pass
+                return reply
+            try:
+                aside["relevance_gate_reason"] = gate_reason
+            except Exception:
+                pass
+
+        # Speak-satiation bookkeeping when we actually surface.
+        bump = getattr(autonomous, "_bump_speak_satiation", None) if autonomous else None
+        if callable(bump):
+            try:
+                bump(str(aside.get("topic_key") or ""))
+            except Exception:
+                pass
 
         self._last_spoken_aside_time = now
         return f"{reply.rstrip()}\n\n{content.strip()}"

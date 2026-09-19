@@ -51,7 +51,10 @@ _MILD_SOCIAL_EXACT = frozenset(
 )
 _MILD_SOCIAL_RE = re.compile(
     r"^\s*(?:hi|hello|hey|yo|sup|hiya|howdy|greetings|"
-    r"good\s+(?:morning|afternoon|evening))\b[\s!.]*$",
+    r"good\s+(?:morning|afternoon|evening))\b[\s!.]*$"
+    r"|^\s*(?:hey[, ]+)?(?:are you (?:still )?with me|you (?:still )?there|still there)\??\s*$"
+    r"|^\s*(?:what'?s|how'?s)\s+the\s+weather\b.*$"
+    r"|^\s*how are you\??\s*$",
     re.IGNORECASE,
 )
 
@@ -66,6 +69,13 @@ def is_mild_social_turn(user_input: str, intent: Optional[str] = None) -> bool:
     if bare in _MILD_SOCIAL_EXACT or lower in _MILD_SOCIAL_EXACT:
         return True
     if _MILD_SOCIAL_RE.match(text):
+        return True
+    # Light check-ins / presence pings — must not drag stale unresolved rumination.
+    light_needles = (
+        "still with me", "you there", "you still there", "are you there",
+        "what's the weather", "whats the weather", "how are you",
+    )
+    if any(n in bare for n in light_needles) and len(text.split()) <= 10:
         return True
     if intent == "greeting" and len(text.split()) <= 5:
         return True
