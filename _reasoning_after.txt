@@ -1,0 +1,31 @@
+DESIGN_JOB: Reasoning is Monday's live think lobe on the thalamus path (DirectMaximumSophisticationAdapter → MaximumSophisticationReasoning): ground think/answers in Notus facts and Monday's own prior lines, answer compound questions from multiple grounded facts, and refuse to invent when memory is empty.
+
+=== LIVE create_core_systems AFTER ===
+SEED | 'My name is Matthew' → 'Got it — your name is Matthew.'
+SEED | "My dog's name is Pixel" → "Got it — your dog's name is Pixel."
+SEED | 'I live in Boulder' → 'Got it — you live in Boulder.'
+SEED | 'I work as a carpenter' → 'Got it — you work as a carpenter.'
+SEED | 'My favorite color is teal' → 'Got it — your favorite color is teal.'
+SEED | 'Remember the codeword is NebulaQuartz' → 'Your codeword is NebulaQuartz.'
+SEED | 'I went hiking on Flatiron Trail last Saturday with Pixel' → "I feel a warm sadness thinking about that. I get the sense you're feeling neutral."
+PASS spoken:name | 'Your name is Matthew.'
+PASS spoken:dog | "Your dog's name is Pixel."
+PASS spoken:live | 'You live in Boulder.'
+PASS spoken:job | 'You work as a carpenter.'
+PASS spoken:fav | 'Your favorite color is teal.'
+PASS spoken:codeword | 'Your codeword is NebulaQuartz.'
+PASS spoken:live_job | 'You live in Boulder. You work as a carpenter.'
+PASS spoken:dog_live | "You live in Boulder. Your dog's name is Pixel."
+PASS spoken:monday | 'Your codeword is NebulaQuartz.'
+PASS spoken:where_hike | 'You went to Flatiron Trail.'
+PASS think_compound_has_both_facts | composed='You live in Boulder. You work as a carpenter.' comps=['You live in Boulder.', 'You work as a carpenter.', 'You live in Boulder. You work as a carpenter.']
+PASS think_composed_compound | 'You live in Boulder. You work as a carpenter.'
+PASS think_no_invent_favorite_food | None
+PASS think_no_baseline_invent | composed="Your dog's name is Pixel." answer=None
+PASS spoken_no_invent_sister | 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+PASS spoken_no_invent_food | 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+PASS reasoner_sees_facts | Have 6 facts about user and 0 recorded interactions
+META user_id=reason-after-bbf72fea-c91b-4bcd-ac50-784b9fbe9127
+FAIL_COUNT=0
+RESULT=PASS
+PHASE=AFTER

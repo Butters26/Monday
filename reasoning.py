@@ -2095,7 +2095,16 @@ class MaximumSophisticationReasoning:
         if semantic_input:
             if getattr(self, '_direct_core', False):
                 conclusion = semantic_input.get('answer')
-                return conclusion.strip() if isinstance(conclusion, str) and conclusion.strip() else None
+                if isinstance(conclusion, str) and conclusion.strip():
+                    return conclusion.strip()
+                # Fall back to grounded theory explanation (compound / Notus facts).
+                theories = thinking.get('theories') or []
+                if theories and isinstance(theories[0], dict):
+                    exp = theories[0].get('explanation')
+                    comps = theories[0].get('components') or []
+                    if isinstance(exp, str) and exp.strip() and comps:
+                        return exp.strip()
+                return None
             # This is the main response - mark it so language generation sends it to Output
             language_result = self._generate_language(
                 semantic_input,
@@ -2428,12 +2437,47 @@ class MaximumSophisticationReasoning:
     
     def build_theory(self, question: str, context: Dict) -> Any:
         """Build explanatory theory using all available knowledge"""
+
+        class Theory:
+            def __init__(self, exp, conf, comps=None, evidence=None, predictions=None):
+                self.explanation = exp
+                self.confidence = conf
+                self.components = list(comps or [])[:5]
+                self.predictions = list(predictions or [])
+                self.evidence_for = list(evidence or [])[:3]
+
+        memories = context.get('memories', []) or []
+
+        # Live direct-core path: ground think in Notus facts / Monday lines only.
+        # Compound answers come from answer_from_grounded_memories; empty → no invent
+        # (no wrong-slot favorite substitution, no baseline textbook leak).
+        if getattr(self, '_direct_core', False):
+            grounded = None
+            try:
+                from direct_response import answer_from_grounded_memories
+                grounded = answer_from_grounded_memories(question or '', memories)
+            except Exception:
+                grounded = None
+            if isinstance(grounded, str) and grounded.strip():
+                body = grounded.strip()
+                # Strip leading yes-ack for component split; keep full string as explanation.
+                split_src = re.sub(r'(?i)^yes\s*[—\-]\s*', '', body).strip() or body
+                parts = [
+                    p.strip()
+                    for p in re.split(r'(?<=[.!?])\s+', split_src)
+                    if p.strip()
+                ]
+                if not parts:
+                    parts = [body]
+                conf = 0.85 if len(parts) >= 2 else 0.7
+                return Theory(body, conf, parts, parts)
+            # Honest empty — leave explanation unset so compose does not invent.
+            return Theory(None, 0.0, [], [])
         
         # Extract concepts
         concepts = [w for w in question.lower().split() if len(w) > 3 and w not in {'what', 'why', 'how', 'when', 'where', 'who', 'this', 'that', 'with', 'from'}]
         
         # USE MEMORIES FROM CONTEXT (passed but was ignored)
-        memories = context.get('memories', [])
         memory_texts = [m.get('content', '') if isinstance(m, dict) else str(m) for m in memories[:10]]
 
         # Keep only memories that actually overlap the question so unrelated
@@ -2568,16 +2612,7 @@ class MaximumSophisticationReasoning:
         if len(relevant_facts) >= 2:
             confidence = min(0.9, confidence + 0.2)
         
-        # Simple theory object
-        class Theory:
-            def __init__(self, exp, conf):
-                self.explanation = exp
-                self.confidence = conf
-                self.components = components[:5]
-                self.predictions = predictions
-                self.evidence_for = relevant_facts[:2]
-        
-        return Theory(explanation, confidence)
+        return Theory(explanation, confidence, components, relevant_facts[:2], predictions)
     
     def forward_chain(self):
         """Derive new facts - queries Notus as last resort"""
