@@ -786,6 +786,17 @@ class Thalamus:
                 perception_payload["attention_priority"] = ranked_ids[:8]
                 perception_payload["attention_focus"] = attention_payload.get("focus")
 
+        # Tell autonomous which user is present BEFORE aside mint/memory grounding.
+        with self.lobe_handlers_lock:
+            _has_auto_early = "autonomous" in self.lobe_handlers
+        if _has_auto_early:
+            try:
+                self.send_message(
+                    "autonomous", "user_active", {"user_id": user_id}, source="thalamus"
+                )
+            except Exception:
+                pass
+
         # Capture speak-worthy inner-life BEFORE this turn's emotion process_input
         # can wash intensity / unresolved context. Her own prior feelings stay eligible
         # to surface as a second beat after the reply.
@@ -1060,7 +1071,7 @@ class Thalamus:
             has_autonomous = "autonomous" in self.lobe_handlers
         if has_autonomous:
             try:
-                self.send_message("autonomous", "user_active", {}, source="thalamus")
+                self.send_message("autonomous", "user_active", {"user_id": user_id}, source="thalamus")
             except Exception:
                 pass
         # Rare second beat: speak-worthy inner thought may surface after the reply.

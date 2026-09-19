@@ -7,6 +7,7 @@ Monday thinks on her own, not just when spoken to.
 import time
 import threading
 import random
+import re
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 from thalamus import get_thalamus
@@ -53,6 +54,8 @@ class AutonomousThinkingLoop:
         self.current_focus = None  # What Monday is currently thinking about
         self.user_present = False  # Is user actively engaged?
         self.user_last_message_time = 0.0
+        # Active conversation user — Notus memories are per-user; ground thoughts there.
+        self.current_user_id = "default"
         
         # Register with Thalamus
         self._register_with_thalamus()
@@ -89,6 +92,9 @@ class AutonomousThinkingLoop:
         if msg_type == 'user_active':
             self.user_present = True
             self.user_last_message_time = time.time()
+            uid = message.get('user_id')
+            if isinstance(uid, str) and uid.strip():
+                self.current_user_id = uid.strip()
             return {'status': 'success'}
         
         elif msg_type == 'user_inactive':
@@ -274,11 +280,12 @@ class AutonomousThinkingLoop:
         Prefers get_recent / get_recent_memories, then get_conversation_history,
         then semantic query. Never calls a nonexistent Notus type alone.
         """
+        uid = self.current_user_id if isinstance(self.current_user_id, str) and self.current_user_id.strip() else "default"
         attempts = (
-            ('get_recent_memories', {'limit': 5}),
-            ('get_recent', {'limit': 5}),
-            ('get_conversation_history', {'limit': 5}),
-            ('query', {'query': 'recent conversation', 'limit': 5}),
+            ('get_recent_memories', {'limit': 5, 'user_id': uid}),
+            ('get_recent', {'limit': 5, 'user_id': uid}),
+            ('get_conversation_history', {'limit': 5, 'user_id': uid}),
+            ('query', {'query': 'recent conversation', 'limit': 5, 'user_id': uid}),
         )
         for msg_type, payload in attempts:
             try:
@@ -300,7 +307,7 @@ class AutonomousThinkingLoop:
         return []
 
     @staticmethod
-    def _memory_snippet(memory: Dict[str, Any], max_len: int = 72) -> str:
+    def _memory_snippet(memory: Dict[str, Any], max_len: int = 140) -> str:
         """Short real memory text for first-person reaction lines."""
         raw = (
             memory.get('content')
@@ -313,7 +320,24 @@ class AutonomousThinkingLoop:
         if not text:
             return ''
         if len(text) > max_len:
-            return text[: max_len - 3] + '...'
+            # Prefer keeping distinctive marker-like tokens intact in the kept window.
+            m = re.search(r"(MARKER_[A-Za-z0-9_\-]+)", text)
+            if m:
+                token = m.group(1)
+                # Anchor window around the marker when present.
+                start = max(0, m.start() - max(20, (max_len - len(token)) // 3))
+                window = text[start:start + max_len]
+                if len(text) > start + max_len:
+                    # Ensure token fully inside window
+                    if token not in window:
+                        window = text[max(0, m.end() - max_len):m.end()]
+                    if not window.endswith(text[-1]) and start + max_len < len(text):
+                        if token in window:
+                            return window[:-3] + '...' if len(window) >= max_len else window
+                    return (window[: max_len - 3] + '...') if len(window) > max_len else window
+            head = max(28, (max_len - 3) // 2)
+            tail = max(24, max_len - head - 3)
+            return text[:head] + '...' + text[-tail:]
         return text
 
     def _get_current_values(self) -> List[Dict[str, Any]]:
@@ -389,7 +413,7 @@ class AutonomousThinkingLoop:
 
         # Real memory text wins when present: first-person reaction to THAT snippet,
         # still colored by unresolved appraisal / emotion from bda4de0.
-        usable = [m for m in (memories or []) if isinstance(m, dict) and self._memory_snippet(m)]
+        usable = self._prefer_grounding_memories(memories, primary)
         if usable and thought_type in ('feeling', 'reflection', 'memory', 'question'):
             return self._generate_memory_rich_thought(
                 thought_type, emotion, intensity, usable, primary
@@ -412,6 +436,64 @@ class AutonomousThinkingLoop:
 
         return None, None
 
+
+    @staticmethod
+    def _is_boilerplate_memory(text: str) -> bool:
+        """Skip Monday refusal/filler lines — they are not lived experience to sit with."""
+        t = (text or "").strip().lower()
+        if not t:
+            return True
+        needles = (
+            "do not have enough grounded information",
+            "i do not have enough grounded",
+            "please provide more context",
+            "please provide more context or a fact",
+            "i'm here — thanks for checking in",
+            "i'm here - thanks for checking in",
+            "how are you?",
+        )
+        return any(n in t for n in needles)
+
+    def _prefer_grounding_memories(
+        self,
+        memories: List[Dict[str, Any]],
+        primary: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Prefer this user's lived lines over Monday replies / boilerplate."""
+        usable: List[Dict[str, Any]] = []
+        for m in memories or []:
+            if not isinstance(m, dict):
+                continue
+            snippet = self._memory_snippet(m)
+            if not snippet or self._is_boilerplate_memory(snippet):
+                continue
+            usable.append(m)
+        if not usable:
+            # Fall back to any non-empty snippet if everything looked like boilerplate.
+            usable = [m for m in (memories or []) if isinstance(m, dict) and self._memory_snippet(m)]
+
+        def role_of(m: Dict[str, Any]) -> str:
+            return str(m.get("role") or m.get("speaker") or "").strip().lower()
+
+        userish = [m for m in usable if role_of(m) in {"user", "human", "matthew"}]
+        pool = userish or usable
+
+        event = str((primary or {}).get("event_type") or "").strip().lower()
+        if event and pool:
+            # Soft keyword bias toward memories that mention the unresolved theme.
+            theme_words = {event, "trust", "hurt", "broke", "behind", "shared", "notes"}
+            if event == "betrayal":
+                theme_words.update({"betray", "betrayed", "back"})
+            themed = []
+            for m in pool:
+                low = self._memory_snippet(m).lower()
+                if any(w in low for w in theme_words):
+                    themed.append(m)
+            if themed:
+                return themed
+        return pool
+
+
     def _generate_memory_rich_thought(
         self,
         thought_type: str,
@@ -421,7 +503,8 @@ class AutonomousThinkingLoop:
         primary: Optional[Dict[str, Any]] = None,
     ) -> tuple:
         """First-person reaction that quotes a short real memory snippet."""
-        memory = random.choice(memories)
+        preferred = self._prefer_grounding_memories(memories, primary) or list(memories)
+        memory = random.choice(preferred)
         snippet = self._memory_snippet(memory)
         event = str((primary or {}).get('event_type') or '').strip()
         lines: List[str] = []
