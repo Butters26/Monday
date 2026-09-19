@@ -203,6 +203,11 @@ class AppraisalResult:
     contrast_affected: bool = False
     # Emotion implied by event_type alone (before explicit override)
     event_inferred_emotion: str = 'neutral'
+    # Continuity / ownership markers (per-utterance; not a redesign)
+    temporal: str = 'current'  # current | historical | returning
+    third_party_emotion: Optional[str] = None
+    resolution_signal: bool = False
+    quoted_affect: bool = False
 
 @dataclass
 class UserAffectModel:
@@ -211,6 +216,11 @@ class UserAffectModel:
     confidence: float = 0.0
     inferred_need: str = 'neutral'   # 'validation','help','celebration','space','neutral'
     last_updated: float = 0.0
+    # Multi-turn continuity (USER only — never written into Monday INTERNAL enum)
+    previous_emotion: str = 'neutral'
+    temporal: str = 'current'  # current | historical | returning
+    last_event_type: str = 'neutral'
+    third_party_emotion: Optional[str] = None
 
 @dataclass
 class EmotionalUnderstanding:
@@ -307,7 +317,8 @@ class AppraisalEngine:
           'i hate you', 'hate you', 'hate monday', 'despise you', 'despise monday',
           'i despise you', 'loath you', 'loathe you', 'you suck', 'you are worthless',
           "you're worthless", 'you are stupid', "you're stupid", 'you idiot', 'fuck you',
-          'screw you', 'really hurt', 'that hurt', 'hurt my feelings', 'that really hurt'], 'harm', 0.80),
+          'screw you', 'really hurt', 'that hurt', 'hurt my feelings', 'that really hurt',
+          'embarrassed me', 'humiliated me'], 'harm', 0.80),
         # Threat / fear
         (['threatened', 'going to hurt', 'going to kill', 'warned me', 'scared of',
           "don't feel safe", 'feel unsafe', 'in danger', 'i am terrified', "i'm terrified",
@@ -329,7 +340,7 @@ class AppraisalEngine:
           'fed up', 'pissed off', 'pissing me off', 'had enough', 'so angry'], 'conflict', 0.55),
         # Criticism
         (['criticized', 'told me i was wrong', 'called me out', 'said i did it wrong',
-          'pointed out my mistake', 'embarrassed me', "doesn't think i'm good",
+          'pointed out my mistake', "doesn't think i'm good",
           'talked down to me', 'condescending'], 'criticism', 0.45),
         # Success
         (['got the job', 'got promoted', 'passed the exam', 'finished it', 'won',
@@ -393,24 +404,46 @@ class AppraisalEngine:
         sensitivity_map: event_type → learned sensitivity multiplier
         """
         tl = text.lower()
+        quoted_affect = self._has_quoted_self_report(tl)
+        # Strip quoted speech so "He said I'm furious" is not treated as USER self-report.
+        unquoted = self._strip_quoted_speech(tl)
 
-        negated = self._detect_negation(tl)
+        negated = self._detect_negation(unquoted)
         sarcasm = self._detect_sarcasm(tl)
-        contrast_override = self._detect_contrastive_override(tl)
-        explicit_emo, explicit_conf, contrast_emo = self._extract_explicit_user_emotion(tl)
+        contrast_override = self._detect_contrastive_override(unquoted)
+        explicit_emo, explicit_conf, contrast_emo = self._extract_explicit_user_emotion(unquoted)
+        hist_emo, hist_conf = self._extract_historical_self_emotion(unquoted)
+        returning_emo, returning_conf = self._extract_returning_emotion(unquoted)
+        third_party_emo = self._extract_third_party_emotion(tl)
+        resolution_signal = self._detect_resolution(unquoted)
+
+        temporal = 'current'
+        # Historical past ("I was furious at first / yesterday") is not current affect.
+        if hist_emo and explicit_emo is None and not contrast_emo and not returning_emo:
+            temporal = 'historical'
+            explicit_emo, explicit_conf = None, 0.0  # do not treat as current self-report
+        elif returning_emo:
+            temporal = 'returning'
+            if explicit_emo is None:
+                explicit_emo, explicit_conf = returning_emo, returning_conf
 
         # If sarcasm, flip positive surface signals to negative
-        effective_text = tl
+        effective_text = unquoted
         if sarcasm:
-            # Replace surface positive words to avoid false positive classification
             for pos in ['great', 'wonderful', 'fantastic', 'perfect', 'lovely', 'fine']:
                 effective_text = effective_text.replace(pos, '_sarcasm_')
 
         # Mask hypothetical / counterfactual affect so "thought I'd be furious" does not classify.
         effective_text = self._mask_hypotheticals(effective_text)
+        # Mask resolved-threat phrasing so residual "threat" token does not re-fire threat.
+        if resolution_signal:
+            effective_text = self._mask_resolution_phrases(effective_text)
 
         directed_at_monday = self._directed_at_monday(tl)
-        directed_at_user = self._directed_at_user(tl)
+        directed_at_user = self._directed_at_user(unquoted)
+        # Third-party emotion ownership: someone else's affect is not the user's.
+        if third_party_emo and not directed_at_user and not directed_at_monday:
+            pass
         third_party = not directed_at_monday and not directed_at_user
 
         event_type, base_severity = self._classify_event(effective_text)
@@ -424,11 +457,24 @@ class AppraisalEngine:
         if contrast_emo:
             contrast_affected = True
 
-        # Soft event from explicit self-report when classifiers found nothing useful.
-        if event_type == 'neutral' and explicit_emo and explicit_emo != 'neutral':
+        # Soft event from explicit CURRENT self-report when classifiers found nothing useful.
+        if event_type == 'neutral' and explicit_emo and explicit_emo != 'neutral' and temporal != 'historical':
             soft = self._EXPLICIT_SOFT_EVENT.get(explicit_emo)
             if soft:
                 event_type, base_severity = soft
+
+        # Returning irritation / reopened affect → mild conflict if still neutral.
+        if temporal == 'returning' and event_type == 'neutral' and returning_emo:
+            soft = self._EXPLICIT_SOFT_EVENT.get(returning_emo, ('conflict', 0.35))
+            event_type, base_severity = soft
+
+        # Resolution: event clears toward neutral; do not re-escalate from residual tokens.
+        if resolution_signal:
+            if event_type in ('threat', 'harm', 'conflict', 'rejection', 'criticism'):
+                event_type = 'neutral'
+                base_severity = min(base_severity, 0.12)
+            if explicit_emo is None and re.search(r"\bi(?:'m| am) (?:fine|okay|ok|better|calm)\b", unquoted):
+                explicit_emo, explicit_conf = 'neutral', 0.88
 
         # If negated, drop severity and shift event_type toward neutral
         if negated and event_type not in ('loss',):  # can't negate a death
@@ -441,16 +487,38 @@ class AppraisalEngine:
 
         # PAD delta for Monday based on who is affected
         pad_delta = self._compute_monday_pad(event_type, severity, directed_at_monday, directed_at_user)
+        if resolution_signal:
+            # Soft positive recovery nudge for Monday INTERNAL (not user-affect cast).
+            pad_delta = (
+                max(-0.05, pad_delta[0] * 0.15 + 0.15),
+                max(0.0, pad_delta[1] * 0.2),
+                pad_delta[2] * 0.3 + 0.05,
+            )
 
         # Event-mapped user emotion (kept separate from explicit self-report)
         event_inferred, event_conf = self._infer_user_emotion(
             event_type, directed_at_user, severity, negated
         )
-        # Explicit self-report outranks event-inferred USER emotion (not the event type).
-        if explicit_emo is not None:
+        # Explicit CURRENT self-report outranks event-inferred USER emotion.
+        if temporal == 'historical' and hist_emo:
+            # Historical naming is recorded via temporal; current USER emotion stays unknown.
+            user_emotion, user_conf = 'unknown', 0.25
+            event_inferred = hist_emo  # park historical label in event_inferred for continuity layer
+        elif explicit_emo is not None:
             user_emotion, user_conf = explicit_emo, explicit_conf
+        elif third_party and third_party_emo:
+            # Third-party affect ≠ USER affect
+            user_emotion, user_conf = 'unknown', 0.2
         else:
             user_emotion, user_conf = event_inferred, event_conf
+
+        # Quoted self-report speech must not become USER emotion.
+        if quoted_affect and temporal == 'current' and not directed_at_user:
+            if user_emotion in ('angry', 'furious', 'sad', 'scared', 'worried', 'happy'):
+                user_emotion, user_conf = 'unknown', 0.2
+                if event_type == 'conflict' and severity < 0.6:
+                    event_type, severity = 'neutral', 0.1
+                    pad_delta = (0.0, 0.0, 0.0)
 
         return AppraisalResult(
             event_type=event_type,
@@ -466,10 +534,115 @@ class AppraisalEngine:
             user_confidence=user_conf,
             explicit_user_emotion=explicit_emo,
             contrast_affected=contrast_affected,
-            event_inferred_emotion=event_inferred,
+            event_inferred_emotion=event_inferred if temporal != 'historical' else (hist_emo or event_inferred),
+            temporal=temporal,
+            third_party_emotion=third_party_emo,
+            resolution_signal=resolution_signal,
+            quoted_affect=quoted_affect,
         )
 
     # --------------- Private classifiers ---------------
+
+    def _strip_quoted_speech(self, tl: str) -> str:
+        """Remove quoted spans so reported speech is not treated as USER self-report.
+        Only strip double-quoted spans (and space-bounded single-quoted spans) so
+        contractions like I'm / don't are preserved.
+        """
+        out = re.sub(r'"[^"]*"', ' ', tl)
+        out = re.sub(r"(^|[\s])'([^']{2,})'([\s,.!?]|$)", r'\1 \3', out)
+        return out
+
+    def _has_quoted_self_report(self, tl: str) -> bool:
+        return bool(re.search(
+            r'["\'].{0,60}\bi(?:\'m| am)\s+(?:so |really )?(?:angry|furious|mad|sad|scared|afraid|worried|happy|hurt)',
+            tl, re.I,
+        ))
+
+    def _detect_resolution(self, tl: str) -> bool:
+        patterns = [
+            r'\bthreat is gone\b', r'\bdanger (?:is |has )?passed\b',
+            r'\bno longer (?:a )?(?:threat|problem|issue|danger)\b',
+            r'\bapologi[sz]ed\b', r'\bfeel(?:ing)? better\b',
+            r'\bi(?:\'m| am) fine now\b', r'\bi(?:\'m| am) okay now\b',
+            r'\bi(?:\'m| am) (?:fine|okay|ok|better) now\b',
+        ]
+        return any(re.search(p, tl) for p in patterns)
+
+    def _mask_resolution_phrases(self, tl: str) -> str:
+        out = tl
+        for pat in [
+            r'\bthe threat is gone\b', r'\bthreat is gone\b',
+            r'\bdanger (?:is |has )?passed\b',
+            r'\bno longer (?:a )?(?:threat|problem|issue|danger)\b',
+        ]:
+            out = re.sub(pat, ' ', out)
+        return out
+
+    def _extract_historical_self_emotion(self, tl: str) -> Tuple[Optional[str], float]:
+        """Past-tense self affect that is not the speaker's current state."""
+        # Hypothetical fear about another's reaction is not historical self-affect.
+        if re.search(r"\bi was (?:afraid|scared|worried) (?:she|he|they|that)\b", tl):
+            return None, 0.0
+        m = re.search(
+            r"\bi was\s+(?:so |really |completely |totally |very )?"
+            r"(angry|furious|mad|livid|sad|heartbroken|scared|afraid|worried|hurt|happy|proud|annoyed)"
+            r"(?:\s+(?:at first|yesterday|earlier|before|then|last night))?\b",
+            tl,
+        )
+        if not m:
+            return None, 0.0
+        word = m.group(1)
+        emo = self._SELF_REPORT_CANON.get(word, word)
+        return emo, 0.72
+
+    def _extract_returning_emotion(self, tl: str) -> Tuple[Optional[str], float]:
+        """Reopened / returning affect after a calmer period."""
+        if re.search(r'\b(?:thinking about it again|coming back|coming up again)\b', tl):
+            if re.search(r'\bannoy', tl) or re.search(r'\birritat', tl):
+                return 'annoyed', 0.78
+            if re.search(r'\bang', tl) or re.search(r'\bmad\b', tl):
+                return 'angry', 0.78
+            return 'annoyed', 0.70
+        if re.search(r'\bstarting to (?:annoy|irritate|anger|bother)\b', tl):
+            return 'annoyed', 0.80
+        if re.search(r'\b(?:getting|feeling) (?:mad|angry|annoyed|upset) again\b', tl):
+            return 'angry', 0.80
+        if re.search(r'\bis starting to annoy me\b', tl):
+            return 'annoyed', 0.80
+        return None, 0.0
+
+    def _extract_third_party_emotion(self, tl: str) -> Optional[str]:
+        """Someone else's affect — never USER affect."""
+        # Mask hypothetical attributions ("I thought he was angry")
+        scan = re.sub(
+            r"\bi thought (?:she|he|they) was\b.{0,20}",
+            ' ',
+            tl,
+        )
+        scan = re.sub(
+            r"\bi was (?:afraid|scared|worried) (?:she|he|they) would\b.{0,30}",
+            ' ',
+            scan,
+        )
+        # Current-state supersession for third party: "scared yesterday but okay now"
+        if re.search(r"\b(?:she|he|they)\b.{0,40}\b(?:scared|afraid|worried|angry|sad|upset)\b.{0,40}\b(?:but |however ).{0,20}\b(?:okay|ok|fine|better|calm)\b", scan):
+            return 'calm'
+        m = re.search(
+            r"\b(?:she|he|they|ariana)\s+(?:is|was|thinks)\s+(?:so |really |completely )?"
+            r"(worried|angry|furious|mad|scared|afraid|sad|upset|hurt|annoyed|calm)\b",
+            scan, re.I,
+        )
+        if m:
+            word = m.group(1).lower()
+            return self._SELF_REPORT_CANON.get(word, word)
+        m = re.search(
+            r"\b(?:she|he|they)'s\s+(?:so |really )?(worried|angry|furious|mad|scared|afraid|sad|upset|hurt)\b",
+            scan, re.I,
+        )
+        if m:
+            word = m.group(1).lower()
+            return self._SELF_REPORT_CANON.get(word, word)
+        return None
 
     def _detect_negation(self, tl: str) -> bool:
         # Mask event idioms so "not fair" etc. are not treated as full negation.
@@ -512,6 +685,8 @@ class AppraisalEngine:
         'relieved': 'relieved',
         'proud': 'proud',
         'exhausted': 'exhausted', 'tired': 'exhausted',
+        'hurt': 'hurt',
+        'annoyed': 'annoyed', 'irritated': 'annoyed',
         'fine': 'neutral', 'okay': 'neutral', 'ok': 'neutral', 'better': 'neutral',
         'calm': 'calm',
     }
@@ -527,6 +702,9 @@ class AppraisalEngine:
         'scared': ('threat', 0.65),
         'worried': ('threat', 0.55),
         'relieved': ('success', 0.55),
+        'hurt': ('harm', 0.65),
+        'exhausted': ('neutral', 0.25),
+        'annoyed': ('conflict', 0.40),
         'calm': ('neutral', 0.2),
     }
 
@@ -585,11 +763,19 @@ class AppraisalEngine:
 
         # 3) Affirmative self-report (hypotheticals masked so "thought I'd be furious" is ignored)
         scan = self._mask_hypotheticals(tl)
+        # "Now I'm mostly just hurt" / "I'm hurt by it"
+        hurt = re.search(
+            r"\bi(?:'m| am)\s+(?:now\s+)?(?:mostly |just |mostly just |really |so )?"
+            r"(hurt)\b",
+            scan,
+        )
+        if hurt:
+            return 'hurt', 0.90, False
         aff = re.search(
-            r"\bi(?:'m| am)\s+(?:so |really |completely |totally |very )?"
+            r"\bi(?:'m| am)\s+(?:so |really |completely |totally |very |mostly |just )?"
             r"(happy|glad|joyful|angry|furious|mad|livid|sad|heartbroken|depressed|miserable|"
             r"scared|afraid|terrified|worried|anxious|concerned|relieved|proud|exhausted|tired|"
-            r"fine|okay|ok|calm)\b",
+            r"hurt|annoyed|irritated|fine|okay|ok|calm)\b",
             scan,
         )
         if aff:
@@ -597,11 +783,21 @@ class AppraisalEngine:
         feel = re.search(
             r"\bi feel\s+(?:so |really )?"
             r"(happy|glad|angry|furious|mad|sad|heartbroken|depressed|miserable|"
-            r"scared|afraid|worried|anxious|proud|relieved|exhausted|tired)\b",
+            r"scared|afraid|worried|anxious|proud|relieved|exhausted|tired|hurt|better)\b",
             scan,
         )
         if feel:
-            return self._SELF_REPORT_CANON[feel.group(1)], 0.85, False
+            word = feel.group(1)
+            if word == 'better':
+                return 'neutral', 0.85, False
+            return self._SELF_REPORT_CANON[word], 0.85, False
+        # Bare continuity phrases: "Still glad I did it" / "glad I finished"
+        bare = re.search(
+            r"\b(?:still |also )?(glad|happy|proud)\b(?:\s+i\b|\s+about\b|\s+i\s)",
+            scan,
+        )
+        if bare:
+            return self._SELF_REPORT_CANON[bare.group(1)], 0.82, False
         return None, 0.0, False
 
     def _directed_at_monday(self, tl: str) -> bool:
@@ -610,9 +806,10 @@ class AppraisalEngine:
         return any(p in padded for p in self._MONDAY_TARGET)
 
     def _directed_at_user(self, tl: str) -> bool:
-        padded = f' {tl.strip()} '
-        # Keep original subject tokens; pad so trailing "me" / "myself" still match.
-        if any(p in tl for p in self._USER_SUBJECT):
+        # Normalize trailing punctuation so "annoy me." still counts as user-directed.
+        norm = re.sub(r'[.!?,;:]+', ' ', tl.strip())
+        padded = f' {norm} '
+        if any(p in norm for p in self._USER_SUBJECT):
             return True
         return any(tok in padded for tok in (' me ', ' myself ', ' i '))
 
@@ -998,6 +1195,10 @@ class AdvancedEmotionalEngine:
                 'confidence': self._user_affect.confidence,
                 'inferred_need': self._user_affect.inferred_need,
                 'last_updated': self._user_affect.last_updated,
+                'previous_emotion': self._user_affect.previous_emotion,
+                'temporal': self._user_affect.temporal,
+                'last_event_type': self._user_affect.last_event_type,
+                'third_party_emotion': self._user_affect.third_party_emotion,
             },
             'pad': {'v': self.pad.v, 'a': self.pad.a, 'd': self.pad.d},
             'attachment': asdict(self.attachment),
@@ -1059,6 +1260,10 @@ class AdvancedEmotionalEngine:
                 confidence=float(ua.get('confidence', 0.0)),
                 inferred_need=ua.get('inferred_need', 'neutral'),
                 last_updated=float(ua.get('last_updated', 0.0)),
+                previous_emotion=ua.get('previous_emotion', 'neutral'),
+                temporal=ua.get('temporal', 'current'),
+                last_event_type=ua.get('last_event_type', 'neutral'),
+                third_party_emotion=ua.get('third_party_emotion'),
             )
         pad_obj = obj.get('pad')
         if isinstance(pad_obj, dict):
@@ -1159,12 +1364,71 @@ class AdvancedEmotionalEngine:
         self._update_attachment_from_appraisal(appraisal)
         self._update_needs_from_appraisal(appraisal)
 
-        # 1. Update user affect model
+        # 1. Update user affect model (multi-turn continuity; USER ≠ Monday INTERNAL)
+        prev_ua = self._user_affect
+        prev_emo = prev_ua.inferred_emotion
+        new_emo = appraisal.user_inferred_emotion
+        new_conf = appraisal.user_confidence
+        temporal = getattr(appraisal, 'temporal', 'current') or 'current'
+        tp_emo = getattr(appraisal, 'third_party_emotion', None)
+        resolution = bool(getattr(appraisal, 'resolution_signal', False))
+
+        if temporal == 'historical':
+            # Past naming is not current; park historical, keep prior current if any.
+            hist_label = appraisal.event_inferred_emotion or new_emo
+            if prev_emo not in ('neutral', 'unknown', '') and prev_ua.confidence >= 0.25:
+                cur_emo, cur_conf = prev_emo, max(0.25, prev_ua.confidence * 0.95)
+            else:
+                cur_emo, cur_conf = 'unknown', 0.25
+            previous_emotion = hist_label if hist_label not in ('neutral', 'unknown', None) else prev_emo
+            new_emo, new_conf = cur_emo, cur_conf
+        elif temporal == 'returning':
+            previous_emotion = prev_emo
+            # returning emotion already in appraisal.user_inferred_emotion
+        elif resolution or (
+            appraisal.explicit_user_emotion in ('neutral', 'calm')
+            and appraisal.user_inferred_emotion in ('neutral', 'calm')
+        ):
+            previous_emotion = prev_emo
+            # Allow clear to neutral/calm — do not keep strongest-ever
+        elif (
+            new_emo in ('neutral', 'unknown')
+            and new_conf < 0.35
+            and prev_emo not in ('neutral', 'unknown', '')
+            and prev_ua.confidence >= 0.30
+        ):
+            # Weak/empty turn: carry forward if anaphoric/continuity cue, else decay (not lock).
+            if self._has_continuity_cue(appraisal.raw_text):
+                previous_emotion = prev_emo
+                new_emo = prev_emo
+                new_conf = max(0.28, prev_ua.confidence * 0.85)
+            elif self._is_topic_shift_neutral(appraisal.raw_text):
+                previous_emotion = prev_emo
+                new_emo, new_conf = 'unknown', 0.15
+            else:
+                previous_emotion = prev_emo
+                # Mild decay toward unknown rather than hard lock on prior peak
+                new_emo, new_conf = 'unknown', 0.18
+        else:
+            previous_emotion = prev_emo
+
+        # Prefer third-party emotion from this turn; else retain briefly if continuity cue
+        if tp_emo is None and prev_ua.third_party_emotion and self._has_continuity_cue(appraisal.raw_text):
+            tp_emo = prev_ua.third_party_emotion
+        if appraisal.third_party and tp_emo and new_emo in ('neutral', 'unknown') and appraisal.explicit_user_emotion is None:
+            # Ensure USER is not overwritten by third-party naming
+            if new_emo == 'neutral' and new_conf < 0.4:
+                new_emo, new_conf = 'unknown', max(new_conf, 0.2)
+
         self._user_affect = UserAffectModel(
-            inferred_emotion=appraisal.user_inferred_emotion,
-            confidence=appraisal.user_confidence,
+            inferred_emotion=new_emo,
+            confidence=new_conf,
             inferred_need=self._infer_user_need(appraisal),
             last_updated=time.time(),
+            previous_emotion=previous_emotion or 'neutral',
+            temporal=temporal,
+            last_event_type=appraisal.event_type,
+            third_party_emotion=tp_emo,
         )
 
         # 2. Update event history for escalation tracking
@@ -1209,7 +1473,21 @@ class AdvancedEmotionalEngine:
 
         # 6. Unresolved appraisal tracking (persistence hooks)
         _NEGATIVE_EVENTS = {'harm', 'betrayal', 'rejection', 'threat', 'loss', 'abandonment'}
-        if appraisal.event_type in _NEGATIVE_EVENTS and appraisal.severity >= 0.4:
+        if getattr(appraisal, 'resolution_signal', False):
+            # Resolution language clears stale unresolved (USER calm ≠ lock Monday INTERNAL)
+            self._unresolved_appraisals = []
+            self._attention_bias = None
+            # Soften Monday INTERNAL intensity when threat/hurt resolved
+            self.emotional_intensity = max(0.15, self.emotional_intensity * 0.55)
+        elif (
+            appraisal.explicit_user_emotion in ('happy', 'proud', 'relieved', 'calm')
+            and appraisal.user_confidence >= 0.7
+            and appraisal.event_type in ('affection', 'success', 'celebration', 'support', 'gift')
+        ):
+            # Positive self-report flip clears lingering negative unresolved
+            self._unresolved_appraisals = []
+            self._attention_bias = None
+        elif appraisal.event_type in _NEGATIVE_EVENTS and appraisal.severity >= 0.4:
             self._unresolved_appraisals.append(
                 (appraisal.event_type, appraisal.severity, time.time())
             )
@@ -1243,6 +1521,27 @@ class AdvancedEmotionalEngine:
                 pass
         except Exception:
             pass
+
+    def _has_continuity_cue(self, text: str) -> bool:
+        """Anaphoric / episode-continuing language across turns."""
+        tl = (text or '').lower()
+        patterns = [
+            r"\b(him|her|it|them|that|this)\b",
+            r"\bdon'?t even want\b", r"\bwant to talk\b",
+            r"\btomorrow\b", r"\bstill\b", r"\bagain\b",
+            r"\bby it\b", r"\bat first\b", r"\bnow i\b",
+            r"\bthe (?:same |whole )?(?:thing|situation|incident)\b",
+            r"\bthinking about\b",
+        ]
+        return any(re.search(p, tl) for p in patterns)
+
+    def _is_topic_shift_neutral(self, text: str) -> bool:
+        """Small-talk / topic change that should not lock prior USER peak affect."""
+        tl = (text or '').lower()
+        return bool(re.search(
+            r"\b(weather|temperature|hello|hi\b|hey\b|what time|good morning|good night|how are you)\b",
+            tl,
+        ))
 
     def _infer_user_need(self, appraisal: AppraisalResult) -> str:
         """Infer what kind of response the user likely wants."""
@@ -1396,8 +1695,13 @@ class AdvancedEmotionalEngine:
         if self._CUE_NEGATION_WINDOW.search(t) or self._CUE_CONTRAST.search(t):
             return cues
 
-        # Score against text with hypotheticals masked so "thought I'd be furious" does not fire.
-        scan = self._appraisal_engine._mask_hypotheticals(t)
+        # Strip quotes + mask hypotheticals so reported/past speech does not nudge cues.
+        scan = self._appraisal_engine._strip_quoted_speech(t)
+        scan = self._appraisal_engine._mask_hypotheticals(scan)
+        # Historical past self-report should not drive current cue tops
+        if re.search(r"\bi was\s+(?:so |really )?(?:angry|furious|mad|sad|scared|afraid|worried|hurt)\b", scan):
+            if not re.search(r"\b(?:now|but)\s+i(?:'m| am)\b", scan):
+                return cues
 
         for pattern, key, strength in self._EXPLICIT_SELF_REPORTS:
             if re.search(pattern, scan):
@@ -1592,6 +1896,10 @@ class AdvancedEmotionalEngine:
                 explicit_user_emotion=base.explicit_user_emotion,
                 contrast_affected=base.contrast_affected,
                 event_inferred_emotion=base.event_inferred_emotion,
+                temporal=getattr(base, 'temporal', 'current'),
+                third_party_emotion=getattr(base, 'third_party_emotion', None),
+                resolution_signal=getattr(base, 'resolution_signal', False),
+                quoted_affect=getattr(base, 'quoted_affect', False),
             )
 
         if appraisal_authoritative:
@@ -1639,6 +1947,9 @@ class AdvancedEmotionalEngine:
             and not appraisal.negated
             and not appraisal.contrast_affected
             and not appraisal.third_party
+            and getattr(appraisal, 'temporal', 'current') != 'historical'
+            and not getattr(appraisal, 'resolution_signal', False)
+            and not getattr(appraisal, 'quoted_affect', False)
         ):
             # Semantic fills gaps only when eligible (ST normal bar; basic high bar).
             # Basic must not become primary on weak noisy matches.
@@ -1748,6 +2059,38 @@ class AdvancedEmotionalEngine:
                     severity = appraisal.severity
                     confidence = appraisal.user_confidence
                     final = appraisal
+
+        # Preserve continuity/ownership markers if a rebuilt final dropped them.
+        if final is not None and final is not appraisal:
+            final = AppraisalResult(
+                event_type=final.event_type,
+                severity=final.severity,
+                directed_at_monday=final.directed_at_monday,
+                directed_at_user=final.directed_at_user,
+                third_party=final.third_party,
+                negated=final.negated,
+                sarcasm_likely=final.sarcasm_likely,
+                raw_text=final.raw_text,
+                monday_pad_delta=final.monday_pad_delta,
+                user_inferred_emotion=final.user_inferred_emotion,
+                user_confidence=final.user_confidence,
+                explicit_user_emotion=final.explicit_user_emotion,
+                contrast_affected=final.contrast_affected,
+                event_inferred_emotion=final.event_inferred_emotion,
+                temporal=getattr(final, 'temporal', None) or getattr(appraisal, 'temporal', 'current'),
+                third_party_emotion=(
+                    getattr(final, 'third_party_emotion', None)
+                    or getattr(appraisal, 'third_party_emotion', None)
+                ),
+                resolution_signal=bool(
+                    getattr(final, 'resolution_signal', False)
+                    or getattr(appraisal, 'resolution_signal', False)
+                ),
+                quoted_affect=bool(
+                    getattr(final, 'quoted_affect', False)
+                    or getattr(appraisal, 'quoted_affect', False)
+                ),
+            )
 
         return EmotionalUnderstanding(
             appraisal=appraisal,
@@ -2489,6 +2832,15 @@ class EmotionalProcess:
             'memory_count': len(self.engine.emotional_memories),
             'patterns': patterns_summary,
             'emotional_patterns': patterns_summary,
+            'user_affect': {
+                'inferred_emotion': self.engine._user_affect.inferred_emotion,
+                'confidence': self.engine._user_affect.confidence,
+                'inferred_need': self.engine._user_affect.inferred_need,
+                'previous_emotion': self.engine._user_affect.previous_emotion,
+                'temporal': self.engine._user_affect.temporal,
+                'last_event_type': self.engine._user_affect.last_event_type,
+                'third_party_emotion': self.engine._user_affect.third_party_emotion,
+            },
         }
 
     def process_message_safe(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -2551,6 +2903,7 @@ class EmotionalProcess:
                     'voice_prosody': snap['voice_prosody'],
                     'memory_count': snap['memory_count'],
                     'patterns': snap['patterns'],
+                    'user_affect': snap.get('user_affect'),
                 }
                 
             elif msg_type == 'feel_emotion':
@@ -2647,6 +3000,7 @@ class EmotionalProcess:
                     'patterns': snap['patterns'],
                     'emotional_patterns': snap['emotional_patterns'],
                     'autonomy_level': snap['autonomy_level'],
+                    'user_affect': snap.get('user_affect'),
                 }
             
             elif msg_type == 'get_emotional_state':

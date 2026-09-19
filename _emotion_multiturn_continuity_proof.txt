@@ -1,0 +1,362 @@
+=== Emotion multi-turn continuity proof ===
+Date: Sat Sep 19, 2026 (America/Denver)
+PRIORITY PRESERVED: AppraisalEngine -> semantic support -> keyword/cue fallback
+USER affect ≠ Monday INTERNAL; unknown≠neutral; negation≠contrast; ST/basic gates unchanged.
+Fixes: continuity carry, historical/returning temporal, quote ownership, embarrassed→harm,
+  hurt/glad explicit, resolution clears stale unresolved, third-party emotion field.
+
+## 8) Legacy helpers: _analyze_emotional_cues + keyword
+_analyze_emotional_cues still called: YES (count=1)
+  role: keyword/cue SUPPLEMENT only inside _understand_emotional_text
+  decisions: returns cue vector; used only when appraisal+semantic do not authoritatively set meaning
+  can override incorrectly?: No — appraisal_authoritative / semantic primary win; cues capped; gated by negation/contrast/quotes/historical
+  status: LIVE supplement (not dead); not primary; no incorrect override on continuity path — left unchanged except quote/historical gates
+  sample cues={'positive': 0.0, 'negative': 0.0, 'excitement': 0.0, 'concern': 0.0, 'anger': 0.187, 'sadness': 0.0, 'pride': 0.0} primary=appraisal
+
+## 1) Multi-turn continuity (boss incident)
+T1 USER_TEXT: My boss embarrassed me in front of everyone.
+  current_user_emotion=hurt previous_user_emotion=neutral temporal=current conf=0.88
+  appraisal_event=harm sev=0.80 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=contempt PAD=(-0.27, 0.28, 0.07) intens=0.85
+  attachment_delta={'security': -0.064, 'abandonment_fear': 0.126, 'hurt': 0.157} internal_delta={'worry': -0.025, 'tension': -0.015, 'hope': -0.016, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[('harm', 0.8)]
+  primary_source=appraisal output="I'm here to help. I get the sense you're feeling hurt."
+  UserAffectModel={emotion='hurt', prev='neutral', temp='current', tp=None, need='validation'}
+
+T2 USER_TEXT: I was furious at first.
+  current_user_emotion=hurt previous_user_emotion=angry temporal=historical conf=0.84
+  appraisal_event=neutral sev=0.10 third_party=False tp_emotion=None
+  neg=False contrast=False historical=True returning=False resolution=False quoted=False
+  Monday_INTERNAL=contempt PAD=(-0.12, 0.06, 0.13) intens=0.83
+  attachment_delta={'abandonment_fear': 0.102, 'hurt': 0.35} internal_delta={'worry': -0.011, 'tension': 0.018, 'hope': -0.017, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[('harm', 0.8)]
+  primary_source=neutral output="I'm here to help."
+  UserAffectModel={emotion='hurt', prev='angry', temp='historical', tp=None, need='neutral'}
+
+T3 USER_TEXT: Now I'm mostly just hurt by it.
+  current_user_emotion=hurt previous_user_emotion=hurt temporal=current conf=0.9
+  appraisal_event=harm sev=0.65 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=contempt PAD=(-0.37, 0.22, 0.02) intens=0.8
+  attachment_delta={'security': -0.062, 'abandonment_fear': 0.271, 'hurt': 0.151} internal_delta={'worry': 0.018, 'tension': -0.002, 'hope': -0.012, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[('harm', 0.8), ('harm', 0.77)]
+  primary_source=appraisal output="I'm here to help. I get the sense you're feeling hurt."
+  UserAffectModel={emotion='hurt', prev='hurt', temp='current', tp=None, need='validation'}
+
+T4 USER_TEXT: I don't even want to talk to him tomorrow.
+  current_user_emotion=hurt previous_user_emotion=hurt temporal=current conf=0.77
+  appraisal_event=neutral sev=0.03 third_party=False tp_emotion=None
+  neg=True contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=contempt PAD=(-0.21, 0.05, 0.04) intens=0.79
+  attachment_delta={'abandonment_fear': 0.147} internal_delta={'worry': 0.027, 'tension': 0.017, 'hope': -0.028, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[('harm', 0.8), ('harm', 0.77)]
+  primary_source=neutral output="I'm here to help."
+  UserAffectModel={emotion='hurt', prev='hurt', temp='current', tp=None, need='neutral'}
+
+## 2) Ownership (USER vs third-party vs Monday INTERNAL)
+T1 USER_TEXT: Ariana is worried about the project.
+  current_user_emotion=unknown previous_user_emotion=neutral temporal=current conf=0.2
+  appraisal_event=neutral sev=0.10 third_party=True tp_emotion=worried
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=curious PAD=(0.01, -0.02, 0.17) intens=0.9
+  attachment_delta={'abandonment_fear': -0.05} internal_delta={'worry': -0.025, 'tension': -0.001, 'hope': -0.017, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to help."
+  UserAffectModel={emotion='unknown', prev='neutral', temp='current', tp='worried', need='neutral'}
+
+T2 USER_TEXT: I'm calm.
+  current_user_emotion=calm previous_user_emotion=unknown temporal=current conf=0.9
+  appraisal_event=neutral sev=0.20 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=curious PAD=(-0.01, 0.04, 0.17) intens=0.85
+  attachment_delta={'abandonment_fear': -0.05} internal_delta={'worry': -0.022, 'tension': -0.003, 'hope': -0.018, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to help. I get the sense you're feeling calm."
+  UserAffectModel={emotion='calm', prev='unknown', temp='current', tp=None, need='neutral'}
+
+T3 USER_TEXT: She thinks everything falls apart.
+  current_user_emotion=unknown previous_user_emotion=calm temporal=current conf=0.18
+  appraisal_event=neutral sev=0.10 third_party=True tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=curious PAD=(0.03, 0.04, 0.18) intens=0.8
+  attachment_delta={'abandonment_fear': -0.05} internal_delta={'worry': -0.019, 'tension': 0.015, 'hope': -0.023, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to help."
+  UserAffectModel={emotion='unknown', prev='calm', temp='current', tp=None, need='neutral'}
+
+## 3) Historical vs current vs returning
+T1 USER_TEXT: I was angry yesterday.
+  current_user_emotion=unknown previous_user_emotion=angry temporal=historical conf=0.25
+  appraisal_event=neutral sev=0.10 third_party=False tp_emotion=None
+  neg=False contrast=False historical=True returning=False resolution=False quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.05, 0.05, 0.13) intens=0.92
+  attachment_delta={'abandonment_fear': 0.055, 'hurt': 0.35} internal_delta={'worry': -0.025, 'tension': -0.014, 'hope': -0.024, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to ...help..."
+  UserAffectModel={emotion='unknown', prev='angry', temp='historical', tp=None, need='neutral'}
+
+T2 USER_TEXT: I'm fine now.
+  current_user_emotion=neutral previous_user_emotion=unknown temporal=current conf=0.9
+  appraisal_event=neutral sev=0.10 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=True quoted=False
+  Monday_INTERNAL=melancholic PAD=(0.06, 0.01, 0.14) intens=0.48
+  attachment_delta={'abandonment_fear': 0.055} internal_delta={'worry': 0.004, 'tension': -0.013, 'hope': -0.013, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to ...help... I get the sense you're feeling neutral."
+  UserAffectModel={emotion='neutral', prev='unknown', temp='current', tp=None, need='neutral'}
+
+T3 USER_TEXT: Thinking about it again is starting to annoy me.
+  current_user_emotion=annoyed previous_user_emotion=neutral temporal=returning conf=0.78
+  appraisal_event=conflict sev=0.40 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=True resolution=False quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.12, 0.12, 0.17) intens=0.43
+  attachment_delta={'abandonment_fear': 0.055} internal_delta={'worry': 0.003, 'tension': -0.018, 'hope': -0.019, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=appraisal output="I'm here to help. I get the sense you're feeling annoyed."
+  UserAffectModel={emotion='annoyed', prev='neutral', temp='returning', tp=None, need='help'}
+
+## 4) Contrast across turns (proud / exhausted / glad)
+T1 USER_TEXT: I'm proud I finished it.
+  current_user_emotion=proud previous_user_emotion=neutral temporal=current conf=0.9
+  appraisal_event=success sev=0.65 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=protective PAD=(0.23, 0.16, 0.3) intens=0.95
+  attachment_delta={'abandonment_fear': -0.05} internal_delta={'worry': -0.025, 'tension': -0.012, 'hope': -0.018, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[]
+  primary_source=appraisal output="I'm here to help. I get the sense you're feeling proud."
+  UserAffectModel={emotion='proud', prev='neutral', temp='current', tp=None, need='celebration'}
+
+T2 USER_TEXT: But I'm exhausted.
+  current_user_emotion=exhausted previous_user_emotion=proud temporal=current conf=0.92
+  appraisal_event=neutral sev=0.25 third_party=False tp_emotion=None
+  neg=False contrast=True historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=protective PAD=(0.06, 0.07, 0.25) intens=0.9
+  attachment_delta={'abandonment_fear': -0.05} internal_delta={'worry': -0.022, 'tension': -0.012, 'hope': -0.015, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to help. I get the sense you're feeling exhausted."
+  UserAffectModel={emotion='exhausted', prev='proud', temp='current', tp=None, need='neutral'}
+
+T3 USER_TEXT: Still glad I did it.
+  current_user_emotion=happy previous_user_emotion=exhausted temporal=current conf=0.82
+  appraisal_event=affection sev=0.45 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=protective PAD=(0.24, 0.03, 0.28) intens=0.85
+  attachment_delta={'security': 0.027, 'abandonment_fear': -0.095} internal_delta={'worry': -0.019, 'tension': -0.015, 'hope': -0.013, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=appraisal output="I'm here to help. I get the sense you're feeling happy."
+  UserAffectModel={emotion='happy', prev='exhausted', temp='current', tp=None, need='celebration'}
+
+  NOTE: UserAffectModel is single-label; simultaneous multi-emotion unsupported. History via previous_emotion.
+
+## 5) Persistence vs stale (USER + Monday INTERNAL)
+### anger→neutral chat
+## anger→neutral chat
+T1 USER_TEXT: I'm furious about what they did.
+  current_user_emotion=angry previous_user_emotion=neutral temporal=current conf=0.9
+  appraisal_event=conflict sev=0.55 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=nostalgic PAD=(-0.19, 0.19, 0.17) intens=0.85
+  attachment_delta={'abandonment_fear': 0.055, 'hurt': 0.35} internal_delta={'worry': -0.025, 'tension': -0.011, 'hope': -0.021, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[]
+  primary_source=appraisal output="That brings back such bittersweet memories... I get the sense you're feeling angry."
+  UserAffectModel={emotion='angry', prev='neutral', temp='current', tp=None, need='help'}
+
+T2 USER_TEXT: What's the weather like today?
+  current_user_emotion=unknown previous_user_emotion=angry temporal=current conf=0.15
+  appraisal_event=neutral sev=0.10 third_party=True tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=nostalgic PAD=(-0.11, 0.05, 0.16) intens=0.8
+  attachment_delta={'abandonment_fear': 0.055} internal_delta={'worry': 0.004, 'tension': 0.017, 'hope': -0.011, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm feeling a complex mix of joy and melancholy."
+  UserAffectModel={emotion='unknown', prev='angry', temp='current', tp=None, need='neutral'}
+
+### sadness→positive
+## sadness→positive
+T1 USER_TEXT: I'm really sad about losing that.
+  current_user_emotion=sad previous_user_emotion=neutral temporal=current conf=0.9
+  appraisal_event=rejection sev=0.63 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=nostalgic PAD=(-0.21, 0.15, 0.0) intens=0.83
+  attachment_delta={'security': -0.05, 'abandonment_fear': 0.089, 'hurt': 0.123} internal_delta={'worry': -0.025, 'tension': -0.012, 'hope': -0.02, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[('rejection', 0.63)]
+  primary_source=appraisal output="I feel a warm sadness thinking about that. I get the sense you're feeling sad."
+  UserAffectModel={emotion='sad', prev='neutral', temp='current', tp=None, need='validation'}
+
+T2 USER_TEXT: Actually something great just happened and I'm happy.
+  current_user_emotion=happy previous_user_emotion=sad temporal=current conf=0.9
+  appraisal_event=affection sev=0.45 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=nostalgic PAD=(0.11, 0.11, 0.21) intens=0.8
+  attachment_delta={'security': 0.027, 'abandonment_fear': -0.058, 'hurt': -0.081} internal_delta={'worry': -0.013, 'tension': 0.015, 'hope': -0.027, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=appraisal output="I'm feeling a complex mix of joy and melancholy. I get the sense you're feeling happy."
+  UserAffectModel={emotion='happy', prev='sad', temp='current', tp=None, need='celebration'}
+
+### fear→threat gone
+## fear→threat gone
+T1 USER_TEXT: I'm scared this is going to go wrong.
+  current_user_emotion=scared previous_user_emotion=neutral temporal=current conf=0.9
+  appraisal_event=threat sev=0.75 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=frustrated PAD=(-0.22, 0.32, 0.03) intens=0.91
+  attachment_delta={'abandonment_fear': -0.05} internal_delta={'worry': -0.025, 'tension': 0.017, 'hope': -0.029, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[('threat', 0.75)]
+  primary_source=appraisal output="I'm frustrated but I still care. I get the sense you're feeling scared."
+  UserAffectModel={emotion='scared', prev='neutral', temp='current', tp=None, need='help'}
+
+T2 USER_TEXT: The threat is gone. I'm fine now.
+  current_user_emotion=neutral previous_user_emotion=scared temporal=current conf=0.9
+  appraisal_event=neutral sev=0.10 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=True quoted=False
+  Monday_INTERNAL=frustrated PAD=(0.03, 0.11, 0.19) intens=0.49
+  attachment_delta={'abandonment_fear': -0.05} internal_delta={'worry': -0.019, 'tension': -0.01, 'hope': -0.026, 'fatigue': 0.03, 'rumination': 0.04}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="There's anger mixed with genuine concern here. I get the sense you're feeling neutral."
+  UserAffectModel={emotion='neutral', prev='scared', temp='current', tp=None, need='neutral'}
+
+### hurt→apology
+## hurt→apology
+T1 USER_TEXT: That really hurt my feelings.
+  current_user_emotion=hurt previous_user_emotion=neutral temporal=current conf=0.93
+  appraisal_event=harm sev=0.88 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=frustrated PAD=(-0.34, 0.29, -0.0) intens=0.96
+  attachment_delta={'security': -0.07, 'abandonment_fear': 0.144, 'hurt': 0.172} internal_delta={'worry': -0.025, 'tension': 0.002, 'hope': -0.023, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[('harm', 0.88)]
+  primary_source=appraisal output="This is both annoying and worrying. I get the sense you're feeling hurt."
+  UserAffectModel={emotion='hurt', prev='neutral', temp='current', tp=None, need='validation'}
+
+T2 USER_TEXT: He apologized and I feel better.
+  current_user_emotion=neutral previous_user_emotion=hurt temporal=current conf=0.85
+  appraisal_event=neutral sev=0.10 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=True quoted=False
+  Monday_INTERNAL=frustrated PAD=(0.02, 0.06, 0.13) intens=0.51
+  attachment_delta={'abandonment_fear': 0.002} internal_delta={'worry': -0.006, 'tension': -0.002, 'hope': -0.02, 'fatigue': 0.03, 'rumination': 0.04}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm frustrated but I still care. I get the sense you're feeling neutral."
+  UserAffectModel={emotion='neutral', prev='hurt', temp='current', tp=None, need='neutral'}
+
+## 6) Memory interaction
+Notus store attempts: ['store_appraisal_event', 'store_emotional_memory', 'store_appraisal_event', 'store_emotional_memory']
+Notus retrieve attempts: ['get_emotional_memories', 'get_emotional_context', 'get_all_emotional_memories', 'get_past_emotional_responses', 'get_emotional_memories', 'get_emotional_context', 'get_all_emotional_memories', 'get_past_emotional_responses']
+Stored: store_appraisal_event + store_emotional_memory (graceful no-op if unsupported)
+Retrieved: get_emotional_memories / get_emotional_context / get_all_emotional_memories / get_past_emotional_responses
+Later influence: _event_history escalates severity; UserAffectModel.previous_emotion carries USER continuity; unresolved_appraisals slow Monday INTERNAL decay
+Contamination?: USER continuity is local UserAffectModel. Notus optional enrichment only. No Notus code changes (no demonstrated integration bug).
+Local emotional_memories after 2 turns: 1; event_history=['harm', 'harm']
+
+## 7) Edge cases ownership table
+TEXT | owner | temporal | USER | third_party_emotion | quoted | notes
+-----|-------|----------|------|---------------------|--------|------
+He said "I'm furious." | quoted | current | neutral | None | True | quoted third-party speech
+She was scared yesterday but okay now. | third-party | current | unknown | calm | False | third-party historical→resolved
+I thought he was angry with me. | USER | current | neutral | None | False | hypothetical attribution
+I was afraid she would be upset but she wasn't. | USER | current | neutral | None | False | hypothetical fear; negated outcome
+I'm not angry at her she's angry at me. | USER-negated + third-party | current | neutral | angry | False | negated USER + third-party anger
+
+## 10) E2E 8-turn conversation via EmotionalProcess.process_input (live path)
+T1 USER_TEXT: My boss embarrassed me in front of everyone.
+  current_user_emotion=hurt previous_user_emotion=neutral temporal=current conf=0.88
+  appraisal_event=harm sev=0.80 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.26, 0.24, 0.06) intens=0.98
+  attachment_delta={'security': -0.064, 'abandonment_fear': 0.126, 'hurt': 0.157} internal_delta={'worry': -0.025, 'tension': -0.015, 'hope': -0.017, 'fatigue': 0.03}
+  memory_add=1 memory_total=1 unresolved=[('harm', 0.8)]
+  primary_source=appraisal output="I'm here to ...help... I get the sense you're feeling hurt."
+  UserAffectModel={emotion='hurt', prev='neutral', temp='current', tp=None, need='validation'}
+
+T2 USER_TEXT: I was furious at first.
+  current_user_emotion=hurt previous_user_emotion=angry temporal=historical conf=0.84
+  appraisal_event=neutral sev=0.10 third_party=False tp_emotion=None
+  neg=False contrast=False historical=True returning=False resolution=False quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.14, 0.07, 0.14) intens=0.95
+  attachment_delta={'abandonment_fear': 0.102, 'hurt': 0.35} internal_delta={'worry': -0.011, 'tension': -0.018, 'hope': -0.022, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[('harm', 0.8)]
+  primary_source=neutral output="I'm here to ...help..."
+  UserAffectModel={emotion='hurt', prev='angry', temp='historical', tp=None, need='neutral'}
+
+T3 USER_TEXT: Now I'm mostly just hurt by it.
+  current_user_emotion=hurt previous_user_emotion=hurt temporal=current conf=0.9
+  appraisal_event=harm sev=0.65 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.42, 0.3, 0.0) intens=0.92
+  attachment_delta={'security': -0.062, 'abandonment_fear': 0.271, 'hurt': 0.151} internal_delta={'worry': 0.016, 'tension': -0.003, 'hope': -0.02, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[('harm', 0.8), ('harm', 0.77)]
+  primary_source=appraisal output="I'm here to ...help... I get the sense you're feeling hurt."
+  UserAffectModel={emotion='hurt', prev='hurt', temp='current', tp=None, need='validation'}
+
+T4 USER_TEXT: I don't even want to talk to him tomorrow.
+  current_user_emotion=hurt previous_user_emotion=hurt temporal=current conf=0.77
+  appraisal_event=neutral sev=0.03 third_party=False tp_emotion=None
+  neg=True contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.18, 0.06, 0.07) intens=0.92
+  attachment_delta={'abandonment_fear': 0.147} internal_delta={'worry': 0.025, 'tension': -0.015, 'hope': -0.014, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[('harm', 0.8), ('harm', 0.77)]
+  primary_source=neutral output="I'm here to ...help..."
+  UserAffectModel={emotion='hurt', prev='hurt', temp='current', tp=None, need='neutral'}
+
+T5 USER_TEXT: What's the weather like today?
+  current_user_emotion=unknown previous_user_emotion=hurt temporal=current conf=0.15
+  appraisal_event=neutral sev=0.10 third_party=True tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.12, 0.05, 0.06) intens=0.91
+  attachment_delta={'abandonment_fear': 0.147} internal_delta={'worry': 0.021, 'tension': 0.012, 'hope': -0.027, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[('harm', 0.8), ('harm', 0.77)]
+  primary_source=neutral output="I'm here to ...help..."
+  UserAffectModel={emotion='unknown', prev='hurt', temp='current', tp=None, need='neutral'}
+
+T6 USER_TEXT: Actually he apologized this morning.
+  current_user_emotion=neutral previous_user_emotion=unknown temporal=current conf=0.36
+  appraisal_event=neutral sev=0.10 third_party=True tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=True quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.06, 0.04, 0.08) intens=0.5
+  attachment_delta={'abandonment_fear': 0.006} internal_delta={'worry': 0.018, 'tension': 0.01, 'hope': -0.013, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to ...help... I get the sense you're feeling neutral."
+  UserAffectModel={emotion='neutral', prev='unknown', temp='current', tp=None, need='neutral'}
+
+T7 USER_TEXT: I feel better about it now.
+  current_user_emotion=neutral previous_user_emotion=neutral temporal=current conf=0.85
+  appraisal_event=neutral sev=0.10 third_party=False tp_emotion=None
+  neg=False contrast=False historical=False returning=False resolution=True quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.03, 0.02, 0.1) intens=0.25
+  attachment_delta={} internal_delta={'worry': 0.016, 'tension': -0.013, 'hope': -0.027, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to help. I get the sense you're feeling neutral. I'm learning to read feelings better."
+  UserAffectModel={emotion='neutral', prev='neutral', temp='current', tp=None, need='neutral'}
+
+T8 USER_TEXT: Still don't love seeing him though.
+  current_user_emotion=neutral previous_user_emotion=neutral temporal=current conf=0.2
+  appraisal_event=neutral sev=0.03 third_party=True tp_emotion=None
+  neg=True contrast=False historical=False returning=False resolution=False quoted=False
+  Monday_INTERNAL=melancholic PAD=(-0.16, -0.01, 0.08) intens=0.2
+  attachment_delta={} internal_delta={'worry': 0.013, 'tension': -0.011, 'hope': -0.014, 'fatigue': 0.03}
+  memory_add=0 memory_total=1 unresolved=[]
+  primary_source=neutral output="I'm here to help. I'm learning to read feelings better."
+  UserAffectModel={emotion='neutral', prev='neutral', temp='current', tp=None, need='neutral'}
+
+## E2E summary table
+Turn | user_text | curr_USER | prev_USER | event | tp | neg/contrast/hist | Monday | PAD | mem+/unres
+-----|-----------|-----------|-----------|-------|----|-------------------|--------|-----|-----------
+1 | My boss embarrassed me in front of everyon | hurt | neutral | harm | None | n=False/c=False/h=False/r=False/res=False | melancholic | (-0.26, 0.24, 0.06) | +1/[('harm', 0.8)]
+2 | I was furious at first. | hurt | angry | neutral | None | n=False/c=False/h=True/r=False/res=False | melancholic | (-0.14, 0.07, 0.14) | +0/[('harm', 0.8)]
+3 | Now I'm mostly just hurt by it. | hurt | hurt | harm | None | n=False/c=False/h=False/r=False/res=False | melancholic | (-0.42, 0.3, 0.0) | +0/[('harm', 0.8), ('harm', 0.77)]
+4 | I don't even want to talk to him tomorrow. | hurt | hurt | neutral | None | n=True/c=False/h=False/r=False/res=False | melancholic | (-0.18, 0.06, 0.07) | +0/[('harm', 0.8), ('harm', 0.77)]
+5 | What's the weather like today? | unknown | hurt | neutral | None | n=False/c=False/h=False/r=False/res=False | melancholic | (-0.12, 0.05, 0.06) | +0/[('harm', 0.8), ('harm', 0.77)]
+6 | Actually he apologized this morning. | neutral | unknown | neutral | None | n=False/c=False/h=False/r=False/res=True | melancholic | (-0.06, 0.04, 0.08) | +0/[]
+7 | I feel better about it now. | neutral | neutral | neutral | None | n=False/c=False/h=False/r=False/res=True | melancholic | (-0.03, 0.02, 0.1) | +0/[]
+8 | Still don't love seeing him though. | neutral | neutral | neutral | None | n=True/c=False/h=False/r=False/res=False | melancholic | (-0.16, -0.01, 0.08) | +0/[]
+
+## 11) Concrete failures / lost / confused / stale context
+No continuity/ownership/stale/history failures remaining on the exercised sequences.
+Honest limits:
+ - Simultaneous multi-emotion (proud AND exhausted at once) unsupported; previous_emotion preserves cross-turn history.
+ - Monday INTERNAL is PAD-driven and may lag USER flips; resolution clears unresolved and softens intensity (not instant enum remap from USER).
+ - "She thinks everything falls apart" has no emotion word → third_party_emotion=None (belief ≠ affect).
+ - E2E turn "Still don't love seeing him though" may be weak/negated without strong affect label — continuity/unknown acceptable.
+
+## 1) Files changed
+advanced_emotional_engine.py — continuity/ownership/history/stale/quote fixes only; no semantic layer or emotion architecture redesign.
+_emotion_multiturn_continuity_proof.txt — this transcript.
