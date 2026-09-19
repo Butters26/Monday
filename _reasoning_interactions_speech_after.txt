@@ -1,0 +1,71 @@
+DESIGN_JOB: Fix Reasoning→Notus episodic payload (user_id + query/text; empty=list) so interaction counts are real + isolated; widen Monday-own-speech intent so natural 'what did you say/tell/call' questions ground only in monday rows.
+
+=== LIVE create_core_systems PROOF ===
+PASS stored_interactions_for_uid | ids=['320ef99c-f969-4573-b5f5-0c2b33e4aaea', '5e473a06-631c-4d64-a274-fd5a2e531a8f', '94376036-4cc3-4c0d-b07e-eb83a2719bba']
+PASS stored_interactions_for_other | ids=['eb111674-8904-4f08-8624-6210bd19e2d1', 'a11580eb-a9ad-42dc-9d70-c23dae32878c']
+PASS notus_lists_uid_interactions | count=3 sample={'id': '94376036-4cc3-4c0d-b07e-eb83a2719bba', 'timestamp': '2026-09-19T15:34:52.426967', 'actor': 'Monday', 'action': 'named', 'object': 'project marker Silver Lantern', 'place': None, 'cause': None, 'effect': None, 'note': 'Monday named project marker Silver Lantern', 'sentiment': None, 'confidence': 0.9, 'source': 'thalamus', 'usage_count': 0, 'user_id': 'reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87'}
+PASS notus_no_other_leak_in_uid_list | []
+PASS notus_user_id_field_matches | []
+PASS notus_lists_other_interactions | count=2
+PASS other_sees_own_secret | [{'id': 'a11580eb-a9ad-42dc-9d70-c23dae32878c', 'timestamp': '2026-09-19T15:34:52.428396', 'actor': 'user', 'action': 'visited', 'object': 'Otherville', 'place': None, 'cause': None, 'effect': None, 'note': 'user visited Otherville', 'sentiment': None, 'confidence': 0.9, 'source': 'thalamus', 'usage
+PASS other_cannot_see_uid_lantern | [{'id': 'a11580eb-a9ad-42dc-9d70-c23dae32878c', 'timestamp': '2026-09-19T15:34:52.428396', 'actor': 'user', 'action': 'visited', 'object': 'Otherville', 'place': None, 'cause': None, 'effect': None, 'note': 'user visited Otherville', 'sentiment': None, 'confidence': 0.9, 'source': 'thalamus', 'usage
+PASS reasoning_query_episodic_retrieves | n=3 sample=[{'id': '94376036-4cc3-4c0d-b07e-eb83a2719bba', 'timestamp': '2026-09-19T15:34:52.426967', 'actor': 'Monday', 'action': 'named', 'object': 'project marker Silver Lantern', 'place': None, 'cause': None, 'effect': None, 'note': 'Monday named project marker Silver Lantern', 'sentiment': None, 'confidence': 0.9, 'source': 'thalamus', 'usage_count': 0, 'user_id': 'reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87'}]
+PASS user_info_past_interactions_nonzero | n=3 summary=Have 0 facts about user and 3 recorded interactions
+PASS summary_count_matches_retrieved | summary='Have 0 facts about user and 3 recorded interactions' n_past=3
+PASS summary_not_zero_when_events_exist | Have 0 facts about user and 3 recorded interactions
+PASS user_info_isolation_no_other_secret | [{'id': '94376036-4cc3-4c0d-b07e-eb83a2719bba', 'timestamp': '2026-09-19T15:34:52.426967', 'actor': 'Monday', 'action': 'named', 'object': 'project marker Silver Lantern', 'place': None, 'cause': None, 'effect': None, 'note': 'Monday named project marker Silver Lantern', 'sentiment': None, 'confiden
+PASS other_user_info_sees_own | [{'id': 'a11580eb-a9ad-42dc-9d70-c23dae32878c', 'timestamp': '2026-09-19T15:34:52.428396', 'actor': 'user', 'action': 'visited', 'object': 'Otherville', 'place': None, 'cause': None, 'effect': None, 'note': 'user visited Otherville', 'sentiment': None, 'confidence': 0.9, 'source': 'thalamus', 'usage
+PASS other_user_info_no_uid_leak | [{'id': 'a11580eb-a9ad-42dc-9d70-c23dae32878c', 'timestamp': '2026-09-19T15:34:52.428396', 'actor': 'user', 'action': 'visited', 'object': 'Otherville', 'place': None, 'cause': None, 'effect': None, 'note': 'user visited Otherville', 'sentiment': None, 'confidence': 0.9, 'source': 'thalamus', 'usage
+PASS fact_retrieval_still_works | n_facts=1 summary=Have 1 facts about user and 3 recorded interactions
+PASS monday_speech_stored | {'stored': True, 'id': '83e4fb97-5881-4992-b604-054c5bda2f39', 'content': "For this conversation, I'll call the project marker Silver Lantern.", 'facts_learned': []}
+
+=== SPEECH RECALL DETAIL ===
+PASS intent_detect:What project marker did you say you would use? | What project marker did you say you would use?
+RETRIEVED | q='What project marker did you say you would use?' | src=from_notus role='monday' user_id='reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87' content="For this conversation, I'll call the project marker Silver Lantern."
+REASONING | composed="For this conversation, I'll call the project marker Silver Lantern." answer="For this conversation, I'll call the project marker Silver Lantern." evidence=["For this conversation, I'll call the project marker Silver Lantern.", "For this conversation, I'll call the project marker Silver Lantern."] grounded="For this conversation, I'll call the project marker Silver Lantern."
+FINAL | 'For this conversation, I\'ll call the project marker Silver Lantern.\n\nI do not want to invent details - can you tell me more about what you meant by "What project marker did you say you would use?"?'
+PASS speech_final_lantern:What project marker did you say you woul | final='For this conversation, I\'ll call the project marker Silver Lantern.\n\nI do not want to invent details - can you tell me more about what you meant by "What project marker did you say you would use?"?' grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_reason_lantern:What project marker did you say you woul | grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_not_user_fact:What project marker did you say you woul | final='For this conversation, I\'ll call the project marker Silver Lantern.\n\nI do not want to invent details - can you tell me more about what you meant by "What project marker did you say you would use?"?'
+PASS intent_detect:Remind me what you called that. | Remind me what you called that.
+RETRIEVED | q='Remind me what you called that.' | src=from_notus role='monday' user_id='reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87' content="For this conversation, I'll call the project marker Silver Lantern."
+REASONING | composed="For this conversation, I'll call the project marker Silver Lantern." answer="For this conversation, I'll call the project marker Silver Lantern." evidence=["For this conversation, I'll call the project marker Silver Lantern.", "For this conversation, I'll call the project marker Silver Lantern."] grounded="For this conversation, I'll call the project marker Silver Lantern."
+FINAL | "For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_final_lantern:Remind me what you called that. | final="For this conversation, I'll call the project marker Silver Lantern." grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_reason_lantern:Remind me what you called that. | grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_not_user_fact:Remind me what you called that. | final="For this conversation, I'll call the project marker Silver Lantern."
+PASS intent_detect:What was the thing you said about the project? | What was the thing you said about the project?
+RETRIEVED | q='What was the thing you said about the project?' | src=from_notus role='monday' user_id='reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87' content="For this conversation, I'll call the project marker Silver Lantern.\n\nI do not want to invent details - can you tell me more about what you m"
+REASONING | composed="For this conversation, I'll call the project marker Silver Lantern." answer="For this conversation, I'll call the project marker Silver Lantern." evidence=["For this conversation, I'll call the project marker Silver Lantern.", "For this conversation, I'll call the project marker Silver Lantern."] grounded="For this conversation, I'll call the project marker Silver Lantern."
+FINAL | "For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_final_lantern:What was the thing you said about the pr | final="For this conversation, I'll call the project marker Silver Lantern." grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_reason_lantern:What was the thing you said about the pr | grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_not_user_fact:What was the thing you said about the pr | final="For this conversation, I'll call the project marker Silver Lantern."
+PASS intent_detect:What did you tell me earlier about the project m | What did you tell me earlier about the project marker?
+RETRIEVED | q='What did you tell me earlier about the project marker?' | src=from_notus role='monday' user_id='reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87' content="For this conversation, I'll call the project marker Silver Lantern.\n\nI do not want to invent details - can you tell me more about what you m"
+REASONING | composed="For this conversation, I'll call the project marker Silver Lantern." answer="For this conversation, I'll call the project marker Silver Lantern." evidence=["For this conversation, I'll call the project marker Silver Lantern.", "For this conversation, I'll call the project marker Silver Lantern."] grounded="For this conversation, I'll call the project marker Silver Lantern."
+FINAL | "For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_final_lantern:What did you tell me earlier about the p | final="For this conversation, I'll call the project marker Silver Lantern." grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_reason_lantern:What did you tell me earlier about the p | grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_not_user_fact:What did you tell me earlier about the p | final="For this conversation, I'll call the project marker Silver Lantern."
+PASS intent_detect:What were your exact words about Silver Lantern? | What were your exact words about Silver Lantern?
+RETRIEVED | q='What were your exact words about Silver Lantern?' | src=from_notus role='monday' user_id='reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87' content="For this conversation, I'll call the project marker Silver Lantern."
+REASONING | composed="For this conversation, I'll call the project marker Silver Lantern." answer="For this conversation, I'll call the project marker Silver Lantern." evidence=["For this conversation, I'll call the project marker Silver Lantern.", "For this conversation, I'll call the project marker Silver Lantern."] grounded="For this conversation, I'll call the project marker Silver Lantern."
+FINAL | "For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_final_lantern:What were your exact words about Silver  | final="For this conversation, I'll call the project marker Silver Lantern." grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_reason_lantern:What were your exact words about Silver  | grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_not_user_fact:What were your exact words about Silver  | final="For this conversation, I'll call the project marker Silver Lantern."
+PASS intent_detect:What did you say about the project marker? | What did you say about the project marker?
+RETRIEVED | q='What did you say about the project marker?' | src=from_notus role='monday' user_id='reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87' content="For this conversation, I'll call the project marker Silver Lantern.\n\nI do not want to invent details - can you tell me more about what you m"
+REASONING | composed="For this conversation, I'll call the project marker Silver Lantern." answer="For this conversation, I'll call the project marker Silver Lantern." evidence=["For this conversation, I'll call the project marker Silver Lantern.", "For this conversation, I'll call the project marker Silver Lantern."] grounded="For this conversation, I'll call the project marker Silver Lantern."
+FINAL | "For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_final_lantern:What did you say about the project marke | final="For this conversation, I'll call the project marker Silver Lantern." grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_reason_lantern:What did you say about the project marke | grounded="For this conversation, I'll call the project marker Silver Lantern." composed="For this conversation, I'll call the project marker Silver Lantern."
+PASS speech_not_user_fact:What did you say about the project marke | final="For this conversation, I'll call the project marker Silver Lantern."
+
+META user_id=reason-speech-24d7e293-7dba-4131-a8d5-c56212b40c87
+META other_user_id=reason-speech-other-4436130e-ffe7-4ad6-ab48-bd145a18f811
+META speech_line="For this conversation, I'll call the project marker Silver Lantern."
+FAIL_COUNT=0
+RESULT=PASS
+PHASE=AFTER

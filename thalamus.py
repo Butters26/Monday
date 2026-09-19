@@ -27,8 +27,10 @@ from direct_response import (
     honest_curiosity_question,
     is_mild_social_turn,
     relevance_score,
+    _asks_about_monday_own_speech,
     _attribute_asked,
     _fact_covers_attribute,
+    _MONDAY_ROLES,
 )
 from learning.lobe_learning_store import LobeLearningStore
 
@@ -930,6 +932,40 @@ class Thalamus:
                 )
             )
         ]
+        # Own-speech asks: ensure recent monday/assistant/abin lines are in
+        # evidence even when query_context AND-gates bury them behind fillers
+        # like "thing" / "exact words" / "earlier".
+        if _asks_about_monday_own_speech(user_input):
+            try:
+                recent = self.send_and_wait(
+                    "notus",
+                    "get_recent",
+                    {"user_id": user_id, "limit": 25},
+                )
+            except Exception:
+                recent = {"status": "error"}
+            if recent.get("status") == "success":
+                have = {
+                    str(m.get("content") or "").strip().casefold()
+                    for m in memories
+                    if isinstance(m, dict)
+                }
+                for m in self._content(recent).get("memories") or []:
+                    if not isinstance(m, dict):
+                        continue
+                    role = str(m.get("role") or "").strip().lower()
+                    if role in {"assistant", "abin"}:
+                        role = "monday"
+                    if role not in _MONDAY_ROLES:
+                        continue
+                    content = str(m.get("content") or "").strip()
+                    if not content:
+                        continue
+                    key = content.casefold()
+                    if key in have or key == (user_input or "").strip().casefold():
+                        continue
+                    memories.append({**m, "role": "monday"})
+                    have.add(key)
         ctx = dict(ctx)
         ctx["memories"] = memories
 

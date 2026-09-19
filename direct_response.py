@@ -475,24 +475,59 @@ def _narrative_answer(query: str, snippets: List[tuple]) -> Optional[str]:
     return None
 
 
-def _monday_speech_answer(query: str, snippets: List[tuple]) -> Optional[str]:
-    """Use stored Monday speech for 'what did you say about X'."""
+def _asks_about_monday_own_speech(query: str) -> bool:
+    """True when the user is asking what Monday herself previously said/told/called.
+
+    Intent-level match — not a whitelist of example sentences. Covers phrasing
+    like "what did you say/tell/call", "your exact words", "remind me what you
+    called/said", "the thing you said about…", "did you say you would…".
+    """
     q = query or ""
-    if not re.search(
-        r"\b(?:what did you (?:just )?say|what you said|you said about)\b",
+    if re.search(
+        r"\b(?:what (?:did|do) you (?:just )?(?:say|tell|call|mention)|"
+        r"what you (?:said|told|called|mentioned)|"
+        r"you said about|"
+        r"what (?:were|was) your (?:exact )?words|"
+        r"remind me what you (?:called|said|told|mentioned)|"
+        r"what was the (?:thing|name|phrase|word|marker) you (?:said|called|told|mentioned)|"
+        r"(?:what|which)\b.{0,48}\bdid you (?:say|tell|call|mention)\b|"
+        r"\bdid you say you (?:would|will)\b|"
+        r"\byou (?:told|said) me (?:earlier|before|about)\b)\b",
         q,
         re.IGNORECASE,
     ):
+        return True
+    # "What X did you say you would use / call …"
+    if re.search(
+        r"\bwhat\b.{0,40}\bdid you (?:say|tell|call)\b.{0,40}\b(?:you )?(?:would|will|use|call)\b",
+        q,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
+def _monday_speech_answer(query: str, snippets: List[tuple]) -> Optional[str]:
+    """Use stored Monday speech when asked what she herself said.
+
+    Returns:
+      - None when the question is not about Monday's prior speech
+      - "" when it is, but no monday/assistant/abin row grounds an answer
+        (caller must not fall through to user facts/memories)
+      - the best matching Monday line otherwise
+    """
+    q = query or ""
+    if not _asks_about_monday_own_speech(q):
         return None
     monday = [
         (relevance_score(q, text), text)
         for role, text in snippets
         if role in _MONDAY_ROLES and not _looks_like_question_memory(text)
     ]
-    monday = [(s, t) for s, t in monday if s >= 0.2 or (content_tokens(q) & content_tokens(t))]
+    monday = [(s, t) for s, t in monday if s >= 0.15 or (content_tokens(q) & content_tokens(t))]
     if not monday:
-        # Fall back to any grounded fact that overlaps the topic tokens.
-        return None
+        # Asked what Monday said — do not impersonate from user/fact rows.
+        return ""
     monday.sort(key=lambda item: (-item[0], item[1]))
     best = monday[0][1]
     return best if best.endswith((".", "!", "?")) else best + "."
@@ -529,9 +564,11 @@ def answer_from_grounded_memories(
 
 
     # Prefer Monday's own prior speech when asked what she said.
+    # "" means speech-intent matched but no monday/assistant/abin grounding —
+    # do not answer from user memories or durable facts as if Monday said them.
     monday_ans = _monday_speech_answer(q, snippets)
-    if monday_ans:
-        return monday_ans
+    if monday_ans is not None:
+        return monday_ans or None
 
     def _name_answer() -> Optional[str]:
         name_q = re.search(

@@ -159,7 +159,13 @@ class NotusMemorySystem(SuperhumanMemorySystem):
     # Ask-verbs / fillers that must not AND-gate identity recall
     # ("remind me my name", "what am I called name").
     _WEAK_QUERY_TOKENS = frozenset(
-        {"remind", "call", "tell", "please", "know", "said", "say"}
+        {
+            "remind", "call", "tell", "please", "know", "said", "say",
+            # Speech-recall meta fillers must not AND-gate Monday's own lines
+            # ("the thing you said", "exact words", "earlier about…").
+            "thing", "things", "word", "words", "exact", "earlier", "before",
+            "previously", "phrase", "told", "called", "mention", "mentioned",
+        }
     )
     # Minimum share of query content-tokens that must appear in a hit.
     _MIN_RELEVANCE = 0.34
@@ -430,7 +436,17 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                     return 0.0
             elif overlap < min_needed:
                 # Allow fact rows that still hit every significant token (AND).
-                if not (role_l == "fact" and _sig_covered(significant)):
+                # Monday/assistant/abin rows: topic-token hit is enough for
+                # own-speech recall (meta fillers already excluded from significant).
+                monday_ok = (
+                    role_l in {"monday", "assistant", "abin"}
+                    and significant
+                    and _sig_hit_count(significant) >= 1
+                )
+                if not (
+                    (role_l == "fact" and _sig_covered(significant))
+                    or monday_ok
+                ):
                     return 0.0
         elif significant and not _sig_hit_count(significant):
             return 0.0
@@ -818,6 +834,56 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             )
         scored.sort(key=lambda item: item[0], reverse=True)
         return [item for _, item in scored[:limit]]
+
+    def list_recent_episodes(
+        self,
+        user_id: str = "default",
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """List recent episodic events for one user (no free-text gate).
+
+        Used by the Reasoning↔Notus bridge when counting recorded interactions
+        without a relevance query. Strict user_id scope — no cross-user leak.
+        """
+        limit = max(1, min(int(limit), 100))
+        user_id = (user_id or "default").strip()
+        try:
+            with self._db_connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT id, timestamp, actor, action, object, place, cause, effect,
+                           note, sentiment, confidence, source, usage_count, user_id
+                    FROM episodic_events
+                    WHERE user_id = %s
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                    """,
+                    (user_id, limit),
+                )
+                rows = cursor.fetchall()
+        except Exception:
+            return []
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "id": r[0],
+                    "timestamp": r[1],
+                    "actor": r[2],
+                    "action": r[3],
+                    "object": r[4],
+                    "place": r[5],
+                    "cause": r[6],
+                    "effect": r[7],
+                    "note": r[8],
+                    "sentiment": r[9],
+                    "confidence": float(r[10] or 0.0),
+                    "source": r[11],
+                    "usage_count": r[12],
+                    "user_id": r[13],
+                }
+            )
+        return out
 
     # ------------------------------------------------------------------
     # Durable facts with contradiction tracking
@@ -1720,12 +1786,21 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             return {"status": "success", "content": {"id": event_id}}
 
         if msg_type == "query_episodic":
-            query = str(payload.get("query", payload.get("text", "")) or "")
-            episodes = self.recall_episodes(
-                query,
-                user_id=user_id,
-                limit=max(1, min(int(payload.get("limit", 10)), 100)),
+            # Active contract: query/text (+ optional legacy pattern as query alias).
+            # user_id from payload scopes isolation. Empty query → recent list.
+            query = str(
+                payload.get("query", payload.get("text", payload.get("pattern", "")))
+                or ""
             )
+            limit = max(1, min(int(payload.get("limit", 10)), 100))
+            if not query.strip():
+                episodes = self.list_recent_episodes(user_id=user_id, limit=limit)
+            else:
+                episodes = self.recall_episodes(
+                    query,
+                    user_id=user_id,
+                    limit=limit,
+                )
             return {
                 "status": "success",
                 "content": {"events": episodes, "episodes": episodes, "count": len(episodes)},

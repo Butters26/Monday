@@ -531,13 +531,32 @@ class MaximumSophisticationReasoning:
             print(f"⚠️ Semantic query failed: {e}")
             return []
     
-    def query_episodic_from_notus(self, pattern: str = None, limit: int = 5) -> List[Dict[str, Any]]:
-        """Query episodic memory (events and experiences) from Notus"""
+    def query_episodic_from_notus(
+        self,
+        pattern: str = None,
+        limit: int = 5,
+        user_id: str = 'default',
+        query: str = '',
+    ) -> List[Dict[str, Any]]:
+        """Query episodic memory (events and experiences) from Notus.
+
+        Active Notus expects ``user_id`` plus ``query``/``text`` (empty query
+        lists recent per-user episodes). ``pattern`` is kept as a legacy alias
+        for the free-text query only — never as a substitute for user_id.
+        """
         try:
+            q = (query if query is not None else '') or (pattern or '')
+            q = str(q).strip()
+            content = {
+                'user_id': user_id or 'default',
+                'limit': limit,
+                'query': q,
+                'text': q,
+            }
             result = self.thalamus.send_message(
                 destination='notus',
                 msg_type='query_episodic',
-                content={'pattern': pattern, 'limit': limit},
+                content=content,
                 source='reasoning'
             )
             if result.get('status') == 'success':
@@ -590,8 +609,11 @@ class MaximumSophisticationReasoning:
                     subject=None, limit=50, user_id=user_id
                 )
             
-            # Query past interactions with user (episodic)
-            user_events = self.query_episodic_from_notus(pattern=user_id, limit=10)
+            # Query past interactions with user (episodic).
+            # Empty query → Notus lists recent episodes for this user_id only.
+            user_events = self.query_episodic_from_notus(
+                user_id=user_id, query='', limit=10
+            )
             
             return {
                 'status': 'success',
