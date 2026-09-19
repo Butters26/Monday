@@ -17,7 +17,7 @@ import re
 import time
 import threading
 import uuid
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from direct_response import (
     DeterministicResponseProvider,
@@ -610,8 +610,138 @@ class Thalamus:
         )
         return semantic_input, answer
 
+
+    @staticmethod
+    def _build_attention_signals(
+        user_input: str,
+        perception_payload: Optional[Dict[str, Any]] = None,
+        user_id: str = "default",
+    ) -> List[Dict[str, Any]]:
+        """Build competing live-path signals for AttentionLobe (user + perception + ambient)."""
+        perception_payload = perception_payload if isinstance(perception_payload, dict) else {}
+        signals: List[Dict[str, Any]] = []
+        text = user_input if isinstance(user_input, str) else ""
+        signals.append(
+            {
+                "id": "user_input",
+                "text": text,
+                "source": "user",
+                "modality": "text",
+                "priority": 0.55,
+                "novelty_flags": list(perception_payload.get("novelty_flags") or []),
+                "emotions": list(
+                    (perception_payload.get("raw_meta") or {}).get("emotions")
+                    or perception_payload.get("emotions")
+                    or []
+                ),
+                "entities": list(perception_payload.get("entities") or []),
+                "concepts": list(perception_payload.get("concepts") or perception_payload.get("words") or []),
+                "user_id": user_id,
+            }
+        )
+        # Perception envelope as its own competing signal when present.
+        if perception_payload:
+            perc_text = (
+                perception_payload.get("text")
+                or perception_payload.get("normalized_text")
+                or text
+            )
+            signals.append(
+                {
+                    "id": "perception_envelope",
+                    "text": perc_text if isinstance(perc_text, str) else text,
+                    "source": "perception",
+                    "modality": str(perception_payload.get("modality") or "text"),
+                    "priority": 0.25,
+                    "novelty_flags": list(perception_payload.get("novelty_flags") or []),
+                    "emotions": list(
+                        (perception_payload.get("raw_meta") or {}).get("emotions")
+                        or perception_payload.get("emotions")
+                        or []
+                    ),
+                    "entities": list(perception_payload.get("entities") or []),
+                    "concepts": list(
+                        perception_payload.get("concepts")
+                        or perception_payload.get("words")
+                        or []
+                    ),
+                }
+            )
+            for idx, ent in enumerate(perception_payload.get("entities") or []):
+                if not isinstance(ent, str) or not ent.strip():
+                    continue
+                signals.append(
+                    {
+                        "id": f"entity:{ent.strip()}",
+                        "text": ent.strip(),
+                        "source": "perception",
+                        "modality": "text",
+                        "priority": 0.20,
+                        "entities": [ent.strip()],
+                    }
+                )
+                if idx >= 4:
+                    break
+            for idx, flag in enumerate(perception_payload.get("novelty_flags") or []):
+                if not flag:
+                    continue
+                signals.append(
+                    {
+                        "id": f"novelty:{flag}",
+                        "text": str(flag),
+                        "source": "perception",
+                        "modality": "text",
+                        "priority": 0.30,
+                        "novelty_flags": [str(flag)],
+                    }
+                )
+                if idx >= 3:
+                    break
+        # Low-salience ambient competitor so ranking is real, not a single dead entry.
+        signals.append(
+            {
+                "id": "ambient_noise",
+                "text": "ambient room tone",
+                "source": "ambient",
+                "modality": "text",
+                "priority": 0.0,
+            }
+        )
+        return signals
+
+    def _attend_live_signals(
+        self,
+        user_input: str,
+        perception_payload: Optional[Dict[str, Any]] = None,
+        user_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Send competing signals through attention; return ranking payload or {}."""
+        with self.lobe_handlers_lock:
+            has_attention = "attention" in self.lobe_handlers
+        if not has_attention:
+            return {}
+        signals = self._build_attention_signals(user_input, perception_payload, user_id)
+        response = self.send_and_wait(
+            "attention",
+            "evaluate",
+            {"signals": signals, "user_id": user_id},
+            source="thalamus",
+        )
+        if response.get("status") != "success":
+            return {}
+        payload = self._content(response)
+        # Honest route: push focus to reasoning when registered (soft ack).
+        if payload.get("focus"):
+            self.send_and_wait(
+                "attention",
+                "route_focus",
+                {},
+                source="thalamus",
+            )
+        return payload
+
     def process_user_input(self, user_input: str, user_id: str = "default") -> str:
-        """Run the sole prompted path: perception → conversation → Notus → emotion → reasoning → language → output."""
+        """Run the sole prompted path: perception → attention → conversation → Notus → emotion → reasoning → language → output."""
         if not isinstance(user_input, str) or not user_input.strip():
             return "Please send a message."
 
@@ -635,6 +765,24 @@ class Thalamus:
             )
             if isinstance(normalized, str) and normalized.strip():
                 user_input = normalized.strip()
+
+        # Attention: score competing signals, decay stale focus, rank priority.
+        attention_payload: Dict[str, Any] = self._attend_live_signals(
+            user_input, perception_payload, user_id=user_id
+        )
+        # Promote high-salience perception concepts when attention ranked them.
+        if attention_payload and perception_payload:
+            ranked_ids = [
+                str(r.get("id") or "")
+                for r in (attention_payload.get("ranked") or [])
+                if isinstance(r, dict)
+            ]
+            concepts = perception_payload.get("concepts")
+            if isinstance(concepts, list) and concepts and ranked_ids:
+                # Keep order stable but note priority list on the envelope.
+                perception_payload = dict(perception_payload)
+                perception_payload["attention_priority"] = ranked_ids[:8]
+                perception_payload["attention_focus"] = attention_payload.get("focus")
 
         # Capture speak-worthy inner-life BEFORE this turn's emotion process_input
         # can wash intensity / unresolved context. Her own prior feelings stay eligible
@@ -682,7 +830,11 @@ class Thalamus:
                 "user_input": user_input,
                 "user_id": user_id,
                 "perception": perception_payload,
-                "context": {"perception": perception_payload},
+                "attention": attention_payload,
+                "context": {
+                    "perception": perception_payload,
+                    "attention": attention_payload,
+                },
             },
         )
         if conversation["status"] != "success":
@@ -792,6 +944,7 @@ class Thalamus:
                     "memory_context": ctx,
                     "emotion_result": emotional_state,
                     "perception": perception_payload,
+                    "attention": attention_payload,
                 },
             },
         )

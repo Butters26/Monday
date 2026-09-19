@@ -249,6 +249,10 @@ class ConversationSystem:
             if isinstance(perception, dict):
                 context = dict(context)
                 context['perception'] = perception
+            attention = payload.get('attention')
+            if isinstance(attention, dict):
+                context = dict(context)
+                context['attention'] = attention
 
             understanding = self.understand(user_input, context)
             # Fold perception entities/concepts into understanding when present.
@@ -271,6 +275,32 @@ class ConversationSystem:
                 understanding['perception_novelty_flags'] = list(perc.get('novelty_flags') or [])
                 if perc.get('sentiment') and understanding.get('sentiment') in (None, 'neutral'):
                     understanding['sentiment'] = perc.get('sentiment')
+
+            # Fold live attention ranking into understanding (priority, not theater).
+            attn = context.get('attention') if isinstance(context.get('attention'), dict) else {}
+            if attn:
+                understanding['attention_focus'] = attn.get('focus')
+                understanding['attention_focus_text'] = attn.get('focus_text')
+                understanding['attention_focus_score'] = attn.get('focus_score')
+                ranked = attn.get('ranked') or []
+                understanding['attention_ranked'] = [
+                    {
+                        'id': r.get('id'),
+                        'score': r.get('score'),
+                        'text': r.get('text'),
+                        'source': r.get('source'),
+                    }
+                    for r in ranked[:8]
+                    if isinstance(r, dict)
+                ]
+                # Prefer high-salience entities first when perception listed them.
+                focus_text = str(attn.get('focus_text') or '').strip()
+                if focus_text and isinstance(understanding.get('entities'), list):
+                    ents = list(understanding['entities'])
+                    promoted = [e for e in ents if isinstance(e, str) and e and e.lower() in focus_text.lower()]
+                    rest = [e for e in ents if e not in promoted]
+                    if promoted:
+                        understanding['entities'] = promoted + rest
 
             return {
                 'status': 'success',

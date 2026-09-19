@@ -282,6 +282,14 @@ class DirectMaximumSophisticationAdapter:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         if message.get("type") == "health":
             return {"status": "success", "content": {"healthy": self.running}}
+        if message.get("type") == "attention_focus":
+            # Soft ack from AttentionLobe.route_focus — live think also gets attention.
+            payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
+            self._last_attention_focus = payload
+            return {
+                "status": "success",
+                "content": {"acknowledged": True, "focus": payload.get("focus")},
+            }
         if message.get("type") != "think":
             return {"status": "error", "message": "Unknown message type", "content": {}}
 
@@ -324,6 +332,8 @@ class DirectMaximumSophisticationAdapter:
         evidence = self._evidence(memories, user_input)
         emotional_state = direct_input.get("emotion_result", {})
         emotional_state = emotional_state if isinstance(emotional_state, dict) else {}
+        attention_payload = direct_input.get("attention", {})
+        attention_payload = attention_payload if isinstance(attention_payload, dict) else {}
         legacy_input = {
             "user_input": user_input,
             "user_id": direct_input.get("user_id", "default"),
@@ -337,6 +347,7 @@ class DirectMaximumSophisticationAdapter:
             # Retain the direct envelope data for legacy routines that consume it.
             "memory_context": {"memories": evidence},
             "understanding": understanding,
+            "attention": attention_payload,
         }
         # Prefer teaching ack / fact answers over legacy composition noise.
         teaching = self._teaching_ack(user_input)
@@ -378,6 +389,10 @@ class DirectMaximumSophisticationAdapter:
             "emotion": emotional_state.get("current_emotion", "neutral"),
             "memory_context": evidence,
         }
+        if attention_payload:
+            semantic_input["attention_focus"] = attention_payload.get("focus")
+            semantic_input["attention_focus_text"] = attention_payload.get("focus_text")
+            semantic_input["attention_ranked"] = list(attention_payload.get("ranked") or [])[:5]
         if answer is not None:
             semantic_input.update(
                 {"answer": answer, "conclusion": answer, "propositions": [answer]}
