@@ -1,0 +1,80 @@
+DESIGN_JOB: Notus is Monday's live memory lobe: persist and recall clean user+Monday speech across restarts, extract only durable personal facts (no invent, no poison), and surface them on the thalamus store/query_context path with per-user isolation.
+
+=== LIVE create_core_systems AFTER ===
+✅ Autonomous Thinking Loop registered with Thalamus
+🧠 Autonomous Thinking Loop background starting...
+PASS health_postgresql_ready | {'healthy': True, 'backend': 'postgresql', 'ready': True}
+PASS store_user_speech
+PASS extract_name | user dog_name Pixel   Your dog's name is Pixel.
+user name Matthew   Your name is Matthew.
+user codeword NebulaQuartz   Your codeword is NebulaQuartz.
+user lives_in Boulder   You live in Boulder.
+user 
+PASS extract_dog | user dog_name Pixel   Your dog's name is Pixel.
+user name Matthew   Your name is Matthew.
+user codeword NebulaQuartz   Your codeword is NebulaQuartz.
+user lives_in Boulder   You live in Boulder.
+user 
+PASS extract_live | user dog_name Pixel   Your dog's name is Pixel.
+user name Matthew   Your name is Matthew.
+user codeword NebulaQuartz   Your codeword is NebulaQuartz.
+user lives_in Boulder   You live in Boulder.
+user 
+PASS extract_work | user dog_name Pixel   Your dog's name is Pixel.
+user name Matthew   Your name is Matthew.
+user codeword NebulaQuartz   Your codeword is NebulaQuartz.
+user lives_in Boulder   You live in Boulder.
+user 
+PASS extract_codeword | user dog_name Pixel   Your dog's name is Pixel.
+user name Matthew   Your name is Matthew.
+user codeword NebulaQuartz   Your codeword is NebulaQuartz.
+user lives_in Boulder   You live in Boulder.
+user 
+PASS store_monday_speech
+PASS recall_dog_query_context | My name is Matthew. My dog's name is Pixel. I live in Boulder. I work as an engineer. The codeword is NebulaQuartz.
+
+PASS recall_live_query_context | My name is Matthew. My dog's name is Pixel. I live in Boulder. I work as an engineer. The codeword is NebulaQuartz.
+
+PASS name_recall:What is my name? | user dog_name Pixel  user dog_name Pixel Your dog's name is Pixel.
+user name Matthew  user name Matthew Your name is Matthew.
+PASS name_recall:who am I | user dog_name Pixel  user dog_name Pixel Your dog's name is Pixel.
+user name Matthew  user name Matthew Your name is Matthew.
+PASS name_recall:what am I called | user dog_name Pixel  user dog_name Pixel Your dog's name is Pixel.
+user name Matthew  user name Matthew Your name is Matthew.
+PASS name_recall:remind me my name | user dog_name Pixel  user dog_name Pixel Your dog's name is Pixel.
+user name Matthew  user name Matthew Your name is Matthew.
+PASS name_recall_query_context | Your dog's name is Pixel.
+Your name is Matthew.
+Your name is Matthew.
+Your dog's name is Pixel.
+My name is Matthew. My dog's name is Pixel. I live in Boulder. I work as an engineer. The codeword is NebulaQuartz.
+user dog_name Pixel  user dog_name Pix
+PASS reject_transcript | {'stored': False, 'skipped': 'unsafe_or_disallowed_memory', 'role': 'user'}
+PASS reject_experience | {'stored': False, 'skipped': 'unsafe_or_disallowed_memory', 'role': 'user'}
+PASS reject_role | {'stored': False, 'skipped': 'unsafe_or_disallowed_memory', 'role': 'system'}
+PASS no_invent | (empty)
+PASS no_fragile_mood
+PASS user_isolation | 
+
+PASS contradiction_new_active | ['Denver']
+PASS contradiction_old_suppressed | ['Denver']
+PASS job_alias
+PASS codeword
+META user_id=after-proof-3a9eb9a0-0c46-45ea-bf36-8b7524779b6d
+🛑 Autonomous Thinking Loop shutdown
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+✅ Autonomous Thinking Loop registered with Thalamus
+🧠 Autonomous Thinking Loop background starting...
+PASS health_restart
+PASS continuity_dog
+PASS continuity_facts
+PASS continuity_codeword
+PASS continuity_name_facts
+PASS continuity_monday_speech
+🛑 Autonomous Thinking Loop shutdown
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+PHASE=AFTER
+FAIL_COUNT=0
+RESULT=PASS

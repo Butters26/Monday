@@ -1,0 +1,12 @@
+DESIGN_JOB: Notus is Monday's live memory lobe: persist and recall clean user+Monday speech across restarts, extract only durable personal facts (no invent, no poison), and surface them on the thalamus store/query_context path with per-user isolation.
+
+=== LIVE create_core_systems BEFORE (name-recall full-job gap) ===
+FAIL query_facts 'What is my name?' -> []
+FAIL query_facts 'who am I' -> []
+FAIL query_facts 'what am I called' -> []
+FAIL query_facts 'remind me my name' -> []
+FAIL query_context What is my name? -> []
+FAIL_COUNT 5
+RESULT FAIL
+
+ROOT: 'name'/'named' were retrieval stopwords so natural name questions yielded empty query tokens; content also stripped 'name' so the name predicate never matched. Multi-token AND gate also blocked 'remind me my name' / 'what am I called' via weak ask-verbs.

@@ -131,9 +131,18 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             "about", "tell", "of", "to", "in", "on", "at", "for", "and", "or",
             "it", "its", "have", "has", "had", "will", "just", "also", "so",
             "as", "if", "but", "not", "no", "yes", "ok", "okay", "hey", "hi",
-            "hello", "named", "name", "got", "know", "which", "whose",
+            "hello", "got", "know", "which", "whose",
             "there", "here", "into", "over", "under", "again", "any", "some",
         }
+    )
+    # Durable identity tokens must survive stopword stripping on BOTH query and
+    # content sides — otherwise "What is my name?" yields empty tokens and the
+    # name predicate can never match "Your name is Matthew."
+    _RETRIEVAL_KEEPWORDS = frozenset({"name", "named", "called"})
+    # Ask-verbs / fillers that must not AND-gate identity recall
+    # ("remind me my name", "what am I called name").
+    _WEAK_QUERY_TOKENS = frozenset(
+        {"remind", "call", "tell", "please", "know", "said", "say"}
     )
     # Minimum share of query content-tokens that must appear in a hit.
     _MIN_RELEVANCE = 0.34
@@ -178,6 +187,11 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         "hike": frozenset({"hike", "hiking", "hiked"}),
         "hiking": frozenset({"hike", "hiking", "hiked"}),
         "hiked": frozenset({"hike", "hiking", "hiked"}),
+        # Identity asks: "what am I called" / name predicate / readable "name is".
+        # "what am I called" is handled by _augment_identity_query (+ name),
+        # not by aliasing everyday "call" onto the name predicate.
+        "name": frozenset({"name", "named"}),
+        "named": frozenset({"name", "named"}),
     }
 
     @classmethod
@@ -205,6 +219,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             "having": "have",
             "nothing": "nothing",
         }
+        irregular = {"called": "call", "named": "name"}
+        if w in irregular:
+            return irregular[w]
         if w in short_ing:
             return short_ing[w]
         if len(w) > 5 and w.endswith("ing"):
@@ -237,7 +254,9 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         out = []
         for w in words:
             w = cls._stem_token(w)
-            if w in cls._RETRIEVAL_STOPWORDS or len(w) <= 1:
+            if len(w) <= 1:
+                continue
+            if w in cls._RETRIEVAL_STOPWORDS and w not in cls._RETRIEVAL_KEEPWORDS:
                 continue
             out.append(w)
         return out
@@ -245,6 +264,14 @@ class NotusMemorySystem(SuperhumanMemorySystem):
     @classmethod
     def _content_tokens(cls, text: str) -> set:
         return set(cls._content_token_list(text))
+
+    @classmethod
+    def _significant_tokens(cls, tokens: set) -> set:
+        """Content tokens that count for multi-token AND gates."""
+        return {
+            t for t in (tokens or set())
+            if len(t) >= 4 and t not in cls._WEAK_QUERY_TOKENS
+        }
 
     @classmethod
     def _overlap_score(cls, query_tokens: set, text: str) -> float:
@@ -280,6 +307,38 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         if total == 0:
             return 0.0
         return 0.12 * (hits / float(total))
+
+    @classmethod
+    def _augment_identity_query(cls, query: str) -> str:
+        """Ensure identity asks keep a retrievable 'name' signal.
+
+        'who am I' has no content tokens after stopword strip; append 'name'
+        so recall can hit the name predicate / readable fact line.
+        """
+        import re
+
+        q = (query or "").strip()
+        if not q:
+            return q
+        if re.search(
+            r"(?i)\b(?:"
+            r"who\s+am\s+i|"
+            r"what(?:'s|s)?\s+am\s+i\s+called|"
+            r"what\s+am\s+i\s+called|"
+            r"remind\s+me\s+(?:of\s+)?my\s+name|"
+            r"what(?:'s|s)?\s+my\s+name|"
+            r"what\s+is\s+my\s+name|"
+            r"my\s+name"
+            r")\b",
+            q,
+        ):
+            # Keepwords already preserve 'name' when present; inject when absent.
+            # Always ensure a 'name' token for identity asks — "what am I called"
+            # only yields {call}, which must not block the name inject.
+            if "name" not in cls._content_tokens(q):
+                if not re.search(r"(?i)\bname\b", q):
+                    return q + " name"
+        return q
 
     @classmethod
     def _is_fact_shaped_query(cls, query: str) -> bool:
@@ -333,7 +392,7 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             return 0.0
         cand = self._content_tokens(content)
         cand_exp = self._expand_tokens(cand)
-        significant = {t for t in query_tokens if len(t) >= 4}
+        significant = self._significant_tokens(query_tokens)
         role_l = str(role or "").strip().lower()
 
         def _sig_covered(tokens: set) -> bool:
@@ -398,7 +457,7 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         relevant — never pads with unrelated recency.
         """
         limit = max(1, int(limit or getattr(self.config, "max_context_memories", 15)))
-        query = (query or "").strip()
+        query = self._augment_identity_query((query or "").strip())
         if not query or self._simple_greeting(query):
             return []
         query_tokens = self._content_tokens(query)
@@ -521,7 +580,7 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         Contradicted facts are suppressed.
         """
         limit = max(1, int(limit))
-        query = (query or "").strip()
+        query = self._augment_identity_query((query or "").strip())
         if not query or self._simple_greeting(query):
             return []
         query_tokens = self._content_tokens(query)
@@ -568,7 +627,7 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             blob_exp = self._expand_tokens(blob_tokens)
             if not any(self._alias_set(qt) & blob_exp for qt in query_tokens):
                 continue
-            significant = {t for t in query_tokens if len(t) >= 4}
+            significant = self._significant_tokens(query_tokens)
             # Multi-word fact questions: require majority / AND on significant tokens.
             if len(query_tokens) >= 2 and significant:
                 sig_covered = all(
