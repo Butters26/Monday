@@ -441,10 +441,16 @@ class AppraisalEngine:
 
         directed_at_monday = self._directed_at_monday(tl)
         directed_at_user = self._directed_at_user(unquoted)
-        # Third-party emotion ownership: someone else's affect is not the user's.
-        if third_party_emo and not directed_at_user and not directed_at_monday:
-            pass
-        third_party = not directed_at_monday and not directed_at_user
+        # Third-party = positive evidence of another person as focus — NOT mere
+        # absence of I/you (object/topic questions must not become third_party).
+        third_party = (
+            not directed_at_monday
+            and not directed_at_user
+            and (
+                bool(third_party_emo)
+                or self._has_third_party_person_ref(tl)
+            )
+        )
 
         event_type, base_severity = self._classify_event(effective_text)
 
@@ -813,6 +819,24 @@ class AppraisalEngine:
             return True
         return any(tok in padded for tok in (' me ', ' myself ', ' i '))
 
+    def _has_third_party_person_ref(self, tl: str) -> bool:
+        """Positive evidence of another person — pronouns or name+affect/belief.
+        Absence of I/you alone is NOT third-party (object/topic questions stay non-third-party).
+        """
+        if re.search(r"\b(?:she|he|they|him|her|them|his|hers|their)\b", tl):
+            return True
+        # Name-like token + affect state (e.g. "ariana is worried")
+        if re.search(
+            r"\b[a-z]{3,}\s+(?:is|was)\s+(?:so |really |completely )?"
+            r"(?:worried|angry|furious|mad|scared|afraid|sad|upset|hurt|annoyed|calm|happy|fine|okay|ok)\b",
+            tl,
+        ):
+            return True
+        # Name-like token + belief verb (e.g. "ariana thinks") — not "I think"
+        if re.search(r"\b[a-z]{3,}\s+thinks\b", tl) and not re.search(r"\bi\s+think", tl):
+            return True
+        return False
+
     def _classify_event(self, tl: str) -> Tuple[str, float]:
         for phrases, event_type, severity in self._CLASSIFIERS:
             for phrase in phrases:
@@ -948,6 +972,8 @@ class AdvancedEmotionalEngine:
         # Appraisal system
         self._appraisal_engine = AppraisalEngine()
         self._user_affect = UserAffectModel()
+        self._last_appraisal: Optional[AppraisalResult] = None
+        self._last_understanding: Optional[EmotionalUnderstanding] = None
         # event_type → sensitivity multiplier (learned, starts at 1.0 for all)
         self._event_sensitivity: Dict[str, float] = {et: 1.0 for et in EVENT_TYPES}
         # recent event-type history for escalation detection (last 20)
@@ -1041,6 +1067,7 @@ class AdvancedEmotionalEngine:
             relationship_history=self._event_history[-20:],
             sensitivity_map=self._event_sensitivity,
         )
+        self._last_understanding = understanding
         appraisal = understanding.final_appraisal or understanding.appraisal
         self._apply_appraisal(appraisal)
 
@@ -1359,6 +1386,7 @@ class AdvancedEmotionalEngine:
         Central method: takes an AppraisalResult and drives Monday's emotion through the
         PAD pipeline. Also updates user affect model, event history, learning, and persistence.
         """
+        self._last_appraisal = appraisal
         self._update_internal_from_time(dt=1.0)
         self._update_attachment_from_input(appraisal.raw_text)
         self._update_attachment_from_appraisal(appraisal)
@@ -1412,9 +1440,23 @@ class AdvancedEmotionalEngine:
         else:
             previous_emotion = prev_emo
 
-        # Prefer third-party emotion from this turn; else retain briefly if continuity cue
-        if tp_emo is None and prev_ua.third_party_emotion and self._has_continuity_cue(appraisal.raw_text):
-            tp_emo = prev_ua.third_party_emotion
+        # Prefer third-party emotion from this turn; else retain across nearby
+        # turns when pronoun/coreference keeps the same third-party focus.
+        if tp_emo is None and prev_ua.third_party_emotion:
+            tl_raw = (appraisal.raw_text or '').lower()
+            if (
+                self._has_continuity_cue(appraisal.raw_text)
+                or (
+                    bool(getattr(appraisal, 'third_party', False))
+                    and self._appraisal_engine._has_third_party_person_ref(tl_raw)
+                )
+            ):
+                tp_emo = prev_ua.third_party_emotion
+                # Reflect carry on this turn's appraisal meta (no giant entity memory).
+                try:
+                    appraisal.third_party_emotion = tp_emo
+                except Exception:
+                    pass
         if appraisal.third_party and tp_emo and new_emo in ('neutral', 'unknown') and appraisal.explicit_user_emotion is None:
             # Ensure USER is not overwritten by third-party naming
             if new_emo == 'neutral' and new_conf < 0.4:
@@ -1526,7 +1568,7 @@ class AdvancedEmotionalEngine:
         """Anaphoric / episode-continuing language across turns."""
         tl = (text or '').lower()
         patterns = [
-            r"\b(him|her|it|them|that|this)\b",
+            r"\b(he|she|him|her|they|them|it|that|this)\b",
             r"\bdon'?t even want\b", r"\bwant to talk\b",
             r"\btomorrow\b", r"\bstill\b", r"\bagain\b",
             r"\bby it\b", r"\bat first\b", r"\bnow i\b",
@@ -2111,6 +2153,53 @@ class AdvancedEmotionalEngine:
             final_appraisal=final,
         )
 
+    def _situation_wording_should_reflect_current(self, user_input: str) -> bool:
+        """True when OUTPUT must not narrate a resolved/irrelevant prior conflict as active.
+        PAD/INTERNAL may linger; explicit wording must match the current situation.
+        """
+        appr = getattr(self, '_last_appraisal', None)
+        if appr is None:
+            return False
+        event = getattr(appr, 'event_type', 'neutral') or 'neutral'
+        situation_calm = event in (
+            'neutral', 'success', 'affection', 'support', 'celebration', 'gift'
+        )
+        ua = self._user_affect
+        user_calm = ua.inferred_emotion in ('unknown', 'neutral', 'calm', 'happy', 'relieved', 'proud')
+        resolution = bool(getattr(appr, 'resolution_signal', False))
+        unresolved_clear = not bool(getattr(self, '_unresolved_appraisals', None))
+
+        # Resolution: threat/harm cleared — do not speak as if conflict still active.
+        if resolution and situation_calm and unresolved_clear:
+            return True
+        # Unrelated topic / object question: no content hijack from lingering INTERNAL.
+        if situation_calm and user_calm and ua.confidence < 0.45:
+            if self._is_topic_shift_neutral(user_input):
+                return True
+            if self._is_unrelated_object_topic(user_input, appr):
+                return True
+        return False
+
+    def _is_unrelated_object_topic(self, text: str, appraisal: AppraisalResult) -> bool:
+        """Object/topic ask with no person owning emotion and no episode continuity."""
+        if getattr(appraisal, 'third_party', False):
+            return False
+        if getattr(appraisal, 'third_party_emotion', None):
+            return False
+        if appraisal.explicit_user_emotion:
+            return False
+        if appraisal.directed_at_user or appraisal.directed_at_monday:
+            return False
+        tl = (text or '').lower()
+        # Continuity into an episode is not an unrelated topic shift.
+        if self._has_continuity_cue(text) and not self._is_topic_shift_neutral(text):
+            return False
+        # Question / request about a non-person topic.
+        if ('?' in (text or '')) or re.search(r"\b(?:what|how|when|where)\b", tl):
+            if not re.search(r"\b(?:i|me|my|mine|you|we|us|she|he|they|him|her|them)\b", tl):
+                return True
+        return False
+
     def _generate_advanced_emotional_response(self, user_input: str, mi: Dict[str, float]) -> str:
         # Query Notus for past emotional responses
         try:
@@ -2122,6 +2211,23 @@ class AdvancedEmotionalEngine:
                     return past_responses[0].get('response', '')
         except Exception:
             pass
+
+        # Stale-expression gate: INTERNAL/PAD may linger; wording must not claim
+        # resolved threat/conflict (or unrelated topics) are still the active situation.
+        if self._situation_wording_should_reflect_current(user_input):
+            lines = [
+                "I'm here to help.",
+                "Okay — I'm with you.",
+                "Got it. I'm listening.",
+                "Alright. I'm here.",
+                "I'm still with you.",
+            ]
+            # Mild residual via expression punctuation only (not content hijack).
+            if self.expression.tears:
+                lines = [l.replace(".", "...") for l in lines]
+            if self.expression.voice_shake:
+                lines = ["".join([" ".join(l.split()[:3]), " ...", " ".join(l.split()[3:])]).strip() for l in lines]
+            return self._rng.choice(lines)
         
         # Base lines by emotion
         db: Dict[EmotionalState, List[str]] = {
@@ -2248,8 +2354,13 @@ class AdvancedEmotionalEngine:
     def _enhance_response_with_advanced_features(self, base: str, user_input: str, predicted: Dict[str, float], context: Dict[str, Any]) -> str:
         dom = max(predicted.items(), key=lambda x: x[1]) if predicted else ("neutral", 0.0)
         out = base
-        if dom[1] > 0.35:
+        situational = self._situation_wording_should_reflect_current(user_input)
+        # Reflect current USER state; never invent active threat language after resolution.
+        if dom[1] > 0.35 and dom[0] not in ('unknown',):
             out += f" I get the sense you're feeling {dom[0]}."
+        if situational:
+            # Prosody/INTERNAL may linger; do not add urgency/support-as-crisis overlays.
+            return out
         if context['urgency_level'] == 'high':
             out += " This sounds urgent—I'm here with you right now."
         elif context['support_needed']:
