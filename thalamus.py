@@ -1228,6 +1228,23 @@ class Thalamus:
         )
         semantic_input.setdefault("answer", reasoning_answer)
         semantic_input.setdefault("propositions", [reasoning_answer])
+        # Tiny glue: Language owns composition from user text + emotion tone cues.
+        semantic_input["user_input"] = user_input
+        if emotional_state.get("emotional_tone") is not None:
+            semantic_input.setdefault(
+                "emotional_tone", emotional_state.get("emotional_tone")
+            )
+        if emotional_state.get("intensity") is not None:
+            semantic_input.setdefault(
+                "emotional_intensity", emotional_state.get("intensity")
+            )
+        if emotional_state.get("current_emotion") or emotional_state.get("emotion"):
+            semantic_input.setdefault(
+                "emotion",
+                emotional_state.get(
+                    "current_emotion", emotional_state.get("emotion", "neutral")
+                ),
+            )
 
         language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
         if language["status"] != "success":

@@ -1,0 +1,78 @@
+=== LANGUAGE BEFORE BASELINE ===
+time: 2026-09-20 16:08:28 MDT
+user_id: lang-before-a9ab4ab0-81b1-4983-b12b-f48fca6ca65c
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+language_registered: True
+Language class: LanguageGenerator
+has generate: True
+has process_message: True
+has grammar.compose_sentence: True
+
+--- DIRECT language generate (answer present) ---
+status: success
+sentence: 'Your name is Matthew. You live in Boulder.'
+passthrough_answer: True
+
+--- DIRECT language generate (propositions only) ---
+status: success
+sentence: "Your name is Matthew. You live in Boulder. Your dog's name is Pixel."
+space_join_only: True
+
+--- DIRECT language generate (no answer, concepts+emotion) ---
+sentence: 'I think boulder is relevant here'
+
+--- LIVE seed facts ---
+SEED | 'My name is Matthew' → 'Got it — your name is Matthew.'
+SEED | "My dog's name is Pixel" → "Got it — your dog's name is Pixel."
+SEED | 'I live in Boulder' → 'Got it — you live in Boulder.'
+SEED | 'I work as a carpenter' → 'Got it — you work as a carpenter.'
+SEED | 'My favorite color is teal' → 'Got it — your favorite color is teal.'
+SEED | 'Remember the codeword is NebulaQuartz' → 'Your codeword is NebulaQuartz.'
+
+--- LIVE questions ---
+Q[multi_fact] 'What is my name and where do I live?'
+  reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  pre_output_final: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  envelope_text_eq_pre: True
+  grounded_refusal: True
+Q[multi_fact2] "What is my dog's name and what is my favorite color?"
+  reply: "Your dog's name is Pixel. Your favorite color is teal."
+  pre_output_final: "Your dog's name is Pixel. Your favorite color is teal."
+  envelope_text_eq_pre: True
+  grounded_refusal: False
+Q[single] 'What is the codeword?'
+  reply: 'Your codeword is NebulaQuartz.'
+  pre_output_final: 'Your codeword is NebulaQuartz.'
+  envelope_text_eq_pre: True
+  grounded_refusal: False
+Q[empty] "What is my sister's name?"
+  reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  pre_output_final: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  envelope_text_eq_pre: True
+  grounded_refusal: True
+  invent_suspected: False
+Q[empty2] 'What is my favorite food?'
+  reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  pre_output_final: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  envelope_text_eq_pre: True
+  grounded_refusal: True
+  invent_suspected: False
+Q[greeting] 'Hello'
+  reply: 'Hello! How can I help?'
+  pre_output_final: 'Hello! How can I help?'
+  envelope_text_eq_pre: True
+  grounded_refusal: False
+
+--- PATH CHECK: language on live path ---
+language_generate_calls: 1
+spy_log: ['generate', ('out', 'Your name is Matthew.')]
+reply: 'Your name is Matthew.'
+
+--- LIVE sad + fact: semantic_input into language ---
+keys: ['answer', 'attention_focus', 'attention_focus_text', 'attention_ranked', 'certainty', 'conclusion', 'emotion', 'intent', 'memory_context', 'propositions']
+emotion field: 'sad'
+emotional_tone field: None
+answer: 'Your name is Matthew.'
+propositions: ['Your name is Matthew.']
+reply: 'Your name is Matthew.'

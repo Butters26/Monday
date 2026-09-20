@@ -386,20 +386,28 @@ def _attribute_asked(query: str) -> Optional[str]:
     )
     if fav:
         return " ".join(fav.group(1).lower().split())
-    name = re.search(
-        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)(?:'s|s')?\s+name\b",
+    # Possessive / noun name: "what is my dog's name", "what is my sister's name"
+    name_poss = re.search(
+        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)(?:'s|s')\s+name\b",
         q,
         re.IGNORECASE,
     )
-    if name:
-        return " ".join(name.group(1).lower().split()) + " name"
+    if name_poss:
+        return " ".join(name_poss.group(1).lower().split()) + " name"
+    # Plain self-name (including compounds: "what is my name and where...")
+    if re.search(r"\bwhat(?:'s|\s+is)\s+my\s+name\b", q, re.IGNORECASE):
+        return "name"
     my_attr = re.search(
         r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z0-9 ]{0,40}?)\s*\??\s*$",
         q,
         re.IGNORECASE,
     )
     if my_attr:
-        return " ".join(my_attr.group(1).lower().split())
+        attr = " ".join(my_attr.group(1).lower().split())
+        # Do not treat compound tails ("name and where do i live") as one attribute.
+        if " and " in attr or " & " in attr:
+            attr = attr.split(" and ")[0].split(" & ")[0].strip()
+        return attr or None
     return None
 
 
@@ -408,6 +416,8 @@ def _fact_covers_attribute(fact: str, attr: str) -> bool:
     attr = (attr or "").strip().casefold()
     if not attr:
         return True
+    if attr == "name":
+        return "your name is " in low or low.startswith("your name is")
     if attr.endswith(" name"):
         noun = attr[:-5].strip()
         return f"your {noun}'s name is " in low or (
@@ -581,20 +591,28 @@ def answer_from_grounded_memories(
         return monday_ans or None
 
     def _name_answer() -> Optional[str]:
+        # Possessive / noun name first: "what is my dog's name"
         name_q = re.search(
-            r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)(?:'s|s')?\s+name\b",
+            r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)(?:'s|s')\s+name\b",
             q,
             re.IGNORECASE,
         )
-        if not name_q:
-            return None
-        noun = " ".join(name_q.group(1).lower().split())
-        needle = f"your {noun}'s name is "
-        for _role, fact in snippets:
-            low = fact.casefold()
-            if needle in low or (noun in low and "name is" in low):
-                return fact if fact.endswith(".") else fact + "."
-        return ""  # asked, missing
+        if name_q:
+            noun = " ".join(name_q.group(1).lower().split())
+            needle = f"your {noun}'s name is "
+            for _role, fact in snippets:
+                low = fact.casefold()
+                if needle in low or (noun in low and "name is" in low):
+                    return fact if fact.endswith(".") else fact + "."
+            return ""  # asked, missing
+        # Plain self-name (also compounds: "what is my name and where do I live")
+        if re.search(r"\bwhat(?:'s|\s+is)\s+my\s+name\b", q, re.IGNORECASE):
+            for _role, fact in snippets:
+                low = fact.casefold()
+                if "your name is " in low or low.startswith("your name is"):
+                    return fact if fact.endswith(".") else fact + "."
+            return ""  # asked, missing
+        return None
 
     def _fav_answer() -> Optional[str]:
         fav_q = re.search(

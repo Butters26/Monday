@@ -1,0 +1,85 @@
+=== LANGUAGE AFTER PROOF ===
+time: 2026-09-20 16:11:40 MDT
+user_id: lang-after2-de02835c-e440-44b7-b4ae-86e7138cc144
+
+DESIGN DONE SENTENCE:
+Language (LanguageGenerator) is registered on the live thalamus path and composes coherent reply text from grounded reasoning answers/propositions, emotion tone, and memory context for Output to wrap — without inventing when grounding is empty.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+language_registered: True
+Language class: LanguageGenerator
+
+--- DIRECT salvage ---
+sentence: 'Your name is Matthew. You live in Boulder.'
+salvaged: True
+
+--- DIRECT empty sister ---
+sentence: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+honest_refusal: True
+no_invent: True
+
+--- DIRECT props compose ---
+sentence: "Your name is Matthew. You live in Boulder. Your dog's name is Pixel."
+composed_multi: True
+SEED | 'My name is Matthew' → 'Got it — your name is Matthew.'
+SEED | "My dog's name is Pixel" → "Got it — your dog's name is Pixel."
+SEED | 'I live in Boulder' → 'Got it — you live in Boulder.'
+SEED | 'I work as a carpenter' → 'Got it — you work as a carpenter.'
+SEED | 'My favorite color is teal' → 'Got it — your favorite color is teal.'
+SEED | 'Remember the codeword is NebulaQuartz' → 'Your codeword is NebulaQuartz.'
+
+--- LIVE questions ---
+Q[multi_fact] 'What is my name and where do I live?'
+  reply: 'Your name is Matthew. You live in Boulder.'
+  pre_output_final: 'Your name is Matthew. You live in Boulder.'
+  envelope_text_eq_pre: True
+  grounded_refusal: False
+  PASS_composed_multi: True
+Q[multi_fact2] "What is my dog's name and what is my favorite color?"
+  reply: "Your dog's name is Pixel. Your favorite color is teal."
+  pre_output_final: "Your dog's name is Pixel. Your favorite color is teal."
+  envelope_text_eq_pre: True
+  grounded_refusal: False
+Q[single] 'What is the codeword?'
+  reply: 'Your codeword is NebulaQuartz.'
+  pre_output_final: 'Your codeword is NebulaQuartz.'
+  envelope_text_eq_pre: True
+  grounded_refusal: False
+Q[empty] "What is my sister's name?"
+  reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  pre_output_final: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  envelope_text_eq_pre: True
+  grounded_refusal: True
+  invent_suspected: False
+  feel_corruption: False
+Q[empty2] 'What is my favorite food?'
+  reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  pre_output_final: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  envelope_text_eq_pre: True
+  grounded_refusal: True
+  invent_suspected: False
+  feel_corruption: False
+Q[greeting] 'Hello'
+  reply: 'Hello! How can I help?'
+  pre_output_final: 'Hello! How can I help?'
+  envelope_text_eq_pre: True
+  grounded_refusal: False
+
+--- PATH CHECK ---
+language_generate_calls: 1
+spy_log: ['generate', ('out', 'Your name is Matthew.')]
+reply: 'Your name is Matthew.'
+
+--- LIVE sad + fact ---
+keys include user_input+tone: True
+emotion='sad' tone='melancholic' user_input='What is my name?'
+reply: 'Your name is Matthew.'
+fact_text_preserved: True
+
+--- BEFORE vs AFTER ---
+BEFORE multi_fact → grounded refusal
+AFTER  multi_fact → 'Your name is Matthew. You live in Boulder.'
+AFTER empty sister refusal: True
+AFTER empty food refusal: True
+BEFORE: emotional_tone not passed to Language
+AFTER: user_input + emotional_tone passed; fact text preserved for Output

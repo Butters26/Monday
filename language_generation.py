@@ -153,16 +153,29 @@ class GrammarEngine:
         answer = semantic_input.get('answer', '')
         propositions = semantic_input.get('propositions', [])
 
-        if isinstance(answer, str) and answer.strip():
+        # Prefer multi-proposition composition when Reasoning/Notus supplied
+        # distinct grounded facts — do not invent, only arrange.
+        composed_props = self._compose_propositions(propositions)
+        if composed_props:
+            # If answer is a single fact but props have more, prefer props.
+            if not (isinstance(answer, str) and answer.strip()):
+                return composed_props
+            ans = answer.strip()
+            # Refusal boilerplate is not composition — props win when present.
+            if self._is_grounding_refusal(ans):
+                return composed_props
+            # Answer already covers the same facts — keep answer (may be joined).
+            if self._answer_covers_propositions(ans, propositions):
+                return ans
+            # Props add facts answer lacks — compose props.
+            if len(composed_props) > len(ans):
+                return composed_props
+            return ans
+        if isinstance(answer, str) and answer.strip() and not self._is_grounding_refusal(answer):
             return answer.strip()
-        if isinstance(propositions, list):
-            grounded = [
-                proposition.strip()
-                for proposition in propositions
-                if isinstance(proposition, str) and proposition.strip()
-            ]
-            if grounded:
-                return ' '.join(grounded)
+        # Honest empty: keep the grounded refusal — do not invent via grammar.
+        if isinstance(answer, str) and self._is_grounding_refusal(answer):
+            return answer.strip()
         
         # Query Notus for past language patterns
         try:
@@ -499,6 +512,59 @@ class GrammarEngine:
         }
         return mapping.get(rel_type, 'relates to')
 
+
+    @staticmethod
+    def _is_grounding_refusal(text: str) -> bool:
+        low = (text or "").strip().lower()
+        return low.startswith("i do not have enough grounded information")
+
+    @staticmethod
+    def _normalize_prop(text: str) -> str:
+        t = (text or "").strip()
+        if not t:
+            return ""
+        if t[-1] not in ".!?":
+            t += "."
+        return t
+
+    def _compose_propositions(self, propositions) -> str:
+        """Arrange distinct grounded propositions into coherent reply text."""
+        if not isinstance(propositions, list):
+            return ""
+        clean = []
+        seen = set()
+        for proposition in propositions:
+            if not isinstance(proposition, str):
+                continue
+            prop = self._normalize_prop(proposition)
+            if not prop or self._is_grounding_refusal(prop):
+                continue
+            key = prop.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            clean.append(prop)
+        if not clean:
+            return ""
+        if len(clean) == 1:
+            return clean[0]
+        return " ".join(clean)
+
+    @staticmethod
+    def _answer_covers_propositions(answer: str, propositions) -> bool:
+        if not isinstance(propositions, list) or not answer:
+            return True
+        low = answer.casefold()
+        for proposition in propositions:
+            if not isinstance(proposition, str) or not proposition.strip():
+                continue
+            # Compare without trailing punctuation
+            stem = proposition.strip().rstrip(".!?").casefold()
+            if stem and stem not in low:
+                return False
+        return True
+
+
 class LanguageGenerator:
     """Builds sentences from meaning - Monday's voice"""
     
@@ -509,6 +575,8 @@ class LanguageGenerator:
         # Persistent connection to Thalamus (created once at startup, reused forever)
         # Direct reference to Thalamus (NO SOCKETS)
         self.thalamus = thalamus or get_thalamus()
+        # Let GrammarEngine Notus queries reuse Language's thalamus helper (was orphaned).
+        self.grammar._send_to_thalamus = self._send_to_thalamus
         
         # Cache for emotional state (avoid repeated queries)
         self.current_emotional_state = None
@@ -540,17 +608,38 @@ class LanguageGenerator:
             return {}
     
     def _adjust_words_for_emotion(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Adjust word selection based on current emotional state"""
-        emotional_state = self._query_emotional_state()
-        
-        if not emotional_state:
-            return semantic_input  # No emotion data, use defaults
-        
-        emotion_tone = emotional_state.get('emotional_tone', 'neutral')
-        intensity = emotional_state.get('intensity', 0.5)
-        
+        """Adjust word selection based on current emotional state / semantic cues."""
+        # Prefer live-path cues already on semantic_input; fall back to emotion lobe.
+        emotion_tone = semantic_input.get('emotional_tone')
+        intensity = semantic_input.get('emotional_intensity', semantic_input.get('intensity'))
+        emotion_name = semantic_input.get('emotion', 'neutral')
+
+        emotional_state = {}
+        if not emotion_tone or intensity is None:
+            emotional_state = self._query_emotional_state() or {}
+            emotion_tone = emotion_tone or emotional_state.get('emotional_tone', 'neutral')
+            if intensity is None:
+                intensity = emotional_state.get('intensity', 0.5)
+        try:
+            intensity = float(intensity if intensity is not None else 0.5)
+        except (TypeError, ValueError):
+            intensity = 0.5
+        emotion_tone = emotion_tone or 'neutral'
+
+        # Map coarse emotion names into tone buckets when tone absent/neutral.
+        if emotion_tone in (None, '', 'neutral') and isinstance(emotion_name, str):
+            en = emotion_name.lower()
+            if en in ('happy', 'joy', 'excited', 'curious', 'interested'):
+                emotion_tone = 'cheerful'
+            elif en in ('sad', 'melancholy', 'grief', 'lonely', 'nostalgic'):
+                emotion_tone = 'melancholic'
+            elif en in ('angry', 'frustrated', 'irritated', 'annoyed'):
+                emotion_tone = 'irritated'
+
         # Modify vocabulary based on emotion
         adjusted_input = semantic_input.copy()
+        adjusted_input['emotion'] = emotion_name
+        adjusted_input.setdefault('emotional_tone', emotion_tone)
         
         # Adjust verb choices based on emotion
         if 'verb' in semantic_input:
@@ -610,12 +699,18 @@ class LanguageGenerator:
         if semantic_input.get('is_novelty_question') and semantic_input.get('question_to_ask'):
             print(f"🆕 Language: Using novelty question directly")
             return semantic_input.get('question_to_ask')
+
+        # Salvage: Reasoning/provider may hand the empty-grounding refusal even when
+        # Notus facts exist on memory_context. Compose from those facts — do not invent.
+        semantic_input = self._salvage_grounded_answer(dict(semantic_input))
         
         try:
             # CRITICAL: Adjust word choice based on current emotion
             adjusted_input = self._adjust_words_for_emotion(semantic_input)
             
             sentence = self.grammar.compose_sentence(adjusted_input)
+            # Light emotion-tone wording when composing (facts stay intact).
+            sentence = self._apply_emotion_wording(sentence, adjusted_input)
             # Ensure we never return None or empty string
             if not sentence or not isinstance(sentence, str) or not sentence.strip():
                 return "I'm thinking about that."
@@ -623,6 +718,61 @@ class LanguageGenerator:
         except Exception as e:
             print(f"❌ Generation error: {e}")
             return "I'm thinking about that."
+
+    def _salvage_grounded_answer(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
+        """If answer is empty-grounding refusal but memories have facts, compose from them."""
+        answer = semantic_input.get("answer", "")
+        if not (isinstance(answer, str) and self.grammar._is_grounding_refusal(answer)):
+            return semantic_input
+        user_input = semantic_input.get("user_input") or semantic_input.get("user_text") or ""
+        memories = semantic_input.get("memory_context") or []
+        if isinstance(memories, dict):
+            memories = memories.get("memories") or memories.get("facts") or []
+        if not user_input or not memories:
+            return semantic_input
+        try:
+            from direct_response import answer_from_grounded_memories
+            grounded = answer_from_grounded_memories(user_input, memories)
+        except Exception:
+            grounded = None
+        if not isinstance(grounded, str) or not grounded.strip():
+            return semantic_input
+        if self.grammar._is_grounding_refusal(grounded):
+            return semantic_input
+        semantic_input["answer"] = grounded.strip()
+        props = semantic_input.get("propositions")
+        if not isinstance(props, list) or not props or (
+            len(props) == 1 and isinstance(props[0], str)
+            and self.grammar._is_grounding_refusal(props[0])
+        ):
+            # Split joined multi-fact answers into propositions when possible.
+            parts = [p.strip() for p in grounded.replace("? ", "?. ").split(". ") if p.strip()]
+            normalized = []
+            for p in parts:
+                if not p.endswith((".", "!", "?")):
+                    p = p + "."
+                normalized.append(p)
+            semantic_input["propositions"] = normalized or [grounded.strip()]
+        return semantic_input
+
+    def _apply_emotion_wording(self, sentence: str, semantic_input: Dict[str, Any]) -> str:
+        """Light tone cues on composed wording without inventing factual content."""
+        if not sentence or not isinstance(sentence, str):
+            return sentence
+        # Grounded fact answers / teaching acks / refusals: keep content intact.
+        # Output lobe owns tears/voice_shake/withdraw delivery.
+        low = sentence.strip().lower()
+        if self.grammar._is_grounding_refusal(sentence):
+            return sentence
+        if low.startswith((
+            "your ", "you ", "got it", "hello", "hi ", "hey",
+            "i do not", "i am unable", "i'm unable", "can you", "could you",
+            "please ", "i understand",
+        )):
+            return sentence
+        # Emotion tone is already carried on semantic_input for grammar verb/adj
+        # selection; do not rewrite finished reply text here.
+        return sentence
     
     def _register_with_thalamus(self):
         """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
