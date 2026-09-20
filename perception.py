@@ -4,7 +4,7 @@
 Modalities (design):
   - text: always online (normalize + extract concepts/entities)
   - hearing/audio: real acoustic + semantic STT (whisper/vosk/google) from mic OR file/bytes
-  - vision: real low-level features + optional CLIP semantic caption/objects from camera OR file/bytes
+  - vision: real low-level features + optional BLIP generative caption (CLIP supplemental only) from camera OR file/bytes
 
 Hardware mic/webcam are probed honestly and never claimed live unless
 device open succeeds. File/buffer paths are first-class sensory intake
@@ -79,11 +79,20 @@ class PerceptionLobe:
         self._whisper_module = None
         self._vosk_model = None
         self.semantic_vision_available = False
-        self.vision_semantic_backend = None  # clip | None
+        self.vision_semantic_backend = None  # blip | None
         self._vision_semantic_reason = "not probed"
+        self._blip_model = None
+        self._blip_processor = None
+        self._blip_torch = None
+        self._blip_model_cls = None
+        self._blip_processor_cls = None
+        # Optional CLIP supplemental classifier (never sole semantic source / never a caption).
         self._clip_model = None
         self._clip_processor = None
         self._clip_torch = None
+        self._clip_model_cls = None
+        self._clip_processor_cls = None
+        self._clip_supplemental_available = False
 
         self._probe_processing_libs()
         if probe_devices:
@@ -181,25 +190,45 @@ class PerceptionLobe:
         self._stt_backend_reason = "no STT backend (whisper/vosk/speech_recognition)"
 
     def _probe_semantic_vision(self) -> None:
-        """CLIP zero-shot via transformers — lazy-load weights on first use."""
+        """BLIP generative captioning primary; CLIP optional supplemental only.
+
+        CLIP candidate labels never define possible captions. Lazy-load weights
+        on first use. Honest degrade when transformers/torch unavailable.
+        """
         try:
             import torch  # type: ignore
-            from transformers import CLIPModel, CLIPProcessor  # type: ignore
-            self._clip_torch = torch
-            # Keep references so first infer can load weights.
-            self._clip_model_cls = CLIPModel
-            self._clip_processor_cls = CLIPProcessor
+            from transformers import (  # type: ignore
+                BlipForConditionalGeneration,
+                BlipProcessor,
+            )
+            self._blip_torch = torch
+            self._blip_model_cls = BlipForConditionalGeneration
+            self._blip_processor_cls = BlipProcessor
             self.semantic_vision_available = True
-            self.vision_semantic_backend = "clip"
+            self.vision_semantic_backend = "blip"
             self._vision_semantic_reason = (
-                "transformers CLIP openai/clip-vit-base-patch32 (lazy load, CPU)"
+                "transformers BLIP Salesforce/blip-image-captioning-base "
+                "(lazy load, CPU; generative caption)"
             )
         except ImportError as exc:
             self.semantic_vision_available = False
             self.vision_semantic_backend = None
+            self._blip_model_cls = None
+            self._blip_processor_cls = None
+            self._vision_semantic_reason = f"BLIP unavailable: {exc}"
+
+        # Supplemental zero-shot classifier — broad general labels only.
+        try:
+            import torch  # type: ignore
+            from transformers import CLIPModel, CLIPProcessor  # type: ignore
+            self._clip_torch = torch
+            self._clip_model_cls = CLIPModel
+            self._clip_processor_cls = CLIPProcessor
+            self._clip_supplemental_available = True
+        except ImportError:
             self._clip_model_cls = None
             self._clip_processor_cls = None
-            self._vision_semantic_reason = f"CLIP unavailable: {exc}"
+            self._clip_supplemental_available = False
 
     def _probe_audio(self) -> None:
         """Mark mic online only if speech_recognition + mic open succeed."""
@@ -1154,55 +1183,60 @@ class PerceptionLobe:
             "resolution": f"{width}x{height}",
         }
 
-    # Candidate vocabulary for CLIP zero-shot. Labels are hypotheses the model
-    # scores against the actual image — never returned unless inference agrees.
-    _CLIP_CANDIDATES = (
-        "a yellow sun over green grass",
-        "a red circle on a blue background",
-        "a blue square on an orange background",
-        "a green triangle",
-        "a bright yellow sphere",
-        "green grass and blue sky",
-        "an ocean with blue water",
-        "a forest with many trees",
-        "a mountain landscape",
-        "a city skyline with buildings",
-        "a red car on a road",
-        "a bicycle",
-        "a boat on water",
-        "a house with a roof",
-        "a person standing",
-        "a dog",
-        "a cat",
-        "a bird flying",
-        "an apple fruit",
-        "a banana fruit",
-        "a book",
-        "a chair",
-        "a table",
-        "a computer screen",
-        "a traffic light",
-        "a stop sign",
-        "fire and flames",
-        "snow and ice",
-        "a desert with sand",
-        "night sky with stars",
-        "a blank white wall",
-        "random colorful noise",
-        "a solid gray empty surface",
-        "an abstract pattern of dots",
-        "a checkered black and white pattern",
-        "a rainbow gradient",
-        "a smiley face",
-        "a tree with leaves",
-        "flowers in a garden",
-        "a bridge over a river",
+    # Supplemental CLIP labels ONLY — broad open vocabulary, NOT a caption source.
+    # Must never include upcoming proof-image descriptions or fixture-tailored phrases.
+    # Selected CLIP labels are classifier hints, never treated as generated captions.
+    _CLIP_SUPPLEMENTAL_LABELS = (
+        "person",
+        "animal",
+        "vehicle",
+        "building",
+        "furniture",
+        "food",
+        "plant",
+        "water",
+        "sky",
+        "ground",
+        "indoor scene",
+        "outdoor scene",
+        "text or sign",
+        "electronic device",
+        "tool or utensil",
+        "clothing",
+        "sports equipment",
+        "abstract pattern",
+        "empty surface",
+        "crowd of people",
     )
 
-    def _ensure_clip(self) -> bool:
-        if self._clip_model is not None and self._clip_processor is not None:
+    # Prior fixture-tailored CLIP answer phrases have been deleted; CLIP is
+    # supplemental only and cannot be the sole semantic path.
+
+    def _ensure_blip(self) -> bool:
+        if self._blip_model is not None and self._blip_processor is not None:
             return True
         if not self.semantic_vision_available:
+            return False
+        cls_m = getattr(self, "_blip_model_cls", None)
+        cls_p = getattr(self, "_blip_processor_cls", None)
+        if cls_m is None or cls_p is None:
+            return False
+        try:
+            name = "Salesforce/blip-image-captioning-base"
+            self._blip_processor = cls_p.from_pretrained(name)
+            self._blip_model = cls_m.from_pretrained(name)
+            self._blip_model.eval()
+            return True
+        except Exception as exc:
+            self.semantic_vision_available = False
+            self._vision_semantic_reason = f"BLIP load failed: {exc}"
+            return False
+
+    def _ensure_clip(self) -> bool:
+        """Optional supplemental CLIP — never required for semantic vision."""
+        if self._clip_model is not None and self._clip_processor is not None:
+            return True
+        if not getattr(self, "_clip_supplemental_available", False):
             return False
         cls_m = getattr(self, "_clip_model_cls", None)
         cls_p = getattr(self, "_clip_processor_cls", None)
@@ -1214,17 +1248,48 @@ class PerceptionLobe:
             self._clip_model = cls_m.from_pretrained(name)
             self._clip_model.eval()
             return True
-        except Exception as exc:
-            self.semantic_vision_available = False
-            self._vision_semantic_reason = f"CLIP load failed: {exc}"
+        except Exception:
+            self._clip_supplemental_available = False
             return False
 
-    def _semantic_vision_infer(self, frame: Any) -> Dict[str, Any]:
-        """Real visual semantic inference via CLIP zero-shot.
+    def _clip_supplemental_classify(self, img: Any) -> Dict[str, Any]:
+        """Broad-vocab CLIP hints only. Never invents a caption."""
+        result: Dict[str, Any] = {"scores": [], "labels": [], "confidence": 0.0}
+        if not self._ensure_clip():
+            return result
+        try:
+            torch = self._clip_torch
+            labels = list(self._CLIP_SUPPLEMENTAL_LABELS)
+            inputs = self._clip_processor(
+                text=labels, images=img, return_tensors="pt", padding=True
+            )
+            with torch.no_grad():
+                logits = self._clip_model(**inputs).logits_per_image[0]
+                probs = logits.softmax(dim=0).tolist()
+            ranked = sorted(zip(labels, probs), key=lambda x: -x[1])
+            top_p = float(ranked[0][1]) if ranked else 0.0
+            second_p = float(ranked[1][1]) if len(ranked) > 1 else 0.0
+            result["scores"] = [
+                {"label": lab, "score": float(p)} for lab, p in ranked[:5]
+            ]
+            result["confidence"] = top_p
+            # Only surface labels with clear margin — supplemental hints.
+            if top_p >= 0.20 and (top_p - second_p) >= 0.04:
+                result["labels"] = [
+                    lab
+                    for lab, p in ranked
+                    if p >= max(0.12, top_p * 0.40) and p >= 0.10
+                ][:4]
+            return result
+        except Exception:
+            return result
 
-        Returns caption/objects/scene only from model scores — never from
-        filenames or hardcoded fixture answers. Honest degradation when
-        unavailable or low-confidence.
+    def _semantic_vision_infer(self, frame: Any) -> Dict[str, Any]:
+        """Generative visual semantics via BLIP image captioning.
+
+        Caption is model-generated free text — NOT selection from a candidate
+        list. CLIP may add supplemental class hints only. Honest degradation
+        when model unavailable or low-confidence; never invents objects.
         """
         out: Dict[str, Any] = {
             "available": False,
@@ -1235,63 +1300,103 @@ class PerceptionLobe:
             "scores": [],
             "confidence": 0.0,
             "error": None,
+            "clip_supplemental": None,
         }
         if not self.semantic_vision_available:
             out["error"] = self._vision_semantic_reason or "semantic vision unavailable"
             return out
-        if not self._ensure_clip():
-            out["error"] = self._vision_semantic_reason or "CLIP not loaded"
+        if not self._ensure_blip():
+            out["error"] = self._vision_semantic_reason or "BLIP not loaded"
             return out
 
         try:
             from PIL import Image
-            torch = self._clip_torch
-            # frame is BGR ndarray
+            torch = self._blip_torch
             rgb = frame[:, :, ::-1].copy()
-            img = Image.fromarray(rgb.astype(np.uint8))
-            labels = list(self._CLIP_CANDIDATES)
-            inputs = self._clip_processor(
-                text=labels, images=img, return_tensors="pt", padding=True
-            )
+            img = Image.fromarray(rgb.astype(np.uint8)).convert("RGB")
+
+            inputs = self._blip_processor(images=img, return_tensors="pt")
             with torch.no_grad():
-                logits = self._clip_model(**inputs).logits_per_image[0]
-                probs = logits.softmax(dim=0).tolist()
+                generated = self._blip_model.generate(
+                    **inputs,
+                    max_new_tokens=30,
+                    num_beams=3,
+                    return_dict_in_generate=True,
+                    output_scores=True,
+                )
+            seq = generated.sequences[0]
+            caption = self._blip_processor.decode(seq, skip_special_tokens=True)
+            caption = (caption or "").strip()
+            # Strip common BLIP prompt echo if present.
+            for prefix in ("a photography of ", "a photo of ", "an image of "):
+                if caption.lower().startswith(prefix):
+                    caption = caption[len(prefix):].strip()
+                    break
 
-            ranked = sorted(zip(labels, probs), key=lambda x: -x[1])
-            top_label, top_p = ranked[0]
-            # Require a clear winner — otherwise honest low-confidence degrade.
-            second_p = ranked[1][1] if len(ranked) > 1 else 0.0
-            margin = top_p - second_p
-            confident = bool(top_p >= 0.18 and margin >= 0.05)
+            # Mean max-token probability as generative confidence.
+            token_probs: List[float] = []
+            if getattr(generated, "scores", None):
+                for step_logits in generated.scores:
+                    probs = torch.softmax(step_logits[0], dim=-1)
+                    token_probs.append(float(probs.max().item()))
+            mean_tp = float(sum(token_probs) / len(token_probs)) if token_probs else 0.0
+            # Beam sequences: also consider relative sequence score when present.
+            seq_score = None
+            if getattr(generated, "sequences_scores", None) is not None:
+                try:
+                    seq_score = float(generated.sequences_scores[0].item())
+                except Exception:
+                    seq_score = None
 
-            out["scores"] = [
-                {"label": lab, "score": float(p)} for lab, p in ranked[:5]
-            ]
-            out["confidence"] = float(top_p)
+            # Reject empty / trivial captions; require solid token confidence.
+            confident = bool(
+                caption
+                and len(caption.split()) >= 2
+                and mean_tp >= 0.42
+            )
+
             out["available"] = True
-            out["backend"] = "clip"
+            out["backend"] = "blip"
+            out["confidence"] = mean_tp
+            out["scores"] = [
+                {"token_mean_prob": mean_tp, "seq_score": seq_score, "caption_preview": caption[:80]}
+            ]
+
+            # Supplemental CLIP — classifier hints only, never becomes caption.
+            clip_sup = self._clip_supplemental_classify(img)
+            out["clip_supplemental"] = {
+                "labels": list(clip_sup.get("labels") or []),
+                "scores": list(clip_sup.get("scores") or [])[:5],
+                "confidence": float(clip_sup.get("confidence") or 0.0),
+            }
 
             if not confident:
                 out["error"] = (
                     f"semantic vision low confidence "
-                    f"(top={top_p:.3f} margin={margin:.3f}); no objects invented"
+                    f"(token_mean_prob={mean_tp:.3f}); no caption invented"
                 )
                 out["caption"] = None
                 out["objects"] = []
                 out["scene"] = None
                 return out
 
-            # Accept labels clearly above noise floor relative to top.
-            accepted = [
-                lab for lab, p in ranked
-                if p >= max(0.12, top_p * 0.35) and p >= 0.10
-            ][:4]
-            out["objects"] = list(accepted)
-            out["scene"] = accepted[0] if accepted else top_label
-            if len(accepted) == 1:
-                out["caption"] = accepted[0]
-            else:
-                out["caption"] = ", ".join(accepted[:3])
+            out["caption"] = caption
+            out["scene"] = caption
+            # Objects: content words from caption + optional CLIP supplemental labels.
+            words = [
+                w.strip(_PUNCT_STRIP).lower()
+                for w in caption.split()
+                if len(w.strip(_PUNCT_STRIP)) > 2
+            ]
+            stop = {
+                "the", "and", "with", "from", "that", "this", "are", "was",
+                "for", "its", "his", "her", "their", "onto", "into", "over",
+                "under", "near", "beside", "there", "here", "some", "many",
+            }
+            obj_from_cap = [w for w in words if w not in stop][:8]
+            clip_labels = list(clip_sup.get("labels") or [])
+            objects = list(dict.fromkeys(obj_from_cap + clip_labels))
+            out["objects"] = objects
             return out
         except Exception as exc:
             out["error"] = f"semantic vision inference failed: {exc}"
@@ -1387,6 +1492,7 @@ class PerceptionLobe:
                 "confidence": sem_conf,
                 "scores": list(semantic.get("scores") or [])[:5],
                 "error": sem_err,
+                "clip_supplemental": semantic.get("clip_supplemental"),
             },
             "semantic_vision_available": bool(self.semantic_vision_available),
             "camera_live": bool(self.vision_available),
