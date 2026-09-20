@@ -97,6 +97,10 @@ class AttentionLobe:
             )
             if not isinstance(text, str):
                 text = str(text) if text is not None else ""
+            try:
+                novelty_score = float(signal.get("novelty_score") or 0.0)
+            except (TypeError, ValueError):
+                novelty_score = 0.0
             norm: Dict[str, Any] = {
                 "id": AttentionLobe._signal_id(signal, index),
                 "text": text,
@@ -104,6 +108,7 @@ class AttentionLobe:
                 "modality": str(signal.get("modality") or "text"),
                 "priority": float(signal.get("priority") or signal.get("base_priority") or 0.0),
                 "novelty_flags": list(signal.get("novelty_flags") or []),
+                "novelty_score": novelty_score,
                 "emotions": list(signal.get("emotions") or []),
                 "entities": list(signal.get("entities") or []),
                 "concepts": list(signal.get("concepts") or signal.get("words") or []),
@@ -118,6 +123,7 @@ class AttentionLobe:
             "modality": "text",
             "priority": 0.0,
             "novelty_flags": [],
+            "novelty_score": 0.0,
             "emotions": [],
             "entities": [],
             "concepts": [],
@@ -155,6 +161,14 @@ class AttentionLobe:
         novelty = signal.get("novelty_flags") or []
         if novelty:
             score += min(0.40, 0.12 * len(novelty))
+
+        # Consolidated Novelty-lobe score (0–1) — real boost, not theater.
+        try:
+            nov_score = float(signal.get("novelty_score") or 0.0)
+        except (TypeError, ValueError):
+            nov_score = 0.0
+        if nov_score > 0.0:
+            score += min(0.45, 0.45 * max(0.0, min(1.0, nov_score)))
 
         emotions = signal.get("emotions") or []
         if emotions:

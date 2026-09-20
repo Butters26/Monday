@@ -1,0 +1,104 @@
+=== NOVELTY AFTER PROOF ===
+time: 2026-09-19 22:28:31 MDT
+
+DESIGN DONE SENTENCE:
+Novelty is registered in core, computes a real novelty_score for each
+incoming experience against recent/familiar patterns, and that score feeds
+Attention salience and the existing curiosity path without duplicate Q spam.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+novelty_registered: True
+
+--- input [familiar_first]: 'hello there how are you' ---
+perception_novelty_flags_count: 3 sample=['novel_concept:hello', 'novel_concept:there', 'novel_question']
+novelty_source: fresh_perception_signal
+novelty_score: 0.4275
+novelty_is_novel: False
+familiar_overlap: 0.0 nearest: 0.0
+novelty_flags_sample: ['novelty_low', 'novel_concept:hello', 'novel_concept:there', 'novel_question']
+novel_tokens_sample: []
+attention_focus: user_input focus_score=1.5
+attention_user_score: 1.5
+attention_novelty_candidate_present: False score=None
+
+--- input [novel_first]: 'I just discovered synesthesia chromesthesia and the Bandersnatch Quasar Protocol' ---
+perception_novelty_flags_count: 8 sample=['novel_entity:Bandersnatch Quasar Protocol', 'novel_concept:just', 'novel_concept:discovered', 'novel_concept:synesthesia', 'novel_concept:chromesthesia']
+novelty_source: fresh_perception_signal
+novelty_score: 1.0
+novelty_is_novel: True
+familiar_overlap: 0.0 nearest: 0.0
+novelty_flags_sample: ['novel_entity:Bandersnatch Quasar Protocol', 'novel_token:bandersnatch', 'novel_token:chromesthesia', 'novel_token:discovered', 'novel_token:protocol', 'novel_token:quasar']
+novel_tokens_sample: ['bandersnatch', 'chromesthesia', 'discovered', 'protocol', 'quasar', 'synesthesia']
+attention_focus: user_input focus_score=1.5
+attention_user_score: 1.5
+attention_novelty_candidate_present: True score=1.295
+
+--- input [novel_repeat]: 'I just discovered synesthesia chromesthesia and the Bandersnatch Quasar Protocol' ---
+perception_novelty_flags_count: 0 sample=[]
+novelty_source: assess_experience
+novelty_score: 0.0
+novelty_is_novel: False
+familiar_overlap: 1.0 nearest: 1.0
+novelty_flags_sample: ['familiar_recent_repeat', 'novelty_low']
+novel_tokens_sample: []
+attention_focus: user_input focus_score=1.1938
+attention_user_score: 1.1938
+attention_novelty_candidate_present: True score=1.036
+
+--- input [familiar_again]: 'hello there how are you' ---
+perception_novelty_flags_count: 1 sample=['novel_question']
+novelty_source: fresh_perception_signal
+novelty_score: 0.0
+novelty_is_novel: False
+familiar_overlap: 1.0 nearest: 1.0
+novelty_flags_sample: ['familiar_recent_repeat', 'novelty_low', 'novel_question']
+novel_tokens_sample: []
+attention_focus: user_input focus_score=1.315
+attention_user_score: 1.315
+attention_novelty_candidate_present: True score=0.8288
+
+live_novel_reply_ok: True
+live_novel_excerpt: "There's something beautiful and sad about that. I get the sense you're feeling neutral. I'm learning to read feelings better.\n\nI do not want to invent details -"
+live_novel_last_score: 0.0 is_novel=False
+live_repeat_last_score: 0.0 is_novel=False
+live_repeat_excerpt: "That makes me feel nostalgic and happy at once. I get the sense you're feeling neutral. I'm learning to read feelings be"
+lobe_present[attention]: True
+lobe_present[emotion]: True
+lobe_present[notus]: True
+lobe_present[reasoning]: True
+lobe_present[autonomous]: True
+lobe_present[perception]: True
+lobe_present[novelty]: True
+
+=== BEFORE vs AFTER (excerpt) ===
+BEFORE: novelty_registered=False; send→Unknown destination: novelty
+AFTER:  novelty_registered=True; real scores below
+
+=== SUMMARY ===
+familiar_first: score=0.4275 is_novel=False attn_user=1.5 nov_candidate=False
+novel_first: score=1.0000 is_novel=True attn_user=1.5 nov_candidate=True
+novel_repeat: score=0.0000 is_novel=False attn_user=1.1938 nov_candidate=True
+familiar_again: score=0.0000 is_novel=False attn_user=1.315 nov_candidate=True
+
+novel_first > novel_repeat: True (1.0000 > 0.0000)
+novel_first is_novel: True
+novel_repeat lower/not-novel: score=0.0000 is_novel=False
+familiar_again low: 0.0000
+
+shutdown: ok
+
+=== LIVE PATH CONFIRMATION (process_user_input) ===
+Input: 'Quizzlebop Flux Capacitor synesthesia chromesthesia Ziggurat Protocol'
+first_score: 1.0 is_novel=True
+repeat_score: 0.0 is_novel=False
+first>repeat: True
+novelty_registered: True
+Emotion notify on first turn saw novelty_score=1.00; reasoning secondary signal did not clobber it.
+Finished lobes still present: attention, emotion, notus, reasoning, autonomous, perception, novelty.
+
+=== REMAINING GAPS ===
+- Curiosity question *text* still owned by conversation/direct_response (by design); Novelty only supplies novelty_score eligibility.
+- Emotion-driven question drafts are stored pending but not auto-dispatched to language (avoids duplicate spam).
+- Score can saturate at 1.0 when many perception flags + novel entities coincide — real computation, not random theater.
+- Reasoning still emits secondary novelty_signal (legacy); Novelty treats it as non-primary / non-commit.
+- No durable cross-session novelty memory beyond in-process familiar_tokens (Notus learn path exists for user answers only).

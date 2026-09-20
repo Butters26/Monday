@@ -20,6 +20,7 @@ from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
 from notus_memory_core import ActiveNotusMemorySystem
 from output import OutputLobe
+from novelty_lobe import NoveltyLobe
 from perception import PerceptionLobe
 from sensory_integration_lobe import SensoryIntegrationLobe
 from runtime_paths import runtime_dir
@@ -54,6 +55,7 @@ def create_core_systems(
         "perception": PerceptionLobe(thalamus=thalamus),
         "sensory_integration": SensoryIntegrationLobe(thalamus=thalamus),
         "attention": AttentionLobe(thalamus=thalamus),
+        "novelty": NoveltyLobe(thalamus=thalamus),
         "conversation": ConversationSystem(thalamus=thalamus),
         "notus": ActiveNotusMemorySystem(thalamus=thalamus),
         "emotion": EmotionalProcess(
@@ -70,6 +72,7 @@ def create_core_systems(
         "perception",
         "sensory_integration",
         "attention",
+        "novelty",
         "conversation",
         "notus",
         "emotion",
@@ -99,6 +102,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "emotion",
         "notus",
         "conversation",
+        "novelty",
         "attention",
         "sensory_integration",
         "perception",

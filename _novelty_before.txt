@@ -1,0 +1,49 @@
+=== NOVELTY BEFORE BASELINE ===
+time: 2026-09-19 22:25:42 MDT
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'output', 'perception', 'reasoning', 'sensory_integration']
+novelty_registered: False
+systems_keys: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'output', 'perception', 'reasoning', 'sensory_integration', 'thalamus']
+
+--- input [familiar]: 'hello there how are you' ---
+perception_status: success
+perception_novelty_flags: ['novel_concept:hello', 'novel_concept:there', 'novel_question']
+perception_entities: []
+perception_concepts_sample: ['hello', 'there', 'how', 'are', 'you']
+attention_focus: user_input
+attention_focus_score: 1.315
+attention_top: [{'id': 'user_input', 'score': 1.315, 'nov': None}, {'id': 'perception_envelope', 'score': 1.03, 'nov': None}, {'id': 'novelty:novel_concept:hello', 'score': 0.6525, 'nov': None}]
+attention_novelty_candidates: 3 scores=[0.6525, 0.6525, 0.64]
+can_message_novelty: False
+novelty_send_when_missing: {'status': 'error', 'message': 'Unknown destination: novelty'}
+
+--- input [novel_first]: 'I just discovered synesthesia chromesthesia and the Bandersnatch Quasar Protocol' ---
+perception_status: success
+perception_novelty_flags: ['novel_entity:Bandersnatch Quasar Protocol', 'novel_concept:just', 'novel_concept:discovered', 'novel_concept:synesthesia', 'novel_concept:chromesthesia', 'novel_concept:bandersnatch', 'novel_concept:quasar', 'novel_concept:protocol']
+perception_entities: ['Bandersnatch Quasar Protocol']
+perception_concepts_sample: ['just', 'discovered', 'synesthesia', 'chromesthesia', 'and', 'the', 'bandersnatch', 'quasar']
+attention_focus: user_input
+attention_focus_score: 1.3475
+attention_top: [{'id': 'user_input', 'score': 1.3475, 'nov': None}, {'id': 'perception_envelope', 'score': 1.0625, 'nov': None}, {'id': 'novelty:novel_entity:Bandersnatch Quasar Protocol', 'score': 0.7075, 'nov': None}]
+attention_novelty_candidates: 7 scores=[0.7075, 0.6675, 0.665, 0.65]
+can_message_novelty: False
+novelty_send_when_missing: {'status': 'error', 'message': 'Unknown destination: novelty'}
+
+--- input [novel_repeat]: 'I just discovered synesthesia chromesthesia and the Bandersnatch Quasar Protocol' ---
+perception_status: success
+perception_novelty_flags: []
+perception_entities: ['Bandersnatch Quasar Protocol']
+perception_concepts_sample: ['just', 'discovered', 'synesthesia', 'chromesthesia', 'and', 'the', 'bandersnatch', 'quasar']
+attention_focus: user_input
+attention_focus_score: 1.0128
+attention_top: [{'id': 'user_input', 'score': 1.0128, 'nov': None}, {'id': 'perception_envelope', 'score': 0.7562, 'nov': None}, {'id': 'novelty:novel_entity:Bandersnatch Quasar Protocol', 'score': 0.566, 'nov': None}]
+attention_novelty_candidates: 7 scores=[0.566, 0.534, 0.532, 0.52]
+can_message_novelty: False
+novelty_send_when_missing: {'status': 'error', 'message': 'Unknown destination: novelty'}
+
+emotion_feel_status: success
+emotion_current: curious
+
+live_path_hello_reply_len: 22
+live_path_hello_excerpt: 'Hello! How can I help?'
+
+shutdown: ok

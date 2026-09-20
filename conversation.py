@@ -36,7 +36,8 @@ class ConversationSystem:
         # Direct reference to Thalamus (NO SOCKETS)
         self.thalamus = thalamus or get_thalamus()
         
-        # novelty_lobe left unused on the live six-path (curiosity owned elsewhere)
+        # Curiosity question text stays here / direct_response; Novelty supplies
+        # novelty_score via perception/understanding (not question spam).
         self.novelty_lobe = None
         
     def understand(self, user_input: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -273,6 +274,13 @@ class ConversationSystem:
                 understanding['perception_concepts'] = concept_list
                 understanding['perception_modality'] = perc.get('modality') or 'text'
                 understanding['perception_novelty_flags'] = list(perc.get('novelty_flags') or [])
+                try:
+                    understanding['novelty_score'] = float(perc.get('novelty_score') or 0.0)
+                except (TypeError, ValueError):
+                    understanding['novelty_score'] = 0.0
+                understanding['novelty_is_novel'] = bool(perc.get('novelty_is_novel'))
+                if isinstance(perc.get('novelty'), dict):
+                    understanding['novelty'] = dict(perc.get('novelty') or {})
                 if perc.get('sentiment') and understanding.get('sentiment') in (None, 'neutral'):
                     understanding['sentiment'] = perc.get('sentiment')
 
@@ -349,9 +357,10 @@ class ConversationSystem:
         *,
         force: bool = False,
     ) -> Optional[str]:
-        """Maybe one honest follow-up when affect is hot or unresolved.
+        """Maybe one honest follow-up when affect is hot, unresolved, or novel.
 
-        Mild social turns never force a question. Does not use novelty_lobe.
+        Mild social turns never force a question. Consumes novelty_score from
+        understanding (Novelty lobe signal) — does not ask Novelty to invent Qs.
         """
         emotional_context = emotional_context if isinstance(emotional_context, dict) else {}
         understanding = understanding if isinstance(understanding, dict) else {}
@@ -367,6 +376,10 @@ class ConversationSystem:
             intensity = float(emotional_context.get("intensity", 0.0) or 0.0)
         except (TypeError, ValueError):
             intensity = 0.0
+        try:
+            novelty_score = float(understanding.get("novelty_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            novelty_score = 0.0
         unresolved = emotional_context.get("unresolved_appraisals") or []
         if not isinstance(unresolved, list):
             unresolved = []
@@ -381,14 +394,26 @@ class ConversationSystem:
             except Exception:
                 max_sev = 0.55
 
-        eligible = bool(force) or bool(unresolved) or intensity >= 0.70
+        elevated_novelty = novelty_score >= 0.55
+        eligible = (
+            bool(force)
+            or bool(unresolved)
+            or intensity >= 0.70
+            or elevated_novelty
+        )
         if not eligible:
             return None
 
         if not force:
-            # Sometimes — bias toward asking when unresolved / hot, never spam.
+            # Sometimes — bias toward asking when unresolved / hot / novel, never spam.
             if unresolved and (intensity >= 0.50 or max_sev >= 0.55):
                 if random.random() >= 0.88:
+                    return None
+            elif elevated_novelty and novelty_score >= 0.70:
+                if random.random() >= 0.70:
+                    return None
+            elif elevated_novelty:
+                if random.random() >= 0.45:
                     return None
             elif intensity >= 0.70:
                 if random.random() >= 0.55:

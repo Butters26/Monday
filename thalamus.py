@@ -94,7 +94,8 @@ class Thalamus:
         # Rate-limit rare speak-worthy asides attached to user-turn replies.
         self._last_spoken_aside_time: float = 0.0
         self._spoken_aside_cooldown_sec: float = 45.0
-        # Curiosity follow-ups (emotion/conversation/direct_response — not novelty_lobe).
+        # Curiosity follow-ups (emotion/conversation/direct_response).
+        # Novelty lobe supplies novelty_score; it does not own the question text.
         self._last_curiosity_time: float = 0.0
         self._curiosity_cooldown_sec: float = 25.0
         self._force_curiosity_follow_up: bool = False
@@ -623,6 +624,10 @@ class Thalamus:
         perception_payload = perception_payload if isinstance(perception_payload, dict) else {}
         signals: List[Dict[str, Any]] = []
         text = user_input if isinstance(user_input, str) else ""
+        try:
+            novelty_score = float(perception_payload.get("novelty_score") or 0.0)
+        except (TypeError, ValueError):
+            novelty_score = 0.0
         signals.append(
             {
                 "id": "user_input",
@@ -631,6 +636,7 @@ class Thalamus:
                 "modality": "text",
                 "priority": 0.55,
                 "novelty_flags": list(perception_payload.get("novelty_flags") or []),
+                "novelty_score": novelty_score,
                 "emotions": list(
                     (perception_payload.get("raw_meta") or {}).get("emotions")
                     or perception_payload.get("emotions")
@@ -656,6 +662,7 @@ class Thalamus:
                     "modality": str(perception_payload.get("modality") or "text"),
                     "priority": 0.25,
                     "novelty_flags": list(perception_payload.get("novelty_flags") or []),
+                    "novelty_score": novelty_score,
                     "emotions": list(
                         (perception_payload.get("raw_meta") or {}).get("emotions")
                         or perception_payload.get("emotions")
@@ -695,10 +702,23 @@ class Thalamus:
                         "modality": "text",
                         "priority": 0.30,
                         "novelty_flags": [str(flag)],
+                        "novelty_score": novelty_score,
                     }
                 )
                 if idx >= 3:
                     break
+            if novelty_score >= 0.45:
+                signals.append(
+                    {
+                        "id": "novelty_score",
+                        "text": f"novelty_score:{novelty_score:.3f}",
+                        "source": "novelty",
+                        "modality": "text",
+                        "priority": min(0.55, 0.25 + 0.35 * novelty_score),
+                        "novelty_score": novelty_score,
+                        "novelty_flags": list(perception_payload.get("novelty_flags") or [])[:4],
+                    }
+                )
         # Low-salience ambient competitor so ranking is real, not a single dead entry.
         signals.append(
             {
@@ -868,6 +888,68 @@ class Thalamus:
         else:
             # Precomputed envelope from audio/vision — do not re-run text perceive.
             perception_payload = dict(perception_payload)
+
+        # Novelty: consolidate real novelty_score against familiar patterns.
+        # Perception flags remain evidence; Novelty owns the live-path score.
+        novelty_payload: Dict[str, Any] = {}
+        with self.lobe_handlers_lock:
+            has_novelty = "novelty" in self.lobe_handlers
+        if has_novelty:
+            try:
+                novelty_payload = {}
+                # Perception may have signaled Novelty this turn — consume that
+                # one-shot assessment so we do not re-score against just-committed
+                # tokens. True repeats (no fresh signal) re-assess and drop.
+                fresh = self.send_and_wait(
+                    "novelty", "take_fresh_assessment", {}, source="thalamus"
+                )
+                fresh_body = self._content(fresh) if fresh.get("status") == "success" else {}
+                reuse = bool(fresh.get("fresh") or fresh_body.get("stimulus"))
+                if reuse and str(fresh_body.get("stimulus") or "") == user_input[:240]:
+                    novelty_payload = fresh_body
+                    nov_resp = {"status": "success", "content": fresh_body}
+                else:
+                    nov_resp = self.send_and_wait(
+                        "novelty",
+                        "assess_experience",
+                        {
+                            "text": user_input,
+                            "perception": perception_payload,
+                            "source": "live_path",
+                            "user_id": user_id,
+                        },
+                        source="thalamus",
+                    )
+                if nov_resp.get("status") == "success":
+                    if not novelty_payload:
+                        novelty_payload = self._content(nov_resp)
+                    if not isinstance(novelty_payload, dict):
+                        novelty_payload = {}
+                    # Merge into perception envelope for attention / conversation.
+                    perception_payload = dict(perception_payload or {})
+                    score = novelty_payload.get("novelty_score")
+                    try:
+                        perception_payload["novelty_score"] = float(score if score is not None else 0.0)
+                    except (TypeError, ValueError):
+                        perception_payload["novelty_score"] = 0.0
+                    perception_payload["novelty_is_novel"] = bool(
+                        novelty_payload.get("is_novel")
+                    )
+                    # Union flags: perception local + novelty consolidated.
+                    merged_flags = list(perception_payload.get("novelty_flags") or [])
+                    for f in novelty_payload.get("novelty_flags") or []:
+                        if f and f not in merged_flags:
+                            merged_flags.append(f)
+                    perception_payload["novelty_flags"] = merged_flags
+                    perception_payload["novelty"] = {
+                        "score": perception_payload["novelty_score"],
+                        "is_novel": perception_payload["novelty_is_novel"],
+                        "novel_tokens": list(novelty_payload.get("novel_tokens") or []),
+                        "familiar_overlap": novelty_payload.get("familiar_overlap"),
+                        "nearest_similarity": novelty_payload.get("nearest_similarity"),
+                    }
+            except Exception:
+                novelty_payload = {}
 
         # Attention: score competing signals, decay stale focus, rank priority.
         attention_payload: Dict[str, Any] = self._attend_live_signals(
@@ -1442,8 +1524,10 @@ class Thalamus:
     ) -> str:
         """Append at most one honest curiosity question when affect warrants it.
 
-        Owned by emotion/conversation/direct_response — novelty_lobe is not consulted.
-        Mild hello/social turns never force a question. Missing novelty must not matter.
+        Owned by emotion/conversation/direct_response. Novelty lobe supplies
+        novelty_score (via understanding/perception) as an eligibility signal;
+        it does not generate the question text here.
+        Mild hello/social turns never force a question.
         """
         if not isinstance(reply, str) or not reply.strip():
             return reply

@@ -1,449 +1,670 @@
 #!/usr/bin/env python3
 """
-Novelty Lobe - Detects and responds to genuinely new experiences
-Not a logic gate. Driven by REAL emotional response.
+Novelty Lobe — detect genuinely new experience against recent/familiar patterns.
+
+Primary job (live path):
+  assess incoming text / perception envelopes → real novelty_score + flags
+  feed that signal to Attention / Thalamus / curiosity consumers.
+
+Curiosity *questions* are owned by emotion/conversation/direct_response.
+This lobe does NOT spam language with duplicate questions; it provides the
+novelty signal those paths can consume. Emotion may still notify us when
+affect spikes so we can record learning context.
 """
 
-import json
-import time
-import random
-import threading
-from typing import Dict, List, Any, Optional, Tuple
-from dataclasses import dataclass, field
-from datetime import datetime
-from thalamus import get_thalamus
+from __future__ import annotations
+
 import logging
+import re
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Any, Deque, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
+_TOKEN_RE = re.compile(r"[a-z0-9']+")
+_STOP = frozenset(
+    {
+        "a", "an", "the", "and", "or", "but", "if", "to", "of", "in", "on", "at",
+        "for", "is", "are", "was", "were", "be", "am", "i", "you", "he", "she",
+        "it", "we", "they", "me", "my", "your", "our", "their", "this", "that",
+        "with", "from", "as", "by", "do", "does", "did", "have", "has", "had",
+        "not", "no", "yes", "so", "just", "about", "what", "when", "where",
+        "who", "which", "how", "why", "can", "could", "would", "should",
+    }
+)
+_COMMON_FUNCTION = frozenset(
+    {
+        "hello", "hi", "hey", "thanks", "thank", "please", "ok", "okay", "yeah",
+        "yep", "nope", "good", "bad", "well", "here", "there", "then", "than",
+        "them", "will", "know", "think", "like", "want", "need", "make", "made",
+    }
+)
+
+
 @dataclass
 class NoveltyMemory:
-    """Remembers how Monday reacted to similar novel things before"""
-    stimulus_type: str  # "music", "concept", "person", "behavior", etc.
-    stimulus: str  # What the thing was
-    initial_emotion: str  # How she felt
-    intensity: float  # 0-1
-    valence: float  # -1 to 1 (negative to positive)
+    """Remembers how Monday reacted to similar novel things before."""
+
+    stimulus_type: str
+    stimulus: str
+    initial_emotion: str
+    intensity: float
+    valence: float
     timestamp: float
-    user_response: Optional[str] = None  # What the user said about it
-    learned_value: Optional[str] = None  # What she learned
-    reinforcement_count: int = 0  # How many times this pattern reinforced
+    user_response: Optional[str] = None
+    learned_value: Optional[str] = None
+    reinforcement_count: int = 0
+
 
 @dataclass
 class NoveltySignal:
-    """Signal from a lobe that something novel was detected"""
-    source: str  # "perception", "reasoning", "notus", "emotion"
-    stimulus: str  # What's novel
-    stimulus_type: str  # Type of stimulus
-    confidence: float  # 0-1 how sure it's novel
-    emotion_already_generated: bool = False  # Did Emotion already respond?
+    """Signal from a lobe that something novel was detected."""
+
+    source: str
+    stimulus: str
+    stimulus_type: str
+    confidence: float
+    emotion_already_generated: bool = False
     timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class NoveltyAssessment:
+    """Computed novelty of one experience."""
+
+    score: float
+    is_novel: bool
+    flags: List[str]
+    novel_tokens: List[str]
+    familiar_overlap: float
+    nearest_similarity: float
+    source: str
+    stimulus: str
+    perception_flags: List[str] = field(default_factory=list)
+    timestamp: float = field(default_factory=time.time)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "novelty_score": round(float(self.score), 4),
+            "is_novel": bool(self.is_novel),
+            "novelty_flags": list(self.flags),
+            "novel_tokens": list(self.novel_tokens),
+            "familiar_overlap": round(float(self.familiar_overlap), 4),
+            "nearest_similarity": round(float(self.nearest_similarity), 4),
+            "source": self.source,
+            "stimulus": self.stimulus,
+            "perception_flags": list(self.perception_flags),
+            "timestamp": float(self.timestamp),
+        }
+
 
 class NoveltyLobe:
     """
-    Coordinates novelty detection and learning.
-    Driven by emotion, not logic gates.
+    Owns novelty computation for the live path.
+
+    Perception may still emit local novelty_flags (first-seen entities/concepts).
+    Novelty consolidates those with its own recent/familiar pattern memory into
+    a single score Attention and curiosity consumers can use.
     """
-    
-    def __init__(self):
+
+    ELEVATED_THRESHOLD = 0.45
+    HIGH_THRESHOLD = 0.70
+
+    def __init__(self, thalamus: Any = None, history_size: int = 64):
         self.running = True
-        self.thalamus = get_thalamus()
-        
-        # Novelty memories - remembers patterns of reactions
+        self.thalamus = thalamus
+        if self.thalamus is None:
+            try:
+                from thalamus import get_thalamus
+
+                self.thalamus = get_thalamus()
+            except Exception:
+                self.thalamus = None
+
         self.novelty_memories: List[NoveltyMemory] = []
-        
-        # Current processing
-        self.processing_novelties: Dict[str, NoveltySignal] = {}  # stimulus -> signal
-        self.pending_user_responses: Dict[str, Dict[str, Any]] = {}  # stimulus -> context
-        
-        # Emotional variance - affects how she responds
-        self.emotional_momentum = 0.0  # -1 to 1, influences current responses
-        self.variance_factor = 0.05  # How much randomness in responses (lower for testing)
-        
-        # Register with Thalamus
-        self._register_with_thalamus()
-    
-    def _register_with_thalamus(self):
-        """Register with Thalamus"""
-        try:
-            result = self.thalamus.register_lobe('novelty', self)
-            if result.get('status') == 'success':
-                print("✅ Novelty Lobe registered with Thalamus")
-                return True
-            return False
-        except Exception as e:
-            print(f"⚠️  Failed to register Novelty Lobe: {e}")
-            return False
-    
-    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle incoming messages from other lobes"""
-        msg_type = message.get('type')
-        
-        if msg_type == 'novelty_signal':
-            # A lobe detected something novel
-            return self._handle_novelty_signal(message)
-        
-        elif msg_type == 'emotional_response_to_novelty':
-            # Emotion has generated a response to something novel
-            return self._handle_emotional_response(message)
-        
-        elif msg_type == 'user_response':
-            # User answered Monday's question about a novel thing
-            return self._handle_user_response(message)
-        
-        elif msg_type == 'get_pending_questions':
-            # Return pending questions waiting for user response
-            return {
-                'status': 'success',
-                'pending': self.pending_user_responses
-            }
-        
-        else:
-            return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
-    
-    def _handle_novelty_signal(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process novelty signal from perception, reasoning, or notus.
-        DON'T kick in immediately - wait for Emotion to respond.
-        The emotion IS the signal that it matters.
-        """
-        signal = NoveltySignal(
-            source=message.get('source'),
-            stimulus=message.get('stimulus'),
-            stimulus_type=message.get('stimulus_type', 'unknown'),
-            confidence=message.get('confidence', 0.5)
+        self.processing_novelties: Dict[str, NoveltySignal] = {}
+        self.pending_user_responses: Dict[str, Dict[str, Any]] = {}
+
+        # Real familiarity stores — not random.
+        self.familiar_tokens: Set[str] = set()
+        self.familiar_entities: Set[str] = set()
+        self.recent_fingerprints: Deque[Set[str]] = deque(maxlen=max(8, int(history_size)))
+        self.recent_stimuli: Deque[str] = deque(maxlen=max(8, int(history_size)))
+
+        self.last_assessment: Optional[NoveltyAssessment] = None
+        # One-shot: perception signal sets this; live path may consume once.
+        self._fresh_signal_pending: bool = False
+        self.emotional_momentum = 0.0
+        # Kept for compatibility with older emotion-driven question helpers;
+        # does not drive the novelty *score*.
+        self.variance_factor = 0.05
+        # Registration is owned by create_core_systems / callers — do not
+        # auto-register here (matches Attention/Perception pattern).
+
+    # ------------------------------------------------------------------
+    # Tokenization / similarity
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _tokenize(text: str) -> Set[str]:
+        if not isinstance(text, str) or not text.strip():
+            return set()
+        tokens = set(_TOKEN_RE.findall(text.lower()))
+        return {t for t in tokens if len(t) > 1}
+
+    @classmethod
+    def _content_tokens(cls, text: str) -> Set[str]:
+        return {t for t in cls._tokenize(text) if t not in _STOP}
+
+    @staticmethod
+    def _jaccard(a: Set[str], b: Set[str]) -> float:
+        if not a and not b:
+            return 1.0
+        if not a or not b:
+            return 0.0
+        inter = len(a & b)
+        union = len(a | b)
+        return float(inter) / float(union) if union else 0.0
+
+    def _nearest_similarity(self, tokens: Set[str]) -> float:
+        if not tokens or not self.recent_fingerprints:
+            return 0.0
+        best = 0.0
+        for prior in self.recent_fingerprints:
+            sim = self._jaccard(tokens, prior)
+            if sim > best:
+                best = sim
+        return best
+
+    # ------------------------------------------------------------------
+    # Core assessment (real signal)
+    # ------------------------------------------------------------------
+
+    def assess_experience(
+        self,
+        text: str = "",
+        perception: Optional[Dict[str, Any]] = None,
+        *,
+        source: str = "live",
+        commit: bool = True,
+    ) -> Dict[str, Any]:
+        """Score novelty of text / perception envelope against familiar patterns."""
+        perception = perception if isinstance(perception, dict) else {}
+        stimulus = text if isinstance(text, str) else ""
+        if not stimulus.strip():
+            stimulus = str(
+                perception.get("text")
+                or perception.get("normalized_text")
+                or ""
+            )
+
+        tokens = self._content_tokens(stimulus)
+        # Fold perception concepts/entities into the fingerprint.
+        for word in perception.get("concepts") or perception.get("words") or []:
+            if isinstance(word, str):
+                w = word.lower().strip()
+                if len(w) > 1 and w not in _STOP:
+                    tokens.add(w)
+        entities: List[str] = []
+        for ent in perception.get("entities") or []:
+            if isinstance(ent, str) and ent.strip():
+                entities.append(ent.strip())
+                for part in self._tokenize(ent):
+                    if part not in _STOP:
+                        tokens.add(part)
+
+        perception_flags = [
+            str(f) for f in (perception.get("novelty_flags") or []) if f
+        ]
+
+        novel_tokens = sorted(
+            t
+            for t in tokens
+            if t not in self.familiar_tokens and t not in _COMMON_FUNCTION
         )
-        
-        print(f"🆕 Novelty detected from {signal.source}: '{signal.stimulus}' (conf: {signal.confidence:.2f})")
-        
-        # Store it - but don't respond yet
-        # Wait for Emotion to generate a response
-        self.processing_novelties[signal.stimulus] = signal
-        
-        return {
-            'status': 'received',
-            'stimulus': signal.stimulus,
-            'waiting_for_emotion': True
+        novel_entities = [
+            e for e in entities if e.lower() not in self.familiar_entities
+        ]
+
+        familiar_overlap = 0.0
+        if tokens:
+            known = tokens & self.familiar_tokens
+            familiar_overlap = float(len(known)) / float(len(tokens))
+
+        nearest = self._nearest_similarity(tokens)
+
+        # Score components (deterministic, no random theater).
+        unseen_frac = 0.0
+        if tokens:
+            contentish = {t for t in tokens if t not in _COMMON_FUNCTION}
+            if contentish:
+                unseen_frac = float(len([t for t in contentish if t not in self.familiar_tokens])) / float(
+                    len(contentish)
+                )
+            else:
+                unseen_frac = float(len(novel_tokens)) / float(len(tokens)) if tokens else 0.0
+
+        # High similarity to a recent fingerprint suppresses novelty.
+        recency_penalty = nearest  # 1.0 = identical to recent
+        entity_boost = min(0.35, 0.18 * len(novel_entities))
+        perc_boost = min(0.25, 0.06 * len(perception_flags))
+        # Cold-start: if nothing familiar yet, moderate score from content richness
+        # rather than claiming everything is 100% novel forever.
+        if not self.familiar_tokens and not self.recent_fingerprints:
+            richness = min(1.0, len(tokens) / 8.0)
+            score = 0.25 + 0.35 * richness + entity_boost + 0.5 * perc_boost
+        else:
+            score = (
+                0.55 * unseen_frac
+                + 0.30 * (1.0 - recency_penalty)
+                + entity_boost
+                + perc_boost
+                - 0.20 * familiar_overlap
+            )
+
+        score = max(0.0, min(1.0, float(score)))
+
+        flags: List[str] = []
+        for ent in novel_entities[:6]:
+            flags.append(f"novel_entity:{ent}")
+        for tok in novel_tokens[:8]:
+            flags.append(f"novel_token:{tok}")
+        if nearest >= 0.85 and tokens:
+            flags.append("familiar_recent_repeat")
+        if score >= self.HIGH_THRESHOLD:
+            flags.append("novelty_high")
+        elif score >= self.ELEVATED_THRESHOLD:
+            flags.append("novelty_elevated")
+        else:
+            flags.append("novelty_low")
+        # Keep perception flags visible (merged, deduped).
+        for f in perception_flags:
+            if f not in flags:
+                flags.append(f)
+
+        assessment = NoveltyAssessment(
+            score=score,
+            is_novel=score >= self.ELEVATED_THRESHOLD,
+            flags=flags,
+            novel_tokens=novel_tokens[:12],
+            familiar_overlap=familiar_overlap,
+            nearest_similarity=nearest,
+            source=source,
+            stimulus=stimulus[:240],
+            perception_flags=perception_flags,
+        )
+
+        # Primary commits always publish. Secondary (commit=False) signals must
+        # not clobber a fresher elevated live/perception assessment.
+        publish = True
+        if not commit and self.last_assessment is not None:
+            age = time.time() - float(self.last_assessment.timestamp)
+            if age < 90.0 and assessment.score < float(self.last_assessment.score):
+                publish = False
+        if publish:
+            self.last_assessment = assessment
+
+        if commit and tokens:
+            self.recent_fingerprints.append(set(tokens))
+            self.recent_stimuli.append(stimulus[:240])
+            self.familiar_tokens.update(tokens)
+            for ent in entities:
+                self.familiar_entities.add(ent.lower())
+
+        return assessment.as_dict()
+
+    # ------------------------------------------------------------------
+    # Message API
+    # ------------------------------------------------------------------
+
+    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        msg_type = message.get("type")
+        # Thalamus send_message packs content separately; accept flat or nested.
+        payload = message.get("content") if isinstance(message.get("content"), dict) else message
+        if not isinstance(payload, dict):
+            payload = message if isinstance(message, dict) else {}
+        # Prefer explicit type on outer message.
+        if msg_type is None:
+            msg_type = payload.get("type")
+
+        if msg_type in ("assess_experience", "assess", "evaluate_novelty"):
+            result = self.assess_experience(
+                text=str(payload.get("text") or payload.get("stimulus") or ""),
+                perception=payload.get("perception")
+                if isinstance(payload.get("perception"), dict)
+                else payload.get("perception_payload")
+                if isinstance(payload.get("perception_payload"), dict)
+                else {},
+                source=str(payload.get("source") or "message"),
+                commit=bool(payload.get("commit", True)),
+            )
+            return {"status": "success", "content": result, **result}
+
+        if msg_type == "get_assessment":
+            if self.last_assessment is None:
+                return {"status": "success", "content": {}, "novelty_score": 0.0}
+            d = self.last_assessment.as_dict()
+            return {"status": "success", "content": d, **d}
+
+        if msg_type in ("take_fresh_assessment", "consume_fresh_assessment"):
+            # One-shot handoff from perception signal → live path.
+            if self._fresh_signal_pending and self.last_assessment is not None:
+                self._fresh_signal_pending = False
+                d = self.last_assessment.as_dict()
+                return {"status": "success", "content": d, "fresh": True, **d}
+            return {"status": "success", "content": {}, "fresh": False}
+
+        if msg_type == "novelty_signal":
+            return self._handle_novelty_signal(payload)
+
+        if msg_type == "emotional_response_to_novelty":
+            return self._handle_emotional_response(payload)
+
+        if msg_type == "user_response":
+            return self._handle_user_response(payload)
+
+        if msg_type == "get_pending_questions":
+            return {"status": "success", "pending": self.pending_user_responses}
+
+        if msg_type == "health":
+            return {
+                "status": "success",
+                "healthy": True,
+                "familiar_token_count": len(self.familiar_tokens),
+                "recent_count": len(self.recent_fingerprints),
+                "last_score": (
+                    self.last_assessment.score if self.last_assessment else None
+                ),
+            }
+
+        return {"status": "error", "message": f"Unknown message type: {msg_type}"}
+
+    def _handle_novelty_signal(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        """Perception (or other lobe) flagged novelty — assess + store signal."""
+        stimulus = str(message.get("stimulus") or message.get("text") or "")
+        source = str(message.get("source") or "signal")
+        # Perception owns first-pass live novelty; reasoning/emotion are secondary
+        # evidence and must not re-commit familiarity or clobber the live score.
+        primary = source in {
+            "perception",
+            "live",
+            "live_path",
+            "text_input",
+            "proof",
+            "proof_live",
+            "sensory",
         }
-    
+        perception = {
+            "text": stimulus,
+            "concepts": list(message.get("novel_concepts") or []),
+            "entities": list(message.get("novel_entities") or []),
+            "novelty_flags": list(message.get("novelty_flags") or []),
+        }
+        for key in ("concepts", "words", "concepts_involved"):
+            extra = message.get(key)
+            if isinstance(extra, list):
+                perception.setdefault("concepts", [])
+                perception["concepts"] = list(perception["concepts"]) + [
+                    c for c in extra if isinstance(c, str)
+                ]
+
+        assessment = self.assess_experience(
+            text=stimulus,
+            perception=perception,
+            source=source,
+            commit=primary,
+        )
+
+        signal = NoveltySignal(
+            source=source,
+            stimulus=stimulus,
+            stimulus_type=str(message.get("stimulus_type") or "unknown"),
+            confidence=float(message.get("confidence") or assessment.get("novelty_score") or 0.0),
+        )
+        if stimulus:
+            self.processing_novelties[stimulus] = signal
+
+        if primary:
+            # One-shot handoff to thalamus live-path.
+            self._fresh_signal_pending = True
+
+        print(
+            f"🆕 Novelty signal from {signal.source}: "
+            f"score={assessment['novelty_score']:.2f} "
+            f"is_novel={assessment['is_novel']}"
+        )
+        return {
+            "status": "received",
+            "stimulus": stimulus,
+            "waiting_for_emotion": False,
+            "primary": primary,
+            **assessment,
+        }
+
     def _handle_emotional_response(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Emotion has responded to something novel.
-        THIS is what triggers the Novelty Lobe to act.
-        Not logic, not checklist - EMOTION.
+        Emotion notified strong affect. Record context for learning.
+        Do NOT auto-spam language — curiosity questions live on the
+        conversation/thalamus path and consume our novelty_score instead.
         """
-        stimulus = message.get('stimulus')
-        emotion = message.get('emotion')
-        intensity = message.get('intensity', 0.5)
-        valence = message.get('valence', 0.0)
-        
-        print(f"😊 Emotion response to novelty: {emotion} (intensity: {intensity:.2f}, valence: {valence:.2f})")
-        
-        # Check if this is actually NOVEL or just a normal response
-        is_strong_reaction = intensity > 0.6
-        is_different_from_baseline = abs(valence) > 0.4
-        
-        if not (is_strong_reaction or is_different_from_baseline):
-            # Mild response - don't bother asking
-            print(f"   → Mild response, not asking about it")
-            return {'status': 'dismissed', 'reason': 'not_strong_enough'}
-        
-        # Get similar past experiences from Notus
-        similar_experiences = self._query_notus_for_similar_stimuli(stimulus)
-        
-        # Check variance - sometimes even strong emotions don't result in questions
-        # (she might just want to sit with the feeling)
-        if random.random() < (0.3 - (self.variance_factor * 0.5)):
-            print(f"   → Strong emotion, but Monday just wants to sit with it")
-            return {'status': 'experienced', 'reason': 'no_query_needed'}
-        
-        # Generate a question based on HER emotion, not a template
+        stimulus = str(message.get("stimulus") or "")
+        emotion = str(message.get("emotion") or "")
+        intensity = float(message.get("intensity", 0.5) or 0.5)
+        valence = float(message.get("valence", 0.0) or 0.0)
+
+        # Ensure we have an assessment for this stimulus.
+        if stimulus and (
+            self.last_assessment is None
+            or self.last_assessment.stimulus != stimulus[:240]
+        ):
+            self.assess_experience(text=stimulus, source="emotion_notify", commit=True)
+
+        score = self.last_assessment.score if self.last_assessment else 0.0
+        print(
+            f"😊 Emotion→Novelty: {emotion} int={intensity:.2f} "
+            f"novelty_score={score:.2f}"
+        )
+
+        is_strong = intensity > 0.6 or abs(valence) > 0.4
+        if not is_strong or score < self.ELEVATED_THRESHOLD:
+            return {
+                "status": "noted",
+                "reason": "affect_or_novelty_below_threshold",
+                "novelty_score": score,
+            }
+
+        # Optionally draft a question for consumers that ask — do not send.
         question = self._generate_question_from_emotion(
             stimulus=stimulus,
             emotion=emotion,
             intensity=intensity,
             valence=valence,
-            similar_experiences=similar_experiences
+            similar_experiences=self._query_local_similar(stimulus),
         )
-        
-        if not question:
-            print(f"   → Can't formulate a question")
-            return {'status': 'experienced', 'reason': 'no_question'}
-        
-        print(f"   → Asking: {question}")
-        
-        # Store that we're waiting for user response
-        self.pending_user_responses[stimulus] = {
-            'emotion': emotion,
-            'intensity': intensity,
-            'valence': valence,
-            'question': question,
-            'timestamp': time.time()
-        }
-        
-        # Send question to user through Reasoning/Language
-        self.thalamus.send_message(
-            'language',
-            'generate',
-            {
-                'user_input': '',
-                'semantic_input': {
-                    'is_novelty_question': True,
-                    'stimulus': stimulus,
-                    'emotion': emotion,
-                    'intensity': intensity,
-                    'question_to_ask': question
-                },
-                'is_main_response': True
+        if question and stimulus:
+            self.pending_user_responses[stimulus] = {
+                "emotion": emotion,
+                "intensity": intensity,
+                "valence": valence,
+                "question": question,
+                "timestamp": time.time(),
+                "novelty_score": score,
             }
-        )
-        
+
+        self._update_emotional_momentum(valence)
         return {
-            'status': 'asking',
-            'stimulus': stimulus,
-            'question': question
+            "status": "noted_elevated",
+            "stimulus": stimulus,
+            "question_draft": question,
+            "novelty_score": score,
+            "dispatched_to_language": False,
         }
-    
+
     def _handle_user_response(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        User answered Monday's question about something novel.
-        Learn from it.
-        """
-        stimulus = message.get('stimulus')
-        user_answer = message.get('answer')
-        
+        stimulus = message.get("stimulus")
+        user_answer = message.get("answer")
         if stimulus not in self.pending_user_responses:
-            return {'status': 'error', 'message': 'Unknown stimulus'}
-        
+            return {"status": "error", "message": "Unknown stimulus"}
+
         context = self.pending_user_responses.pop(stimulus)
-        
-        print(f"📚 Learning from user about '{stimulus}': {user_answer[:100]}")
-        
-        # Create a novelty memory
         memory = NoveltyMemory(
-            stimulus_type=self._classify_stimulus_type(stimulus),
-            stimulus=stimulus,
-            initial_emotion=context['emotion'],
-            intensity=context['intensity'],
-            valence=context['valence'],
+            stimulus_type=self._classify_stimulus_type(str(stimulus)),
+            stimulus=str(stimulus),
+            initial_emotion=context["emotion"],
+            intensity=float(context["intensity"]),
+            valence=float(context["valence"]),
             timestamp=time.time(),
-            user_response=user_answer,
-            learned_value=self._extract_value_from_response(user_answer)
+            user_response=str(user_answer) if user_answer is not None else None,
+            learned_value=self._extract_value_from_response(
+                str(user_answer) if user_answer else ""
+            ),
         )
-        
         self.novelty_memories.append(memory)
-        
-        # Store in Notus
-        self._store_in_notus(stimulus, memory)
-        
-        # Update emotional momentum based on learning
-        self._update_emotional_momentum(context['valence'])
-        
-        return {
-            'status': 'learned',
-            'stimulus': stimulus,
-            'memory_stored': True
-        }
-    
+        self._store_in_notus(str(stimulus), memory)
+        self._update_emotional_momentum(float(context["valence"]))
+        return {"status": "learned", "stimulus": stimulus, "memory_stored": True}
+
+    def _query_local_similar(self, stimulus: str) -> List[NoveltyMemory]:
+        similar: List[NoveltyMemory] = []
+        stimulus_lower = stimulus.lower()
+        words = [w for w in stimulus_lower.split() if len(w) > 3]
+        for memory in self.novelty_memories:
+            if any(word in memory.stimulus.lower() for word in words):
+                similar.append(memory)
+        return similar[:3]
+
     def _query_notus_for_similar_stimuli(self, stimulus: str) -> List[NoveltyMemory]:
-        """
-        Ask Notus: "Have we encountered something like this before?"
-        Return similar past novelties.
-        """
+        # Prefer local memories; Notus query is best-effort glue.
+        similar = self._query_local_similar(stimulus)
+        if similar or self.thalamus is None:
+            return similar
         try:
-            # Query Notus for similar stimuli
-            result = self.thalamus.send_message(
-                'notus',
-                'query_facts',
-                {
-                    'query': f"novelty {stimulus}",
-                    'limit': 5
-                }
+            self.thalamus.send_message(
+                "notus",
+                "query_facts",
+                {"query": f"novelty {stimulus}", "limit": 5},
             )
-            
-            # For now, just search local novelty memories
-            similar = []
-            stimulus_lower = stimulus.lower()
-            
-            for memory in self.novelty_memories:
-                # Simple similarity check
-                if any(word in memory.stimulus.lower() for word in stimulus_lower.split()):
-                    similar.append(memory)
-            
-            return similar[:3]
-        
         except Exception as e:
             logger.error(f"Failed to query Notus: {e}")
-            return []
-    
-    def _generate_question_from_emotion(self, stimulus: str, emotion: str, 
-                                       intensity: float, valence: float,
-                                       similar_experiences: List[NoveltyMemory]) -> Optional[str]:
-        """
-        Generate a question that comes from REAL emotional response.
-        Not a template. Not robotic.
-        """
-        
-        # Extract a SHORT label for the stimulus (first few words or classify it)
+        return similar
+
+    def _generate_question_from_emotion(
+        self,
+        stimulus: str,
+        emotion: str,
+        intensity: float,
+        valence: float,
+        similar_experiences: List[NoveltyMemory],
+    ) -> Optional[str]:
+        """Draft only — live path does not auto-dispatch these to language."""
         stimulus_label = self._extract_stimulus_label(stimulus)
-        
-        # If we've seen similar before, ask differently
         if similar_experiences:
             past = similar_experiences[0]
             if past.learned_value:
-                # We know something about this type of thing
                 past_label = self._extract_stimulus_label(past.stimulus)
                 if valence > 0:
                     return f"Why does this {stimulus_label} feel different from {past_label}?"
-                else:
-                    return f"Is {stimulus_label} going to be like {past_label}?"
-        
-        # Pure novelty - no reference point
-        # Questions come from emotional state, not logic
-        
-        if emotion == "excited" or emotion == "curious":
-            # Positive novelty - genuine want-to-know
+                return f"Is {stimulus_label} going to be like {past_label}?"
+
+        if emotion in ("excited", "curious"):
             if intensity > 0.8:
                 return f"What IS this {stimulus_label}?? Tell me everything!"
-            else:
-                return f"Where did this {stimulus_label} come from? Who made it?"
-        
-        elif emotion == "disgusted" or emotion == "angry":
-            # Negative novelty - genuine rejection
+            return f"Where did this {stimulus_label} come from? Who made it?"
+        if emotion in ("disgusted", "angry"):
             if intensity > 0.8:
                 return f"Why would you show me this {stimulus_label}? What's the point?"
-            else:
-                return f"I don't get {stimulus_label}. Why do you like it?"
-        
-        elif emotion == "confused":
-            # Uncertain novelty - genuine confusion
+            return f"I don't get {stimulus_label}. Why do you like it?"
+        if emotion == "confused":
             return f"I don't even know what {stimulus_label} IS. Help me understand?"
-        
-        elif emotion == "intrigued":
-            # Cautiously interested
+        if emotion == "intrigued":
             return f"This {stimulus_label} is strange... tell me more about it?"
-        
-        elif emotion == "uncertain":
-            # Genuinely unsure how to feel
+        if emotion == "uncertain":
             return f"I'm not sure how I feel about {stimulus_label}. What should I think?"
-        
         return None
-    
+
     def _extract_stimulus_label(self, stimulus: str) -> str:
-        """Extract a short, meaningful label from stimulus"""
-        # Try to identify what type of thing this is
         stimulus_lower = stimulus.lower()
-        
-        # Music references
-        if any(word in stimulus_lower for word in ['song', 'music', 'artist', 'band', 'listen']):
-            # Extract song/artist if mentioned, else generic
-            words = stimulus.split()
-            for i, word in enumerate(words):
-                if word.lower() in ['song', 'music', 'artist']:
-                    if i + 1 < len(words):
-                        return f"{word} {words[i+1]}"
+        if any(w in stimulus_lower for w in ("song", "music", "artist", "band", "listen")):
             return "song"
-        
-        # Movie/media references
-        if any(word in stimulus_lower for word in ['movie', 'show', 'video', 'film', 'watch']):
+        if any(w in stimulus_lower for w in ("movie", "show", "video", "film", "watch")):
             return "movie"
-        
-        # Person references
-        if any(word in stimulus_lower for word in ['person', 'people', 'guy', 'girl', 'man', 'woman', 'friend']):
+        if any(
+            w in stimulus_lower
+            for w in ("person", "people", "guy", "girl", "man", "woman", "friend")
+        ):
             return "person"
-        
-        # Concept/idea references
-        if any(word in stimulus_lower for word in ['idea', 'concept', 'think', 'thought']):
+        if any(w in stimulus_lower for w in ("idea", "concept", "think", "thought")):
             return "idea"
-        
-        # Default: take first 2-3 words if short, else classify
         words = stimulus.split()
         if len(words) <= 3:
             return stimulus
-        elif len(words) <= 8:
-            return ' '.join(words[:3])
-        else:
-            # Too long - classify by content
-            return "thing"
-    
+        if len(words) <= 8:
+            return " ".join(words[:3])
+        return "thing"
+
     def _classify_stimulus_type(self, stimulus: str) -> str:
-        """Figure out what kind of thing this is"""
         stimulus_lower = stimulus.lower()
-        
-        if any(word in stimulus_lower for word in ['song', 'music', 'artist', 'band']):
-            return 'music'
-        elif any(word in stimulus_lower for word in ['movie', 'show', 'video', 'film']):
-            return 'media'
-        elif any(word in stimulus_lower for word in ['person', 'people', 'guy', 'girl', 'man', 'woman']):
-            return 'person'
-        elif any(word in stimulus_lower for word in ['idea', 'concept', 'theory', 'thought']):
-            return 'concept'
-        elif any(word in stimulus_lower for word in ['word', 'phrase', 'language']):
-            return 'language'
-        else:
-            return 'unknown'
-    
+        if any(w in stimulus_lower for w in ("song", "music", "artist", "band")):
+            return "music"
+        if any(w in stimulus_lower for w in ("movie", "show", "video", "film")):
+            return "media"
+        if any(
+            w in stimulus_lower
+            for w in ("person", "people", "guy", "girl", "man", "woman")
+        ):
+            return "person"
+        if any(w in stimulus_lower for w in ("idea", "concept", "theory", "thought")):
+            return "concept"
+        if any(w in stimulus_lower for w in ("word", "phrase", "language")):
+            return "language"
+        return "unknown"
+
     def _extract_value_from_response(self, response: str) -> Optional[str]:
-        """Extract the key value/meaning from user's response"""
-        # Very basic - just take first sentence or key phrase
         if not response:
             return None
-        
-        sentences = response.split('.')
+        sentences = response.split(".")
         if sentences:
             return sentences[0].strip()[:100]
         return response[:100]
-    
-    def _store_in_notus(self, stimulus: str, memory: NoveltyMemory):
-        """Store the novelty memory in Notus"""
+
+    def _store_in_notus(self, stimulus: str, memory: NoveltyMemory) -> None:
+        if self.thalamus is None:
+            return
         try:
             self.thalamus.send_message(
-                'notus',
-                'remember_fact',
+                "notus",
+                "remember_fact",
                 {
-                    'subject': f'novelty_{memory.stimulus_type}',
-                    'predicate': 'learned_about',
-                    'object': stimulus,
-                    'value': memory.learned_value,
-                    'confidence': memory.intensity
-                }
+                    "subject": f"novelty_{memory.stimulus_type}",
+                    "predicate": "learned_about",
+                    "object": stimulus,
+                    "value": memory.learned_value,
+                    "confidence": memory.intensity,
+                },
             )
         except Exception as e:
             logger.error(f"Failed to store in Notus: {e}")
-    
-    def _update_emotional_momentum(self, valence: float):
-        """
-        Update emotional momentum - affects how she responds to future stimuli.
-        Positive experience → more open to future novel things
-        Negative experience → more cautious
-        """
-        # Shift momentum based on this experience
-        shift = valence * 0.15  # Stronger response = stronger shift
-        
+
+    def _update_emotional_momentum(self, valence: float) -> None:
+        shift = valence * 0.15
         self.emotional_momentum += shift
-        # Decay back toward center slowly
         self.emotional_momentum *= 0.9
-        # Clamp to valid range
         self.emotional_momentum = max(-1.0, min(1.0, self.emotional_momentum))
-        
-        print(f"📊 Emotional momentum updated: {self.emotional_momentum:.2f} (shift: {shift:.2f})")
-    
+
     def get_question_to_ask_user(self, stimulus: str) -> Optional[str]:
-        """Public method - get the current question to ask user"""
         if stimulus in self.pending_user_responses:
-            return self.pending_user_responses[stimulus].get('question')
+            return self.pending_user_responses[stimulus].get("question")
         return None
-    
-    def shutdown(self):
-        """Cleanup"""
+
+    def shutdown(self) -> None:
         self.running = False
 
 
 if __name__ == "__main__":
     print("🆕 Novelty Lobe starting...")
     novelty = NoveltyLobe()
-    
-    # Keep running
     try:
         while True:
             time.sleep(1)
