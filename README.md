@@ -34,10 +34,17 @@ holds the message payload.
 - **Outage fallback:** if a Notus store/query returns an error or raises (caught
   by Thalamus), the prompted path continues. Failed writes go into a bounded
   per-user in-memory queue (`notus_outage_fallback.py`, max 64 records/user,
-  FIFO eviction). Query failures serve that per-user buffer. When Notus works
-  again, `Thalamus.retry_unsaved_notus_records()` flushes with dedupe keys so a
-  double retry cannot double-store. This does **not** restore the legacy
-  `monday_memory` / `retrieve_relevant_memory` / `sync_memory_to_notus` APIs.
+  FIFO eviction). Each queued record gets its own stable `event_id` — identical
+  content is kept as separate events; retry idempotency is per event_id, not
+  per content. Query failures serve that per-user buffer. When QUERY succeeds
+  but pending rows remain (STORE still failing), pending memories for the same
+  user are merged into the returned context before Reasoning (ordered, no
+  cross-user leak, not claimed durable until synced). Recovery flush is strict
+  FIFO: on the first sync failure, later records are not attempted.
+  `Thalamus.retry_unsaved_notus_records()` uses event_ids so a double retry
+  cannot double-store the same queued record. This does **not** restore the
+  legacy `monday_memory` / `retrieve_relevant_memory` / `sync_memory_to_notus`
+  APIs.
 - **Tests / CI:** inject SQLite `DirectNotusProcess` via `notus_factory` and set
   `enable_autonomous=False` so acceptance stays PostgreSQL-free, socket-free,
   and without autonomous background loops. See

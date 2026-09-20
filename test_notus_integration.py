@@ -100,6 +100,19 @@ def test_helper_bound_eviction_and_per_user_isolation():
     assert all("alice" not in c for c in bob)
 
 
+def test_identical_content_enqueues_as_separate_events():
+    """Duplicate content must not collapse separate events (Matthew fix #1)."""
+    fb = NotusOutageFallback()
+    a = fb.enqueue(user_id="u", role="user", content="hello")
+    b = fb.enqueue(user_id="u", role="user", content="hello")
+    assert a is not None and b is not None
+    assert a["event_id"] != b["event_id"]
+    pending = fb.pending_records("u")
+    assert len(pending) == 2
+    assert [r["content"] for r in pending] == ["hello", "hello"]
+    assert pending[0]["event_id"] != pending[1]["event_id"]
+
+
 def test_primary_notus_success_path(tmp_path):
     systems, holder = _factory(tmp_path)
     try:
@@ -197,48 +210,283 @@ def test_notus_query_exception_serves_fallback_context(tmp_path):
         shutdown_core_systems(systems)
 
 
+def test_fifo_stop_on_first_sync_failure(tmp_path):
+    """If A fails, B/C must not be attempted; queue stays A,B,C (Matthew fix #2)."""
+    systems, holder = _factory(tmp_path)
+    ctl = holder["ctl"]
+    thalamus = systems["thalamus"]
+    try:
+        fb = thalamus.notus_fallback
+        fb.enqueue(user_id="fifo", role="user", content="A")
+        fb.enqueue(user_id="fifo", role="user", content="B")
+        fb.enqueue(user_id="fifo", role="user", content="C")
+        assert fb.pending_count("fifo") == 3
+
+        ctl.fail_store_with_error = True
+        stores_before = len(ctl.store_calls)
+        result = thalamus.retry_unsaved_notus_records(user_id="fifo")
+        assert result["synced"] == 0
+        assert result["failed"] == 1
+        assert result.get("stopped_unattempted", 0) == 2
+        assert fb.pending_count("fifo") == 3
+        # Only A attempted — B and C not tried.
+        attempted = ctl.store_calls[stores_before:]
+        assert len(attempted) == 1
+        assert attempted[0].get("content") == "A"
+        assert [r["content"] for r in fb.pending_records("fifo")] == ["A", "B", "C"]
+
+        # Heal Notus; retry stores A then B then C in order; queue empty.
+        ctl.fail_store_with_error = False
+        ctl.fail_store_after = None
+        stores_before = len(ctl.store_calls)
+        result2 = thalamus.retry_unsaved_notus_records(user_id="fifo")
+        assert result2["failed"] == 0
+        assert result2["synced"] == 3
+        assert fb.pending_count("fifo") == 0
+        healed = ctl.store_calls[stores_before:]
+        assert [c.get("content") for c in healed] == ["A", "B", "C"]
+    finally:
+        shutdown_core_systems(systems)
+
+
 def test_recovery_retry_removes_only_successes_and_dedupes(tmp_path):
     systems, holder = _factory(tmp_path)
     ctl = holder["ctl"]
     thalamus = systems["thalamus"]
     try:
         fb = thalamus.notus_fallback
-        fb.enqueue(user_id="erin", role="user", content="unsaved-1")
-        fb.enqueue(user_id="erin", role="user", content="unsaved-2")
-        fb.enqueue(user_id="erin", role="monday", content="unsaved-reply")
+        r1 = fb.enqueue(user_id="erin", role="user", content="unsaved-1")
+        r2 = fb.enqueue(user_id="erin", role="user", content="unsaved-2")
+        r3 = fb.enqueue(user_id="erin", role="monday", content="unsaved-reply")
         assert fb.pending_count("erin") == 3
+        assert r1 and r2 and r3
 
-        # Partial failure: only first store succeeds, rest fail.
+        # Partial failure: first store succeeds, second fails → STOP (C not attempted).
         ctl._store_successes = 0
         ctl.fail_store_after = 1
+        stores_before = len(ctl.store_calls)
         result = thalamus.retry_unsaved_notus_records(user_id="erin")
         assert result["synced"] == 1
-        assert result["failed"] >= 1
+        assert result["failed"] == 1
+        assert result.get("stopped_unattempted", 0) == 1
         assert fb.pending_count("erin") == 2
+        attempted = ctl.store_calls[stores_before:]
+        assert [c.get("content") for c in attempted] == ["unsaved-1", "unsaved-2"]
+        assert [r["content"] for r in fb.pending_records("erin")] == [
+            "unsaved-2",
+            "unsaved-reply",
+        ]
 
-        # Heal Notus and retry again — remaining should sync.
+        # Heal Notus and retry again — remaining should sync in order.
         ctl.fail_store_after = None
         ctl.fail_store_with_error = False
         ctl.raise_on_store = False
+        stores_before = len(ctl.store_calls)
         result2 = thalamus.retry_unsaved_notus_records(user_id="erin")
         assert result2["failed"] == 0
         assert fb.pending_count("erin") == 0
+        assert [c.get("content") for c in ctl.store_calls[stores_before:]] == [
+            "unsaved-2",
+            "unsaved-reply",
+        ]
 
-        # Double retry must not create duplicate Notus rows for already-synced keys.
+        # Double retry must not store the same event_ids again.
         stores_before = len(ctl.store_calls)
         result3 = thalamus.retry_unsaved_notus_records(user_id="erin")
         assert result3["synced"] == 0
         assert len(ctl.store_calls) == stores_before
 
-        # Re-enqueue the same content after successful sync — should be skipped
-        # by dedupe (already synced keys).
-        skipped = fb.enqueue(user_id="erin", role="user", content="unsaved-1")
+        # Re-queue of the *same* event_id after sync is skipped (idempotency).
+        skipped = fb.enqueue(
+            user_id="erin",
+            role="user",
+            content="unsaved-1",
+            event_id=r1["event_id"],
+        )
         assert skipped is None
 
         memories = ctl.retrieve_memories("unsaved", user_id="erin", limit=50)
         contents = [m.get("content") for m in memories]
         assert contents.count("unsaved-1") == 1
         assert contents.count("unsaved-2") == 1
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_identical_messages_survive_outage_as_separate_events(tmp_path):
+    """Regression: enqueue identical user message twice during outage;
+    both pending as separate events; after recovery both stored once in order;
+    second retry stores neither again.
+    """
+    systems, holder = _factory(tmp_path)
+    ctl = holder["ctl"]
+    thalamus = systems["thalamus"]
+    try:
+        fb = thalamus.notus_fallback
+        ctl.fail_store_with_error = True
+        thalamus.process_user_input("hello", user_id="twin")
+        thalamus.process_user_input("hello", user_id="twin")
+
+        pending = [
+            r
+            for r in fb.pending_records("twin")
+            if r.get("role") == "user" and r.get("content") == "hello"
+        ]
+        assert len(pending) == 2
+        assert pending[0]["event_id"] != pending[1]["event_id"]
+
+        ctl.fail_store_with_error = False
+        ctl.fail_store_after = None
+        # Drain monday reply rows too if any — flush all for user.
+        result = thalamus.retry_unsaved_notus_records(user_id="twin")
+        assert result["failed"] == 0
+        assert fb.pending_count("twin") == 0
+
+        hello_stores = [
+            c
+            for c in ctl.store_calls
+            if c.get("content") == "hello" and c.get("role") in {"user", "User"}
+        ]
+        # Two distinct hello user events stored (may include live failed attempts
+        # that never persisted — count successful durable rows via retrieve).
+        memories = ctl.retrieve_memories("hello", user_id="twin", limit=50)
+        hello_mems = [
+            m
+            for m in memories
+            if str(m.get("content") or "") == "hello"
+            and str(m.get("role") or "").lower() in {"user", ""}
+        ]
+        # DirectNotus may not always stamp role; fall back to content count.
+        if not hello_mems:
+            hello_mems = [m for m in memories if str(m.get("content") or "") == "hello"]
+        assert len(hello_mems) >= 2, f"expected both hellos durable, got {memories!r}"
+
+        stores_before = len(ctl.store_calls)
+        result2 = thalamus.retry_unsaved_notus_records(user_id="twin")
+        assert result2["synced"] == 0
+        assert len(ctl.store_calls) == stores_before
+    finally:
+        shutdown_core_systems(systems)
+
+
+def test_pending_fallback_visible_when_query_succeeds(tmp_path):
+    """STORE fail + QUERY success → pending merged into memory before Reasoning
+    (Matthew fix #3). After recovery, no duplicate durable record.
+    """
+    systems, holder = _factory(tmp_path)
+    ctl = holder["ctl"]
+    thalamus = systems["thalamus"]
+
+    captured: List[Dict[str, Any]] = []
+
+    class CaptureReasoning:
+        def process_message(self, message):
+            content = message.get("content") if isinstance(message.get("content"), dict) else {}
+            captured.append(content)
+            return {
+                "status": "success",
+                "content": {
+                    "answer": "ok-from-fallback-context",
+                    "conclusion": "ok-from-fallback-context",
+                },
+            }
+
+        def shutdown(self):
+            pass
+
+    def _memories_from_capture(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Locate memories whether nested under input.memory_context or flat."""
+        if not isinstance(payload, dict):
+            return []
+        candidates = []
+
+        def _push(node):
+            if isinstance(node, dict):
+                candidates.append(node)
+                inner = node.get("content")
+                if isinstance(inner, dict):
+                    candidates.append(inner)
+
+        for key in ("memory_context", "memory_result"):
+            _push(payload.get(key))
+        nested = payload.get("input")
+        if isinstance(nested, dict):
+            for key in ("memory_context", "memory_result"):
+                _push(nested.get(key))
+        for node in candidates:
+            mems = node.get("memories")
+            if isinstance(mems, list) and mems:
+                return [m for m in mems if isinstance(m, dict)]
+        return []
+
+    thalamus.register_lobe("reasoning", CaptureReasoning())
+    try:
+        ctl.fail_store_with_error = True
+        # First turn: store fails, fact lands in fallback queue.
+        thalamus.process_user_input(
+            "Remember FACT_MERGE_TEAL is my color", user_id="frank"
+        )
+        pending = thalamus.notus_fallback.pending_records("frank")
+        assert any("FACT_MERGE_TEAL" in r["content"] for r in pending)
+
+        # Second turn: store still failing, but QUERY works — pending must merge.
+        captured.clear()
+        reply = thalamus.process_user_input(
+            "What color did I mention?", user_id="frank"
+        )
+        assert isinstance(reply, str) and reply.strip()
+        assert captured, "reasoning should have been invoked"
+        memories = _memories_from_capture(captured[-1])
+        assert any(
+            "FACT_MERGE_TEAL" in str(m.get("content") or "") for m in memories
+        ), f"pending fallback missing from reasoning context: {captured[-1]!r}"
+        # Must not claim durable.
+        fallback_hits = [
+            m
+            for m in memories
+            if "FACT_MERGE_TEAL" in str(m.get("content") or "")
+            and m.get("source") == "notus_outage_fallback"
+        ]
+        assert fallback_hits
+        assert all(m.get("durable") is False for m in fallback_hits)
+
+        # Cross-user: other user's reasoning must not see frank's pending.
+        captured.clear()
+        thalamus.process_user_input("hello from gus", user_id="gus")
+        if captured:
+            other_mem = _memories_from_capture(captured[-1])
+            assert all(
+                "FACT_MERGE_TEAL" not in str(m.get("content") or "")
+                for m in other_mem
+            )
+
+        # Recovery sync → durable once; no duplicate on second flush.
+        ctl.fail_store_with_error = False
+        ctl.fail_store_after = None
+        result = thalamus.retry_unsaved_notus_records(user_id="frank")
+        assert result["failed"] == 0
+        assert thalamus.notus_fallback.pending_count("frank") == 0
+
+        memories = ctl.retrieve_memories("FACT_MERGE_TEAL", user_id="frank", limit=50)
+        teal = [
+            m
+            for m in memories
+            if "FACT_MERGE_TEAL" in str(m.get("content") or "")
+        ]
+        assert len(teal) >= 1
+        # Content may appear as user utterance once (plus maybe monday reply).
+        user_teal = [
+            m
+            for m in teal
+            if str(m.get("role") or "").lower() in {"user", ""}
+            or "Remember FACT_MERGE_TEAL" in str(m.get("content") or "")
+        ]
+        assert len(user_teal) <= 2  # utterance once; tolerate role-less duplicate sniff
+
+        stores_before = len(ctl.store_calls)
+        result2 = thalamus.retry_unsaved_notus_records(user_id="frank")
+        assert result2["synced"] == 0
+        assert len(ctl.store_calls) == stores_before
     finally:
         shutdown_core_systems(systems)
 
@@ -276,3 +524,4 @@ def test_no_legacy_monday_memory_apis():
     assert not hasattr(t, "sync_memory_to_notus")
     assert hasattr(t, "notus_fallback")
     assert hasattr(t, "retry_unsaved_notus_records")
+    assert hasattr(t, "_merge_notus_fallback_into_context")

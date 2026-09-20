@@ -1091,6 +1091,13 @@ class Thalamus:
                 },
             }
         else:
+            # STORE failed but QUERY works: surface this user's pending fallback
+            # rows in context before Reasoning (same user only; not durable yet).
+            # Merge before flush so this turn still sees pending if sync is slow
+            # or store is still failing under FIFO stop.
+            memory_context = self._merge_notus_fallback_into_context(
+                memory_context, user_id, limit=15
+            )
             self._flush_notus_fallback_best_effort(user_id)
 
         emotion = self.send_and_wait(
@@ -1462,8 +1469,10 @@ class Thalamus:
     ) -> Dict[str, Any]:
         """Flush the bounded per-user Notus outage queue back to Notus.
 
-        Removes only successfully synchronized records. Partial failures leave
-        remaining rows queued. Dedupe keys prevent double-store on repeat retry.
+        Strict FIFO per user: on the first store failure, stop — later records
+        are not attempted so ordering is preserved. Only successfully synced
+        event_ids are removed; a second retry of the same queued record does
+        not double-store.
         """
         def _store(record: Dict[str, Any]) -> bool:
             payload = {
@@ -1475,10 +1484,44 @@ class Thalamus:
             for key in ("tag", "importance", "mode"):
                 if key in record:
                     payload[key] = record[key]
+            # Propagate event_id when backends honor idempotency keys.
+            eid = record.get("event_id") or record.get("dedupe_key")
+            if eid:
+                payload["event_id"] = eid
             result = self.send_and_wait("notus", "store", payload)
             return isinstance(result, dict) and result.get("status") == "success"
 
         return self.notus_fallback.flush(_store, user_id=user_id)
+
+    def _merge_notus_fallback_into_context(
+        self, memory_context: Dict[str, Any], user_id: str, limit: int = 15
+    ) -> Dict[str, Any]:
+        """Merge pending outage rows into a successful Notus query response."""
+        if self.notus_fallback.pending_count(user_id) <= 0:
+            return memory_context
+        try:
+            body = dict(self._content(memory_context) or {})
+            notus_memories = list(body.get("memories") or [])
+            merged = self.notus_fallback.merge_pending_into(
+                user_id, notus_memories, limit=limit
+            )
+            body["memories"] = merged
+            # Keep semantic aligned when it mirrored memories.
+            if isinstance(body.get("semantic"), list):
+                body["semantic"] = merged
+            if any(
+                isinstance(m, dict) and m.get("source") == "notus_outage_fallback"
+                for m in merged
+            ):
+                body["memory_source"] = "notus_plus_outage_fallback"
+                body["fallback_pending"] = True
+            return {
+                "status": "success",
+                "content": body,
+                "message": memory_context.get("message", ""),
+            }
+        except Exception:
+            return memory_context
 
     def _flush_notus_fallback_best_effort(self, user_id: str) -> None:
         """Opportunistic recovery when a Notus call succeeds mid-turn."""
