@@ -99,6 +99,8 @@ class Thalamus:
         self._last_curiosity_time: float = 0.0
         self._curiosity_cooldown_sec: float = 25.0
         self._force_curiosity_follow_up: bool = False
+        # Last Output lobe reply envelope (expression + delivery metadata).
+        self.last_output_envelope: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1251,7 +1253,28 @@ class Thalamus:
                 "preserve_text": True,
             },
         )
-        reply = self._content(output).get("text", response_text)
+        output_body = self._content(output)
+        # Live path uses the Output envelope: text + expression delivery metadata.
+        envelope = output_body.get("envelope") or output.get("envelope")
+        if not isinstance(envelope, dict):
+            envelope = {
+                "text": output_body.get("text", response_text),
+                "expression": output_body.get("expression")
+                or emotional_state.get("expression")
+                or {},
+                "delivery": output_body.get("delivery") or {},
+                "emotional_tone": output_body.get("emotional_tone")
+                or emotional_state.get("emotional_tone"),
+                "voice_prosody": output_body.get("voice_prosody")
+                or emotional_state.get("voice_prosody")
+                or {},
+                "emotion": emotional_state.get(
+                    "current_emotion", emotional_state.get("emotion", "neutral")
+                ),
+                "intensity": emotional_state.get("intensity", 0.5),
+            }
+        self.last_output_envelope = envelope
+        reply = envelope.get("text") or output_body.get("text", response_text)
         # Let autonomous inner-life know the user is present (own-feelings pacing).
         with self.lobe_handlers_lock:
             has_autonomous = "autonomous" in self.lobe_handlers

@@ -1,0 +1,55 @@
+=== OUTPUT BEFORE BASELINE ===
+time: 2026-09-20 14:05:18 MDT
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+output_registered: True
+OutputLobe class: OutputLobe
+tts_available: False
+voice_enabled: False
+has last_envelope attr: False
+has build_envelope: False
+get_status: {"status": "success", "tts_available": false, "voice_enabled": false, "text_output": true, "content": {"tts_available": false, "voice_enabled": false, "text_output": true}}
+
+--- LIVE calm input ---
+reply_ok: True
+reply_excerpt: "I'm here — thanks for checking in. How are you?"
+emotion: nostalgic intensity=0.5575883644823593
+expression_from_emotion: {'tears': False, 'voice_shake': False, 'withdraw': False}
+voice_prosody_from_emotion keys: ['pitch', 'speed', 'warmth', 'clarity', 'confidence']
+emotional_tone: reflective
+output.last_emotion_meta: {'emotion': 'nostalgic', 'intensity': 0.5575883644823593, 'voice_prosody': {'pitch': 0.9830915989102422, 'speed': 0.9887277326068281, 'warmth': 0.5, 'clarity': 0.9691198654390057, 'confidence': 0.7308801345609942}, 'emotional_tone': 'reflective', 'emphasis': [], 'expression': {'tears': False, 'voice_shake': False, 'withdraw': False}}
+output.last_output: "I'm here — thanks for checking in. How are you?"
+thalamus.has last_output_envelope: False
+
+--- DIRECT generate_output with high ExpressionState ---
+generate_output status: success
+returned content keys: ['formatted', 'spoke', 'text']
+returned top keys: ['content', 'formatted', 'spoke', 'status', 'text']
+content.text: 'I hear you.'
+content.envelope present: False
+content.expression: None
+formatted: {"text": "I hear you.", "emotion": "sad", "intensity": 0.9, "voice_prosody": {"pitch": 0.8, "speed": 0.85, "warmth": 0.4}, "emotional_tone": "melancholic", "emphasis": ["strong"], "expression": {"tears": true, "voice_shake": true, "withdraw": true}, "pleasure": null, "arousal": null, "dominance": null, "formatted": false}
+last_emotion_meta after high: {'emotion': 'sad', 'intensity': 0.9, 'voice_prosody': {'pitch': 0.8, 'speed': 0.85, 'warmth': 0.4}, 'emotional_tone': 'melancholic', 'emphasis': ['strong'], 'expression': {'tears': True, 'voice_shake': True, 'withdraw': True}}
+
+--- DIRECT generate_output calm ExpressionState ---
+calm content keys: ['formatted', 'spoke', 'text']
+calm formatted: {"text": "I hear you.", "emotion": "calm", "intensity": 0.3, "voice_prosody": {"pitch": 1.0, "speed": 1.0, "warmth": 0.7}, "emotional_tone": "peaceful", "emphasis": [], "expression": {"tears": false, "voice_shake": false, "withdraw": false}, "pleasure": null, "arousal": null, "dominance": null, "formatted": false}
+high vs calm envelope differ: True
+high tears visible in generate_output return: True
+
+--- LIVE high-emotion attempt (feel sad + sad input) ---
+feel_emotion status: success emotion=sad intensity=0.95
+sad reply_ok: True
+sad reply_excerpt: "That breaks my ...heart... I'm here for you... I get the sense you're feeling sad. I'm learning to read feelings better.\n\nWhat would help with this rejection - or is there more I s"
+post emotion: sad intensity=0.8999999999999999
+post expression: {'tears': True, 'voice_shake': True, 'withdraw': False}
+post last_emotion_meta: {'emotion': 'sad', 'intensity': 0.8999999999999999, 'voice_prosody': {'pitch': 1.0230750851125754, 'speed': 1.0153833900750502, 'warmth': 0.5, 'clarity': 0.9912744146424257, 'confidence': 0.7087255853575742}, 'emotional_tone': 'melancholic', 'emphasis': ['strong'], 'expression': {'tears': True, 'voice_shake': True, 'withdraw': False}}
+reply differs calm vs sad: True
+thalamus last_output_envelope after live: MISSING
+
+=== GAPS (before) ===
+- Output registered and generate_output returns text (reply works)
+- ExpressionState may reach last_emotion_meta under preserve_text path
+- No formal output envelope; live path only consumes text
+- Expression flags do not alter delivery metadata/behavior returned to caller
+- TTS disabled/stub; no buffer/file delivery channel metadata

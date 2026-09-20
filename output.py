@@ -1,16 +1,30 @@
 #!/usr/bin/env python3
 """
 Output Lobe - Expression and Communication
-Handles: Text-to-speech, text output, voice configuration
+
+Designed purpose: turn language text + emotion ExpressionState into a reply
+envelope the live path uses (spoken/written delivery metadata).
+
+Inputs: language text, emotion (ExpressionState tears/voice_shake/withdraw),
+        voice_prosody, emotional_tone, intensity/PAD, emphasis.
+Outputs: reply envelope {text, expression, delivery, voice_prosody, tone, ...}.
+TTS speaker hardware may be unavailable — honest text-buffer / metadata path.
 """
 
 import json
 import os
 import time
 import sys
-from typing import Dict, Any, Optional
-from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass, asdict, field
 from thalamus import get_thalamus
+
+try:
+    from runtime_paths import runtime_dir
+except Exception:  # pragma: no cover
+    def runtime_dir():
+        return Path(os.environ.get("MONDAY_RUNTIME_DIR") or (Path.home() / ".local/state/monday"))
 
 # ============================================================================
 # VOICE PROFILES
@@ -112,6 +126,33 @@ TEXT_TO_PHONEMES = {
     'mealle': ['m', 'eh', 'ae', 'l'],
 }
 
+
+@dataclass
+class OutputEnvelope:
+    """Reply envelope consumed by the live path (text + expression delivery)."""
+    text: str
+    emotion: Optional[str] = None
+    intensity: float = 0.5
+    expression: Dict[str, bool] = field(default_factory=lambda: {
+        "tears": False, "voice_shake": False, "withdraw": False
+    })
+    emotional_tone: Optional[str] = None
+    emphasis: List[str] = field(default_factory=list)
+    voice_prosody: Dict[str, float] = field(default_factory=dict)
+    pleasure: Optional[float] = None
+    arousal: Optional[float] = None
+    dominance: Optional[float] = None
+    delivery: Dict[str, Any] = field(default_factory=dict)
+    spoke: bool = False
+    buffered: bool = False
+    buffer_path: Optional[str] = None
+    channel: str = "text"
+    formatted: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 class OutputLobe:
     """Output system - handles all expression and communication"""
     
@@ -143,6 +184,13 @@ class OutputLobe:
         
         self.last_emotion_meta = {}
         self.last_output = None
+        self.last_envelope: Optional[Dict[str, Any]] = None
+        # Honest TTS stub: write spoken lines to a runtime buffer when no speaker.
+        try:
+            self._speech_buffer_path = Path(runtime_dir()) / "output_speech_buffer.txt"
+        except Exception:
+            self._speech_buffer_path = Path("/tmp/monday_output_speech_buffer.txt")
+        self._speech_buffer: List[str] = []
         if enable_tts:
             self._initialize_tts()
         
@@ -367,10 +415,34 @@ class OutputLobe:
         if not text.endswith(('.', '!', '?', '...')):
             text = f"{text}."
         
+        # ExpressionState delivery shaping (non-preserve path).
+        expression = self.normalize_expression(content.get('expression') or {})
+        if expression.get('tears'):
+            # Soften terminal punctuation toward ellipsis when tearful.
+            if text.endswith('.'):
+                text = text[:-1] + '...'
+            elif not text.endswith(('...', '!', '?')):
+                text = f"{text}..."
+        if expression.get('voice_shake') and '...' not in text:
+            words = text.split()
+            if len(words) > 4:
+                text = f"{' '.join(words[:3])} ... {' '.join(words[3:])}"
+        if expression.get('withdraw'):
+            # Withdrawn delivery: avoid shouty transforms already applied.
+            if text.isupper() and len(text) > 4:
+                text = text[0] + text[1:].lower()
+
         return {
             'text': text,
             'emotion': emotion,
             'intensity': intensity,
+            'expression': expression,
+            'voice_prosody': content.get('voice_prosody') or {},
+            'emotional_tone': content.get('emotional_tone'),
+            'emphasis': content.get('emphasis') or [],
+            'pleasure': content.get('pleasure'),
+            'arousal': content.get('arousal'),
+            'dominance': content.get('dominance'),
             'formatted': True
         }
     
@@ -408,6 +480,151 @@ class OutputLobe:
         
         return text
     
+    @staticmethod
+    def normalize_expression(expression: Any) -> Dict[str, bool]:
+        """Normalize ExpressionState (dict or object) to tears/voice_shake/withdraw."""
+        if expression is None:
+            expression = {}
+        if hasattr(expression, "tears") and not isinstance(expression, dict):
+            return {
+                "tears": bool(getattr(expression, "tears", False)),
+                "voice_shake": bool(getattr(expression, "voice_shake", False)),
+                "withdraw": bool(getattr(expression, "withdraw", False)),
+            }
+        if not isinstance(expression, dict):
+            return {"tears": False, "voice_shake": False, "withdraw": False}
+        return {
+            "tears": bool(expression.get("tears", False)),
+            "voice_shake": bool(expression.get("voice_shake", False)),
+            "withdraw": bool(expression.get("withdraw", False)),
+        }
+
+    def derive_delivery(
+        self,
+        expression: Dict[str, bool],
+        voice_prosody: Optional[Dict[str, float]] = None,
+        emotional_tone: Optional[str] = None,
+        intensity: float = 0.5,
+    ) -> Dict[str, Any]:
+        """Derive delivery metadata/behavior from ExpressionState + prosody."""
+        prosody = dict(voice_prosody or {})
+        markers: List[str] = []
+        # Expression → delivery behavior (metadata; hardware TTS may be stubbed).
+        if expression.get("tears"):
+            markers.append("tearful")
+            prosody["warmth"] = float(prosody.get("warmth", 0.5)) * 0.85
+            prosody["speed"] = float(prosody.get("speed", 1.0)) * 0.92
+            prosody["pitch"] = float(prosody.get("pitch", 1.0)) * 0.95
+        if expression.get("voice_shake"):
+            markers.append("voice_shake")
+            prosody["clarity"] = float(prosody.get("clarity", 1.0)) * 0.82
+            prosody["pitch_jitter"] = 0.12 + 0.1 * float(intensity or 0.5)
+            prosody["speed"] = float(prosody.get("speed", 1.0)) * 0.9
+        if expression.get("withdraw"):
+            markers.append("withdraw")
+            prosody["volume"] = min(float(prosody.get("volume", 1.0)), 0.55)
+            prosody["confidence"] = float(prosody.get("confidence", 0.7)) * 0.7
+            prosody["speed"] = float(prosody.get("speed", 1.0)) * 0.88
+        if not markers:
+            markers.append("calm_delivery")
+
+        channel = "text"
+        tts_reason = None
+        if self.voice_config.get("enabled") and self.tts_available:
+            channel = "tts"
+        else:
+            channel = "text_buffer"
+            if not self.tts_available:
+                tts_reason = "tts_engine_unavailable"
+            elif not self.voice_config.get("enabled"):
+                tts_reason = "voice_disabled"
+
+        return {
+            "markers": markers,
+            "channel": channel,
+            "tts_reason": tts_reason,
+            "prosody": prosody,
+            "emotional_tone": emotional_tone,
+            "intensity": float(intensity if intensity is not None else 0.5),
+            "expression_active": bool(
+                expression.get("tears")
+                or expression.get("voice_shake")
+                or expression.get("withdraw")
+            ),
+        }
+
+    def build_envelope(self, content: Dict[str, Any], text: str, spoke: bool = False) -> OutputEnvelope:
+        """Build the reply envelope from language text + emotion expression fields."""
+        expression = self.normalize_expression(content.get("expression") or {})
+        try:
+            intensity = float(content.get("intensity", 0.5) if content.get("intensity") is not None else 0.5)
+        except (TypeError, ValueError):
+            intensity = 0.5
+        voice_prosody = content.get("voice_prosody") or {}
+        if not isinstance(voice_prosody, dict):
+            voice_prosody = {}
+        emotional_tone = content.get("emotional_tone")
+        delivery = self.derive_delivery(
+            expression,
+            voice_prosody=voice_prosody,
+            emotional_tone=emotional_tone if isinstance(emotional_tone, str) else None,
+            intensity=intensity,
+        )
+        buffered = False
+        buffer_path = None
+        # Always record delivery to the text buffer (honest stub when no speaker).
+        try:
+            buffered, buffer_path = self._buffer_delivery(text, delivery)
+            delivery["buffered"] = buffered
+            delivery["buffer_path"] = buffer_path
+        except Exception as exc:
+            delivery["buffer_error"] = str(exc)
+
+        emphasis = content.get("emphasis") or []
+        if not isinstance(emphasis, list):
+            emphasis = []
+
+        return OutputEnvelope(
+            text=text,
+            emotion=content.get("emotion"),
+            intensity=intensity,
+            expression=expression,
+            emotional_tone=emotional_tone if isinstance(emotional_tone, str) else None,
+            emphasis=list(emphasis),
+            voice_prosody=dict(delivery.get("prosody") or voice_prosody),
+            pleasure=content.get("pleasure"),
+            arousal=content.get("arousal"),
+            dominance=content.get("dominance"),
+            delivery=delivery,
+            spoke=bool(spoke),
+            buffered=buffered,
+            buffer_path=buffer_path,
+            channel=str(delivery.get("channel") or "text"),
+            formatted=bool(content.get("formatted", False)),
+        )
+
+    def _buffer_delivery(self, text: str, delivery: Dict[str, Any]) -> tuple:
+        """Write spoken/written line to runtime buffer (TTS-speaker stand-in)."""
+        if not text or not str(text).strip():
+            return False, None
+        path = self._speech_buffer_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        markers = ",".join(delivery.get("markers") or [])
+        line = (
+            f"{time.strftime('%Y-%m-%d %H:%M:%S')} | "
+            f"markers={markers} | tone={delivery.get('emotional_tone')} | "
+            f"{str(text).strip()}\n"
+        )
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line)
+        self._speech_buffer.append(str(text).strip())
+        if len(self._speech_buffer) > 50:
+            self._speech_buffer = self._speech_buffer[-50:]
+        return True, str(path)
+
+    def get_last_envelope(self) -> Optional[Dict[str, Any]]:
+        return dict(self.last_envelope) if isinstance(self.last_envelope, dict) else None
+
     def _register_with_thalamus(self):
         """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
         try:
@@ -472,8 +689,11 @@ class OutputLobe:
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         
         if msg_type == 'generate_output':
-            content = payload
-            if content.get('preserve_text') and isinstance(content.get('text'), str):
+            content = payload if isinstance(payload, dict) else {}
+            preserve = bool(content.get('preserve_text')) and isinstance(content.get('text'), str)
+            if preserve:
+                # Live path: keep language text intact; expression drives delivery envelope.
+                expression = self.normalize_expression(content.get('expression') or {})
                 formatted = {
                     'text': content['text'],
                     'emotion': content.get('emotion'),
@@ -481,43 +701,60 @@ class OutputLobe:
                     'voice_prosody': content.get('voice_prosody') or {},
                     'emotional_tone': content.get('emotional_tone'),
                     'emphasis': content.get('emphasis') or [],
-                    'expression': content.get('expression') or {},
+                    'expression': expression,
                     'pleasure': content.get('pleasure'),
                     'arousal': content.get('arousal'),
                     'dominance': content.get('dominance'),
                     'formatted': False,
                 }
-                self.last_emotion_meta = {
-                    'emotion': formatted.get('emotion'),
-                    'intensity': formatted.get('intensity'),
-                    'voice_prosody': formatted.get('voice_prosody'),
-                    'emotional_tone': formatted.get('emotional_tone'),
-                    'emphasis': formatted.get('emphasis'),
-                    'expression': formatted.get('expression'),
-                }
             else:
                 formatted = self.format_output(content)
+                # Ensure expression survives format_output for envelope build.
+                if 'expression' not in formatted or not formatted.get('expression'):
+                    formatted['expression'] = self.normalize_expression(
+                        content.get('expression') or {}
+                    )
+                for key in (
+                    'voice_prosody', 'emotional_tone', 'emphasis',
+                    'pleasure', 'arousal', 'dominance',
+                ):
+                    if key not in formatted and key in content:
+                        formatted[key] = content.get(key)
+
             text_output = formatted.get('text', '')
-            
-            # Validate text before sending
             if not text_output or not isinstance(text_output, str) or not text_output.strip():
                 text_output = "I'm thinking about that."
-            
+            formatted['text'] = text_output
+
+            self.last_emotion_meta = {
+                'emotion': formatted.get('emotion'),
+                'intensity': formatted.get('intensity'),
+                'voice_prosody': formatted.get('voice_prosody') or {},
+                'emotional_tone': formatted.get('emotional_tone'),
+                'emphasis': formatted.get('emphasis') or [],
+                'expression': self.normalize_expression(formatted.get('expression') or {}),
+            }
+
             spoke = False
             if self.voice_config['enabled']:
-                spoke = self.speak(text_output)
-            
-            # Send response to GUI
+                spoke = self.speak(
+                    text_output,
+                    voice_prosody=formatted.get('voice_prosody') or {},
+                )
+
+            envelope_obj = self.build_envelope(formatted, text_output, spoke=spoke)
+            envelope = envelope_obj.to_dict()
+            self.last_envelope = envelope
+            self.last_output = text_output
+
             self._send_to_gui({
                 'status': 'success',
                 'response': text_output,
                 'spoke': spoke,
-                'formatted': formatted
+                'formatted': formatted,
+                'envelope': envelope,
             })
-            self.last_output = text_output
-            
-            # The direct core stores user input before reasoning.  Other callers
-            # can opt in to storing that one structured record.
+
             user_input = content.get('user_input', '') or message.get('user_input', '')
             if content.get('store_user_input') and user_input and user_input.strip():
                 try:
@@ -533,15 +770,27 @@ class OutputLobe:
                         }
                     })
                 except Exception as e:
-                    # Don't break if memory storage fails
                     print(f"⚠️  Failed to store conversation to Notus: {e}")
-            
+
             return {
                 'status': 'success',
-                'content': {'text': text_output, 'spoke': spoke, 'formatted': formatted},
+                'content': {
+                    'text': text_output,
+                    'spoke': spoke,
+                    'formatted': formatted,
+                    'envelope': envelope,
+                    'expression': envelope.get('expression'),
+                    'delivery': envelope.get('delivery'),
+                    'emotional_tone': envelope.get('emotional_tone'),
+                    'voice_prosody': envelope.get('voice_prosody'),
+                    'channel': envelope.get('channel'),
+                    'buffered': envelope.get('buffered'),
+                    'buffer_path': envelope.get('buffer_path'),
+                },
                 'text': text_output,
                 'spoke': spoke,
-                'formatted': formatted
+                'formatted': formatted,
+                'envelope': envelope,
             }
         
         elif msg_type == 'text_response':
@@ -589,7 +838,31 @@ class OutputLobe:
                     print(f"⚠️  Failed to store conversation to Notus: {e}")
             
             self.last_output = text
-            return {'status': 'success', 'content': {'text': text, 'sent_to_gui': True}, 'sent_to_gui': True}
+            # Minimal envelope so text_response path still exposes delivery metadata.
+            mini = self.build_envelope(
+                {
+                    'emotion': payload.get('emotion'),
+                    'intensity': payload.get('intensity', 0.5),
+                    'expression': payload.get('expression') or {},
+                    'voice_prosody': payload.get('voice_prosody') or {},
+                    'emotional_tone': payload.get('emotional_tone'),
+                    'emphasis': payload.get('emphasis') or [],
+                },
+                text,
+                spoke=spoke,
+            )
+            self.last_envelope = mini.to_dict()
+            return {
+                'status': 'success',
+                'content': {
+                    'text': text,
+                    'sent_to_gui': True,
+                    'envelope': self.last_envelope,
+                    'expression': self.last_envelope.get('expression'),
+                    'delivery': self.last_envelope.get('delivery'),
+                },
+                'sent_to_gui': True,
+            }
             
         elif msg_type == 'speak':
             # Just speak the text
@@ -618,13 +891,34 @@ class OutputLobe:
             return {'status': 'success', 'config': self.voice_config}
             
         elif msg_type == 'get_status':
-            # Get output system status
+            env = self.last_envelope or {}
+            delivery = env.get('delivery') or {}
             return {
                 'status': 'success',
                 'tts_available': self.tts_available,
                 'voice_enabled': self.voice_config['enabled'],
-                'text_output': True
+                'text_output': True,
+                'channel': env.get('channel') or (
+                    'tts' if (self.tts_available and self.voice_config['enabled']) else 'text_buffer'
+                ),
+                'speech_buffer_path': str(self._speech_buffer_path),
+                'last_envelope_present': bool(self.last_envelope),
+                'last_expression': (env.get('expression') if env else None),
+                'last_delivery_markers': list(delivery.get('markers') or []),
+                'content': {
+                    'tts_available': self.tts_available,
+                    'voice_enabled': self.voice_config['enabled'],
+                    'text_output': True,
+                    'channel': env.get('channel'),
+                    'last_envelope_present': bool(self.last_envelope),
+                },
             }
+
+        elif msg_type == 'get_last_envelope':
+            env = self.get_last_envelope()
+            if not env:
+                return {'status': 'success', 'content': {'envelope': None}, 'envelope': None}
+            return {'status': 'success', 'content': {'envelope': env}, 'envelope': env}
             
         else:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}

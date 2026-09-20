@@ -1,0 +1,71 @@
+=== OUTPUT AFTER PROOF ===
+time: 2026-09-20 14:06:47 MDT
+
+DESIGN DONE SENTENCE:
+Output is registered in core, consumes language text plus emotion
+ExpressionState (tears/voice_shake/withdraw) and prosody/tone, and produces
+a reply envelope the live path stores and uses — text preserved, delivery
+metadata differs for high-emotion vs calm; TTS speaker stubbed to text buffer.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+output_registered: True
+get_status channel=text_buffer tts=False voice_enabled=False buffer=/home/box/.local/state/monday/output_speech_buffer.txt
+
+--- DIRECT generate_output HIGH expression ---
+hi content keys: ['buffer_path', 'buffered', 'channel', 'delivery', 'emotional_tone', 'envelope', 'expression', 'formatted', 'spoke', 'text', 'voice_prosody']
+hi expression: {'tears': True, 'voice_shake': True, 'withdraw': True}
+hi delivery.markers: ['tearful', 'voice_shake', 'withdraw']
+hi delivery.expression_active: True
+hi channel: text_buffer buffered=True
+hi prosody: {"pitch": 0.95, "speed": 0.7286400000000001, "warmth": 0.51, "clarity": 0.82, "confidence": 0.48999999999999994, "pitch_jitter": 0.21000000000000002, "volume": 0.55}
+hi text: 'I hear you.'
+
+--- DIRECT generate_output CALM expression ---
+lo expression: {'tears': False, 'voice_shake': False, 'withdraw': False}
+lo delivery.markers: ['calm_delivery']
+lo delivery.expression_active: False
+lo channel: text_buffer buffered=True
+lo prosody: {"pitch": 1.0, "speed": 1.0, "warmth": 0.6, "clarity": 1.0, "confidence": 0.7}
+high vs calm markers differ: True
+high vs calm prosody differ: True
+high vs calm expression differ: True
+same reply text preserved: True
+
+--- LIVE calm ---
+reply_ok: True
+reply_excerpt: "I'm here — thanks for checking in. How are you?"
+thalamus.last_output_envelope present: True
+calm envelope expression: {'tears': False, 'voice_shake': False, 'withdraw': False}
+calm delivery.markers: ['calm_delivery']
+calm channel: text_buffer
+output.last_envelope markers: ['calm_delivery']
+
+--- LIVE high-emotion (feel sad + grief input) ---
+feel status=success emotion=sad intensity=0.95
+sad reply_ok: True
+sad reply_excerpt: "I'm feeling sad ...with you... We'll get through this... I get the sense you're feeling sad. I'm learning to read feelings better.\n\nWhat would help with this rejection - or is ther"
+post emotion expression: {'tears': True, 'voice_shake': True, 'withdraw': True}
+sad envelope expression: {'tears': True, 'voice_shake': True, 'withdraw': True}
+sad delivery.markers: ['tearful', 'voice_shake', 'withdraw']
+sad delivery.expression_active: True
+sad channel: text_buffer buffered=True
+sad buffer_path: /home/box/.local/state/monday/output_speech_buffer.txt
+sad tone: melancholic
+live high vs calm markers differ: True
+reply still works (non-empty): True
+get_last_envelope has envelope: True
+lobe_present[attention]: True
+lobe_present[emotion]: True
+lobe_present[notus]: True
+lobe_present[reasoning]: True
+lobe_present[autonomous]: True
+lobe_present[perception]: True
+lobe_present[novelty]: True
+lobe_present[output]: True
+
+=== BEFORE vs AFTER (excerpt) ===
+BEFORE: no envelope; thalamus.last_output_envelope MISSING; content keys=[formatted,spoke,text]
+AFTER:  envelope with expression+delivery; thalamus stores last_output_envelope; markers differ high vs calm
+
+=== SUMMARY ===
+output_registered=True envelope_live=True sad_markers=['tearful', 'voice_shake', 'withdraw'] calm_markers=['calm_delivery']
