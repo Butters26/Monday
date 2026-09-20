@@ -30,11 +30,15 @@ from thalamus import Thalamus
 def create_core_systems(
     runtime_directory: Optional[str] = None,
     reasoning_factory: Optional[Any] = None,
+    notus_factory: Optional[Any] = None,
+    enable_autonomous: bool = True,
 ) -> Dict[str, Any]:
     """Instantiate and register prompted-path systems plus autonomous thinking.
 
     `runtime_directory` is retained for mutable non-Notus runtime state and tests.
-    Notus itself is PostgreSQL-only and does not use a local SQLite file.
+    Primary Notus is PostgreSQL (ActiveNotusMemorySystem) when ``notus_factory``
+    is omitted. Tests may inject a SQLite/memory Notus (e.g. DirectNotusProcess)
+    so acceptance runs without provisioning PostgreSQL.
 
     Postgres env (ActiveNotusMemorySystem / notus_memory._connect_postgres):
       NOTUS_POSTGRES_DSN   — full DSN; if set, wins over discrete vars
@@ -46,10 +50,17 @@ def create_core_systems(
     Related (not read by Notus connect, but used elsewhere):
       MONDAY_RUNTIME_DIR   — runtime_paths.runtime_dir() override
     There is no DATABASE_URL / PG* wiring in the active Notus path.
+
+    ``enable_autonomous=False`` skips registering/starting AutonomousThinkingLoop
+    (socket-free, loop-free acceptance tests).
     """
     directory = Path(runtime_directory) if runtime_directory else runtime_dir()
     directory.mkdir(parents=True, exist_ok=True)
     thalamus = Thalamus()
+    if notus_factory is None:
+        notus = ActiveNotusMemorySystem(thalamus=thalamus)
+    else:
+        notus = notus_factory(thalamus=thalamus, runtime_directory=str(directory))
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
         "perception": PerceptionLobe(thalamus=thalamus),
@@ -57,7 +68,7 @@ def create_core_systems(
         "attention": AttentionLobe(thalamus=thalamus),
         "novelty": NoveltyLobe(thalamus=thalamus),
         "conversation": ConversationSystem(thalamus=thalamus),
-        "notus": ActiveNotusMemorySystem(thalamus=thalamus),
+        "notus": notus,
         "emotion": EmotionalProcess(
             state_file=str(directory / "emotional_state.json"), thalamus=thalamus
         ),
@@ -84,12 +95,13 @@ def create_core_systems(
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
 
-    autonomous = AutonomousThinkingLoop(thalamus=thalamus)
-    result = thalamus.register_lobe("autonomous", autonomous)
-    if result["status"] != "success":
-        raise RuntimeError(f"Could not register autonomous: {result.get('message')}")
-    systems["autonomous"] = autonomous
-    autonomous.start_background()
+    if enable_autonomous:
+        autonomous = AutonomousThinkingLoop(thalamus=thalamus)
+        result = thalamus.register_lobe("autonomous", autonomous)
+        if result["status"] != "success":
+            raise RuntimeError(f"Could not register autonomous: {result.get('message')}")
+        systems["autonomous"] = autonomous
+        autonomous.start_background()
     return systems
 
 

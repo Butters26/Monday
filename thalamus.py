@@ -35,6 +35,7 @@ from direct_response import (
     _MONDAY_ROLES,
 )
 from learning.lobe_learning_store import LobeLearningStore
+from notus_outage_fallback import NotusOutageFallback
 
 
 _LEARNING_ROUTE_TYPES = {
@@ -107,6 +108,8 @@ class Thalamus:
         self.last_language_sentence: Optional[str] = None
         # Complete final reply text assembled before Output (asides + curiosity).
         self._last_pre_output_final_text: Optional[str] = None
+        # Bounded per-user Notus outage queue (current-architecture fallback).
+        self.notus_fallback = NotusOutageFallback()
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1051,8 +1054,17 @@ class Thalamus:
         memory = self.send_and_wait(
             "notus", "store", {"role": "user", "content": user_input, "user_id": user_id}
         )
-        if memory["status"] != "success":
-            return "I'm having trouble remembering that right now."
+        if memory.get("status") != "success":
+            # Notus store error/exception must not abort the prompted path.
+            self.notus_fallback.enqueue(
+                user_id=user_id,
+                role="user",
+                content=user_input,
+                memory_type="conversation",
+            )
+        else:
+            # Recovery opportunity: flush any prior outage queue for this user.
+            self._flush_notus_fallback_best_effort(user_id)
 
         # Prefer query_context so durable facts ride with memories.
         memory_context = self.send_and_wait(
@@ -1060,13 +1072,26 @@ class Thalamus:
             "query_context",
             {"query": user_input, "user_id": user_id, "limit": 15},
         )
-        if memory_context["status"] != "success":
+        if memory_context.get("status") != "success":
             # Fallback to plain query if an older Notus build lacks query_context.
             memory_context = self.send_and_wait(
                 "notus", "query", {"query": user_input, "user_id": user_id, "limit": 15}
             )
-        if memory_context["status"] != "success":
-            return "I'm having trouble retrieving context right now."
+        if memory_context.get("status") != "success":
+            # Serve strictly bounded in-memory fallback context; do not abort.
+            fallback_memories = self.notus_fallback.memories_for(user_id, limit=15)
+            memory_context = {
+                "status": "success",
+                "content": {
+                    "memories": fallback_memories,
+                    "semantic": fallback_memories,
+                    "facts": [],
+                    "episodic": [],
+                    "memory_source": "notus_outage_fallback",
+                },
+            }
+        else:
+            self._flush_notus_fallback_best_effort(user_id)
 
         emotion = self.send_and_wait(
             "emotion", "process_input", {"user_input": user_input}
@@ -1405,7 +1430,7 @@ class Thalamus:
         # Persist exact envelope text — continuous someone, not user-only amnesia.
         if isinstance(reply, str) and reply.strip():
             try:
-                self.send_and_wait(
+                spoken = self.send_and_wait(
                     "notus",
                     "store",
                     {
@@ -1418,11 +1443,54 @@ class Thalamus:
                         "mode": "memory",
                     },
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                spoken = {"status": "error", "message": str(exc)}
+            if not isinstance(spoken, dict) or spoken.get("status") != "success":
+                self.notus_fallback.enqueue(
+                    user_id=user_id,
+                    role="monday",
+                    content=reply.strip(),
+                    memory_type="conversation",
+                    extra={"tag": "Spoken", "importance": 6.5, "mode": "memory"},
+                )
+            else:
+                self._flush_notus_fallback_best_effort(user_id)
         return reply
 
+    def retry_unsaved_notus_records(
+        self, user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Flush the bounded per-user Notus outage queue back to Notus.
+
+        Removes only successfully synchronized records. Partial failures leave
+        remaining rows queued. Dedupe keys prevent double-store on repeat retry.
+        """
+        def _store(record: Dict[str, Any]) -> bool:
+            payload = {
+                "role": record.get("role", "user"),
+                "content": record.get("content", ""),
+                "user_id": record.get("user_id", "default"),
+                "memory_type": record.get("memory_type", "conversation"),
+            }
+            for key in ("tag", "importance", "mode"):
+                if key in record:
+                    payload[key] = record[key]
+            result = self.send_and_wait("notus", "store", payload)
+            return isinstance(result, dict) and result.get("status") == "success"
+
+        return self.notus_fallback.flush(_store, user_id=user_id)
+
+    def _flush_notus_fallback_best_effort(self, user_id: str) -> None:
+        """Opportunistic recovery when a Notus call succeeds mid-turn."""
+        try:
+            if self.notus_fallback.pending_count(user_id) <= 0:
+                return
+            self.retry_unsaved_notus_records(user_id=user_id)
+        except Exception:
+            return
+
     def _requeue_speak_worthy(self, autonomous, aside: Dict[str, Any], now: float = 0.0) -> None:
+
         """Put a speak-worthy aside back on the autonomous queue if possible."""
         if autonomous is None or not isinstance(aside, dict):
             return

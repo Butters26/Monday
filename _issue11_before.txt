@@ -1,0 +1,331 @@
+command: python -m pytest -q test_direct_core_pipeline.py test_notus_integration.py
+label: BEFORE (pre-fix thalamus; tests + hooks present)
+============================================================
+F..F....FFFFFFFF                                                         [100%]
+=================================== FAILURES ===================================
+___________________ test_prompted_core_path_order_and_output ___________________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_prompted_core_path_order_0')
+
+    def test_prompted_core_path_order_and_output(tmp_path):
+        random.seed(0)
+        systems = _boot(tmp_path)
+        try:
+            response = systems["thalamus"].process_user_input(
+                "Hello Monday, explain memory?"
+            )
+            assert response
+            assert systems["output"].last_output == response
+    
+            handlers = list(systems["thalamus"].lobe_handlers)
+            for name in PROMPTED_CORE:
+                assert name in handlers
+    
+            # Autonomous must stay off for these acceptance tests.
+            assert "autonomous" not in handlers
+    
+            route_names = [route["to"] for route in systems["thalamus"].message_routes]
+            positions = [route_names.index(stage) for stage in PROMPTED_CORE]
+>           assert positions == sorted(positions)
+E           assert [7, 8, 6, 4, 42, 43] == [4, 6, 7, 8, 42, 43]
+E             
+E             At index 0 diff: 7 != 4
+E             Use -v to get more diff
+
+test_direct_core_pipeline.py:62: AssertionError
+----------------------------- Captured stdout call -----------------------------
+🆕 Novelty signal from perception: score=0.73 is_novel=True
+😊 Emotion→Novelty: melancholic int=0.87 novelty_score=0.73
+🧠 Reasoning: think_about started
+🧠 Reasoning: user_input = 'Hello Monday, explain memory?'
+🧠 Reasoning pulled context: Found 1 stored memories, 0 facts, and 0 episodes
+🧠 Reasoning pulled user info: Have 0 facts about user and 0 recorded interactions
+🆕 Novelty signal from reasoning: score=0.19 is_novel=False
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@2.745] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+[ WARN:0@2.745] global cap_ffmpeg_impl.hpp:1246 open VIDEOIO/FFMPEG: OpenCV should be configured with libavdevice to open a camera device
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 103/103 [00:00<00:00, 11088.64it/s]
+------------------------------ Captured log call -------------------------------
+WARNING  huggingface_hub.utils._http:_http.py:993 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+_____________ test_prompted_core_recalls_stable_fact_after_restart _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_prompted_core_recalls_sta0')
+
+    def test_prompted_core_recalls_stable_fact_after_restart(tmp_path):
+        runtime = tmp_path / "runtime"
+    
+        def factory(*, thalamus, runtime_directory):
+            return DirectNotusProcess(
+                storage_path=str(Path(runtime_directory) / "notus_memory.sqlite3"),
+                thalamus=thalamus,
+            )
+    
+        first = create_core_systems(
+            str(runtime),
+            notus_factory=factory,
+            enable_autonomous=False,
+        )
+        try:
+            learned = first["thalamus"].process_user_input(
+                "My favorite color is violet", user_id="alice"
+            )
+            assert "violet" in learned.lower()
+        finally:
+            shutdown_core_systems(first)
+    
+        reopened = create_core_systems(
+            str(runtime),
+            notus_factory=factory,
+            enable_autonomous=False,
+        )
+        try:
+            recalled = reopened["thalamus"].process_user_input(
+                "What is my favorite color?", user_id="alice"
+            )
+>           assert "violet" in recalled.lower()
+E           AssertionError: assert 'violet' in 'i do not have enough grounded information to answer that. please provide more context or a fact i can reason from.'
+E            +  where 'i do not have enough grounded information to answer that. please provide more context or a fact i can reason from.' = <built-in method lower of str object at 0x7f697997a150>()
+E            +    where <built-in method lower of str object at 0x7f697997a150> = 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'.lower
+
+test_direct_core_pipeline.py:134: AssertionError
+----------------------------- Captured stdout call -----------------------------
+🆕 Novelty signal from perception: score=0.47 is_novel=True
+😊 Emotion→Novelty: curious int=0.95 novelty_score=0.47
+🧠 Reasoning: think_about started
+🧠 Reasoning: user_input = 'My favorite color is violet'
+🧠 Reasoning: Found 1 pending novelty questions, routing response
+⚠️  Novelty check failed: dictionary changed size during iteration
+🧠 Reasoning pulled context: Found 1 stored memories, 0 facts, and 0 episodes
+🧠 Reasoning pulled user info: Have 0 facts about user and 0 recorded interactions
+🆕 Novelty signal from reasoning: score=0.00 is_novel=False
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+✅ Loaded emotional state from /tmp/pytest-of-box/pytest-0/test_prompted_core_recalls_sta0/runtime/emotional_state.json
+🆕 Novelty signal from perception: score=0.43 is_novel=False
+😊 Emotion→Novelty: curious int=0.90 novelty_score=0.43
+🧠 Reasoning: think_about started
+🧠 Reasoning: user_input = 'What is my favorite color?'
+🧠 Reasoning pulled context: Found 1 stored memories, 0 facts, and 0 episodes
+🧠 Reasoning pulled user info: Have 0 facts about user and 0 recorded interactions
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@10.817] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 103/103 [00:00<00:00, 11301.56it/s]
+[ WARN:0@13.147] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 103/103 [00:00<00:00, 10965.64it/s]
+_______________________ test_primary_notus_success_path ________________________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_primary_notus_success_pat0')
+
+    def test_primary_notus_success_path(tmp_path):
+        systems, holder = _factory(tmp_path)
+        try:
+            reply = systems["thalamus"].process_user_input("hello", user_id="u1")
+            assert isinstance(reply, str) and reply.strip()
+            assert "trouble remembering" not in reply.lower()
+            assert "trouble retrieving" not in reply.lower()
+>           assert systems["thalamus"].notus_fallback.pending_count("u1") == 0
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'Thalamus' object has no attribute 'notus_fallback'
+
+test_notus_integration.py:110: AttributeError
+----------------------------- Captured stdout call -----------------------------
+🆕 Novelty signal from perception: score=0.32 is_novel=False
+😊 Emotion→Novelty: melancholic int=0.84 novelty_score=0.32
+🧠 Reasoning: think_about started
+🧠 Reasoning: user_input = 'hello'
+🧠 Reasoning pulled context: Found 1 stored memories, 0 facts, and 0 episodes
+🧠 Reasoning pulled user info: Have 0 facts about user and 0 recorded interactions
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@22.885] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 103/103 [00:00<00:00, 11652.42it/s]
+__________________ test_notus_store_error_continues_pipeline ___________________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_notus_store_error_continu0')
+
+    def test_notus_store_error_continues_pipeline(tmp_path):
+        systems, holder = _factory(tmp_path)
+        ctl = holder["ctl"]
+        assert ctl is not None
+        try:
+            ctl.fail_store_with_error = True
+            reply = systems["thalamus"].process_user_input(
+                "Remember my token ALPHA_ONE", user_id="alice"
+            )
+            assert isinstance(reply, str) and reply.strip()
+>           assert "trouble remembering" not in reply.lower()
+E           assert 'trouble remembering' not in "i'm having ...t right now."
+E             
+E             'trouble remembering' is contained here:
+E               i'm having trouble remembering that right now.
+
+test_notus_integration.py:126: AssertionError
+----------------------------- Captured stdout call -----------------------------
+🆕 Novelty signal from perception: score=0.56 is_novel=True
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@25.214] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+________________ test_notus_store_exception_continues_pipeline _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_notus_store_exception_con0')
+
+    def test_notus_store_exception_continues_pipeline(tmp_path):
+        systems, holder = _factory(tmp_path)
+        ctl = holder["ctl"]
+        try:
+            ctl.raise_on_store = True
+            reply = systems["thalamus"].process_user_input(
+                "Remember my token BETA_TWO", user_id="bob"
+            )
+            assert isinstance(reply, str) and reply.strip()
+>           assert "trouble remembering" not in reply.lower()
+E           assert 'trouble remembering' not in "i'm having ...t right now."
+E             
+E             'trouble remembering' is contained here:
+E               i'm having trouble remembering that right now.
+
+test_notus_integration.py:148: AssertionError
+----------------------------- Captured stdout call -----------------------------
+🆕 Novelty signal from perception: score=0.56 is_novel=True
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@25.258] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+________________ test_notus_query_error_serves_fallback_context ________________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_notus_query_error_serves_0')
+
+    def test_notus_query_error_serves_fallback_context(tmp_path):
+        systems, holder = _factory(tmp_path)
+        ctl = holder["ctl"]
+        thalamus = systems["thalamus"]
+        try:
+            # Seed fallback buffer as if a prior store failed.
+>           thalamus.notus_fallback.enqueue(
+            ^^^^^^^^^^^^^^^^^^^^^^^
+                user_id="carol",
+                role="user",
+                content="My favorite color is teal",
+            )
+E           AttributeError: 'Thalamus' object has no attribute 'notus_fallback'
+
+test_notus_integration.py:161: AttributeError
+----------------------------- Captured stdout call -----------------------------
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@25.294] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+______________ test_notus_query_exception_serves_fallback_context ______________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_notus_query_exception_ser0')
+
+    def test_notus_query_exception_serves_fallback_context(tmp_path):
+        systems, holder = _factory(tmp_path)
+        ctl = holder["ctl"]
+        thalamus = systems["thalamus"]
+        try:
+>           thalamus.notus_fallback.enqueue(
+            ^^^^^^^^^^^^^^^^^^^^^^^
+                user_id="dave",
+                role="user",
+                content="SECRET_DAVE_FACT",
+            )
+E           AttributeError: 'Thalamus' object has no attribute 'notus_fallback'
+
+test_notus_integration.py:184: AttributeError
+----------------------------- Captured stdout call -----------------------------
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@25.328] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+____________ test_recovery_retry_removes_only_successes_and_dedupes ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_recovery_retry_removes_on0')
+
+    def test_recovery_retry_removes_only_successes_and_dedupes(tmp_path):
+        systems, holder = _factory(tmp_path)
+        ctl = holder["ctl"]
+        thalamus = systems["thalamus"]
+        try:
+>           fb = thalamus.notus_fallback
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'Thalamus' object has no attribute 'notus_fallback'
+
+test_notus_integration.py:205: AttributeError
+----------------------------- Captured stdout call -----------------------------
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@25.350] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+_________________ test_outage_queue_does_not_leak_across_users _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-0/test_outage_queue_does_not_lea0')
+
+    def test_outage_queue_does_not_leak_across_users(tmp_path):
+        systems, holder = _factory(tmp_path)
+        ctl = holder["ctl"]
+        thalamus = systems["thalamus"]
+        try:
+            ctl.fail_store_with_error = True
+            thalamus.process_user_input("ALICE_ONLY_SECRET", user_id="alice")
+            thalamus.process_user_input("BOB_ONLY_SECRET", user_id="bob")
+    
+>           alice_pending = thalamus.notus_fallback.pending_records("alice")
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'Thalamus' object has no attribute 'notus_fallback'
+
+test_notus_integration.py:255: AttributeError
+----------------------------- Captured stdout call -----------------------------
+🆕 Novelty signal from perception: score=0.46 is_novel=True
+🆕 Novelty signal from perception: score=0.43 is_novel=False
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
+----------------------------- Captured stderr call -----------------------------
+[ WARN:0@25.372] global cap_v4l.cpp:914 open VIDEOIO(V4L2:/dev/video0): can't open camera by index
+______________________ test_no_legacy_monday_memory_apis _______________________
+
+    def test_no_legacy_monday_memory_apis():
+        from thalamus import Thalamus
+    
+        t = Thalamus()
+        assert not hasattr(t, "monday_memory")
+        assert not hasattr(t, "retrieve_relevant_memory")
+        assert not hasattr(t, "sync_memory_to_notus")
+>       assert hasattr(t, "notus_fallback")
+E       AssertionError: assert False
+E        +  where False = hasattr(<thalamus.Thalamus object at 0x7f682987ba50>, 'notus_fallback')
+
+test_notus_integration.py:277: AssertionError
+=============================== warnings summary ===============================
+test_direct_core_pipeline.py::test_prompted_core_path_order_and_output
+  /workspace/Monday/.venv/lib/python3.13/site-packages/speech_recognition/__init__.py:7: DeprecationWarning: aifc was removed in Python 3.13. Please be aware that you are currently NOT using standard 'aifc', but instead a separately installed 'standard-aifc'.
+    import aifc
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_direct_core_pipeline.py::test_prompted_core_path_order_and_output
+FAILED test_direct_core_pipeline.py::test_prompted_core_recalls_stable_fact_after_restart
+FAILED test_notus_integration.py::test_primary_notus_success_path - Attribute...
+FAILED test_notus_integration.py::test_notus_store_error_continues_pipeline
+FAILED test_notus_integration.py::test_notus_store_exception_continues_pipeline
+FAILED test_notus_integration.py::test_notus_query_error_serves_fallback_context
+FAILED test_notus_integration.py::test_notus_query_exception_serves_fallback_context
+FAILED test_notus_integration.py::test_recovery_retry_removes_only_successes_and_dedupes
+FAILED test_notus_integration.py::test_outage_queue_does_not_leak_across_users
+FAILED test_notus_integration.py::test_no_legacy_monday_memory_apis - Asserti...
+10 failed, 6 passed, 1 warning in 26.71s
