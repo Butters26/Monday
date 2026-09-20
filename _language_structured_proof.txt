@@ -1,0 +1,79 @@
+=== LANGUAGE STRUCTURED HANDOFF PROOF ===
+time: 2026-09-20 16:42:37
+user_id: lang-struct-a5d1b06c-be1a-4adf-9da6-9485b0ef5bbd
+runtime: /tmp/lang-struct-proof-t2hrf20o
+
+DESIGN:
+Conversation=intent; Reasoning=grounded structures (not finished prose);
+Language=sentence construction; Output=delivery.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+language_registered: True
+Language class: LanguageGenerator
+
+--- SEED ---
+SEED | 'My name is Matthew' → 'Got it — your name is Matthew.'
+SEED | 'I live in Boulder' → 'Got it — you live in Boulder.'
+SEED | "My dog's name is Pixel" → "I remember your dog's name is Pixel."
+SEED | 'My favorite color is teal' → 'Got it — your favorite color is teal.'
+SEED | 'Remember the codeword is NebulaQuartz' → 'I remember your codeword is NebulaQuartz.\n\nI do not want to invent details - can you tell me more about what you meant by "Remember the codeword is NebulaQuartz"?'
+SEED | 'I work as a carpenter' → 'Got it — you work as a carpenter.'
+
+--- 1) multi-fact name+live ---
+Q: 'What is my name and where do I live?'
+pre_Language_structures: [{"subject": "user", "relation": "name", "predicate": "name", "value": "Matthew", "object": "Matthew", "certainty": 1.0}, {"subject": "user", "relation": "lives_in", "predicate": "lives_in", "value": "Boulder", "object": "Boulder", "certainty": 1.0}]
+spy_pre_structures: [{"subject": "user", "relation": "name", "predicate": "name", "value": "Matthew", "object": "Matthew", "certainty": 1.0}, {"subject": "user", "relation": "lives_in", "predicate": "lives_in", "value": "Boulder", "object": "Boulder", "certainty": 1.0}]
+spy_pre_answer (should be empty/None for structured path): ''
+Language_final_sentence: 'I remember your name is Matthew. I remember — you live in Boulder.'
+live_reply: 'I remember your name is Matthew. I remember — you live in Boulder.'
+envelope_text: 'I remember your name is Matthew. I remember — you live in Boulder.'
+envelope_eq_language: True
+PASS_structures_before_language: True
+PASS_not_finished_prose_handoff: True
+PASS_grounded_Matthew_Boulder: True
+
+--- 2) multi-fact dog+color ---
+Q: "What is my dog's name and what is my favorite color?"
+pre_Language_structures: [{"subject": "user", "relation": "dog_name", "predicate": "dog_name", "value": "Pixel", "object": "Pixel", "certainty": 1.0}, {"subject": "user", "relation": "favorite_color", "predicate": "favorite_color", "value": "teal", "object": "teal", "certainty": 1.0}]
+Language_final_sentence: "I remember your dog's name is Pixel. I remember your favorite color is teal."
+live_reply: "I remember your dog's name is Pixel. I remember your favorite color is teal."
+envelope_eq_language: True
+PASS_structured_path: True
+
+--- 3) missing sister / favorite food ---
+Q: "What is my sister's name?"
+pre_Language_structures: None
+live_reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+honest_refusal: True
+no_invent: True
+PASS: True
+Q: 'What is my favorite food?'
+pre_Language_structures: None
+live_reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+honest_refusal: True
+no_invent: True
+PASS: True
+
+--- 4) calm vs melancholic wording (Language, not Output) ---
+shared_structures: [{"subject": "user", "relation": "name", "predicate": "name", "value": "Matthew", "object": "Matthew", "certainty": 1.0}, {"subject": "user", "relation": "lives_in", "predicate": "lives_in", "value": "Boulder", "object": "Boulder", "certainty": 1.0}]
+calm_Language: 'Your name is Matthew. You live in Boulder.'
+melancholic_Language: 'I remember your name is Matthew. I remember — you live in Boulder.'
+same_facts: True
+wording_differs_via_Language: True
+no_Output_markers: True
+PASS: True
+
+--- 5) live path Language → Output envelope ---
+Q: 'What is my name?'
+language_generate_calls: 1
+spy_pre_structures: [{"subject": "user", "relation": "name", "predicate": "name", "value": "Matthew", "object": "Matthew", "certainty": 1.0}]
+Language_sentence: 'I remember your name is Matthew.'
+Output_envelope_text: 'I remember your name is Matthew.'
+live_reply: 'I remember your name is Matthew.'
+envelope_text_equals_Language_sentence: True
+PASS: True
+
+--- SUMMARY ---
+Structured handoff active: Reasoning/thalamus pass grounded_structures;
+Language composes tone-aware sentences; Output delivers Language text.
+Empty grounding still refuses honestly without inventing.

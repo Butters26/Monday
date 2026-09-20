@@ -19,7 +19,9 @@ from direct_response import (
     format_predicate_fact,
     looks_like_teaching_turn,
     looks_questionish,
+    prose_answer_to_structures,
     relevance_score,
+    structures_from_grounded_memories,
     _attribute_asked,
     _fact_covers_attribute,
 )
@@ -351,7 +353,8 @@ class DirectMaximumSophisticationAdapter:
         }
         # Prefer teaching ack / fact answers over legacy composition noise.
         teaching = self._teaching_ack(user_input)
-        fact_answer = self._answer_from_facts(evidence, user_input)
+        fact_structures = structures_from_grounded_memories(user_input or "", evidence)
+        fact_answer = None if fact_structures else self._answer_from_facts(evidence, user_input)
         thinking = self.reasoner.think_about(legacy_input)
         if not isinstance(thinking, dict):
             thinking = {}
@@ -380,9 +383,16 @@ class DirectMaximumSophisticationAdapter:
                         usable = None
                         break
         empathic = None
-        if not teaching and not fact_answer:
+        if not teaching and not fact_structures and not fact_answer:
             empathic = empathic_grounded_reply(user_input, emotional_state)
         answer = teaching or fact_answer or empathic or usable
+        # If usable/teaching still produced finished fact prose, prefer structures.
+        if not fact_structures and isinstance(answer, str) and answer.strip():
+            stripped = prose_answer_to_structures(answer)
+            # Only strip when the whole answer parses as fact structures (not acks).
+            if stripped and not str(answer).strip().lower().startswith("got it"):
+                fact_structures = stripped
+                answer = None
         semantic_input = {
             "intent": understanding.get("intent", "conversation"),
             "certainty": understanding.get("confidence", 0.5),
@@ -393,7 +403,18 @@ class DirectMaximumSophisticationAdapter:
             semantic_input["attention_focus"] = attention_payload.get("focus")
             semantic_input["attention_focus_text"] = attention_payload.get("focus_text")
             semantic_input["attention_ranked"] = list(attention_payload.get("ranked") or [])[:5]
-        if answer is not None:
+        if fact_structures:
+            # Reasoning owns grounded meaning — Language owns sentence construction.
+            semantic_input["grounded_structures"] = fact_structures
+            semantic_input["propositions"] = fact_structures
+            semantic_input["certainty"] = min(
+                float(semantic_input.get("certainty") or 0.5),
+                min(float(s.get("certainty", 1.0) or 1.0) for s in fact_structures),
+            )
+            # Do not hand Language finished prose for these facts.
+            semantic_input.pop("answer", None)
+            semantic_input.pop("conclusion", None)
+        elif answer is not None:
             semantic_input.update(
                 {"answer": answer, "conclusion": answer, "propositions": [answer]}
             )

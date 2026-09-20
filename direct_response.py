@@ -305,6 +305,132 @@ def format_predicate_fact(predicate: str, obj: str, subject: str = "user") -> st
     return f"{subject} {pred.replace('_', ' ')} {obj}".strip()
 
 
+
+def make_grounded_structure(
+    subject: str,
+    relation: str,
+    value: str,
+    *,
+    certainty: float = 1.0,
+) -> Dict[str, Any]:
+    """One grounded meaning unit for Language — not a finished sentence."""
+    rel = (relation or "").strip()
+    val = (value or "").strip()
+    sub = (subject or "user").strip() or "user"
+    return {
+        "subject": sub,
+        "relation": rel,
+        "predicate": rel,
+        "value": val,
+        "object": val,
+        "certainty": float(certainty),
+    }
+
+
+def parse_prose_to_structure(text: str) -> Optional[Dict[str, Any]]:
+    """Strip a finished fact line into {subject, relation, value} when possible."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    # Drop soft teaching / reflective Language wrappers if present.
+    raw = re.sub(r"^(?:got it\s*[—\-]\s*)", "", raw, flags=re.I).strip()
+    raw = re.sub(r"^(?:yes\s*[—\-]\s*)", "", raw, flags=re.I).strip()
+    raw = re.sub(r"^(?:i\s+remember|i\s+recall)(?:\s*[—\-,:]+\s*|\s+)", "", raw, flags=re.I).strip()
+    t = raw.rstrip(".!?")
+    m = re.match(r"^your\s+name\s+is\s+(.+)$", t, re.IGNORECASE)
+    if m:
+        return make_grounded_structure("user", "name", m.group(1).strip())
+    m = re.match(
+        r"^your\s+([a-z][a-z0-9 ]{0,40}?)(?:'s|s')\s+name\s+is\s+(.+)$",
+        t,
+        re.IGNORECASE,
+    )
+    if m:
+        noun = " ".join(m.group(1).lower().split())
+        return make_grounded_structure("user", f"{noun.replace(' ', '_')}_name", m.group(2).strip())
+    m = re.match(r"^you\s+live\s+in\s+(.+)$", t, re.IGNORECASE)
+    if m:
+        return make_grounded_structure("user", "lives_in", m.group(1).strip())
+    m = re.match(
+        r"^you\s+work\s+(as|at|in)\s+(?:an?\s+)?(.+)$",
+        t,
+        re.IGNORECASE,
+    )
+    if m:
+        return make_grounded_structure("user", f"work_{m.group(1).lower()}", m.group(2).strip())
+    m = re.match(
+        r"^your\s+(favorite\s+[a-z][a-z0-9 ]{0,40}?|favourite\s+[a-z][a-z0-9 ]{0,40}?|"
+        r"codeword|password|passcode)\s+is\s+(.+)$",
+        t,
+        re.IGNORECASE,
+    )
+    if m:
+        attr = " ".join(m.group(1).lower().split()).replace(" ", "_")
+        return make_grounded_structure("user", attr, m.group(2).strip())
+    m = re.match(r"^your\s+([a-z][a-z0-9 ]{0,40}?)\s+is\s+(.+)$", t, re.IGNORECASE)
+    if m:
+        attr = " ".join(m.group(1).lower().split()).replace(" ", "_")
+        if attr.endswith("_name") or attr == "name":
+            return make_grounded_structure("user", attr, m.group(2).strip())
+        return make_grounded_structure("user", attr, m.group(2).strip())
+    return None
+
+
+def format_structure(structure: Dict[str, Any]) -> str:
+    """Neutral readable line from a structure (Language may re-tone)."""
+    if not isinstance(structure, dict):
+        return ""
+    rel = str(structure.get("relation") or structure.get("predicate") or "").strip()
+    val = str(structure.get("value") or structure.get("object") or "").strip()
+    sub = str(structure.get("subject") or "user").strip() or "user"
+    if not rel or not val:
+        return ""
+    return format_predicate_fact(rel, val, sub)
+
+
+def prose_answer_to_structures(answer: str) -> List[Dict[str, Any]]:
+    """Split finished multi-fact prose into structures. Unparseable lines are dropped."""
+    text = (answer or "").strip()
+    if not text:
+        return []
+    # Split on sentence boundaries while keeping abbreviations simple.
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for part in parts:
+        # Also allow "A. B." already split; handle "Yes — a. b." prefix.
+        chunk = part.strip()
+        if not chunk:
+            continue
+        struct = parse_prose_to_structure(chunk)
+        if not struct:
+            continue
+        key = (struct["relation"].casefold(), struct["value"].casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(struct)
+    return out
+
+
+def structures_from_grounded_memories(
+    user_input: str,
+    memories: Iterable[Dict[str, Any]],
+    *,
+    min_score: float = 0.34,
+) -> Optional[List[Dict[str, Any]]]:
+    """Grounded meaning for Language: list of structures, or None if empty/unstructured.
+
+    Returns None when there is no grounded fact answer (honest empty) or when the
+    only answer is narrative/speech prose that cannot be structured yet.
+    """
+    prose = answer_from_grounded_memories(user_input, memories, min_score=min_score)
+    if not isinstance(prose, str) or not prose.strip():
+        return None
+    structs = prose_answer_to_structures(prose)
+    return structs or None
+
+
 def _repair_mangled_fact(content: str) -> str:
     """Fix legacy mangled lines like 'Your lives in is Boulder.'"""
     text = (content or "").strip()
@@ -745,9 +871,13 @@ def answer_from_grounded_memories(
             # unless other slots still fill a compound question.
             slot_miss_forced = True
             continue
-        key = got.casefold()
+        # Prefer clean structure-backed fact lines (strip prior Language tone framing).
+        cleaned = format_structure(parse_prose_to_structure(got) or {}) or got
+        if not cleaned:
+            cleaned = got
+        key = cleaned.casefold()
         if key not in {s.casefold() for s in slot_hits}:
-            slot_hits.append(got if got.endswith((".", "!", "?")) else got + ".")
+            slot_hits.append(cleaned if cleaned.endswith((".", "!", "?")) else cleaned + ".")
 
     if len(slot_hits) >= 2:
         joined = " ".join(slot_hits)

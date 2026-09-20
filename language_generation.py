@@ -152,6 +152,24 @@ class GrammarEngine:
         tense = semantic_input.get('tense', 'present')
         answer = semantic_input.get('answer', '')
         propositions = semantic_input.get('propositions', [])
+        emotional_tone = semantic_input.get('emotional_tone') or emotion or 'neutral'
+
+        # Structured grounded meaning — Language owns wording (not pass-through prose).
+        structures = semantic_input.get('grounded_structures')
+        if not isinstance(structures, list) or not structures:
+            structures = [
+                p for p in (propositions or [])
+                if isinstance(p, dict) and (p.get('relation') or p.get('predicate'))
+                and (p.get('value') or p.get('object'))
+            ]
+        if structures:
+            composed = self._compose_from_structures(
+                structures,
+                emotional_tone=emotional_tone,
+                certainty=certainty,
+            )
+            if composed:
+                return composed
 
         # Prefer multi-proposition composition when Reasoning/Notus supplied
         # distinct grounded facts — do not invent, only arrange.
@@ -527,6 +545,78 @@ class GrammarEngine:
             t += "."
         return t
 
+
+    def _realize_structure(
+        self,
+        structure: Dict[str, Any],
+        *,
+        emotional_tone: str = "neutral",
+        certainty: float = 0.5,
+    ) -> str:
+        """Turn one {subject, relation, value} unit into a sentence with tone."""
+        if not isinstance(structure, dict):
+            return ""
+        rel = str(structure.get("relation") or structure.get("predicate") or "").strip()
+        val = str(structure.get("value") or structure.get("object") or "").strip()
+        sub = str(structure.get("subject") or "user").strip() or "user"
+        if not rel or not val:
+            return ""
+        try:
+            from direct_response import format_predicate_fact
+            base = format_predicate_fact(rel, val, sub)
+        except Exception:
+            base = f"{rel.replace('_', ' ')} {val}"
+        if not base:
+            return ""
+        base = base.strip()
+        tone = (emotional_tone or "neutral").lower()
+        # Soften wording without changing or inventing facts.
+        if tone in {"melancholic", "somber", "reflective", "sad"}:
+            if base.lower().startswith("your "):
+                body = base[0].lower() + base[1:] if len(base) > 1 else base
+                core = body.rstrip(".!?")
+                return f"I remember {core}."
+            if base.lower().startswith("you "):
+                core = base.rstrip(".!?")
+                return f"I remember — {core[0].lower() + core[1:]}."
+            return f"I remember — {base}"
+        if tone in {"cheerful", "enthusiastic", "ecstatic", "happy"}:
+            core = base.rstrip(".!?")
+            return f"{core}."
+        # calm / neutral / default: direct fact sentence
+        return base if base.endswith((".", "!", "?")) else base + "."
+
+    def _compose_from_structures(
+        self,
+        structures,
+        *,
+        emotional_tone: str = "neutral",
+        certainty: float = 0.5,
+    ) -> str:
+        """Compose reply text from grounded semantic structures."""
+        if not isinstance(structures, list):
+            return ""
+        parts = []
+        seen = set()
+        for structure in structures:
+            if not isinstance(structure, dict):
+                continue
+            sentence = self._realize_structure(
+                structure,
+                emotional_tone=emotional_tone,
+                certainty=float(structure.get("certainty", certainty) or certainty),
+            )
+            if not sentence:
+                continue
+            key = sentence.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            parts.append(sentence)
+        if not parts:
+            return ""
+        return " ".join(parts)
+
     def _compose_propositions(self, propositions) -> str:
         """Arrange distinct grounded propositions into coherent reply text."""
         if not isinstance(propositions, list):
@@ -720,16 +810,56 @@ class LanguageGenerator:
             return "I'm thinking about that."
 
     def _salvage_grounded_answer(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
-        """If answer is empty-grounding refusal but memories have facts, compose from them."""
-        answer = semantic_input.get("answer", "")
-        if not (isinstance(answer, str) and self.grammar._is_grounding_refusal(answer)):
+        """If structures/answer empty but memories hold facts, attach structures — do not invent."""
+        existing = semantic_input.get("grounded_structures")
+        if isinstance(existing, list) and existing:
             return semantic_input
+        # Dict propositions already count as structures.
+        props = semantic_input.get("propositions")
+        if isinstance(props, list) and any(isinstance(p, dict) for p in props):
+            semantic_input["grounded_structures"] = [
+                p for p in props if isinstance(p, dict)
+            ]
+            semantic_input["answer"] = ""
+            return semantic_input
+        answer = semantic_input.get("answer", "")
         user_input = semantic_input.get("user_input") or semantic_input.get("user_text") or ""
         memories = semantic_input.get("memory_context") or []
-        if isinstance(memories, dict):
-            memories = memories.get("memories") or memories.get("facts") or []
-        if not user_input or not memories:
+        # If answer is already usable non-refusal prose, try strip to structures —
+        # but keep teaching acks / empathic / social lines as finished prose.
+        if isinstance(answer, str) and answer.strip() and not self.grammar._is_grounding_refusal(answer):
+            low = answer.strip().lower()
+            keep_prose = low.startswith((
+                "got it", "hello", "hi ", "hey", "that sounds", "i hear",
+                "i can feel", "i'm here", "i am here", "i am sitting",
+                "i'm sitting", "i'm thinking", "can you tell", "could you",
+            ))
+            if keep_prose:
+                return semantic_input
+            try:
+                from direct_response import prose_answer_to_structures
+                structs = prose_answer_to_structures(answer)
+            except Exception:
+                structs = None
+            if structs:
+                semantic_input["grounded_structures"] = structs
+                semantic_input["propositions"] = structs
+                semantic_input["answer"] = ""
+                return semantic_input
             return semantic_input
+        if not user_input or not isinstance(memories, list):
+            return semantic_input
+        try:
+            from direct_response import structures_from_grounded_memories, prose_answer_to_structures
+            structs = structures_from_grounded_memories(user_input, memories)
+        except Exception:
+            structs = None
+        if structs:
+            semantic_input["grounded_structures"] = structs
+            semantic_input["propositions"] = structs
+            semantic_input["answer"] = ""
+            return semantic_input
+        # Fallback: prose salvage for narrative paths Language still pass-throughs.
         try:
             from direct_response import answer_from_grounded_memories
             grounded = answer_from_grounded_memories(user_input, memories)
@@ -739,21 +869,27 @@ class LanguageGenerator:
             return semantic_input
         if self.grammar._is_grounding_refusal(grounded):
             return semantic_input
+        try:
+            from direct_response import prose_answer_to_structures
+            structs = prose_answer_to_structures(grounded)
+        except Exception:
+            structs = None
+        if structs:
+            semantic_input["grounded_structures"] = structs
+            semantic_input["propositions"] = structs
+            semantic_input["answer"] = ""
+            return semantic_input
         semantic_input["answer"] = grounded.strip()
-        props = semantic_input.get("propositions")
-        if not isinstance(props, list) or not props or (
-            len(props) == 1 and isinstance(props[0], str)
-            and self.grammar._is_grounding_refusal(props[0])
-        ):
-            # Split joined multi-fact answers into propositions when possible.
+        if not isinstance(props, list) or not props:
             parts = [p.strip() for p in grounded.replace("? ", "?. ").split(". ") if p.strip()]
             normalized = []
-            for p in parts:
-                if not p.endswith((".", "!", "?")):
-                    p = p + "."
-                normalized.append(p)
+            for part in parts:
+                if part and part[-1] not in ".!?":
+                    part = part + "."
+                normalized.append(part)
             semantic_input["propositions"] = normalized or [grounded.strip()]
         return semantic_input
+
 
     def _apply_emotion_wording(self, sentence: str, semantic_input: Dict[str, Any]) -> str:
         """Light tone cues on composed wording without inventing factual content."""

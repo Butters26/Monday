@@ -26,7 +26,9 @@ from direct_response import (
     content_tokens,
     honest_curiosity_question,
     is_mild_social_turn,
+    prose_answer_to_structures,
     relevance_score,
+    structures_from_grounded_memories,
     _asks_about_monday_own_speech,
     _attribute_asked,
     _fact_covers_attribute,
@@ -101,6 +103,8 @@ class Thalamus:
         self._force_curiosity_follow_up: bool = False
         # Last Output lobe reply envelope (expression + delivery metadata).
         self.last_output_envelope: Optional[Dict[str, Any]] = None
+        self.last_grounded_structures: Optional[List[Dict[str, Any]]] = None
+        self.last_language_sentence: Optional[str] = None
         # Complete final reply text assembled before Output (asides + curiosity).
         self._last_pre_output_final_text: Optional[str] = None
 
@@ -1210,8 +1214,11 @@ class Thalamus:
             if bad:
                 grounded = answer_from_grounded_memories(user_input, memories)
                 reasoning_answer = grounded
-        if reasoning_answer is None:
+        early_structures = semantic_input.get("grounded_structures")
+        has_structures = isinstance(early_structures, list) and bool(early_structures)
+        if reasoning_answer is None and not has_structures:
             # Provider fallback — pass emotion so empathic path can fire.
+            # Skip when Reasoning already supplied grounded structures for Language.
             try:
                 understanding_with_emotion = dict(understanding) if isinstance(understanding, dict) else {}
                 understanding_with_emotion["emotion_result"] = emotional_state
@@ -1222,12 +1229,62 @@ class Thalamus:
                 reasoning_answer = None
             reasoning_answer = self._first_usable_text(reasoning_answer)
             if reasoning_answer is None:
-                reasoning_answer = "I am unable to formulate a response right now."
+                # Last chance: structured facts from memories before hard inability.
+                try:
+                    salvage_structs = structures_from_grounded_memories(user_input, memories)
+                except Exception:
+                    salvage_structs = None
+                if salvage_structs:
+                    semantic_input["grounded_structures"] = salvage_structs
+                    has_structures = True
+                else:
+                    reasoning_answer = "I am unable to formulate a response right now."
         semantic_input.setdefault(
             "intent", understanding.get("intent", "conversation")
         )
-        semantic_input.setdefault("answer", reasoning_answer)
-        semantic_input.setdefault("propositions", [reasoning_answer])
+        # Prefer structured grounded meaning over finished prose for Language.
+        grounded_structures = semantic_input.get("grounded_structures")
+        if not isinstance(grounded_structures, list) or not grounded_structures:
+            grounded_structures = None
+            # Reasoning may still have handed finished fact prose — strip it.
+            prose_candidates = []
+            for key in ("answer", "conclusion"):
+                val = semantic_input.get(key)
+                if isinstance(val, str) and val.strip():
+                    prose_candidates.append(val)
+            if isinstance(reasoning_answer, str) and reasoning_answer.strip():
+                prose_candidates.append(reasoning_answer)
+            for prose in prose_candidates:
+                low = prose.strip().lower()
+                if low.startswith(
+                    ("got it", "hello", "hi ", "hey", "i do not have enough grounded",
+                     "i am unable", "i'm unable", "that sounds", "i hear", "i'm here",
+                     "i am here", "i am sitting", "i'm sitting")
+                ):
+                    continue
+                stripped = prose_answer_to_structures(prose)
+                if stripped:
+                    grounded_structures = stripped
+                    break
+            if grounded_structures is None:
+                # Live salvage: memories may hold triples even when reasoning prose failed.
+                try:
+                    grounded_structures = structures_from_grounded_memories(
+                        user_input, memories
+                    )
+                except Exception:
+                    grounded_structures = None
+        if grounded_structures:
+            semantic_input["grounded_structures"] = grounded_structures
+            semantic_input["propositions"] = grounded_structures
+            # Clear finished prose so Language must compose from structures.
+            semantic_input["answer"] = ""
+            semantic_input.pop("conclusion", None)
+            reasoning_answer = None
+        else:
+            if reasoning_answer is not None:
+                semantic_input.setdefault("answer", reasoning_answer)
+                semantic_input.setdefault("propositions", [reasoning_answer])
         # Tiny glue: Language owns composition from user text + emotion tone cues.
         semantic_input["user_input"] = user_input
         if emotional_state.get("emotional_tone") is not None:
@@ -1246,10 +1303,16 @@ class Thalamus:
                 ),
             )
 
+        self.last_grounded_structures = (
+            list(grounded_structures) if grounded_structures else None
+        )
         language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
         if language["status"] != "success":
             return "I'm having trouble finding the words right now."
         response_text = self._content(language).get("sentence", "")
+        self.last_language_sentence = (
+            response_text if isinstance(response_text, str) else None
+        )
 
         # Let autonomous inner-life know the user is present (own-feelings pacing).
         with self.lobe_handlers_lock:
