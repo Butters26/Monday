@@ -742,31 +742,132 @@ class Thalamus:
             )
         return payload
 
-    def process_user_input(self, user_input: str, user_id: str = "default") -> str:
+    def process_sensory_input(
+        self,
+        modality: str,
+        *,
+        text: Optional[str] = None,
+        path: Optional[str] = None,
+        audio_bytes: Optional[bytes] = None,
+        image_bytes: Optional[bytes] = None,
+        user_id: str = "default",
+        continue_conversation: bool = True,
+    ) -> Any:
+        """Route sensory intake through Perception before conversation.
+
+        Modalities: text | audio/hearing | vision/visual/image.
+        File/buffer paths are first-class. Returns reply string when
+        continue_conversation, else the perception envelope dict.
+        """
+        modality_l = (modality or "text").strip().lower()
+        with self.lobe_handlers_lock:
+            has_perception = "perception" in self.lobe_handlers
+        if not has_perception:
+            if modality_l == "text" and isinstance(text, str) and text.strip():
+                return self.process_user_input(text, user_id=user_id)
+            return {"status": "error", "message": "perception lobe not registered"}
+
+        if modality_l in ("text", "chat", "language"):
+            if not isinstance(text, str) or not text.strip():
+                return {"status": "error", "message": "text modality requires text="}
+            if continue_conversation:
+                return self.process_user_input(text, user_id=user_id)
+            resp = self.send_and_wait(
+                "perception", "perceive_text", {"text": text, "user_id": user_id}
+            )
+            return self._content(resp) if resp.get("status") == "success" else resp
+
+        if modality_l in ("audio", "hearing", "sound"):
+            content: Dict[str, Any] = {"user_id": user_id}
+            if path:
+                content["path"] = path
+            if audio_bytes is not None:
+                content["audio_bytes"] = audio_bytes
+            if not path and audio_bytes is None:
+                content["use_mic"] = True
+            resp = self.send_and_wait("perception", "perceive_audio", content)
+            if resp.get("status") != "success":
+                return resp if not continue_conversation else (
+                    f"I couldn't hear that ({resp.get('message') or 'audio perception failed'})."
+                )
+            envelope = self._content(resp)
+            if not continue_conversation:
+                return envelope
+            spoken = envelope.get("text")
+            if isinstance(spoken, str) and spoken.strip():
+                return self.process_user_input(
+                    spoken.strip(), user_id=user_id, perception_payload=envelope
+                )
+            # Acoustic-only: still enter live path with an honest sensory note.
+            note = (
+                "[hearing] "
+                + ", ".join(str(c) for c in (envelope.get("concepts") or [])[:6])
+            )
+            return self.process_user_input(
+                note, user_id=user_id, perception_payload=envelope
+            )
+
+        if modality_l in ("vision", "visual", "image", "sight"):
+            content = {"user_id": user_id}
+            if path:
+                content["path"] = path
+            if image_bytes is not None:
+                content["image_bytes"] = image_bytes
+            if not path and image_bytes is None:
+                content["use_camera"] = True
+            resp = self.send_and_wait("perception", "perceive_vision", content)
+            if resp.get("status") != "success":
+                return resp if not continue_conversation else (
+                    f"I couldn't see that ({resp.get('message') or 'vision perception failed'})."
+                )
+            envelope = self._content(resp)
+            if not continue_conversation:
+                return envelope
+            note = envelope.get("text") or (
+                "[vision] "
+                + ", ".join(str(c) for c in (envelope.get("concepts") or [])[:6])
+            )
+            return self.process_user_input(
+                str(note), user_id=user_id, perception_payload=envelope
+            )
+
+        return {"status": "error", "message": f"unknown modality: {modality}"}
+
+    def process_user_input(
+        self,
+        user_input: str,
+        user_id: str = "default",
+        perception_payload: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Run the sole prompted path: perception → attention → conversation → Notus → emotion → reasoning → language → output."""
         if not isinstance(user_input, str) or not user_input.strip():
             return "Please send a message."
 
         # Text perception first when registered: normalize + concepts before chat.
-        perception_payload: Dict[str, Any] = {}
-        with self.lobe_handlers_lock:
-            has_perception = "perception" in self.lobe_handlers
-        if has_perception:
-            perception = self.send_and_wait(
-                "perception",
-                "perceive_text",
-                {"text": user_input, "user_id": user_id},
-            )
-            if perception.get("status") != "success":
-                return "I'm having trouble perceiving that right now."
-            perception_payload = self._content(perception)
-            normalized = (
-                perception_payload.get("text")
-                or perception_payload.get("normalized_text")
-                or user_input
-            )
-            if isinstance(normalized, str) and normalized.strip():
-                user_input = normalized.strip()
+        # Callers that already ran Perception (audio/vision) may pass the envelope.
+        if perception_payload is None:
+            perception_payload = {}
+            with self.lobe_handlers_lock:
+                has_perception = "perception" in self.lobe_handlers
+            if has_perception:
+                perception = self.send_and_wait(
+                    "perception",
+                    "perceive_text",
+                    {"text": user_input, "user_id": user_id},
+                )
+                if perception.get("status") != "success":
+                    return "I'm having trouble perceiving that right now."
+                perception_payload = self._content(perception)
+                normalized = (
+                    perception_payload.get("text")
+                    or perception_payload.get("normalized_text")
+                    or user_input
+                )
+                if isinstance(normalized, str) and normalized.strip():
+                    user_input = normalized.strip()
+        else:
+            # Precomputed envelope from audio/vision — do not re-run text perceive.
+            perception_payload = dict(perception_payload)
 
         # Attention: score competing signals, decay stale focus, rank priority.
         attention_payload: Dict[str, Any] = self._attend_live_signals(

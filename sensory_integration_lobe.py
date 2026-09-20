@@ -3,6 +3,7 @@ SensoryIntegrationLobe — thin fuse of normalized signals into perception.
 
 Optional helper: normalize raw inputs and hand them to PerceptionLobe's
 unified shape via thalamus (sensory_data). Not a socket theater loop.
+Supports text strings and modality-tagged dicts (audio/vision file paths).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ class SensoryIntegrationLobe:
         self.normalized_signals: List[Any] = []
 
     def integrate_inputs(self, inputs):
-        """Normalize inputs and optionally route strings into perception."""
+        """Normalize inputs and optionally route into perception."""
         self.sensory_buffer.extend(inputs)
         self.normalized_signals = self._normalize(inputs)
         if self.thalamus:
@@ -42,6 +43,8 @@ class SensoryIntegrationLobe:
                 out = dict(item)
                 if isinstance(out.get("text"), str):
                     out["text"] = out["text"].strip()
+                if "modality" not in out and out.get("type"):
+                    out["modality"] = out["type"]
                 normalized.append(out)
             else:
                 normalized.append(item)

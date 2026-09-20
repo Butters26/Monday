@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """Perception Lobe — senses → concepts/entities/novelty → thalamus.
 
-Modalities:
+Modalities (design):
   - text: always online (normalize + extract concepts/entities)
-  - audio: real one-shot STT when speech_recognition + microphone open succeed
-  - vision: real one-frame features when opencv + camera open succeed
+  - hearing/audio: real acoustic (+ optional STT) from mic OR audio file/bytes
+  - vision: real image features from camera OR image file/bytes
 
-No autonomous hearing/vision theater loops. Never prints fake
-"microphone initialized" / "webcam active" unless the device open
-actually succeeded.
+Hardware mic/webcam are probed honestly and never claimed live unless
+device open succeeds. File/buffer paths are first-class sensory intake
+so the lobe still perceives when hardware is absent.
 """
 
 from __future__ import annotations
 
+import io
 import os
 import re
+import tempfile
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple
+import wave
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+import numpy as np
 
 from thalamus import get_thalamus
 
@@ -33,9 +39,13 @@ _FAKE_SUCCESS_PHRASES = (
     "autonomous vision active",
 )
 
+PathLike = Union[str, Path]
+AudioSource = Union[PathLike, bytes, bytearray, memoryview]
+ImageSource = Union[PathLike, bytes, bytearray, memoryview]
+
 
 class PerceptionLobe:
-    """Multi-modal perception with honest capability probing."""
+    """Multi-modal perception with honest capability probing + file intake."""
 
     TEXT_ENABLED = True
 
@@ -45,6 +55,7 @@ class PerceptionLobe:
         self.seen_concepts: Set[str] = set()
         self.seen_entities: Set[str] = set()
 
+        # Hardware live flags (mic / camera) — never set without real open.
         self.stt_available = False
         self.vision_available = False
         self.stt_engine = None
@@ -52,75 +63,111 @@ class PerceptionLobe:
         self._vision_reason = "not probed"
         self._sr_module = None
         self._cv2 = None
+        self._pil = None
 
+        # File/buffer processing flags (independent of hardware).
+        self.audio_file_available = False
+        self.vision_file_available = False
+        self._audio_file_reason = "not probed"
+        self._vision_file_reason = "not probed"
+
+        self._probe_processing_libs()
         if probe_devices:
             self._probe_audio()
             self._probe_vision()
 
     # ------------------------------------------------------------------
-    # Honest capability probes (no continuous loops, no fake success)
+    # Honest capability probes
     # ------------------------------------------------------------------
 
-    def _probe_audio(self) -> None:
-        """Mark audio online only if speech_recognition + mic open succeed."""
+    def _probe_processing_libs(self) -> None:
+        """File/buffer processing does not require mic/camera hardware."""
+        # Audio file path: stdlib wave + numpy is enough for real acoustics.
+        self.audio_file_available = True
+        self._audio_file_reason = "wave+numpy acoustic processing online"
         try:
             import speech_recognition as sr  # type: ignore
+            self._sr_module = sr
+            if self.stt_engine is None:
+                self.stt_engine = sr.Recognizer()
         except ImportError:
-            self.stt_available = False
-            self.stt_engine = None
-            self._sr_module = None
-            self._audio_reason = "speech_recognition not installed"
-            return
+            # STT optional; acoustic path still real.
+            pass
 
+        try:
+            import cv2  # type: ignore
+            self._cv2 = cv2
+            self.vision_file_available = True
+            self._vision_file_reason = "opencv image-file processing online"
+        except ImportError:
+            self._cv2 = None
+            try:
+                from PIL import Image  # type: ignore
+                self._pil = Image
+                self.vision_file_available = True
+                self._vision_file_reason = "PIL image-file processing online"
+            except ImportError:
+                self._pil = None
+                self.vision_file_available = False
+                self._vision_file_reason = "opencv/PIL not installed"
+
+    def _probe_audio(self) -> None:
+        """Mark mic online only if speech_recognition + mic open succeed."""
+        if self._sr_module is None:
+            try:
+                import speech_recognition as sr  # type: ignore
+                self._sr_module = sr
+            except ImportError:
+                self.stt_available = False
+                self.stt_engine = None
+                self._audio_reason = "speech_recognition not installed (mic STT offline; file acoustics still online)"
+                return
+
+        sr = self._sr_module
         try:
             recognizer = sr.Recognizer()
             mic = sr.Microphone()
-            # Opening the context is the real device check.
             with mic as source:
                 recognizer.adjust_for_ambient_noise(source, duration=0.1)
-            self._sr_module = sr
             self.stt_engine = recognizer
             self.stt_available = True
             self._audio_reason = "microphone open succeeded"
-            # Honest success only after open really worked.
-            print("Perception: microphone open succeeded — audio online")
+            print("Perception: microphone open succeeded — live mic online")
         except Exception as exc:
             self.stt_available = False
-            self.stt_engine = None
-            self._sr_module = None
+            if self.stt_engine is None:
+                self.stt_engine = sr.Recognizer()
             self._audio_reason = f"microphone unavailable: {exc}"
 
     def _probe_vision(self) -> None:
-        """Mark vision online only if opencv + camera open + frame succeed."""
-        try:
-            import cv2  # type: ignore
-        except ImportError:
-            self.vision_available = False
-            self._cv2 = None
-            self._vision_reason = "opencv not installed"
-            return
+        """Mark camera online only if opencv + camera open + frame succeed."""
+        if self._cv2 is None:
+            try:
+                import cv2  # type: ignore
+                self._cv2 = cv2
+            except ImportError:
+                self.vision_available = False
+                self._vision_reason = "opencv not installed (camera offline; file vision may still work via PIL)"
+                return
 
+        cv2 = self._cv2
         cap = None
         try:
             cap = cv2.VideoCapture(0)
             if not cap.isOpened():
                 self.vision_available = False
-                self._cv2 = None
                 self._vision_reason = "camera index 0 not openable"
                 return
             ret, frame = cap.read()
             if not ret or frame is None:
                 self.vision_available = False
-                self._cv2 = None
                 self._vision_reason = "camera opened but no frame"
                 return
-            self._cv2 = cv2
             self.vision_available = True
             self._vision_reason = "camera open + frame succeeded"
-            print("Perception: camera open succeeded — vision online")
+            print("Perception: camera open succeeded — live vision online")
         except Exception as exc:
             self.vision_available = False
-            self._cv2 = None
             self._vision_reason = f"camera unavailable: {exc}"
         finally:
             if cap is not None:
@@ -200,10 +247,8 @@ class PerceptionLobe:
             },
         )
 
-    # Back-compat alias used by older callers / smoke helpers.
     def process_text_input(self, text: str) -> Dict[str, Any]:
         result = self.perceive_text(text)
-        # Extra keys some live-path consumers still look for.
         result["normalized_text"] = result.get("text", "")
         result["words"] = list(result.get("concepts") or [])
         result["type"] = "text_input"
@@ -397,11 +442,327 @@ class PerceptionLobe:
             pass
 
     # ------------------------------------------------------------------
-    # Audio channel — one-shot listen when STT+mic really available
+    # Audio helpers — real acoustic analysis from WAV samples
     # ------------------------------------------------------------------
 
-    def perceive_audio(self) -> Dict[str, Any]:
-        """One-shot listen → transcript → same text pipeline (modality=audio)."""
+    def _resolve_wav_path(
+        self, path: Optional[PathLike] = None, audio_bytes: Optional[bytes] = None
+    ) -> Tuple[str, Optional[str]]:
+        """Return (wav_path, temp_path_to_cleanup_or_None)."""
+        if path is not None:
+            p = str(path)
+            if not os.path.isfile(p):
+                raise FileNotFoundError(f"audio file not found: {p}")
+            return p, None
+        if audio_bytes is not None:
+            raw = bytes(audio_bytes)
+            fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="monday_perc_aud_")
+            os.close(fd)
+            with open(tmp, "wb") as fh:
+                fh.write(raw)
+            return tmp, tmp
+        raise ValueError("audio path or bytes required")
+
+    def _load_wav_mono(self, wav_path: str) -> Tuple[np.ndarray, int, Dict[str, Any]]:
+        with wave.open(wav_path, "rb") as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            framerate = wf.getframerate()
+            n_frames = wf.getnframes()
+            raw = wf.readframes(n_frames)
+
+        if sampwidth == 1:
+            data = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0
+            data /= 128.0
+        elif sampwidth == 2:
+            data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        elif sampwidth == 4:
+            data = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+        else:
+            raise ValueError(f"unsupported sample width: {sampwidth}")
+
+        if n_channels > 1:
+            data = data.reshape(-1, n_channels).mean(axis=1)
+
+        meta = {
+            "channels": n_channels,
+            "sampwidth": sampwidth,
+            "sample_rate": framerate,
+            "n_frames": n_frames,
+            "duration_sec": float(n_frames) / float(framerate) if framerate else 0.0,
+        }
+        return data, framerate, meta
+
+    def _analyze_acoustics(self, samples: np.ndarray, sample_rate: int) -> Dict[str, Any]:
+        if samples.size == 0:
+            return {
+                "rms": 0.0,
+                "peak": 0.0,
+                "zcr": 0.0,
+                "spectral_centroid_hz": 0.0,
+                "loudness": "silent",
+                "speech_like": False,
+                "energy_variance": 0.0,
+            }
+
+        rms = float(np.sqrt(np.mean(np.square(samples))))
+        peak = float(np.max(np.abs(samples)))
+        # Zero-crossing rate
+        signs = np.sign(samples)
+        signs[signs == 0] = 1
+        zcr = float(np.mean(signs[:-1] != signs[1:])) if samples.size > 1 else 0.0
+
+        # Spectral centroid (magnitude-weighted mean frequency)
+        windowed = samples * np.hanning(samples.size)
+        spectrum = np.abs(np.fft.rfft(windowed))
+        freqs = np.fft.rfftfreq(samples.size, d=1.0 / float(sample_rate or 1))
+        mag_sum = float(np.sum(spectrum)) + 1e-12
+        centroid = float(np.sum(freqs * spectrum) / mag_sum)
+
+        # Frame energy variance — speech tends to vary more than steady tones
+        frame = max(1, int(0.02 * (sample_rate or 16000)))
+        if samples.size >= frame * 2:
+            n = (samples.size // frame) * frame
+            frames = samples[:n].reshape(-1, frame)
+            energies = np.mean(np.square(frames), axis=1)
+            energy_var = float(np.var(energies))
+        else:
+            energy_var = 0.0
+
+        if rms < 0.005:
+            loudness = "silent"
+        elif rms < 0.02:
+            loudness = "quiet"
+        elif rms < 0.15:
+            loudness = "moderate"
+        else:
+            loudness = "loud"
+
+        # Heuristic: mid ZCR + energy variance suggests speech-like signal
+        speech_like = bool(0.02 < zcr < 0.35 and energy_var > 1e-6 and rms > 0.008)
+
+        return {
+            "rms": rms,
+            "peak": peak,
+            "zcr": zcr,
+            "spectral_centroid_hz": centroid,
+            "loudness": loudness,
+            "speech_like": speech_like,
+            "energy_variance": energy_var,
+        }
+
+    def _stt_from_wav(self, wav_path: str) -> Tuple[Optional[str], Optional[str]]:
+        """Optional STT. Returns (transcript_or_None, error_or_None)."""
+        if self._sr_module is None:
+            return None, "speech_recognition not installed"
+        if self.stt_engine is None:
+            self.stt_engine = self._sr_module.Recognizer()
+        sr = self._sr_module
+        try:
+            with sr.AudioFile(wav_path) as source:
+                audio = self.stt_engine.record(source)
+            try:
+                transcript = self.stt_engine.recognize_google(audio)
+                return (transcript if isinstance(transcript, str) else str(transcript)), None
+            except sr.UnknownValueError:
+                return None, "could not understand audio"
+            except sr.RequestError as exc:
+                return None, f"STT service error: {exc}"
+        except Exception as exc:
+            return None, f"STT from file failed: {exc}"
+
+    def _envelope_from_acoustics(
+        self,
+        acoustics: Dict[str, Any],
+        wav_meta: Dict[str, Any],
+        *,
+        transcript: Optional[str] = None,
+        stt_error: Optional[str] = None,
+        intake: str = "file",
+        source_label: str = "audio_file",
+    ) -> Dict[str, Any]:
+        concepts = [
+            f"loudness:{acoustics['loudness']}",
+            f"duration:{wav_meta['duration_sec']:.2f}s",
+            f"sr:{wav_meta['sample_rate']}",
+        ]
+        if acoustics["speech_like"]:
+            concepts.append("speech_like:true")
+        else:
+            concepts.append("speech_like:false")
+        concepts.append(f"centroid:{acoustics['spectral_centroid_hz']:.0f}hz")
+
+        novelty_flags: List[str] = []
+        if acoustics["loudness"] in ("loud", "silent"):
+            novelty_flags.append(f"loudness_extreme:{acoustics['loudness']}")
+        if acoustics["speech_like"]:
+            novelty_flags.append("speech_like_signal")
+
+        entities: List[str] = []
+        text_out: Optional[str] = None
+        confidence = 0.55
+
+        if transcript:
+            base = self.perceive_text(transcript)
+            text_out = base.get("text")
+            # Merge acoustic concepts with linguistic ones.
+            ling_concepts = list(base.get("concepts") or [])
+            concepts = concepts + [c for c in ling_concepts if c not in concepts]
+            entities = list(base.get("entities") or [])
+            novelty_flags = list(dict.fromkeys(
+                list(base.get("novelty_flags") or []) + novelty_flags
+            ))
+            confidence = min(0.9, max(0.7, float(base.get("confidence") or 0.7)))
+            meta_extra = dict(base.get("raw_meta") or {})
+        else:
+            meta_extra = {}
+
+        raw_meta = {
+            **meta_extra,
+            "available": True,
+            "intake": intake,
+            "source": source_label,
+            "acoustics": acoustics,
+            "wav": wav_meta,
+            "transcript": transcript,
+            "stt_error": stt_error,
+            "stt": "recognize_google" if transcript else None,
+            "mic_live": bool(self.stt_available),
+            "timestamp": time.time(),
+        }
+        return self._unified(
+            "audio",
+            text=text_out,
+            concepts=concepts,
+            entities=entities,
+            novelty_flags=novelty_flags,
+            confidence=confidence,
+            raw_meta=raw_meta,
+        )
+
+    # ------------------------------------------------------------------
+    # Audio channel — file/bytes (always when wave works) + optional mic
+    # ------------------------------------------------------------------
+
+    def perceive_audio(
+        self,
+        path: Optional[PathLike] = None,
+        audio_bytes: Optional[bytes] = None,
+        *,
+        use_mic: bool = False,
+        try_stt: bool = True,
+    ) -> Dict[str, Any]:
+        """Perceive hearing input from file/bytes, or live mic when requested.
+
+        File/buffer acoustic analysis is real processing (RMS/ZCR/centroid).
+        Optional STT enriches with transcript when speech_recognition works.
+        Live mic is only used when use_mic=True and hardware probe succeeded.
+        """
+        if path is not None or audio_bytes is not None:
+            return self._perceive_audio_file(
+                path=path, audio_bytes=audio_bytes, try_stt=try_stt
+            )
+
+        if use_mic or (path is None and audio_bytes is None):
+            # Legacy no-arg call = try mic; degrade honestly if unavailable.
+            return self._perceive_audio_mic()
+
+        return self._unified(
+            "audio",
+            confidence=0.0,
+            raw_meta={
+                "available": False,
+                "error": "no audio source provided",
+                "timestamp": time.time(),
+            },
+        )
+
+    def _perceive_audio_file(
+        self,
+        path: Optional[PathLike] = None,
+        audio_bytes: Optional[bytes] = None,
+        try_stt: bool = True,
+    ) -> Dict[str, Any]:
+        if not self.audio_file_available:
+            return self._unified(
+                "audio",
+                confidence=0.0,
+                raw_meta={
+                    "available": False,
+                    "reason": self._audio_file_reason,
+                    "error": "audio file perception disabled",
+                    "timestamp": time.time(),
+                },
+            )
+
+        tmp: Optional[str] = None
+        try:
+            wav_path, tmp = self._resolve_wav_path(path=path, audio_bytes=audio_bytes)
+            # If non-wav, try ffmpeg → wav via tempfile
+            if not wav_path.lower().endswith(".wav"):
+                wav_path, tmp2 = self._ffmpeg_to_wav(wav_path)
+                if tmp:
+                    try:
+                        os.unlink(tmp)
+                    except Exception:
+                        pass
+                tmp = tmp2
+
+            samples, sr, wav_meta = self._load_wav_mono(wav_path)
+            acoustics = self._analyze_acoustics(samples, sr)
+            transcript = None
+            stt_error = None
+            if try_stt:
+                transcript, stt_error = self._stt_from_wav(wav_path)
+            return self._envelope_from_acoustics(
+                acoustics,
+                wav_meta,
+                transcript=transcript,
+                stt_error=stt_error,
+                intake="file",
+                source_label="audio_file",
+            )
+        except Exception as exc:
+            return self._unified(
+                "audio",
+                confidence=0.0,
+                raw_meta={
+                    "available": True,
+                    "intake": "file",
+                    "error": f"audio file processing failed: {exc}",
+                    "timestamp": time.time(),
+                },
+            )
+        finally:
+            if tmp and os.path.isfile(tmp):
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
+
+    def _ffmpeg_to_wav(self, src_path: str) -> Tuple[str, str]:
+        import subprocess
+        fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="monday_perc_ff_")
+        os.close(fd)
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", src_path,
+                    "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", tmp,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+            return tmp, tmp
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except Exception:
+                pass
+            raise
+
+    def _perceive_audio_mic(self) -> Dict[str, Any]:
         if not self.stt_available or self.stt_engine is None or self._sr_module is None:
             return self._unified(
                 "audio",
@@ -411,8 +772,11 @@ class PerceptionLobe:
                 confidence=0.0,
                 raw_meta={
                     "available": False,
+                    "intake": "mic",
                     "reason": self._audio_reason,
-                    "error": "audio perception disabled — device/libs unavailable",
+                    "error": "live mic perception disabled — device unavailable",
+                    "audio_file_available": bool(self.audio_file_available),
+                    "hint": "pass path= or audio_bytes= for file-based hearing",
                     "timestamp": time.time(),
                 },
             )
@@ -422,53 +786,42 @@ class PerceptionLobe:
             with sr.Microphone() as source:
                 self.stt_engine.adjust_for_ambient_noise(source, duration=0.3)
                 audio = self.stt_engine.listen(source, timeout=5, phrase_time_limit=10)
+            # Persist to temp wav for acoustic analysis + STT
+            fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="monday_perc_mic_")
+            os.close(fd)
             try:
-                transcript = self.stt_engine.recognize_google(audio)
-            except sr.UnknownValueError:
-                return self._unified(
-                    "audio",
-                    concepts=[],
-                    entities=[],
-                    novelty_flags=[],
-                    confidence=0.0,
-                    raw_meta={
-                        "available": True,
-                        "error": "could not understand audio",
-                        "timestamp": time.time(),
-                    },
+                with open(tmp, "wb") as fh:
+                    fh.write(audio.get_wav_data())
+                samples, rate, wav_meta = self._load_wav_mono(tmp)
+                acoustics = self._analyze_acoustics(samples, rate)
+                transcript = None
+                stt_error = None
+                try:
+                    transcript = self.stt_engine.recognize_google(audio)
+                except sr.UnknownValueError:
+                    stt_error = "could not understand audio"
+                except sr.RequestError as exc:
+                    stt_error = f"STT service error: {exc}"
+                return self._envelope_from_acoustics(
+                    acoustics,
+                    wav_meta,
+                    transcript=transcript if isinstance(transcript, str) else None,
+                    stt_error=stt_error,
+                    intake="mic",
+                    source_label="audio_mic",
                 )
-            except sr.RequestError as exc:
-                return self._unified(
-                    "audio",
-                    concepts=[],
-                    entities=[],
-                    novelty_flags=[],
-                    confidence=0.0,
-                    raw_meta={
-                        "available": True,
-                        "error": f"STT service error: {exc}",
-                        "timestamp": time.time(),
-                    },
-                )
-
-            base = self.perceive_text(transcript)
-            base["modality"] = "audio"
-            base["confidence"] = min(0.85, float(base.get("confidence") or 0.0))
-            meta = dict(base.get("raw_meta") or {})
-            meta["source"] = "audio"
-            meta["transcript"] = transcript
-            meta["stt"] = "recognize_google"
-            base["raw_meta"] = meta
-            return base
+            finally:
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
         except sr.WaitTimeoutError:
             return self._unified(
                 "audio",
-                concepts=[],
-                entities=[],
-                novelty_flags=[],
                 confidence=0.0,
                 raw_meta={
                     "available": True,
+                    "intake": "mic",
                     "error": "no speech detected (timeout)",
                     "timestamp": time.time(),
                 },
@@ -476,32 +829,266 @@ class PerceptionLobe:
         except Exception as exc:
             return self._unified(
                 "audio",
-                concepts=[],
-                entities=[],
-                novelty_flags=[],
                 confidence=0.0,
                 raw_meta={
                     "available": self.stt_available,
+                    "intake": "mic",
                     "error": f"audio capture failed: {exc}",
                     "timestamp": time.time(),
                 },
             )
 
-    def process_audio_input(self) -> Optional[Dict[str, Any]]:
-        """Legacy helper — returns unified payload or None if unavailable."""
-        if not self.stt_available:
+    def process_audio_input(
+        self,
+        path: Optional[PathLike] = None,
+        audio_bytes: Optional[bytes] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Legacy helper — file if given, else mic; None on hard failure."""
+        if path is not None or audio_bytes is not None:
+            result = self.perceive_audio(path=path, audio_bytes=audio_bytes)
+        elif not self.stt_available and not self.audio_file_available:
             return None
-        result = self.perceive_audio()
-        if (result.get("raw_meta") or {}).get("error") and not result.get("text"):
+        else:
+            result = self.perceive_audio()
+        if (result.get("raw_meta") or {}).get("error") and not result.get("concepts"):
             return None
         return result
 
     # ------------------------------------------------------------------
-    # Vision channel — one frame when opencv+camera really available
+    # Vision helpers — real features from ndarray BGR/RGB frames
     # ------------------------------------------------------------------
 
-    def perceive_vision(self) -> Dict[str, Any]:
-        """Capture one frame → honest features (faces/brightness). No fake captions."""
+    def _load_image_bgr(
+        self, path: Optional[PathLike] = None, image_bytes: Optional[bytes] = None
+    ) -> Tuple[Any, Dict[str, Any]]:
+        meta: Dict[str, Any] = {"intake": "file"}
+        if path is not None:
+            p = str(path)
+            if not os.path.isfile(p):
+                raise FileNotFoundError(f"image file not found: {p}")
+            meta["path"] = p
+            if self._cv2 is not None:
+                frame = self._cv2.imread(p)
+                if frame is None:
+                    raise ValueError(f"opencv could not decode image: {p}")
+                return frame, meta
+            if self._pil is not None:
+                from PIL import Image
+                img = Image.open(p).convert("RGB")
+                arr = np.array(img)
+                # RGB → BGR for shared feature path
+                return arr[:, :, ::-1].copy(), meta
+            raise RuntimeError("no image decoder available")
+
+        if image_bytes is not None:
+            raw = bytes(image_bytes)
+            meta["nbytes"] = len(raw)
+            if self._cv2 is not None:
+                buf = np.frombuffer(raw, dtype=np.uint8)
+                frame = self._cv2.imdecode(buf, self._cv2.IMREAD_COLOR)
+                if frame is None:
+                    raise ValueError("opencv could not decode image bytes")
+                return frame, meta
+            if self._pil is not None:
+                from PIL import Image
+                img = Image.open(io.BytesIO(raw)).convert("RGB")
+                arr = np.array(img)
+                return arr[:, :, ::-1].copy(), meta
+            raise RuntimeError("no image decoder available")
+
+        raise ValueError("image path or bytes required")
+
+    def _analyze_frame(self, frame: Any) -> Dict[str, Any]:
+        """Real vision features: brightness, faces, edges, color stats."""
+        height, width = frame.shape[:2]
+        if self._cv2 is not None:
+            cv2 = self._cv2
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            brightness = float(gray.mean())
+            # Edge density via Canny
+            edges = cv2.Canny(gray, 80, 160)
+            edge_density = float(np.mean(edges > 0))
+            faces = 0
+            try:
+                cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+                face_cascade = cv2.CascadeClassifier(cascade_path)
+                if not face_cascade.empty():
+                    detected = face_cascade.detectMultiScale(gray, 1.1, 4)
+                    faces = int(len(detected))
+            except Exception:
+                faces = 0
+            # Simple dominant channel
+            means = frame.reshape(-1, 3).mean(axis=0)  # BGR
+            dominant = ("blue", "green", "red")[int(np.argmax(means))]
+            colorfulness = float(np.std(frame.reshape(-1, 3), axis=0).mean())
+        else:
+            # PIL-loaded frame still BGR ndarray here
+            gray = frame.mean(axis=2)
+            brightness = float(gray.mean())
+            # Sobel-ish edge proxy
+            gy, gx = np.gradient(gray.astype(np.float32))
+            edge_density = float(np.mean(np.hypot(gx, gy) > 20.0))
+            faces = 0
+            means = frame.reshape(-1, 3).mean(axis=0)
+            dominant = ("blue", "green", "red")[int(np.argmax(means))]
+            colorfulness = float(np.std(frame.reshape(-1, 3), axis=0).mean())
+
+        if brightness < 50:
+            bright_label = "dim"
+        elif brightness > 200:
+            bright_label = "bright"
+        else:
+            bright_label = "normal"
+
+        if edge_density < 0.02:
+            complexity = "flat"
+        elif edge_density < 0.08:
+            complexity = "moderate"
+        else:
+            complexity = "busy"
+
+        return {
+            "width": int(width),
+            "height": int(height),
+            "brightness": brightness,
+            "brightness_label": bright_label,
+            "faces_detected": faces,
+            "edge_density": edge_density,
+            "complexity": complexity,
+            "dominant_channel": dominant,
+            "colorfulness": colorfulness,
+            "resolution": f"{width}x{height}",
+        }
+
+    def _envelope_from_vision(
+        self,
+        features: Dict[str, Any],
+        *,
+        intake: str = "file",
+        source_label: str = "vision_file",
+        extra_meta: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        concepts = [
+            f"faces:{features['faces_detected']}",
+            f"brightness:{features['brightness_label']}",
+            f"resolution:{features['resolution']}",
+            f"complexity:{features['complexity']}",
+            f"dominant:{features['dominant_channel']}",
+        ]
+        novelty_flags: List[str] = []
+        if features["faces_detected"] > 0:
+            novelty_flags.append(f"faces_detected:{features['faces_detected']}")
+        if features["brightness_label"] != "normal":
+            novelty_flags.append(f"brightness_extreme:{features['brightness_label']}")
+        if features["complexity"] == "busy":
+            novelty_flags.append("visual_complexity:busy")
+
+        # Honest sensory note for downstream text-capable lobes — not a fake caption model.
+        sensory_note = (
+            f"[vision {intake}] {features['resolution']} "
+            f"brightness={features['brightness_label']} "
+            f"faces={features['faces_detected']} "
+            f"complexity={features['complexity']} "
+            f"dominant={features['dominant_channel']}"
+        )
+
+        raw_meta = {
+            "available": True,
+            "intake": intake,
+            "source": source_label,
+            "faces_detected": features["faces_detected"],
+            "brightness": features["brightness"],
+            "brightness_label": features["brightness_label"],
+            "resolution": features["resolution"],
+            "width": features["width"],
+            "height": features["height"],
+            "edge_density": features["edge_density"],
+            "complexity": features["complexity"],
+            "dominant_channel": features["dominant_channel"],
+            "colorfulness": features["colorfulness"],
+            "caption": None,  # no caption model — honest null
+            "camera_live": bool(self.vision_available),
+            "timestamp": time.time(),
+        }
+        if extra_meta:
+            raw_meta.update(extra_meta)
+
+        return self._unified(
+            "vision",
+            text=sensory_note,
+            concepts=concepts,
+            entities=[],
+            novelty_flags=novelty_flags,
+            confidence=0.75 if features["faces_detected"] > 0 else 0.6,
+            raw_meta=raw_meta,
+        )
+
+    # ------------------------------------------------------------------
+    # Vision channel — file/bytes + optional camera
+    # ------------------------------------------------------------------
+
+    def perceive_vision(
+        self,
+        path: Optional[PathLike] = None,
+        image_bytes: Optional[bytes] = None,
+        *,
+        use_camera: bool = False,
+    ) -> Dict[str, Any]:
+        """Perceive vision from image file/bytes, or live camera when requested."""
+        if path is not None or image_bytes is not None:
+            return self._perceive_vision_file(path=path, image_bytes=image_bytes)
+
+        if use_camera or (path is None and image_bytes is None):
+            return self._perceive_vision_camera()
+
+        return self._unified(
+            "vision",
+            confidence=0.0,
+            raw_meta={
+                "available": False,
+                "error": "no vision source provided",
+                "timestamp": time.time(),
+            },
+        )
+
+    def _perceive_vision_file(
+        self,
+        path: Optional[PathLike] = None,
+        image_bytes: Optional[bytes] = None,
+    ) -> Dict[str, Any]:
+        if not self.vision_file_available:
+            return self._unified(
+                "vision",
+                confidence=0.0,
+                raw_meta={
+                    "available": False,
+                    "reason": self._vision_file_reason,
+                    "error": "vision file perception disabled — opencv/PIL unavailable",
+                    "timestamp": time.time(),
+                },
+            )
+        try:
+            frame, load_meta = self._load_image_bgr(path=path, image_bytes=image_bytes)
+            features = self._analyze_frame(frame)
+            return self._envelope_from_vision(
+                features,
+                intake="file",
+                source_label="vision_file",
+                extra_meta=load_meta,
+            )
+        except Exception as exc:
+            return self._unified(
+                "vision",
+                confidence=0.0,
+                raw_meta={
+                    "available": True,
+                    "intake": "file",
+                    "error": f"vision file processing failed: {exc}",
+                    "timestamp": time.time(),
+                },
+            )
+
+    def _perceive_vision_camera(self) -> Dict[str, Any]:
         if not self.vision_available or self._cv2 is None:
             return self._unified(
                 "vision",
@@ -511,8 +1098,11 @@ class PerceptionLobe:
                 confidence=0.0,
                 raw_meta={
                     "available": False,
+                    "intake": "camera",
                     "reason": self._vision_reason,
-                    "error": "vision perception disabled — device/libs unavailable",
+                    "error": "live camera perception disabled — device unavailable",
+                    "vision_file_available": bool(self.vision_file_available),
+                    "hint": "pass path= or image_bytes= for file-based vision",
                     "timestamp": time.time(),
                 },
             )
@@ -526,12 +1116,10 @@ class PerceptionLobe:
                 self._vision_reason = "camera open failed on capture"
                 return self._unified(
                     "vision",
-                    concepts=[],
-                    entities=[],
-                    novelty_flags=[],
                     confidence=0.0,
                     raw_meta={
                         "available": False,
+                        "intake": "camera",
                         "error": "could not open camera",
                         "timestamp": time.time(),
                     },
@@ -540,77 +1128,25 @@ class PerceptionLobe:
             if not ret or frame is None:
                 return self._unified(
                     "vision",
-                    concepts=[],
-                    entities=[],
-                    novelty_flags=[],
                     confidence=0.0,
                     raw_meta={
                         "available": True,
+                        "intake": "camera",
                         "error": "could not read frame",
                         "timestamp": time.time(),
                     },
                 )
-
-            height, width = frame.shape[:2]
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            brightness = float(gray.mean())
-            faces = 0
-            try:
-                cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-                face_cascade = cv2.CascadeClassifier(cascade_path)
-                if not face_cascade.empty():
-                    detected = face_cascade.detectMultiScale(gray, 1.1, 4)
-                    faces = len(detected)
-            except Exception:
-                faces = 0
-
-            if brightness < 50:
-                bright_label = "dim"
-            elif brightness > 200:
-                bright_label = "bright"
-            else:
-                bright_label = "normal"
-
-            concepts = [
-                f"faces:{faces}",
-                f"brightness:{bright_label}",
-                f"resolution:{width}x{height}",
-            ]
-            novelty_flags: List[str] = []
-            if faces > 0:
-                novelty_flags.append(f"faces_detected:{faces}")
-            if bright_label != "normal":
-                novelty_flags.append(f"brightness_extreme:{bright_label}")
-
-            return self._unified(
-                "vision",
-                # No fake caption/description text — features only.
-                concepts=concepts,
-                entities=[],
-                novelty_flags=novelty_flags,
-                confidence=0.7 if faces > 0 else 0.5,
-                raw_meta={
-                    "available": True,
-                    "faces_detected": faces,
-                    "brightness": brightness,
-                    "brightness_label": bright_label,
-                    "resolution": f"{width}x{height}",
-                    "width": width,
-                    "height": height,
-                    "caption": None,  # stub not implemented — honest null
-                    "source": "vision",
-                    "timestamp": time.time(),
-                },
+            features = self._analyze_frame(frame)
+            return self._envelope_from_vision(
+                features, intake="camera", source_label="vision_camera"
             )
         except Exception as exc:
             return self._unified(
                 "vision",
-                concepts=[],
-                entities=[],
-                novelty_flags=[],
                 confidence=0.0,
                 raw_meta={
                     "available": self.vision_available,
+                    "intake": "camera",
                     "error": f"vision capture failed: {exc}",
                     "timestamp": time.time(),
                 },
@@ -622,41 +1158,70 @@ class PerceptionLobe:
                 except Exception:
                     pass
 
-    def process_visual_input(self) -> Optional[Dict[str, Any]]:
-        if not self.vision_available:
+    def process_visual_input(
+        self,
+        path: Optional[PathLike] = None,
+        image_bytes: Optional[bytes] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if path is not None or image_bytes is not None:
+            result = self.perceive_vision(path=path, image_bytes=image_bytes)
+        elif not self.vision_available and not self.vision_file_available:
             return None
-        result = self.perceive_vision()
+        else:
+            result = self.perceive_vision()
         if (result.get("raw_meta") or {}).get("error") and not result.get("concepts"):
             return None
         return result
+
+    # Aliases matching design naming
+    def perceive_audio_file(self, path: PathLike, try_stt: bool = True) -> Dict[str, Any]:
+        return self.perceive_audio(path=path, try_stt=try_stt)
+
+    def perceive_vision_file(self, path: PathLike) -> Dict[str, Any]:
+        return self.perceive_vision(path=path)
+
+    def perceive_image_file(self, path: PathLike) -> Dict[str, Any]:
+        return self.perceive_vision(path=path)
 
     # ------------------------------------------------------------------
     # Status / messaging
     # ------------------------------------------------------------------
 
     def get_status(self) -> Dict[str, Any]:
+        hearing_online = bool(self.stt_available or self.audio_file_available)
+        vision_online = bool(self.vision_available or self.vision_file_available)
         return {
             "text": True,
             "text_input": True,
-            "audio": bool(self.stt_available),
-            "vision": bool(self.vision_available),
+            "audio": hearing_online,
+            "vision": vision_online,
             "stt_available": bool(self.stt_available),
             "vision_available": bool(self.vision_available),
-            "audio_enabled": bool(self.stt_available),
-            "vision_enabled": bool(self.vision_available),
+            "audio_enabled": hearing_online,
+            "vision_enabled": vision_online,
+            "audio_mic": bool(self.stt_available),
+            "audio_file": bool(self.audio_file_available),
+            "vision_camera": bool(self.vision_available),
+            "vision_file": bool(self.vision_file_available),
             "audio_reason": self._audio_reason,
             "vision_reason": self._vision_reason,
+            "audio_file_reason": self._audio_file_reason,
+            "vision_file_reason": self._vision_file_reason,
             "senses_online": {
                 "text": True,
-                "audio": bool(self.stt_available),
-                "vision": bool(self.vision_available),
+                "audio": hearing_online,
+                "vision": vision_online,
+                "audio_mic": bool(self.stt_available),
+                "audio_file": bool(self.audio_file_available),
+                "vision_camera": bool(self.vision_available),
+                "vision_file": bool(self.vision_file_available),
             },
             "claimed_modalities": [
                 m
                 for m, on in (
                     ("text", True),
-                    ("audio", self.stt_available),
-                    ("vision", self.vision_available),
+                    ("audio", hearing_online),
+                    ("vision", vision_online),
                 )
                 if on
             ],
@@ -674,32 +1239,52 @@ class PerceptionLobe:
         if msg_type in ("perceive_text", "process_text", "user_input", "perceive"):
             text = payload.get("text") or payload.get("user_input") or ""
             result = self.perceive_text(text if isinstance(text, str) else "")
-            # Live chat path expects text + entities at top level (unified already has them).
             result["normalized_text"] = result.get("text", "")
             result["words"] = list(result.get("concepts") or [])
             return {"status": "success", "content": result}
 
-        if msg_type in ("perceive_audio", "listen_audio"):
-            if not self.stt_available:
-                return {
-                    "status": "error",
-                    "message": f"Audio perception disabled — {self._audio_reason}",
-                    "content": self.perceive_audio(),
-                }
-            result = self.perceive_audio()
+        if msg_type in ("perceive_audio", "listen_audio", "perceive_audio_file"):
+            path = payload.get("path") or payload.get("file") or payload.get("audio_path")
+            audio_bytes = payload.get("audio_bytes") or payload.get("bytes") or payload.get("data")
+            use_mic = bool(payload.get("use_mic"))
+            try_stt = payload.get("try_stt", True)
+            if isinstance(audio_bytes, str):
+                # allow base64
+                import base64
+                try:
+                    audio_bytes = base64.b64decode(audio_bytes)
+                except Exception:
+                    audio_bytes = audio_bytes.encode("utf-8")
+            if path or audio_bytes is not None:
+                result = self.perceive_audio(
+                    path=path, audio_bytes=audio_bytes, try_stt=bool(try_stt)
+                )
+            elif use_mic:
+                result = self.perceive_audio(use_mic=True)
+            else:
+                # Prefer honest file hint over silent mic failure when no source.
+                result = self.perceive_audio()
             err = (result.get("raw_meta") or {}).get("error")
-            if err and not result.get("text"):
+            if err and not result.get("concepts") and not result.get("text"):
                 return {"status": "error", "message": err, "content": result}
             return {"status": "success", "content": result}
 
-        if msg_type in ("perceive_vision", "capture_visual"):
-            if not self.vision_available:
-                return {
-                    "status": "error",
-                    "message": f"Vision perception disabled — {self._vision_reason}",
-                    "content": self.perceive_vision(),
-                }
-            result = self.perceive_vision()
+        if msg_type in ("perceive_vision", "capture_visual", "perceive_vision_file", "perceive_image"):
+            path = payload.get("path") or payload.get("file") or payload.get("image_path")
+            image_bytes = payload.get("image_bytes") or payload.get("bytes") or payload.get("data")
+            use_camera = bool(payload.get("use_camera"))
+            if isinstance(image_bytes, str):
+                import base64
+                try:
+                    image_bytes = base64.b64decode(image_bytes)
+                except Exception:
+                    image_bytes = image_bytes.encode("utf-8")
+            if path or image_bytes is not None:
+                result = self.perceive_vision(path=path, image_bytes=image_bytes)
+            elif use_camera:
+                result = self.perceive_vision(use_camera=True)
+            else:
+                result = self.perceive_vision()
             err = (result.get("raw_meta") or {}).get("error")
             if err and not result.get("concepts"):
                 return {"status": "error", "message": err, "content": result}
@@ -710,14 +1295,31 @@ class PerceptionLobe:
             return {"status": "success", "content": status, **status}
 
         if msg_type == "sensory_data":
-            # Thin fuse from SensoryIntegrationLobe — normalize strings into text.
             signals = payload.get("signals") or []
             fused: List[Dict[str, Any]] = []
             for sig in signals:
                 if isinstance(sig, str) and sig.strip():
                     fused.append(self.perceive_text(sig))
-                elif isinstance(sig, dict) and sig.get("text"):
-                    fused.append(self.perceive_text(str(sig["text"])))
+                elif isinstance(sig, dict):
+                    modality = str(sig.get("modality") or sig.get("type") or "text").lower()
+                    if modality in ("audio", "hearing") and (sig.get("path") or sig.get("audio_bytes") or sig.get("bytes")):
+                        fused.append(
+                            self.perceive_audio(
+                                path=sig.get("path"),
+                                audio_bytes=sig.get("audio_bytes") or sig.get("bytes"),
+                            )
+                        )
+                    elif modality in ("vision", "visual", "image") and (
+                        sig.get("path") or sig.get("image_bytes") or sig.get("bytes")
+                    ):
+                        fused.append(
+                            self.perceive_vision(
+                                path=sig.get("path"),
+                                image_bytes=sig.get("image_bytes") or sig.get("bytes"),
+                            )
+                        )
+                    elif sig.get("text"):
+                        fused.append(self.perceive_text(str(sig["text"])))
             return {"status": "success", "content": {"fused": fused, "count": len(fused)}}
 
         return {"status": "error", "message": f"Unknown message type: {msg_type}"}
@@ -728,13 +1330,19 @@ class PerceptionLobe:
         print(
             "Perception Lobe: "
             f"text={'online' if senses['text'] else 'off'} "
-            f"audio={'online' if senses['audio'] else 'disabled'} "
-            f"vision={'online' if senses['vision'] else 'disabled'}"
+            f"audio_file={'online' if senses['audio_file'] else 'disabled'} "
+            f"audio_mic={'online' if senses['audio_mic'] else 'disabled'} "
+            f"vision_file={'online' if senses['vision_file'] else 'disabled'} "
+            f"vision_camera={'online' if senses['vision_camera'] else 'disabled'}"
         )
-        if not senses["audio"]:
-            print(f"  audio: {self._audio_reason}")
-        if not senses["vision"]:
-            print(f"  vision: {self._vision_reason}")
+        if not senses["audio_mic"]:
+            print(f"  audio_mic: {self._audio_reason}")
+        if senses["audio_file"]:
+            print(f"  audio_file: {self._audio_file_reason}")
+        if not senses["vision_camera"]:
+            print(f"  vision_camera: {self._vision_reason}")
+        if senses["vision_file"]:
+            print(f"  vision_file: {self._vision_file_reason}")
         result = self.thalamus.register_lobe("perception", self)
         if result.get("status") != "success":
             print("Failed to register with Thalamus")

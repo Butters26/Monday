@@ -1,0 +1,107 @@
+========================================================================
+PHASE 4 — AFTER PROOF (create_core_systems live path)
+========================================================================
+fixtures: wav=/tmp/monday_perception_fixtures/hearing_sample.wav (48044 bytes)
+          png=/tmp/monday_perception_fixtures/vision_sample.png (5783 bytes) via cv2 5.0.0
+
+--- registration ---
+registered lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'output', 'perception', 'reasoning', 'sensory_integration']
+'perception' in handlers: True
+'sensory_integration' in handlers: True
+get_status: {
+  "text": true,
+  "text_input": true,
+  "audio": true,
+  "vision": true,
+  "stt_available": false,
+  "vision_available": false,
+  "audio_enabled": true,
+  "vision_enabled": true,
+  "audio_mic": false,
+  "audio_file": true,
+  "vision_camera": false,
+  "vision_file": true,
+  "audio_reason": "microphone unavailable: Could not find PyAudio; check installation",
+  "vision_reason": "camera index 0 not openable",
+  "audio_file_reason": "wave+numpy acoustic processing online",
+  "vision_file_reason": "opencv image-file processing online",
+  "senses_online": {
+    "text": true,
+    "audio": true,
+    "vision": true,
+    "audio_mic": false,
+    "audio_file": true,
+    "vision_camera": false,
+    "vision_file": true
+  },
+  "claimed_modalities": [
+    "text",
+    "audio",
+    "vision"
+  ]
+}
+
+--- honesty: no fake mic/webcam success ---
+audio_mic=False reason=microphone unavailable: Could not find PyAudio; check installation
+vision_camera=False reason=camera index 0 not openable
+audio_file=True vision_file=True
+  fake phrase 'microphone initialized' in status: False
+  fake phrase 'webcam initialized' in status: False
+  fake phrase 'webcam active' in status: False
+  fake phrase 'autonomous hearing active' in status: False
+  fake phrase 'autonomous vision active' in status: False
+
+--- TEXT intake ---
+perceive_text modality=text concepts=['hello', 'monday', 'what', 'is', 'perception'] entities=['Monday', 'Perception'] confidence=1.0
+thalamus perceive_text status=success
+  modality=text text='Matthew is testing Perception.' concepts=['matthew', 'is', 'testing', 'perception']
+
+--- HEARING / AUDIO file path (real acoustic processing) ---
+perceive_audio(file) modality=audio confidence=0.55
+  concepts=['loudness:moderate', 'duration:1.50s', 'sr:16000', 'speech_like:true', 'centroid:416hz']
+  novelty_flags=['speech_like_signal']
+  intake=file source=audio_file mic_live=False
+  acoustics={'rms': 0.11290252953767776, 'peak': 0.33343505859375, 'zcr': 0.04908537855743989, 'spectral_centroid_hz': 416.10280788971846, 'loudness': 'moderate', 'speech_like': True, 'energy_variance': 0.00016979436622932553}
+  wav={'channels': 1, 'sampwidth': 2, 'sample_rate': 16000, 'n_frames': 24000, 'duration_sec': 1.5}
+  transcript=None stt_error='could not understand audio'
+  error=None
+thalamus perceive_audio(file) status=success
+  concepts=['loudness:moderate', 'duration:1.50s', 'sr:16000', 'speech_like:true', 'centroid:416hz'] confidence=0.55
+perceive_audio(use_mic=True) available=False error='live mic perception disabled — device unavailable'
+
+--- VISION / IMAGE file path (real feature extraction) ---
+perceive_vision(file) modality=vision confidence=0.6
+  concepts=['faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:red']
+  novelty_flags=[]
+  text='[vision file] 320x240 brightness=normal faces=0 complexity=flat dominant=red'
+  intake=file camera_live=False caption=None
+  brightness=118.834921875 faces=0 complexity=flat edge_density=0.01546875
+  error=None
+thalamus perceive_vision(file) status=success
+  concepts=['faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:red'] confidence=0.6
+perceive_vision(use_camera=True) available=False error='live camera perception disabled — device unavailable'
+
+--- thalamus.process_sensory_input (envelope only) ---
+sensory audio: type=dict modality=audio
+  concepts=['loudness:moderate', 'duration:1.50s', 'sr:16000', 'speech_like:true', 'centroid:416hz']
+  error=None
+sensory vision: type=dict modality=vision
+  concepts=['faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:red']
+  text='[vision file] 320x240 brightness=normal faces=0 complexity=flat dominant=red'
+
+--- BEFORE vs AFTER comparison ---
+BEFORE audio: disabled (no file API; mic/libs gated)
+AFTER  audio: file path processes real WAV → acoustics concepts + optional STT
+BEFORE vision: disabled (no file API; camera/libs gated)
+AFTER  vision: file path processes real PNG → brightness/faces/edges/complexity
+BEFORE claimed_modalities: text only
+AFTER  claimed_modalities: ['text', 'audio', 'vision']
+BEFORE file APIs: absent
+AFTER  file APIs: perceive_audio(path=)/perceive_vision(path=) + thalamus process_sensory_input
+
+REMAINING GAPS vs full design:
+  - Live mic STT: unavailable on this box (no /dev/snd) — honest
+  - Live webcam: unavailable on this box (no /dev/video*) — honest
+  - STT transcript from file depends on Google STT network; acoustics always real
+  - No caption/VLM model (caption=null by design honesty)
+  - File-based hearing+vision processing: REQUIRED and now present

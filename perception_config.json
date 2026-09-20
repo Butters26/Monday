@@ -1,7 +1,7 @@
 {
   "perception": {
     "socket_path": null,
-    "notes": "Live path: PerceptionLobe senses (text required; audio/vision when device open succeeds). Unified thalamus shape. No autonomous theater loops.",
+    "notes": "Live path: PerceptionLobe senses (text required; audio/vision via file/buffer with real processing, or live device when open succeeds). Unified thalamus shape. No autonomous theater loops.",
 
     "input_types": {
       "text": {
@@ -9,16 +9,19 @@
         "default": true
       },
       "audio": {
-        "enabled": "when_available",
-        "require_speech_recognition": true,
-        "require_microphone_open": true,
+        "enabled": true,
+        "file_buffer": true,
+        "live_microphone": "when_available",
+        "require_speech_recognition_for_stt": true,
+        "acoustic_features_without_stt": true,
         "timeout_seconds": 5,
         "phrase_time_limit_seconds": 10
       },
       "visual": {
-        "enabled": "when_available",
-        "require_opencv": true,
-        "require_camera_open": true,
+        "enabled": true,
+        "file_buffer": true,
+        "live_camera": "when_available",
+        "require_opencv_or_pil": true,
         "camera_index": 0
       }
     },
@@ -36,7 +39,9 @@
     "message_types": [
       "perceive_text",
       "perceive_audio",
+      "perceive_audio_file",
       "perceive_vision",
+      "perceive_vision_file",
       "get_status"
     ],
 

@@ -1,0 +1,92 @@
+========================================================================
+PHASE 1 — PERCEPTION DESIGN JOB (from code/comments/architecture)
+========================================================================
+
+Modalities claimed (perception.py docstring + perception_config.json):
+  - text: always online — normalize + extract concepts/entities/novelty
+  - audio/hearing: STT when speech_recognition + microphone open succeed
+  - vision: one-frame features when opencv + camera open succeed
+
+Input contracts:
+  - text: str via perceive_text / process_message(perceive_text|user_input)
+  - audio: NO file/bytes API — only live mic via perceive_audio()
+  - vision: NO file/bytes API — only camera index 0 via perceive_vision()
+  - unified output: modality, text?, concepts, entities, novelty_flags,
+    confidence, raw_meta → thalamus / attention / conversation
+
+Outputs to Thalamus / other lobes:
+  - process_user_input calls perception.perceive_text BEFORE conversation
+  - perception envelope fed to AttentionLobe competing signals
+  - novelty_signal to novelty lobe when novel entities/concepts
+  - conversation folds perception entities/concepts into understanding
+
+Live in create_core_systems / run_abin:
+  - PerceptionLobe registered as 'perception' — YES
+  - SensoryIntegrationLobe — NOT in create_core_systems (orphaned;
+    only used in integration_test.py)
+  - voice_lobe / voice_analyzer — synthesis/analysis tools, NOT wired
+    into Perception intake path
+
+Fake/stub vs real:
+  - text: REAL processing
+  - audio/vision: honest probes — disabled when device/libs missing;
+    NO file-based processing path exists (so hearing/vision fail closed
+    on headless boxes even when WAV/PNG files are available)
+  - earlier work removed fake 'webcam started' theater — honesty, not pass
+
+DESIGN JOB (Matthew terms) — done means:
+  Perception is a full sensory-intake lobe: text + hearing + vision each
+  accept real sensory input (live device OR file/buffer), process it into
+  a unified concepts/entities/salience envelope, and feed thalamus before
+  conversation — with honest degradation (no fake mic/webcam success).
+
+========================================================================
+PHASE 2 — BEFORE BASELINE (create_core_systems live path)
+========================================================================
+
+--- registration ---
+registered lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'output', 'perception', 'reasoning']
+'perception' in handlers: True
+type: PerceptionLobe
+get_status: {
+  "text": true,
+  "text_input": true,
+  "audio": false,
+  "vision": false,
+  "stt_available": false,
+  "vision_available": false,
+  "audio_enabled": false,
+  "vision_enabled": false,
+  "audio_reason": "speech_recognition not installed",
+  "vision_reason": "opencv not installed",
+  "senses_online": {
+    "text": true,
+    "audio": false,
+    "vision": false
+  },
+  "claimed_modalities": [
+    "text"
+  ]
+}
+
+--- TEXT intake (perceive_text + thalamus process_user_input path) ---
+perceive_text modality=text concepts=['hello', 'monday', 'what', 'is', 'perception'] entities=['Monday', 'Perception'] confidence=1.0
+thalamus perceive_text status=success
+  modality=text text='Matthew is testing Perception.' concepts=['matthew', 'is', 'testing', 'perception']
+
+--- HEARING / AUDIO path ---
+perceive_audio: modality=audio confidence=0.0 raw_meta={'available': False, 'reason': 'speech_recognition not installed', 'error': 'audio perception disabled — device/libs unavailable', 'timestamp': 1789866534.59433}
+thalamus perceive_audio status=error message=Audio perception disabled — speech_recognition not installed
+
+--- VISION / IMAGE path ---
+perceive_vision: modality=vision confidence=0.0 raw_meta={'available': False, 'reason': 'opencv not installed', 'error': 'vision perception disabled — device/libs unavailable', 'timestamp': 1789866534.595891}
+thalamus perceive_vision status=error message=Vision perception disabled — opencv not installed
+
+--- file APIs present? ---
+  hasattr(perceive_audio_file): False
+  hasattr(perceive_image_file): False
+  hasattr(perceive_vision_file): False
+  hasattr(process_audio_bytes): False
+  hasattr(process_image_bytes): False
+  perceive_audio signature: () -> 'Dict[str, Any]'
+  perceive_vision signature: () -> 'Dict[str, Any]'

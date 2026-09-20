@@ -2,7 +2,7 @@
 """Start Monday's prompted core plus light autonomous inner-life for own feelings.
 
 Direct-call path (no sockets): prompted lobes including PerceptionLobe
-(text always; audio/vision when devices really open) and AttentionLobe, plus
+(text always; hearing/vision via file or live device when available) and AttentionLobe, plus
 AutonomousThinkingLoop so mood can move from inner thoughts without user text —
 not the full legacy socket stack.
 """
@@ -21,6 +21,7 @@ from language_generation import LanguageGenerator
 from notus_memory_core import ActiveNotusMemorySystem
 from output import OutputLobe
 from perception import PerceptionLobe
+from sensory_integration_lobe import SensoryIntegrationLobe
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -51,6 +52,7 @@ def create_core_systems(
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
         "perception": PerceptionLobe(thalamus=thalamus),
+        "sensory_integration": SensoryIntegrationLobe(thalamus=thalamus),
         "attention": AttentionLobe(thalamus=thalamus),
         "conversation": ConversationSystem(thalamus=thalamus),
         "notus": ActiveNotusMemorySystem(thalamus=thalamus),
@@ -66,6 +68,7 @@ def create_core_systems(
     }
     for name in (
         "perception",
+        "sensory_integration",
         "attention",
         "conversation",
         "notus",
@@ -97,6 +100,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "notus",
         "conversation",
         "attention",
+        "sensory_integration",
         "perception",
     ):
         shutdown = getattr(systems.get(name), "shutdown", None)
