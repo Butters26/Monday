@@ -1,0 +1,5 @@
+Proof images created AFTER BLIP commit 287a343 in working tree.
+Image contents / expected descriptions were NOT added to perception.py.
+A: real photo downloaded: https://images.unsplash.com/photo-1474487548417-781cb71495f3?w=640&q=80
+B: real photo downloaded: https://upload.wikimedia.org/wikipedia/commons/a/a3/Eq_it-na_pizza-margherita_sep2005_sml.jpg
+C: gaussian-blurred low-contrast random noise (ambiguous)

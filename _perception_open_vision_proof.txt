@@ -1,0 +1,269 @@
+========================================================================
+PERCEPTION OPEN VISION PROOF — BLIP generative semantic vision
+========================================================================
+
+--- engines / capability ---
+vision semantic backend: blip (transformers BLIP Salesforce/blip-image-captioning-base (lazy load, CPU; generative caption))
+semantic_vision_available: True
+vision_file: True camera: False
+registered lobes: ['attention', 'conversation', 'perception']
+
+--- candidate / fixture neutralization ---
+_CLIP_CANDIDATES present in source: False
+_CLIP_SUPPLEMENTAL_LABELS present (supplemental classifier only): True
+  old fixture phrase 'a yellow sun over green grass' in source: False
+  old fixture phrase 'a red circle on a blue background' in source: False
+Primary semantic path is generative BLIP (not CLIP candidate selection): True
+
+Proof image sources (created AFTER model-path commit 287a343):
+Proof images created AFTER BLIP commit 287a343 in working tree.
+Image contents / expected descriptions were NOT added to perception.py.
+A: real photo downloaded: https://images.unsplash.com/photo-1474487548417-781cb71495f3?w=640&q=80
+B: real photo downloaded: https://upload.wikimedia.org/wikipedia/commons/a/a3/Eq_it-na_pizza-margherita_sep2005_sml.jpg
+C: gaussian-blurred low-contrast random noise (ambiguous)
+
+========================================================================
+PROOF — VISION A (clear object/scene — train / locomotive)
+========================================================================
+1. image path: /workspace/Monday/_perception_open_vision_fixtures/scene_A_locomotive.jpg
+   size_bytes: 65253
+2. Thalamus modality=vision: status=success modality=vision
+3. low-level features:
+   brightness=normal (104.94631548408488)
+   faces=0 complexity=busy
+   dominant=red resolution=640x377
+   edge_density=0.16059764588859415 colorfulness=56.35794356156807
+4. semantic model output (BLIP generative — not CLIP label pick):
+   backend=blip available=True
+   caption='a train traveling down train tracks next to a stop sign'
+   objects=['train', 'traveling', 'down', 'tracks', 'next', 'stop', 'sign', 'vehicle']
+   scene='a train traveling down train tracks next to a stop sign'
+   confidence(token_mean_prob)=0.5184193079670271
+   error=None
+   clip_supplemental (hints ONLY, never treated as caption)={'labels': ['vehicle'], 'scores': [{'label': 'vehicle', 'score': 0.39117923378944397}, {'label': 'text or sign', 'score': 0.11500877887010574}, {'label': 'sky', 'score': 0.08912380784749985}, {'label': 'ground', 'score': 0.08641867339611053}, {'label': 'animal', 'score': 0.06127089634537697}], 'confidence': 0.39117923378944397}
+5. concepts: ['train', 'traveling', 'down', 'train', 'tracks', 'next', 'to', 'stop', 'sign', 'faces:0', 'brightness:normal', 'resolution:640x377', 'complexity:busy', 'dominant:red']
+   entities: []
+   confidence: 0.7573677231868109
+6. unified vision envelope:
+{'brightness': 'normal',
+ 'caption': 'a train traveling down train tracks next to a stop sign',
+ 'complexity': 'busy',
+ 'concepts': ['train',
+              'traveling',
+              'down',
+              'train',
+              'tracks',
+              'next',
+              'to',
+              'stop',
+              'sign',
+              'faces:0',
+              'brightness:normal',
+              'resolution:640x377',
+              'complexity:busy',
+              'dominant:red'],
+ 'confidence': 0.7573677231868109,
+ 'entities': [],
+ 'faces': 0,
+ 'modality': 'vision',
+ 'novelty_flags': ['novel_concept:train',
+                   'novel_concept:traveling',
+                   'novel_concept:down',
+                   'novel_concept:tracks',
+                   'novel_concept:next',
+                   'novel_concept:stop',
+                   'novel_concept:sign',
+                   'visual_complexity:busy'],
+ 'objects': ['train', 'traveling', 'down', 'tracks', 'next', 'stop', 'sign', 'vehicle'],
+ 'scene': 'a train traveling down train tracks next to a stop sign',
+ 'semantic': {'available': True,
+              'backend': 'blip',
+              'clip_supplemental': {'confidence': 0.39117923378944397,
+                                    'labels': ['vehicle'],
+                                    'scores': [{'label': 'vehicle', 'score': 0.39117923378944397},
+                                               {'label': 'text or sign',
+                                                'score': 0.11500877887010574},
+                                               {'label': 'sky', 'score': 0.08912380784749985},
+                                               {'label': 'ground', 'score': 0.08641867339611053},
+                                               {'label': 'animal', 'score': 0.06127089634537697}]},
+              'confidence': 0.5184193079670271,
+              'error': None,
+              'scores': [{'caption_preview': 'a train traveling down train tracks next to a stop '
+                                             'sign',
+                          'seq_score': -0.7793113589286804,
+                          'token_mean_prob': 0.5184193079670271}]},
+ 'text': 'a train traveling down train tracks next to a stop sign'}
+7. Attention ranks it:
+   focus=user_input focus_text='what do you see?' score=1.4375
+   top ranked: [('user_input', 1.4375, 'user', 'what do you see?'), ('perception_envelope', 1.22, 'perception', 'a train traveling down train tracks next to a stop sign'), ('novelty:novel_concept:traveling', 0.6625, 'perception', 'novel_concept:traveling'), ('novelty:novel_concept:tracks', 0.655, 'perception', 'novel_concept:tracks'), ('novelty:novel_concept:train', 0.6525, 'perception', 'novel_concept:train'), ('novelty:novel_concept:down', 0.65, 'perception', 'novel_concept:down')]
+   perception_envelope present in ranking: True
+8. Conversation receives semantic concepts:
+   perception_modality=vision
+   perception_concepts=['train', 'traveling', 'down', 'train', 'tracks', 'next', 'to', 'stop', 'sign', 'faces:0', 'brightness:normal', 'resolution:640x377', 'complexity:busy', 'dominant:red']
+   entities=[]
+   attention_focus=user_input
+
+========================================================================
+PROOF — VISION B (clear visually different — pizza)
+========================================================================
+1. image path: /workspace/Monday/_perception_open_vision_fixtures/scene_B_pizza.jpg
+   size_bytes: 657369
+2. Thalamus modality=vision: status=success modality=vision
+3. low-level features:
+   brightness=normal (141.0682690938314)
+   faces=0 complexity=busy
+   dominant=red resolution=1024x768
+   edge_density=0.08606592814127605 colorfulness=57.4024427895369
+4. semantic model output (BLIP generative — not CLIP label pick):
+   backend=blip available=True
+   caption='a small pizza on a plate on a table'
+   objects=['small', 'pizza', 'plate', 'table', 'food']
+   scene='a small pizza on a plate on a table'
+   confidence(token_mean_prob)=0.4998744008215991
+   error=None
+   clip_supplemental (hints ONLY, never treated as caption)={'labels': ['food'], 'scores': [{'label': 'food', 'score': 0.9396095871925354}, {'label': 'text or sign', 'score': 0.008607988245785236}, {'label': 'animal', 'score': 0.007334811147302389}, {'label': 'ground', 'score': 0.007063162047415972}, {'label': 'indoor scene', 'score': 0.005630868021398783}], 'confidence': 0.9396095871925354}
+5. concepts: ['small', 'pizza', 'on', 'plate', 'on', 'table', 'faces:0', 'brightness:normal', 'resolution:1024x768', 'complexity:busy', 'dominant:red']
+   entities: []
+   confidence: 0.7499497603286397
+6. unified vision envelope:
+{'brightness': 'normal',
+ 'caption': 'a small pizza on a plate on a table',
+ 'complexity': 'busy',
+ 'concepts': ['small',
+              'pizza',
+              'on',
+              'plate',
+              'on',
+              'table',
+              'faces:0',
+              'brightness:normal',
+              'resolution:1024x768',
+              'complexity:busy',
+              'dominant:red'],
+ 'confidence': 0.7499497603286397,
+ 'entities': [],
+ 'faces': 0,
+ 'modality': 'vision',
+ 'novelty_flags': ['novel_concept:small',
+                   'novel_concept:pizza',
+                   'novel_concept:plate',
+                   'novel_concept:table',
+                   'visual_complexity:busy'],
+ 'objects': ['small', 'pizza', 'plate', 'table', 'food'],
+ 'scene': 'a small pizza on a plate on a table',
+ 'semantic': {'available': True,
+              'backend': 'blip',
+              'clip_supplemental': {'confidence': 0.9396095871925354,
+                                    'labels': ['food'],
+                                    'scores': [{'label': 'food', 'score': 0.9396095871925354},
+                                               {'label': 'text or sign',
+                                                'score': 0.008607988245785236},
+                                               {'label': 'animal', 'score': 0.007334811147302389},
+                                               {'label': 'ground', 'score': 0.007063162047415972},
+                                               {'label': 'indoor scene',
+                                                'score': 0.005630868021398783}]},
+              'confidence': 0.4998744008215991,
+              'error': None,
+              'scores': [{'caption_preview': 'a small pizza on a plate on a table',
+                          'seq_score': -0.866667628288269,
+                          'token_mean_prob': 0.4998744008215991}]},
+ 'text': 'a small pizza on a plate on a table'}
+7. Attention ranks it:
+   focus=user_input focus_text='what do you see?' score=1.3375
+   top ranked: [('user_input', 1.3375, 'user', 'what do you see?'), ('perception_envelope', 1.07, 'perception', 'a small pizza on a plate on a table'), ('novelty:novel_concept:small', 0.6525, 'perception', 'novel_concept:small'), ('novelty:novel_concept:pizza', 0.6525, 'perception', 'novel_concept:pizza'), ('novelty:novel_concept:plate', 0.6525, 'perception', 'novel_concept:plate'), ('novelty:novel_concept:table', 0.6525, 'perception', 'novel_concept:table')]
+   perception_envelope present in ranking: True
+8. Conversation receives semantic concepts:
+   perception_modality=vision
+   perception_concepts=['small', 'pizza', 'on', 'plate', 'on', 'table', 'faces:0', 'brightness:normal', 'resolution:1024x768', 'complexity:busy', 'dominant:red']
+   entities=[]
+   attention_focus=user_input
+
+========================================================================
+PROOF — VISION C (ambiguous / low-confidence noise)
+========================================================================
+1. image path: /workspace/Monday/_perception_open_vision_fixtures/scene_C_ambiguous_noise.png
+   size_bytes: 12788
+2. Thalamus modality=vision: status=success modality=vision
+3. low-level features:
+   brightness=normal (126.613447265625)
+   faces=0 complexity=flat
+   dominant=green resolution=320x320
+   edge_density=0.0 colorfulness=0.6481609746507175
+4. semantic model output (BLIP generative — not CLIP label pick):
+   backend=blip available=True
+   caption=None
+   objects=[]
+   scene=None
+   confidence(token_mean_prob)=0.29159825791915256
+   error='semantic vision low confidence (token_mean_prob=0.292); no caption invented'
+   clip_supplemental (hints ONLY, never treated as caption)={'labels': [], 'scores': [{'label': 'empty surface', 'score': 0.1972017139196396}, {'label': 'sky', 'score': 0.14727191627025604}, {'label': 'text or sign', 'score': 0.12306039780378342}, {'label': 'person', 'score': 0.08231400698423386}, {'label': 'ground', 'score': 0.06001192331314087}], 'confidence': 0.1972017139196396}
+5. concepts: ['faces:0', 'brightness:normal', 'resolution:320x320', 'complexity:flat', 'dominant:green']
+   entities: []
+   confidence: 0.6
+6. unified vision envelope:
+{'brightness': 'normal',
+ 'caption': None,
+ 'complexity': 'flat',
+ 'concepts': ['faces:0',
+              'brightness:normal',
+              'resolution:320x320',
+              'complexity:flat',
+              'dominant:green'],
+ 'confidence': 0.6,
+ 'entities': [],
+ 'faces': 0,
+ 'modality': 'vision',
+ 'novelty_flags': ['semantic_vision_unavailable_or_low_confidence'],
+ 'objects': [],
+ 'scene': None,
+ 'semantic': {'available': True,
+              'backend': 'blip',
+              'clip_supplemental': {'confidence': 0.1972017139196396,
+                                    'labels': [],
+                                    'scores': [{'label': 'empty surface',
+                                                'score': 0.1972017139196396},
+                                               {'label': 'sky', 'score': 0.14727191627025604},
+                                               {'label': 'text or sign',
+                                                'score': 0.12306039780378342},
+                                               {'label': 'person', 'score': 0.08231400698423386},
+                                               {'label': 'ground', 'score': 0.06001192331314087}]},
+              'confidence': 0.29159825791915256,
+              'error': 'semantic vision low confidence (token_mean_prob=0.292); no caption '
+                       'invented',
+              'scores': [{'caption_preview': 'a pair of gold earrings with diamonds on a white '
+                                             'background',
+                          'seq_score': -1.3029428720474243,
+                          'token_mean_prob': 0.29159825791915256}]},
+ 'text': '[vision file] 320x320 brightness=normal faces=0 complexity=flat dominant=green'}
+7. Attention ranks it:
+   focus=user_input focus_text='what do you see?' score=1.0638
+   top ranked: [('user_input', 1.0638, 'user', 'what do you see?'), ('perception_envelope', 0.8542, 'perception', '[vision file] 320x320 brightness=normal faces=0 complexity=flat domina'), ('novelty:semantic_vision_unavailable_or_low_confidence', 0.7175, 'perception', 'semantic_vision_unavailable_or_low_confidence'), ('novelty:novel_concept:small', 0.522, 'perception', 'novel_concept:small'), ('novelty:novel_concept:pizza', 0.522, 'perception', 'novel_concept:pizza'), ('novelty:novel_concept:plate', 0.522, 'perception', 'novel_concept:plate')]
+   perception_envelope present in ranking: True
+8. Conversation receives semantic concepts:
+   perception_modality=vision
+   perception_concepts=['faces:0', 'brightness:normal', 'resolution:320x320', 'complexity:flat', 'dominant:green']
+   entities=[]
+   attention_focus=user_input
+
+========================================================================
+CROSS-CHECKS
+========================================================================
+A caption: 'a train traveling down train tracks next to a stop sign'
+B caption: 'a small pizza on a plate on a table'
+C caption: None
+A vs B captions meaningfully different: True
+A content tokens: ['sign', 'stop', 'tracks', 'train', 'traveling']
+B content tokens: ['pizza', 'plate', 'small', 'table']
+content-token overlap: []
+C caption absent / low-confidence (honest degrade): True
+Fixture phrases absent from perception.py: True
+_CLIP_CANDIDATES removed: True
+Sole primary semantic path is BLIP generative: True
+
+Remaining gaps:
+- Live camera / mic still offline on this box (file intake primary).
+- CLIP supplemental labels are coarse categories, not fine-grained detectors.
+- BLIP-base captions are short; no open-vocab detector (YOLO-World/DETR) wired yet.
+- Ambiguous threshold uses token-mean-prob heuristic; may need tuning on edge cases.
+
+DONE
