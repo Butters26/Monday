@@ -16,3 +16,5 @@ scikit-learn
 joblib
 PyQt5
 Pillow
+openai-whisper  # offline STT for semantic hearing (tiny model)
+# vosk  # optional offline STT fallback (needs model dir)

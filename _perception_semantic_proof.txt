@@ -1,0 +1,410 @@
+========================================================================
+PERCEPTION SEMANTIC PROOF — hearing (STT) + vision (CLIP)
+========================================================================
+
+--- engines / capability ---
+STT backend: whisper (openai-whisper available (model=tiny, loaded on first STT))
+semantic_stt_available: True
+vision semantic backend: clip (transformers CLIP openai/clip-vit-base-patch32 (lazy load, CPU))
+semantic_vision_available: True
+audio_mic: False reason=microphone unavailable: Could not find PyAudio; check installation
+vision_camera: False reason=camera index 0 not openable
+audio_file: True vision_file: True
+registered lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'output', 'perception', 'reasoning', 'sensory_integration']
+
+========================================================================
+PROOF — HEARING (clear spoken WAV)
+========================================================================
+1. WAV path: /workspace/Monday/_perception_semantic_fixtures/speech_clear.wav
+   size_bytes: 112974
+   generation: gTTS→ffmpeg WAV (phrase spoken into audio only; envelope from STT on bytes)
+2. processed successfully: resp.status=success modality=audio
+3. acoustic features present: True
+   acoustics={"rms": 0.09258017688989639, "peak": 0.4805908203125, "zcr": 0.14838698247913973, "spectral_centroid_hz": 1629.9494597824369, "loudness": "moderate", "speech_like": true, "energy_variance": 0.00014146817557048053}
+4. transcript from WAV (STT=whisper): 'Matthew is testing perception in Denver today.'
+5. concepts from transcript: ['matthew', 'is', 'testing', 'perception', 'in', 'denver', 'today']
+   all concepts: ['matthew', 'is', 'testing', 'perception', 'in', 'denver', 'today', 'loudness:moderate', 'duration:3.53s', 'sr:16000', 'speech_like:true', 'centroid:1630hz']
+6. entities from transcript: ['Denver']
+7. unified envelope:
+{'acoustics': {'energy_variance': 0.00014146817557048053,
+               'loudness': 'moderate',
+               'peak': 0.4805908203125,
+               'rms': 0.09258017688989639,
+               'spectral_centroid_hz': 1629.9494597824369,
+               'speech_like': True,
+               'zcr': 0.14838698247913973},
+ 'brightness': None,
+ 'caption': None,
+ 'complexity': None,
+ 'concepts': ['matthew',
+              'is',
+              'testing',
+              'perception',
+              'in',
+              'denver',
+              'today',
+              'loudness:moderate',
+              'duration:3.53s',
+              'sr:16000',
+              'speech_like:true',
+              'centroid:1630hz'],
+ 'confidence': 0.95,
+ 'entities': ['Denver'],
+ 'faces': None,
+ 'modality': 'audio',
+ 'novelty_flags': ['novel_entity:Denver',
+                   'novel_concept:matthew',
+                   'novel_concept:testing',
+                   'novel_concept:perception',
+                   'novel_concept:denver',
+                   'novel_concept:today',
+                   'speech_like_signal'],
+ 'objects': None,
+ 'raw_meta_keys': ['acoustics',
+                   'available',
+                   'emotions',
+                   'intake',
+                   'intent_hints',
+                   'mic_live',
+                   'negations',
+                   'normalized_text',
+                   'object',
+                   'questions',
+                   'raw_text',
+                   'semantic_stt_available',
+                   'sentiment',
+                   'source',
+                   'stt',
+                   'stt_backend_preferred',
+                   'stt_error',
+                   'subject',
+                   'timestamp',
+                   'transcript',
+                   'verb',
+                   'wav',
+                   'words'],
+ 'scene': None,
+ 'semantic': None,
+ 'stt': 'whisper',
+ 'stt_error': None,
+ 'text': 'Matthew is testing perception in Denver today.',
+ 'transcript': 'Matthew is testing perception in Denver today.'}
+8. Thalamus receives audio envelope: status=success modality=audio transcript='Matthew is testing perception in Denver today.'
+9. Attention ranks that perception: focus=user_input focus_text='Matthew is testing perception in Denver today.' focus_score=1.3125
+   top ranked: [('user_input', 1.3125, 'user', 'Matthew is testing perception in Denver today.'), ('perception_envelope', 1.1475, 'perception', 'Matthew is testing perception in Denver today.'), ('novelty:novel_concept:perception', 0.665, 'perception', 'novel_concept:perception'), ('novelty:novel_concept:matthew', 0.6575, 'perception', 'novel_concept:matthew'), ('novelty:novel_concept:testing', 0.6575, 'perception', 'novel_concept:testing')]
+10. Conversation receives perception context:
+   perception_modality=audio
+   perception_concepts=['matthew', 'is', 'testing', 'perception', 'in', 'denver', 'today', 'loudness:moderate', 'duration:3.53s', 'sr:16000', 'speech_like:true', 'centroid:1630hz']
+   entities=['Matthew', 'Denver']
+   attention_focus=user_input
+
+========================================================================
+PROOF — HEARING (nonspeech / unintelligible)
+========================================================================
+1. WAV path: /workspace/Monday/_perception_semantic_fixtures/nonspeech_noise.wav
+2. processed successfully: success modality=audio
+3. acoustic features present: True → {'rms': 0.19044697284698486, 'peak': 0.811004638671875, 'zcr': 0.2171942873214788, 'spectral_centroid_hz': 2674.8348387554106, 'loudness': 'loud', 'speech_like': True, 'energy_variance': 0.0005864467239007354}
+4. transcript: None (honest absent/failed)
+   stt_error: 'whisper: whisper returned empty transcript; google: could not understand audio'
+5. concepts (acoustic-only, no invented semantics): ['loudness:loud', 'duration:2.00s', 'sr:16000', 'speech_like:true', 'centroid:2675hz']
+6. entities (should be empty): []
+7. unified envelope: {'acoustics': {'energy_variance': 0.0005864467239007354,
+               'loudness': 'loud',
+               'peak': 0.811004638671875,
+               'rms': 0.19044697284698486,
+               'spectral_centroid_hz': 2674.8348387554106,
+               'speech_like': True,
+               'zcr': 0.2171942873214788},
+ 'brightness': None,
+ 'caption': None,
+ 'complexity': None,
+ 'concepts': ['loudness:loud', 'duration:2.00s', 'sr:16000', 'speech_like:true', 'centroid:2675hz'],
+ 'confidence': 0.55,
+ 'entities': [],
+ 'faces': None,
+ 'modality': 'audio',
+ 'novelty_flags': ['loudness_extreme:loud', 'speech_like_signal', 'stt_unavailable_or_failed'],
+ 'objects': None,
+ 'raw_meta_keys': ['acoustics',
+                   'available',
+                   'intake',
+                   'mic_live',
+                   'semantic_stt_available',
+                   'source',
+                   'stt',
+                   'stt_backend_preferred',
+                   'stt_error',
+                   'timestamp',
+                   'transcript',
+                   'wav'],
+ 'scene': None,
+ 'semantic': None,
+ 'stt': None,
+ 'stt_error': 'whisper: whisper returned empty transcript; google: could not understand audio',
+ 'text': None,
+ 'transcript': None}
+8. Thalamus: status=success modality=audio
+9. Attention: focus=user_input score=1.12
+10. Conversation perception_concepts=['loudness:loud', 'duration:2.00s', 'sr:16000', 'speech_like:true', 'centroid:2675hz'] entities=[]
+
+========================================================================
+PROOF — VISION A — sun over grass (distinct content)
+========================================================================
+path: /workspace/Monday/_perception_semantic_fixtures/scene_sun_grass.png
+processed: success modality=vision
+low-level: brightness=normal faces=0 complexity=flat res=320x240 dominant=green
+semantic caption: 'a yellow sun over green grass'
+semantic objects: ['a yellow sun over green grass']
+semantic scene: 'a yellow sun over green grass'
+semantic error: None
+semantic scores top: [{'label': 'a yellow sun over green grass', 'score': 0.5947442054748535}, {'label': 'a blue square on an orange background', 'score': 0.1344880312681198}, {'label': 'green grass and blue sky', 'score': 0.07053254544734955}, {'label': 'an ocean with blue water', 'score': 0.05104881897568703}, {'label': 'a green triangle', 'score': 0.022795330733060837}]
+concepts: ['yellow', 'sun', 'over', 'green', 'grass', 'faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:green']
+entities: []
+confidence: 0.7878976821899415
+unified envelope: {'acoustics': None,
+ 'brightness': 'normal',
+ 'caption': 'a yellow sun over green grass',
+ 'complexity': 'flat',
+ 'concepts': ['yellow',
+              'sun',
+              'over',
+              'green',
+              'grass',
+              'faces:0',
+              'brightness:normal',
+              'resolution:320x240',
+              'complexity:flat',
+              'dominant:green'],
+ 'confidence': 0.7878976821899415,
+ 'entities': [],
+ 'faces': 0,
+ 'modality': 'vision',
+ 'novelty_flags': ['novel_concept:yellow',
+                   'novel_concept:over',
+                   'novel_concept:green',
+                   'novel_concept:grass'],
+ 'objects': ['a yellow sun over green grass'],
+ 'raw_meta_keys': ['available',
+                   'brightness',
+                   'brightness_label',
+                   'camera_live',
+                   'caption',
+                   'colorfulness',
+                   'complexity',
+                   'dominant_channel',
+                   'edge_density',
+                   'emotions',
+                   'faces_detected',
+                   'height',
+                   'intake',
+                   'intent_hints',
+                   'negations',
+                   'normalized_text',
+                   'object',
+                   'objects',
+                   'path',
+                   'questions',
+                   'raw_text',
+                   'resolution',
+                   'scene',
+                   'semantic',
+                   'semantic_vision_available',
+                   'sentiment',
+                   'source',
+                   'subject',
+                   'timestamp',
+                   'verb',
+                   'width',
+                   'words'],
+ 'scene': 'a yellow sun over green grass',
+ 'semantic': {'available': True,
+              'backend': 'clip',
+              'confidence': 0.5947442054748535,
+              'error': None,
+              'scores': [{'label': 'a yellow sun over green grass', 'score': 0.5947442054748535},
+                         {'label': 'a blue square on an orange background',
+                          'score': 0.1344880312681198},
+                         {'label': 'green grass and blue sky', 'score': 0.07053254544734955},
+                         {'label': 'an ocean with blue water', 'score': 0.05104881897568703},
+                         {'label': 'a green triangle', 'score': 0.022795330733060837}]},
+ 'stt': None,
+ 'stt_error': None,
+ 'text': 'a yellow sun over green grass',
+ 'transcript': None}
+Thalamus: status=success modality=vision text='a yellow sun over green grass'
+Attention: focus=user_input text='a yellow sun over green grass' score=1.22
+Conversation: modality=vision concepts=['yellow', 'sun', 'over', 'green', 'grass', 'faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:green'] entities=[]
+
+========================================================================
+PROOF — VISION B — red circle on blue (distinct content)
+========================================================================
+path: /workspace/Monday/_perception_semantic_fixtures/scene_red_circle.png
+processed: success modality=vision
+low-level: brightness=normal faces=0 complexity=flat res=320x240 dominant=blue
+semantic caption: 'a red circle on a blue background'
+semantic objects: ['a red circle on a blue background']
+semantic scene: 'a red circle on a blue background'
+semantic error: None
+semantic scores top: [{'label': 'a red circle on a blue background', 'score': 0.9423252940177917}, {'label': 'a blue square on an orange background', 'score': 0.04627501964569092}, {'label': 'a traffic light', 'score': 0.0026151034981012344}, {'label': 'a solid gray empty surface', 'score': 0.002129538217559457}, {'label': 'an ocean with blue water', 'score': 0.001084947376511991}]
+concepts: ['red', 'circle', 'on', 'blue', 'background', 'faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:blue']
+entities: []
+confidence: 0.9269301176071167
+unified envelope: {'acoustics': None,
+ 'brightness': 'normal',
+ 'caption': 'a red circle on a blue background',
+ 'complexity': 'flat',
+ 'concepts': ['red',
+              'circle',
+              'on',
+              'blue',
+              'background',
+              'faces:0',
+              'brightness:normal',
+              'resolution:320x240',
+              'complexity:flat',
+              'dominant:blue'],
+ 'confidence': 0.9269301176071167,
+ 'entities': [],
+ 'faces': 0,
+ 'modality': 'vision',
+ 'novelty_flags': ['novel_concept:circle', 'novel_concept:blue', 'novel_concept:background'],
+ 'objects': ['a red circle on a blue background'],
+ 'raw_meta_keys': ['available',
+                   'brightness',
+                   'brightness_label',
+                   'camera_live',
+                   'caption',
+                   'colorfulness',
+                   'complexity',
+                   'dominant_channel',
+                   'edge_density',
+                   'emotions',
+                   'faces_detected',
+                   'height',
+                   'intake',
+                   'intent_hints',
+                   'negations',
+                   'normalized_text',
+                   'object',
+                   'objects',
+                   'path',
+                   'questions',
+                   'raw_text',
+                   'resolution',
+                   'scene',
+                   'semantic',
+                   'semantic_vision_available',
+                   'sentiment',
+                   'source',
+                   'subject',
+                   'timestamp',
+                   'verb',
+                   'width',
+                   'words'],
+ 'scene': 'a red circle on a blue background',
+ 'semantic': {'available': True,
+              'backend': 'clip',
+              'confidence': 0.9423252940177917,
+              'error': None,
+              'scores': [{'label': 'a red circle on a blue background',
+                          'score': 0.9423252940177917},
+                         {'label': 'a blue square on an orange background',
+                          'score': 0.04627501964569092},
+                         {'label': 'a traffic light', 'score': 0.0026151034981012344},
+                         {'label': 'a solid gray empty surface', 'score': 0.002129538217559457},
+                         {'label': 'an ocean with blue water', 'score': 0.001084947376511991}]},
+ 'stt': None,
+ 'stt_error': None,
+ 'text': 'a red circle on a blue background',
+ 'transcript': None}
+Thalamus: status=success modality=vision text='a red circle on a blue background'
+Attention: focus=user_input text='a red circle on a blue background' score=1.29
+Conversation: modality=vision concepts=['red', 'circle', 'on', 'blue', 'background', 'faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:blue'] entities=[]
+
+========================================================================
+PROOF — VISION FAIL — ambiguous muddy blur (honest degrade)
+========================================================================
+path: /workspace/Monday/_perception_semantic_fixtures/scene_ambiguous_noise.png
+processed: success modality=vision
+low-level: brightness=normal faces=0 complexity=flat res=320x240 dominant=red
+semantic caption: None
+semantic objects: []
+semantic scene: None
+semantic error: 'semantic vision low confidence (top=0.327 margin=0.039); no objects invented'
+semantic scores top: [{'label': 'a solid gray empty surface', 'score': 0.3270401358604431}, {'label': 'random colorful noise', 'score': 0.2876090109348297}, {'label': 'a rainbow gradient', 'score': 0.09447471052408218}, {'label': 'an abstract pattern of dots', 'score': 0.06242087110877037}, {'label': 'a blue square on an orange background', 'score': 0.03040972538292408}]
+concepts: ['faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:red']
+entities: []
+confidence: 0.6
+unified envelope: {'acoustics': None,
+ 'brightness': 'normal',
+ 'caption': None,
+ 'complexity': 'flat',
+ 'concepts': ['faces:0',
+              'brightness:normal',
+              'resolution:320x240',
+              'complexity:flat',
+              'dominant:red'],
+ 'confidence': 0.6,
+ 'entities': [],
+ 'faces': 0,
+ 'modality': 'vision',
+ 'novelty_flags': ['semantic_vision_unavailable_or_low_confidence'],
+ 'objects': [],
+ 'raw_meta_keys': ['available',
+                   'brightness',
+                   'brightness_label',
+                   'camera_live',
+                   'caption',
+                   'colorfulness',
+                   'complexity',
+                   'dominant_channel',
+                   'edge_density',
+                   'faces_detected',
+                   'height',
+                   'intake',
+                   'objects',
+                   'path',
+                   'resolution',
+                   'scene',
+                   'semantic',
+                   'semantic_vision_available',
+                   'source',
+                   'timestamp',
+                   'width'],
+ 'scene': None,
+ 'semantic': {'available': True,
+              'backend': 'clip',
+              'confidence': 0.3270401358604431,
+              'error': 'semantic vision low confidence (top=0.327 margin=0.039); no objects '
+                       'invented',
+              'scores': [{'label': 'a solid gray empty surface', 'score': 0.3270401358604431},
+                         {'label': 'random colorful noise', 'score': 0.2876090109348297},
+                         {'label': 'a rainbow gradient', 'score': 0.09447471052408218},
+                         {'label': 'an abstract pattern of dots', 'score': 0.06242087110877037},
+                         {'label': 'a blue square on an orange background',
+                          'score': 0.03040972538292408}]},
+ 'stt': None,
+ 'stt_error': None,
+ 'text': '[vision file] 320x240 brightness=normal faces=0 complexity=flat dominant=red',
+ 'transcript': None}
+Thalamus: status=success modality=vision text='[vision file] 320x240 brightness=normal faces=0 complexity=flat dominant=red'
+Attention: focus=user_input text='[vision file] 320x240 brightness=normal faces=0 complexity=flat dominant=red' score=1.0248
+Conversation: modality=vision concepts=['faces:0', 'brightness:normal', 'resolution:320x240', 'complexity:flat', 'dominant:red'] entities=[]
+
+========================================================================
+VISION DISTINCTNESS CHECK
+========================================================================
+A semantic concepts: ['grass', 'green', 'over', 'sun', 'yellow']
+B semantic concepts: ['background', 'blue', 'circle', 'on', 'red']
+intersection semantic: []
+different: True
+
+========================================================================
+REMAINING GAPS
+========================================================================
+- Live mic STT: unavailable on this box (no PyAudio/device) — honest
+- Live webcam: unavailable on this box — honest
+- Whisper tiny can mis-hear highly robotic TTS; gTTS→WAV used for proof speech
+- CLIP zero-shot uses a fixed candidate vocabulary (not open-vocab detection)
+- No full BLIP/YOLO open-set captioning; CLIP captions are top matching labels
+- Entity extraction still capitalization-heuristic from text path (reused)

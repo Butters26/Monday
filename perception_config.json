@@ -1,8 +1,7 @@
 {
   "perception": {
     "socket_path": null,
-    "notes": "Live path: PerceptionLobe senses (text required; audio/vision via file/buffer with real processing, or live device when open succeeds). Unified thalamus shape. No autonomous theater loops.",
-
+    "notes": "Live path: PerceptionLobe senses (text required; audio/vision via file/buffer with real acoustics + semantic STT (whisper preferred) and CLIP semantic vision when available, or live device when open succeeds). Unified thalamus shape. No autonomous theater loops.",
     "input_types": {
       "text": {
         "enabled": true,
@@ -15,27 +14,38 @@
         "require_speech_recognition_for_stt": true,
         "acoustic_features_without_stt": true,
         "timeout_seconds": 5,
-        "phrase_time_limit_seconds": 10
+        "phrase_time_limit_seconds": 10,
+        "semantic_stt": true,
+        "stt_backends": [
+          "whisper",
+          "vosk",
+          "google"
+        ],
+        "preferred_stt": "whisper"
       },
       "visual": {
         "enabled": true,
         "file_buffer": true,
         "live_camera": "when_available",
         "require_opencv_or_pil": true,
-        "camera_index": 0
+        "camera_index": 0,
+        "semantic_vision": true,
+        "semantic_backend": "clip",
+        "clip_model": "openai/clip-vit-base-patch32",
+        "low_level_features_without_semantic": true
       }
     },
-
     "unified_output": [
       "modality",
       "text",
+      "caption",
+      "transcript",
       "concepts",
       "entities",
       "novelty_flags",
       "confidence",
       "raw_meta"
     ],
-
     "message_types": [
       "perceive_text",
       "perceive_audio",
@@ -44,14 +54,12 @@
       "perceive_vision_file",
       "get_status"
     ],
-
     "text_processing": {
       "extract_concepts": true,
       "detect_questions": true,
       "detect_emotions": true,
       "min_word_length": 2
     },
-
     "question_words": [
       "what",
       "why",
@@ -61,15 +69,38 @@
       "who",
       "which"
     ],
-
     "emotion_keywords": {
-      "happy": ["happy", "joy", "great", "wonderful", "amazing"],
-      "sad": ["sad", "unhappy", "depressed", "down"],
-      "angry": ["angry", "mad", "furious", "hate"],
-      "excited": ["excited", "thrilled", "amazing"],
-      "worried": ["worried", "anxious", "concerned", "scared"]
+      "happy": [
+        "happy",
+        "joy",
+        "great",
+        "wonderful",
+        "amazing"
+      ],
+      "sad": [
+        "sad",
+        "unhappy",
+        "depressed",
+        "down"
+      ],
+      "angry": [
+        "angry",
+        "mad",
+        "furious",
+        "hate"
+      ],
+      "excited": [
+        "excited",
+        "thrilled",
+        "amazing"
+      ],
+      "worried": [
+        "worried",
+        "anxious",
+        "concerned",
+        "scared"
+      ]
     },
-
     "entity_detection": {
       "enabled": true,
       "detect_capitalized": true,

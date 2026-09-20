@@ -3,8 +3,8 @@
 
 Modalities (design):
   - text: always online (normalize + extract concepts/entities)
-  - hearing/audio: real acoustic (+ optional STT) from mic OR audio file/bytes
-  - vision: real image features from camera OR image file/bytes
+  - hearing/audio: real acoustic + semantic STT (whisper/vosk/google) from mic OR file/bytes
+  - vision: real low-level features + optional CLIP semantic caption/objects from camera OR file/bytes
 
 Hardware mic/webcam are probed honestly and never claimed live unless
 device open succeeds. File/buffer paths are first-class sensory intake
@@ -71,6 +71,20 @@ class PerceptionLobe:
         self._audio_file_reason = "not probed"
         self._vision_file_reason = "not probed"
 
+        # Semantic backends (file STT + visual inference) — independent of mic/camera.
+        self.semantic_stt_available = False
+        self.stt_backend = None  # whisper | vosk | google | None
+        self._stt_backend_reason = "not probed"
+        self._whisper_model = None
+        self._whisper_module = None
+        self._vosk_model = None
+        self.semantic_vision_available = False
+        self.vision_semantic_backend = None  # clip | None
+        self._vision_semantic_reason = "not probed"
+        self._clip_model = None
+        self._clip_processor = None
+        self._clip_torch = None
+
         self._probe_processing_libs()
         if probe_devices:
             self._probe_audio()
@@ -94,6 +108,8 @@ class PerceptionLobe:
             # STT optional; acoustic path still real.
             pass
 
+        self._probe_semantic_stt()
+
         try:
             import cv2  # type: ignore
             self._cv2 = cv2
@@ -110,6 +126,80 @@ class PerceptionLobe:
                 self._pil = None
                 self.vision_file_available = False
                 self._vision_file_reason = "opencv/PIL not installed"
+
+        self._probe_semantic_vision()
+
+    def _probe_semantic_stt(self) -> None:
+        """Prefer offline whisper, then vosk, then speech_recognition google."""
+        # openai-whisper
+        try:
+            import whisper  # type: ignore
+            self._whisper_module = whisper
+            # Defer model load until first use (CPU tiny is ~75MB).
+            self.semantic_stt_available = True
+            self.stt_backend = "whisper"
+            self._stt_backend_reason = "openai-whisper available (model=tiny, loaded on first STT)"
+            return
+        except ImportError:
+            self._whisper_module = None
+
+        # vosk offline
+        try:
+            from vosk import Model as VoskModel  # type: ignore
+            import json as _json  # noqa: F401
+            model_dir = os.environ.get("MONDAY_VOSK_MODEL")
+            candidates = []
+            if model_dir:
+                candidates.append(model_dir)
+            candidates.extend(
+                [
+                    "/workspace/Monday/models/vosk-model-small-en-us-0.15",
+                    str(Path.home() / "vosk-model-small-en-us-0.15"),
+                    "/usr/share/vosk/models/vosk-model-small-en-us-0.15",
+                ]
+            )
+            for c in candidates:
+                if c and os.path.isdir(c):
+                    self._vosk_model = VoskModel(c)
+                    self.semantic_stt_available = True
+                    self.stt_backend = "vosk"
+                    self._stt_backend_reason = f"vosk model online at {c}"
+                    return
+            # vosk installed but no model yet
+            self._stt_backend_reason = "vosk installed but no model directory found"
+        except ImportError:
+            pass
+
+        if self._sr_module is not None:
+            self.semantic_stt_available = True
+            self.stt_backend = "google"
+            self._stt_backend_reason = "speech_recognition recognize_google (network)"
+            return
+
+        self.semantic_stt_available = False
+        self.stt_backend = None
+        self._stt_backend_reason = "no STT backend (whisper/vosk/speech_recognition)"
+
+    def _probe_semantic_vision(self) -> None:
+        """CLIP zero-shot via transformers — lazy-load weights on first use."""
+        try:
+            import torch  # type: ignore
+            from transformers import CLIPModel, CLIPProcessor  # type: ignore
+            self._clip_torch = torch
+            # Keep references so first infer can load weights.
+            self._clip_model_cls = CLIPModel
+            self._clip_processor_cls = CLIPProcessor
+            self.semantic_vision_available = True
+            self.vision_semantic_backend = "clip"
+            self._vision_semantic_reason = (
+                "transformers CLIP openai/clip-vit-base-patch32 (lazy load, CPU)"
+            )
+        except ImportError as exc:
+            self.semantic_vision_available = False
+            self.vision_semantic_backend = None
+            self._clip_model_cls = None
+            self._clip_processor_cls = None
+            self._vision_semantic_reason = f"CLIP unavailable: {exc}"
 
     def _probe_audio(self) -> None:
         """Mark mic online only if speech_recognition + mic open succeed."""
@@ -551,8 +641,60 @@ class PerceptionLobe:
             "energy_variance": energy_var,
         }
 
-    def _stt_from_wav(self, wav_path: str) -> Tuple[Optional[str], Optional[str]]:
-        """Optional STT. Returns (transcript_or_None, error_or_None)."""
+    def _ensure_whisper(self) -> Optional[Any]:
+        if self._whisper_model is not None:
+            return self._whisper_model
+        if self._whisper_module is None:
+            return None
+        try:
+            # tiny = offline, CPU-friendly, real STT on audio bytes
+            self._whisper_model = self._whisper_module.load_model("tiny")
+            return self._whisper_model
+        except Exception:
+            return None
+
+    def _stt_whisper(self, wav_path: str) -> Tuple[Optional[str], Optional[str]]:
+        model = self._ensure_whisper()
+        if model is None:
+            return None, "whisper model load failed"
+        try:
+            result = model.transcribe(wav_path, fp16=False, language="en")
+            text = (result or {}).get("text")
+            if isinstance(text, str):
+                text = text.strip()
+            if text:
+                return text, None
+            return None, "whisper returned empty transcript"
+        except Exception as exc:
+            return None, f"whisper STT failed: {exc}"
+
+    def _stt_vosk(self, wav_path: str) -> Tuple[Optional[str], Optional[str]]:
+        if self._vosk_model is None:
+            return None, "vosk model not loaded"
+        try:
+            from vosk import KaldiRecognizer  # type: ignore
+            import json as _json
+            samples, rate, _meta = self._load_wav_mono(wav_path)
+            # vosk wants 16-bit PCM bytes at model rate (usually 16k)
+            if rate != 16000:
+                # naive resample
+                duration = samples.size / float(rate or 1)
+                new_n = max(1, int(duration * 16000))
+                idx = (np.linspace(0, samples.size - 1, new_n)).astype(np.int64)
+                samples = samples[idx]
+                rate = 16000
+            pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+            rec = KaldiRecognizer(self._vosk_model, rate)
+            rec.AcceptWaveform(pcm)
+            final = _json.loads(rec.FinalResult() or "{}")
+            text = (final.get("text") or "").strip()
+            if text:
+                return text, None
+            return None, "vosk could not understand audio"
+        except Exception as exc:
+            return None, f"vosk STT failed: {exc}"
+
+    def _stt_google(self, wav_path: str) -> Tuple[Optional[str], Optional[str]]:
         if self._sr_module is None:
             return None, "speech_recognition not installed"
         if self.stt_engine is None:
@@ -571,6 +713,39 @@ class PerceptionLobe:
         except Exception as exc:
             return None, f"STT from file failed: {exc}"
 
+    def _stt_from_wav(self, wav_path: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Run real STT on audio bytes. Returns (transcript, error, engine).
+
+        Prefer offline whisper, then vosk, then network google. Acoustics are
+        unaffected when STT fails — caller keeps acoustic-only envelope.
+        """
+        engines: List[Tuple[str, Any]] = []
+        if self.stt_backend == "whisper" or self._whisper_module is not None:
+            engines.append(("whisper", self._stt_whisper))
+        if self.stt_backend == "vosk" or self._vosk_model is not None:
+            engines.append(("vosk", self._stt_vosk))
+        if self._sr_module is not None:
+            engines.append(("google", self._stt_google))
+
+        # Deduplicate while preserving order
+        seen = set()
+        ordered = []
+        for name, fn in engines:
+            if name not in seen:
+                seen.add(name)
+                ordered.append((name, fn))
+
+        if not ordered:
+            return None, "no STT backend available", None
+
+        errors: List[str] = []
+        for name, fn in ordered:
+            transcript, err = fn(wav_path)
+            if transcript:
+                return transcript, None, name
+            errors.append(f"{name}: {err or 'failed'}")
+        return None, "; ".join(errors), None
+
     def _envelope_from_acoustics(
         self,
         acoustics: Dict[str, Any],
@@ -578,19 +753,21 @@ class PerceptionLobe:
         *,
         transcript: Optional[str] = None,
         stt_error: Optional[str] = None,
+        stt_engine: Optional[str] = None,
         intake: str = "file",
         source_label: str = "audio_file",
     ) -> Dict[str, Any]:
-        concepts = [
+        # Acoustic descriptors always present (low-level hearing).
+        acoustic_concepts = [
             f"loudness:{acoustics['loudness']}",
             f"duration:{wav_meta['duration_sec']:.2f}s",
             f"sr:{wav_meta['sample_rate']}",
         ]
         if acoustics["speech_like"]:
-            concepts.append("speech_like:true")
+            acoustic_concepts.append("speech_like:true")
         else:
-            concepts.append("speech_like:false")
-        concepts.append(f"centroid:{acoustics['spectral_centroid_hz']:.0f}hz")
+            acoustic_concepts.append("speech_like:false")
+        acoustic_concepts.append(f"centroid:{acoustics['spectral_centroid_hz']:.0f}hz")
 
         novelty_flags: List[str] = []
         if acoustics["loudness"] in ("loud", "silent"):
@@ -601,21 +778,30 @@ class PerceptionLobe:
         entities: List[str] = []
         text_out: Optional[str] = None
         confidence = 0.55
+        semantic_concepts: List[str] = []
 
         if transcript:
+            # Reuse text semantic extraction — no second NLP system.
             base = self.perceive_text(transcript)
             text_out = base.get("text")
-            # Merge acoustic concepts with linguistic ones.
-            ling_concepts = list(base.get("concepts") or [])
-            concepts = concepts + [c for c in ling_concepts if c not in concepts]
+            semantic_concepts = list(base.get("concepts") or [])
             entities = list(base.get("entities") or [])
             novelty_flags = list(dict.fromkeys(
                 list(base.get("novelty_flags") or []) + novelty_flags
             ))
-            confidence = min(0.9, max(0.7, float(base.get("confidence") or 0.7)))
+            confidence = min(0.95, max(0.75, float(base.get("confidence") or 0.75)))
             meta_extra = dict(base.get("raw_meta") or {})
         else:
             meta_extra = {}
+            if stt_error:
+                novelty_flags.append("stt_unavailable_or_failed")
+
+        # Unified concept list: acoustic + linguistic (linguistic first when present
+        # so downstream Attention/Conversation see what was said).
+        if semantic_concepts:
+            concepts = semantic_concepts + [c for c in acoustic_concepts if c not in semantic_concepts]
+        else:
+            concepts = acoustic_concepts
 
         raw_meta = {
             **meta_extra,
@@ -626,11 +812,13 @@ class PerceptionLobe:
             "wav": wav_meta,
             "transcript": transcript,
             "stt_error": stt_error,
-            "stt": "recognize_google" if transcript else None,
+            "stt": stt_engine if transcript else None,
+            "stt_backend_preferred": self.stt_backend,
+            "semantic_stt_available": bool(self.semantic_stt_available),
             "mic_live": bool(self.stt_available),
             "timestamp": time.time(),
         }
-        return self._unified(
+        out = self._unified(
             "audio",
             text=text_out,
             concepts=concepts,
@@ -639,6 +827,9 @@ class PerceptionLobe:
             confidence=confidence,
             raw_meta=raw_meta,
         )
+        if transcript:
+            out["transcript"] = transcript
+        return out
 
     # ------------------------------------------------------------------
     # Audio channel — file/bytes (always when wave works) + optional mic
@@ -712,13 +903,15 @@ class PerceptionLobe:
             acoustics = self._analyze_acoustics(samples, sr)
             transcript = None
             stt_error = None
+            stt_engine_used = None
             if try_stt:
-                transcript, stt_error = self._stt_from_wav(wav_path)
+                transcript, stt_error, stt_engine_used = self._stt_from_wav(wav_path)
             return self._envelope_from_acoustics(
                 acoustics,
                 wav_meta,
                 transcript=transcript,
                 stt_error=stt_error,
+                stt_engine=stt_engine_used,
                 intake="file",
                 source_label="audio_file",
             )
@@ -807,6 +1000,7 @@ class PerceptionLobe:
                     wav_meta,
                     transcript=transcript if isinstance(transcript, str) else None,
                     stt_error=stt_error,
+                    stt_engine="google" if transcript else None,
                     intake="mic",
                     source_label="audio_mic",
                 )
@@ -960,6 +1154,149 @@ class PerceptionLobe:
             "resolution": f"{width}x{height}",
         }
 
+    # Candidate vocabulary for CLIP zero-shot. Labels are hypotheses the model
+    # scores against the actual image — never returned unless inference agrees.
+    _CLIP_CANDIDATES = (
+        "a yellow sun over green grass",
+        "a red circle on a blue background",
+        "a blue square on an orange background",
+        "a green triangle",
+        "a bright yellow sphere",
+        "green grass and blue sky",
+        "an ocean with blue water",
+        "a forest with many trees",
+        "a mountain landscape",
+        "a city skyline with buildings",
+        "a red car on a road",
+        "a bicycle",
+        "a boat on water",
+        "a house with a roof",
+        "a person standing",
+        "a dog",
+        "a cat",
+        "a bird flying",
+        "an apple fruit",
+        "a banana fruit",
+        "a book",
+        "a chair",
+        "a table",
+        "a computer screen",
+        "a traffic light",
+        "a stop sign",
+        "fire and flames",
+        "snow and ice",
+        "a desert with sand",
+        "night sky with stars",
+        "a blank white wall",
+        "random colorful noise",
+        "a solid gray empty surface",
+        "an abstract pattern of dots",
+        "a checkered black and white pattern",
+        "a rainbow gradient",
+        "a smiley face",
+        "a tree with leaves",
+        "flowers in a garden",
+        "a bridge over a river",
+    )
+
+    def _ensure_clip(self) -> bool:
+        if self._clip_model is not None and self._clip_processor is not None:
+            return True
+        if not self.semantic_vision_available:
+            return False
+        cls_m = getattr(self, "_clip_model_cls", None)
+        cls_p = getattr(self, "_clip_processor_cls", None)
+        if cls_m is None or cls_p is None:
+            return False
+        try:
+            name = "openai/clip-vit-base-patch32"
+            self._clip_processor = cls_p.from_pretrained(name)
+            self._clip_model = cls_m.from_pretrained(name)
+            self._clip_model.eval()
+            return True
+        except Exception as exc:
+            self.semantic_vision_available = False
+            self._vision_semantic_reason = f"CLIP load failed: {exc}"
+            return False
+
+    def _semantic_vision_infer(self, frame: Any) -> Dict[str, Any]:
+        """Real visual semantic inference via CLIP zero-shot.
+
+        Returns caption/objects/scene only from model scores — never from
+        filenames or hardcoded fixture answers. Honest degradation when
+        unavailable or low-confidence.
+        """
+        out: Dict[str, Any] = {
+            "available": False,
+            "backend": self.vision_semantic_backend,
+            "caption": None,
+            "objects": [],
+            "scene": None,
+            "scores": [],
+            "confidence": 0.0,
+            "error": None,
+        }
+        if not self.semantic_vision_available:
+            out["error"] = self._vision_semantic_reason or "semantic vision unavailable"
+            return out
+        if not self._ensure_clip():
+            out["error"] = self._vision_semantic_reason or "CLIP not loaded"
+            return out
+
+        try:
+            from PIL import Image
+            torch = self._clip_torch
+            # frame is BGR ndarray
+            rgb = frame[:, :, ::-1].copy()
+            img = Image.fromarray(rgb.astype(np.uint8))
+            labels = list(self._CLIP_CANDIDATES)
+            inputs = self._clip_processor(
+                text=labels, images=img, return_tensors="pt", padding=True
+            )
+            with torch.no_grad():
+                logits = self._clip_model(**inputs).logits_per_image[0]
+                probs = logits.softmax(dim=0).tolist()
+
+            ranked = sorted(zip(labels, probs), key=lambda x: -x[1])
+            top_label, top_p = ranked[0]
+            # Require a clear winner — otherwise honest low-confidence degrade.
+            second_p = ranked[1][1] if len(ranked) > 1 else 0.0
+            margin = top_p - second_p
+            confident = bool(top_p >= 0.18 and margin >= 0.05)
+
+            out["scores"] = [
+                {"label": lab, "score": float(p)} for lab, p in ranked[:5]
+            ]
+            out["confidence"] = float(top_p)
+            out["available"] = True
+            out["backend"] = "clip"
+
+            if not confident:
+                out["error"] = (
+                    f"semantic vision low confidence "
+                    f"(top={top_p:.3f} margin={margin:.3f}); no objects invented"
+                )
+                out["caption"] = None
+                out["objects"] = []
+                out["scene"] = None
+                return out
+
+            # Accept labels clearly above noise floor relative to top.
+            accepted = [
+                lab for lab, p in ranked
+                if p >= max(0.12, top_p * 0.35) and p >= 0.10
+            ][:4]
+            out["objects"] = list(accepted)
+            out["scene"] = accepted[0] if accepted else top_label
+            if len(accepted) == 1:
+                out["caption"] = accepted[0]
+            else:
+                out["caption"] = ", ".join(accepted[:3])
+            return out
+        except Exception as exc:
+            out["error"] = f"semantic vision inference failed: {exc}"
+            return out
+
     def _envelope_from_vision(
         self,
         features: Dict[str, Any],
@@ -967,8 +1304,9 @@ class PerceptionLobe:
         intake: str = "file",
         source_label: str = "vision_file",
         extra_meta: Optional[Dict[str, Any]] = None,
+        semantic: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        concepts = [
+        low_level = [
             f"faces:{features['faces_detected']}",
             f"brightness:{features['brightness_label']}",
             f"resolution:{features['resolution']}",
@@ -983,16 +1321,50 @@ class PerceptionLobe:
         if features["complexity"] == "busy":
             novelty_flags.append("visual_complexity:busy")
 
-        # Honest sensory note for downstream text-capable lobes — not a fake caption model.
-        sensory_note = (
-            f"[vision {intake}] {features['resolution']} "
-            f"brightness={features['brightness_label']} "
-            f"faces={features['faces_detected']} "
-            f"complexity={features['complexity']} "
-            f"dominant={features['dominant_channel']}"
-        )
+        semantic = semantic or {}
+        caption = semantic.get("caption")
+        objects = list(semantic.get("objects") or [])
+        scene = semantic.get("scene")
+        sem_conf = float(semantic.get("confidence") or 0.0)
+        sem_err = semantic.get("error")
+        sem_ok = bool(caption) and not sem_err
+
+        entities: List[str] = []
+        semantic_concepts: List[str] = []
+        text_out: Optional[str] = None
+        confidence = 0.75 if features["faces_detected"] > 0 else 0.6
+
+        if sem_ok and isinstance(caption, str) and caption.strip():
+            # Reuse text concept/entity extraction on the inferred caption.
+            base = self.perceive_text(caption)
+            semantic_concepts = list(base.get("concepts") or [])
+            entities = list(base.get("entities") or [])
+            novelty_flags = list(dict.fromkeys(
+                list(base.get("novelty_flags") or []) + novelty_flags
+            ))
+            text_out = caption
+            confidence = min(0.95, max(0.7, 0.55 + sem_conf * 0.4))
+            meta_ling = dict(base.get("raw_meta") or {})
+        else:
+            meta_ling = {}
+            # Honest low-level sensory note when no semantic caption.
+            text_out = (
+                f"[vision {intake}] {features['resolution']} "
+                f"brightness={features['brightness_label']} "
+                f"faces={features['faces_detected']} "
+                f"complexity={features['complexity']} "
+                f"dominant={features['dominant_channel']}"
+            )
+            if sem_err:
+                novelty_flags.append("semantic_vision_unavailable_or_low_confidence")
+
+        if semantic_concepts:
+            concepts = semantic_concepts + [c for c in low_level if c not in semantic_concepts]
+        else:
+            concepts = low_level
 
         raw_meta = {
+            **meta_ling,
             "available": True,
             "intake": intake,
             "source": source_label,
@@ -1006,22 +1378,35 @@ class PerceptionLobe:
             "complexity": features["complexity"],
             "dominant_channel": features["dominant_channel"],
             "colorfulness": features["colorfulness"],
-            "caption": None,  # no caption model — honest null
+            "caption": caption,
+            "objects": objects,
+            "scene": scene,
+            "semantic": {
+                "available": bool(semantic.get("available")),
+                "backend": semantic.get("backend"),
+                "confidence": sem_conf,
+                "scores": list(semantic.get("scores") or [])[:5],
+                "error": sem_err,
+            },
+            "semantic_vision_available": bool(self.semantic_vision_available),
             "camera_live": bool(self.vision_available),
             "timestamp": time.time(),
         }
         if extra_meta:
             raw_meta.update(extra_meta)
 
-        return self._unified(
+        out = self._unified(
             "vision",
-            text=sensory_note,
+            text=text_out,
             concepts=concepts,
-            entities=[],
+            entities=entities,
             novelty_flags=novelty_flags,
-            confidence=0.75 if features["faces_detected"] > 0 else 0.6,
+            confidence=confidence,
             raw_meta=raw_meta,
         )
+        if caption:
+            out["caption"] = caption
+        return out
 
     # ------------------------------------------------------------------
     # Vision channel — file/bytes + optional camera
@@ -1070,11 +1455,13 @@ class PerceptionLobe:
         try:
             frame, load_meta = self._load_image_bgr(path=path, image_bytes=image_bytes)
             features = self._analyze_frame(frame)
+            semantic = self._semantic_vision_infer(frame)
             return self._envelope_from_vision(
                 features,
                 intake="file",
                 source_label="vision_file",
                 extra_meta=load_meta,
+                semantic=semantic,
             )
         except Exception as exc:
             return self._unified(
@@ -1137,8 +1524,12 @@ class PerceptionLobe:
                     },
                 )
             features = self._analyze_frame(frame)
+            semantic = self._semantic_vision_infer(frame)
             return self._envelope_from_vision(
-                features, intake="camera", source_label="vision_camera"
+                features,
+                intake="camera",
+                source_label="vision_camera",
+                semantic=semantic,
             )
         except Exception as exc:
             return self._unified(
@@ -1203,6 +1594,12 @@ class PerceptionLobe:
             "audio_file": bool(self.audio_file_available),
             "vision_camera": bool(self.vision_available),
             "vision_file": bool(self.vision_file_available),
+            "semantic_stt_available": bool(self.semantic_stt_available),
+            "stt_backend": self.stt_backend,
+            "stt_backend_reason": self._stt_backend_reason,
+            "semantic_vision_available": bool(self.semantic_vision_available),
+            "vision_semantic_backend": self.vision_semantic_backend,
+            "vision_semantic_reason": self._vision_semantic_reason,
             "audio_reason": self._audio_reason,
             "vision_reason": self._vision_reason,
             "audio_file_reason": self._audio_file_reason,
@@ -1215,6 +1612,8 @@ class PerceptionLobe:
                 "audio_file": bool(self.audio_file_available),
                 "vision_camera": bool(self.vision_available),
                 "vision_file": bool(self.vision_file_available),
+                "semantic_stt": bool(self.semantic_stt_available),
+                "semantic_vision": bool(self.semantic_vision_available),
             },
             "claimed_modalities": [
                 m
@@ -1339,10 +1738,15 @@ class PerceptionLobe:
             print(f"  audio_mic: {self._audio_reason}")
         if senses["audio_file"]:
             print(f"  audio_file: {self._audio_file_reason}")
+        print(f"  semantic_stt: {self.stt_backend or 'none'} — {self._stt_backend_reason}")
         if not senses["vision_camera"]:
             print(f"  vision_camera: {self._vision_reason}")
         if senses["vision_file"]:
             print(f"  vision_file: {self._vision_file_reason}")
+        print(
+            f"  semantic_vision: {self.vision_semantic_backend or 'none'} — "
+            f"{self._vision_semantic_reason}"
+        )
         result = self.thalamus.register_lobe("perception", self)
         if result.get("status") != "success":
             print("Failed to register with Thalamus")
