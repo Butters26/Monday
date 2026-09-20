@@ -101,6 +101,8 @@ class Thalamus:
         self._force_curiosity_follow_up: bool = False
         # Last Output lobe reply envelope (expression + delivery metadata).
         self.last_output_envelope: Optional[Dict[str, Any]] = None
+        # Complete final reply text assembled before Output (asides + curiosity).
+        self._last_pre_output_final_text: Optional[str] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -861,7 +863,7 @@ class Thalamus:
         user_id: str = "default",
         perception_payload: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Run the sole prompted path: perception → attention → conversation → Notus → emotion → reasoning → language → output."""
+        """Run the sole prompted path: perception → attention → conversation → Notus → emotion → reasoning → language → (aside/curiosity) → output → Notus monday speech."""
         if not isinstance(user_input, str) or not user_input.strip():
             return "Please send a message."
 
@@ -987,7 +989,7 @@ class Thalamus:
 
         # Capture speak-worthy inner-life BEFORE this turn's emotion process_input
         # can wash intensity / unresolved context. Her own prior feelings stay eligible
-        # to surface as a second beat after the reply.
+        # to surface as a second beat appended before the Output envelope step.
         pre_turn_intensity = 0.5
         preloaded_aside = None
         try:
@@ -1232,11 +1234,50 @@ class Thalamus:
             return "I'm having trouble finding the words right now."
         response_text = self._content(language).get("sentence", "")
 
+        # Let autonomous inner-life know the user is present (own-feelings pacing).
+        with self.lobe_handlers_lock:
+            has_autonomous = "autonomous" in self.lobe_handlers
+        if has_autonomous:
+            try:
+                self.send_message(
+                    "autonomous",
+                    "user_active",
+                    {"user_id": user_id, "text": user_input},
+                    source="thalamus",
+                )
+            except Exception:
+                pass
+
+        # Build the complete final reply text BEFORE Output so asides and
+        # curiosity follow-ups cannot bypass the Output envelope boundary.
+        # Prefer pre-turn intensity so a mild follow-up does not erase prior feelings.
+        try:
+            post_intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
+        except (TypeError, ValueError):
+            post_intensity = 0.5
+        turn_intensity = max(post_intensity, float(pre_turn_intensity or 0.5))
+        final_text = response_text if isinstance(response_text, str) else ""
+        final_text = self._maybe_attach_speak_worthy_aside(
+            final_text,
+            turn_intensity=turn_intensity,
+            preloaded_aside=preloaded_aside,
+            user_input=user_input,
+        )
+        final_text = self._maybe_attach_curiosity_follow_up(
+            final_text,
+            user_input=user_input,
+            emotional_state=emotional_state,
+            understanding=understanding,
+        )
+        # Proof / diagnostics: text that will enter Output (asides+curiosity included).
+        self._last_pre_output_final_text = final_text
+
+        # Output shapes the complete final reply with current ExpressionState/prosody.
         output = self.send_and_wait(
             "output",
             "generate_output",
             {
-                "text": response_text,
+                "text": final_text,
                 "emotion": emotional_state.get(
                     "current_emotion", emotional_state.get("emotion", "neutral")
                 ),
@@ -1258,7 +1299,7 @@ class Thalamus:
         envelope = output_body.get("envelope") or output.get("envelope")
         if not isinstance(envelope, dict):
             envelope = {
-                "text": output_body.get("text", response_text),
+                "text": output_body.get("text", final_text),
                 "expression": output_body.get("expression")
                 or emotional_state.get("expression")
                 or {},
@@ -1274,40 +1315,9 @@ class Thalamus:
                 "intensity": emotional_state.get("intensity", 0.5),
             }
         self.last_output_envelope = envelope
-        reply = envelope.get("text") or output_body.get("text", response_text)
-        # Let autonomous inner-life know the user is present (own-feelings pacing).
-        with self.lobe_handlers_lock:
-            has_autonomous = "autonomous" in self.lobe_handlers
-        if has_autonomous:
-            try:
-                self.send_message(
-                    "autonomous",
-                    "user_active",
-                    {"user_id": user_id, "text": user_input},
-                    source="thalamus",
-                )
-            except Exception:
-                pass
-        # Rare second beat: speak-worthy inner thought may surface after the reply.
-        # Prefer pre-turn intensity so a mild follow-up does not erase her prior feelings.
-        try:
-            post_intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
-        except (TypeError, ValueError):
-            post_intensity = 0.5
-        turn_intensity = max(post_intensity, float(pre_turn_intensity or 0.5))
-        reply = self._maybe_attach_speak_worthy_aside(
-            reply,
-            turn_intensity=turn_intensity,
-            preloaded_aside=preloaded_aside,
-            user_input=user_input,
-        )
-        reply = self._maybe_attach_curiosity_follow_up(
-            reply,
-            user_input=user_input,
-            emotional_state=emotional_state,
-            understanding=understanding,
-        )
-        # Persist what she actually said — continuous someone, not user-only amnesia.
+        reply = envelope.get("text") or output_body.get("text", final_text)
+
+        # Persist exact envelope text — continuous someone, not user-only amnesia.
         if isinstance(reply, str) and reply.strip():
             try:
                 self.send_and_wait(

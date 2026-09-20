@@ -1,0 +1,88 @@
+=== OUTPUT FINAL-ORDER PROOF (create_core_systems) ===
+time: 2026-09-20 15:52:37 MDT
+
+DESIRED ORDER:
+  Language → aside + curiosity → Output envelope → last_output_envelope
+  → Notus monday speech store → return envelope text
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+output_registered: True
+get_status tts=False voice_enabled=False buffer=None
+
+--- CASE 1: Plain reply (no aside / no curiosity follow-up) ---
+Induced how: Suppressed aside+curiosity via cooldown timestamps; feel_emotion calm@0.35; no speak-worthy seed.
+  pre-Output final text: "There's something beautiful ...and sad about that... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  last_output_envelope['text']: "There's something beautiful ...and sad about that... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  returned reply: "There's something beautiful ...and sad about that... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  Notus Monday speech: "There's something beautiful ...and sad about that... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  Output buffer text: "There's something beautiful ...and sad about that... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  channel=text_buffer markers=['tearful', 'voice_shake', 'withdraw'] expression={'tears': True, 'voice_shake': True, 'withdraw': True}
+has_aside=False has_double_newline=False
+ASSERT five-way equality (plain): True
+
+--- CASE 2: Reply with curiosity follow-up appended ---
+Induced how: Set thalamus._force_curiosity_follow_up=True; cleared curiosity cooldown; blocked aside via _last_spoken_aside_time; seeded unresolved rejection.
+  pre-Output final text: "I'm here to ...help... I get the sense you're feeling neutral. I'm learning to read feelings better.\n\nWhat would help with this rejection - or is there more I should understand before I guess?"
+  last_output_envelope['text']: "I'm here to ...help... I get the sense you're feeling neutral. I'm learning to read feelings better.\n\nWhat would help with this rejection - or is there more I should understand before I guess?"
+  returned reply: "I'm here to ...help... I get the sense you're feeling neutral. I'm learning to read feelings better.\n\nWhat would help with this rejection - or is there more I should understand before I guess?"
+  Notus Monday speech: "I'm here to ...help... I get the sense you're feeling neutral. I'm learning to read feelings better.\n\nWhat would help with this rejection - or is there more I should understand before I guess?"
+  Output buffer text: "I'm here to ...help... I get the sense you're feeling neutral. I'm learning to read feelings better.\n\nWhat would help with this rejection - or is there more I should understand before I guess?"
+  channel=text_buffer markers=['tearful', 'voice_shake', 'withdraw'] expression={'tears': True, 'voice_shake': True, 'withdraw': True}
+has_double_newline=True ends_with_question=True
+ASSERT five-way equality (curiosity): True
+PASS: curiosity follow-up present in final text that went through Output
+
+--- CASE 3: Reply with autonomous aside appended ---
+Induced how: Seeded speak_worthy AutonomousThought on autonomous.thought_queue; seeded emotion._unresolved_appraisals betrayal; cleared speak satiation; temporarily forced aside_passes_relevance_gate allow (proof hook); blocked curiosity via cooldown; feel_emotion sad@0.9.
+  pre-Output final text: "That breaks my ...heart... I'm here for you... I get the sense you're feeling angry. This sounds urgent—I'm here with you right now. I'm learning to read feelings better.\n\nASIDE_MARKER_1789941166: still sitting with that betrayal of trust."
+  last_output_envelope['text']: "That breaks my ...heart... I'm here for you... I get the sense you're feeling angry. This sounds urgent—I'm here with you right now. I'm learning to read feelings better.\n\nASIDE_MARKER_1789941166: still sitting with that betrayal of trust."
+  returned reply: "That breaks my ...heart... I'm here for you... I get the sense you're feeling angry. This sounds urgent—I'm here with you right now. I'm learning to read feelings better.\n\nASIDE_MARKER_1789941166: still sitting with that betrayal of trust."
+  Notus Monday speech: "That breaks my ...heart... I'm here for you... I get the sense you're feeling angry. This sounds urgent—I'm here with you right now. I'm learning to read feelings better.\n\nASIDE_MARKER_1789941166: still sitting with that betrayal of trust."
+  Output buffer text: "That breaks my ...heart... I'm here for you... I get the sense you're feeling angry. This sounds urgent—I'm here with you right now. I'm learning to read feelings better.\n\nASIDE_MARKER_1789941166: still sitting with that betrayal of trust."
+  channel=text_buffer markers=['tearful', 'voice_shake', 'withdraw'] expression={'tears': True, 'voice_shake': True, 'withdraw': True}
+has_aside=True marker_in_reply=True
+ASSERT five-way equality (aside): True
+PASS: autonomous aside present in final text that went through Output
+
+--- CALM vs HIGH-EMOTION delivery markers (live path) ---
+Induced how: proof hook wraps emotion process_input response to inject ExpressionState/prosody (calm vs high) so Output delivery markers can be compared without rewriting Emotion lobe behavior; aside/curiosity suppressed.
+calm markers: ['calm_delivery']
+high markers: ['tearful', 'voice_shake', 'withdraw']
+markers differ (calm vs high): True
+Calm five-way:
+  pre-Output final text: "That breaks my ...heart... I'm here for you... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  last_output_envelope['text']: "That breaks my ...heart... I'm here for you... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  returned reply: "That breaks my ...heart... I'm here for you... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  Notus Monday speech: "That breaks my ...heart... I'm here for you... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  Output buffer text: "That breaks my ...heart... I'm here for you... I get the sense you're feeling neutral. I'm learning to read feelings better."
+  channel=text_buffer markers=['calm_delivery'] expression={'tears': False, 'voice_shake': False, 'withdraw': False}
+ASSERT five-way equality (calm): True
+High five-way:
+  pre-Output final text: "I'm feeling sad ...with you... We'll get through this... I get the sense you're feeling sad. You're not alone. I'm learning to read feelings better."
+  last_output_envelope['text']: "I'm feeling sad ...with you... We'll get through this... I get the sense you're feeling sad. You're not alone. I'm learning to read feelings better."
+  returned reply: "I'm feeling sad ...with you... We'll get through this... I get the sense you're feeling sad. You're not alone. I'm learning to read feelings better."
+  Notus Monday speech: "I'm feeling sad ...with you... We'll get through this... I get the sense you're feeling sad. You're not alone. I'm learning to read feelings better."
+  Output buffer text: "I'm feeling sad ...with you... We'll get through this... I get the sense you're feeling sad. You're not alone. I'm learning to read feelings better."
+  channel=text_buffer markers=['tearful', 'voice_shake', 'withdraw'] expression={'tears': True, 'voice_shake': True, 'withdraw': True}
+ASSERT five-way equality (high): True
+PASS: calm vs high delivery markers differ; text equality still holds
+direct generate_output markers high=['tearful', 'voice_shake', 'withdraw'] calm=['calm_delivery'] differ=True
+
+--- TTS / text_buffer honesty ---
+tts_available: False
+voice_enabled: False
+channel on last live envelope: text_buffer
+buffered: True
+PASS: honest text_buffer channel when TTS unavailable
+
+=== SUMMARY ===
+FAIL_COUNT=0
+RESULT=PASS
+Acceptance:
+  - last_output_envelope['text'] == final returned reply
+  - Notus stores that exact same text
+  - Output text buffer contains that exact same final reply
+  - Autonomous aside and curiosity do NOT bypass Output
+  - Expression/prosody metadata apply to final reply
+  - Calm vs high-emotion delivery markers still differ
+  - Honest text_buffer when TTS unavailable
