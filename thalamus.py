@@ -1140,7 +1140,12 @@ class Thalamus:
         # Own-speech asks: ensure recent monday/assistant/abin lines are in
         # evidence even when query_context AND-gates bury them behind fillers
         # like "thing" / "exact words" / "earlier".
-        if _asks_about_monday_own_speech(user_input):
+        # Prefer Conversation-owned intent; keep helper as fallback.
+        _speech_ask = (
+            (isinstance(understanding, dict) and understanding.get("intent") == "monday_speech_ask")
+            or _asks_about_monday_own_speech(user_input)
+        )
+        if _speech_ask:
             try:
                 recent = self.send_and_wait(
                     "notus",

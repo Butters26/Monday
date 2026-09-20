@@ -1,0 +1,112 @@
+=== CONVERSATION BEFORE BASELINE ===
+time: 2026-09-20 16:45:39 MDT
+user_id: conv-before-80c84f08-7099-4b50-aa4d-ab8eee4eb602
+runtime: /tmp/conv-before-bu6p5aai
+
+DESIGN_FROM_CODE:
+Conversation docstring: dialogue understanding, context memory, intent recognition.
+Live path: thalamus process_user_input → conversation.understand → understanding
+  flows to Reasoning/Language. Ownership: Conversation=intent; Reasoning=grounded
+  meaning; Language=sentence construction; Output=delivery.
+Current intents in conversation._detect_intent: question|request|greeting|statement|goodbye|conversation
+Teaching/monday-speech/attribute helpers live in direct_response (duplicated with Conversation).
+Conversation must NOT write final prose or invent facts.
+
+DONE_MEANS: On the live path Conversation classifies each turn into a clear intent
+(+ slots/entities when designed) that Reasoning/Language consume, without writing
+replies or inventing facts; multi-turn topic state tracked.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+conversation_class: ConversationSystem
+
+--- DIRECT conversation.understand (no live pipeline) ---
+DIRECT[greeting] 'Hello'
+  intent='greeting' conf=0.9 topic=None sentiment='neutral' entities=['Hello']
+  returns_intent_structure_not_prose: True
+DIRECT[fact_teach] 'My name is Matthew'
+  intent='question' conf=0.5 topic=None sentiment='neutral' entities=['My', 'Matthew']
+  returns_intent_structure_not_prose: True
+DIRECT[fact_teach2] 'I live in Boulder'
+  intent='conversation' conf=0.5 topic=None sentiment='neutral' entities=['Boulder']
+  returns_intent_structure_not_prose: True
+DIRECT[fact_teach3] 'My favorite color is teal'
+  intent='conversation' conf=0.5 topic=None sentiment='neutral' entities=['My']
+  returns_intent_structure_not_prose: True
+DIRECT[multi_fact_ask] 'What is my name and where do I live?'
+  intent='question' conf=0.8 topic=None sentiment='neutral' entities=['What']
+  returns_intent_structure_not_prose: True
+DIRECT[missing_fact_ask] "What is my sister's name?"
+  intent='question' conf=0.8 topic=None sentiment='neutral' entities=['What']
+  returns_intent_structure_not_prose: True
+DIRECT[monday_speech_ask] 'What did you say earlier about the codeword?'
+  intent='question' conf=0.8 topic='technology' sentiment='neutral' entities=['What']
+  returns_intent_structure_not_prose: True
+DIRECT[emotional_share] 'I feel heartbroken and alone tonight'
+  intent='statement' conf=0.75 topic='emotions' sentiment='neutral' entities=[]
+  returns_intent_structure_not_prose: True
+DIRECT[topic_shift] "Anyway, let's talk about hiking instead"
+  intent='greeting' conf=0.9 topic=None sentiment='neutral' entities=['Anyway,']
+  returns_intent_structure_not_prose: True
+
+--- LIVE process_user_input (seed then probes) ---
+SEED | 'My name is Matthew' → reply='Got it — your name is Matthew.'
+  conv_intent='question' entities=['My', 'Matthew'] topic=None
+SEED | 'I live in Boulder' → reply='Got it — you live in Boulder.'
+  conv_intent='conversation' entities=['Boulder'] topic=None
+SEED | "My dog's name is Pixel" → reply="I remember your dog's name is Pixel."
+  conv_intent='conversation' entities=['My', 'Pixel'] topic=None
+SEED | 'My favorite color is teal' → reply='Got it — your favorite color is teal.'
+  conv_intent='conversation' entities=['My'] topic=None
+SEED | 'Remember the codeword is NebulaQuartz' → reply='I remember your codeword is NebulaQuartz.\n\nI do not want to invent details - can you tell me more about what you meant by "Remember the codeword is NebulaQuartz"?'
+  conv_intent='conversation' entities=['Remember', 'NebulaQuartz'] topic=technology
+LIVE[greeting] 'Hello'
+  conv_intent='greeting' conf=0.9 topic=None sentiment='neutral'
+  entities=['Hello'] slots=None ask_kind=None
+  reply='Hello! How can I help?'
+  conv_wrote_final_prose: False
+  invent_suspected: False
+LIVE[fact_teach] 'I work as a carpenter'
+  conv_intent='conversation' conf=0.5 topic='work' sentiment='neutral'
+  entities=[] slots=None ask_kind=None
+  reply='Got it — you work as a carpenter.'
+  conv_wrote_final_prose: False
+  invent_suspected: False
+LIVE[multi_fact_ask] 'What is my name and where do I live?'
+  conv_intent='question' conf=0.8 topic=None sentiment='neutral'
+  entities=['What'] slots=None ask_kind=None
+  reply='I remember your name is Matthew. I remember — you live in Boulder.'
+  conv_wrote_final_prose: False
+  invent_suspected: False
+LIVE[missing_fact_ask] "What is my sister's name?"
+  conv_intent='question' conf=0.8 topic=None sentiment='neutral'
+  entities=['What'] slots=None ask_kind=None
+  reply='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  conv_wrote_final_prose: False
+  invent_suspected: False
+LIVE[monday_speech_ask] 'What did you say earlier about the codeword?'
+  conv_intent='question' conf=0.8 topic='technology' sentiment='neutral'
+  entities=['What'] slots=None ask_kind=None
+  reply='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  conv_wrote_final_prose: False
+  invent_suspected: False
+LIVE[emotional_share] 'I feel heartbroken and alone tonight'
+  conv_intent='statement' conf=0.75 topic='emotions' sentiment='neutral'
+  entities=[] slots=None ask_kind=None
+  reply="I'm here to help. I get the sense you're feeling sad. You're not alone."
+  conv_wrote_final_prose: False
+  invent_suspected: False
+LIVE[topic_shift] "Anyway, let's talk about hiking instead"
+  conv_intent='greeting' conf=0.9 topic=None sentiment='neutral'
+  entities=['Anyway,'] slots=None ask_kind=None
+  reply="I'm here to help. I get the sense you're feeling neutral. I'm learning to read feelings better."
+  conv_wrote_final_prose: False
+  invent_suspected: False
+
+--- MIS-INTENT NOTES ---
+fact_teach currently often classified as statement/conversation (not fact_teach)
+multi_fact_ask / missing_fact_ask both just 'question' — no slots for attributes
+monday_speech_ask is 'question' — speech detection lives in direct_response/thalamus
+emotional_share may be statement if 'i feel' matches, else conversation
+topic_shift has no dedicated intent; topic keyword may update current_topic
+
+PHASE=BEFORE
