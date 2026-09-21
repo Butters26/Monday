@@ -286,11 +286,7 @@ class MotorActionLobe:
         """
         q = self._queue_for(user_id)
         if not q:
-            # Also try default legacy queue if a specific user was empty.
-            if self._uid(user_id) != "default" and self._queue_for("default"):
-                q = self._queue_for("default")
-            else:
-                return None
+            return None
 
         # Re-check inhibit at delivery time.
         inhibit = self._check_inhibit("motor_action")
