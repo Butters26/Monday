@@ -1,0 +1,124 @@
+=== ATTENTION BEFORE BASELINE ===
+time: 2026-09-21 06:36:31 MT
+runtime: /tmp/attn-before-96r4flhn
+
+DESIGN_JOB (from attention_lobe.py + thalamus._attend_live_signals CODE):
+AttentionLobe scores salience of competing signals, decays stale scores,
+selects highest-salience focus, and routes that focus to reasoning when
+registered — honest ranked focus for the live path, not print theater.
+Thalamus._build_attention_signals packs user_input + perception_envelope
++ SI attention_signals + entity:* + novelty:* flags + novelty_score + ambient;
+_attend_live_signals evaluates once then route_focus.
+Integrations that inject into Attention now:
+  - Perception/SI (via live evaluate signals)
+  - Novelty (novelty_score / novelty:* competitors)
+  - Executive (executive:current_goal replaceable + steer replace_signals)
+  - Meta-cognition (soft meta:* update_salience nudges)
+DONE_MEANS: Among all those competitors, Attention correctly scores, decays,
+selects focus, honors replace/remove (single executive:current_goal), routes
+honestly, and SI Attention-once is preserved — without faking focus.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+attention_class: AttentionLobe
+decay_rate=0.2 min_salience=0.05
+
+--- A) DIRECT evaluate: competing signals ---
+focus: user_input
+focus_score: 0.9725 focus_source: user
+top8: [('user_input', 0.9725, 'user'), ('executive:current_goal', 0.8635, 'executive_control'), ('novelty_score', 0.78, 'novelty'), ('si:text', 0.71, 'sensory'), ('perception_envelope', 0.6875, 'perception'), ('meta:uncertain_or_empty', 0.235, 'meta_cognition'), ('ambient_noise', 0.2125, 'ambient')]
+salience_keys: ['ambient_noise', 'executive:current_goal', 'meta:uncertain_or_empty', 'novelty_score', 'perception_envelope', 'si:text', 'user_input']
+meta:uncertain_or_empty score=0.235 (sent urgency=0.7, no priority)
+user=0.9725 exec=0.8635 novelty=0.78 ambient=0.2125
+
+--- B) DECAY: repeated evaluate with empty / weak signal ---
+decay1 factor=0.8 dropped=[] remaining=7
+evaluate([]) focus=user_input remaining=7 dropped_this=[]
+scores after empty eval: {'user_input': 0.6224, 'executive:current_goal': 0.5526, 'novelty_score': 0.4992, 'si:text': 0.4544, 'perception_envelope': 0.44, 'meta:uncertain_or_empty': 0.1504}
+further_decay_until_empty iterations=12 drop_events=[(5, ['ambient_noise', 'meta:uncertain_or_empty']), (10, ['perception_envelope', 'si:text']), (11, ['novelty_score', 'executive:current_goal']), (12, ['user_input'])]
+salience_after_full_decay: {}
+current_focus after full decay: None
+
+--- C) replace_signals + executive:current_goal ---
+seeded keys: ['ambient_noise', 'executive:goal:fact_answer', 'executive:goal:teach_ack', 'user_input']
+steer.steered=True reason=salience_updated
+steer.goal_signal_keys=['executive:current_goal']
+steer.focus=executive:current_goal
+attention_exec_keys: ['executive:current_goal']
+current_goal meta: {'id': 'executive:current_goal', 'text': 'executive goal: fact_answer What is my favorite color?', 'source': 'executive_control', 'modality': 'control', 'priority': 0.93, 'novelty_flags': [], 'novelty_score': 0.0, 'emotions': [], 'entities': [], 'concepts': ['executive', 'goal', 'fact_answer'], 'raw': {'id': 'executive:current_goal', 'text': 'executive goal: fact_answer What is my favorite color?', 'source': 'executive_control', 'modality': 'control', 'priority': 0.93, 'concepts': ['executive', 'goal', 'fact_answer']}}
+after open_explore exec_keys=['executive:current_goal'] text=executive goal: open_explore that sounds interesting
+ASSERT single current_goal after change: True
+
+--- D) META soft nudge ---
+nudge: {'nudged': True, 'reason': 'uncertain_or_empty'}
+meta_keys: ['meta:uncertain_or_empty']
+  meta:uncertain_or_empty score=0.235 meta={'source': 'meta_cognition', 'priority': 0.0, 'text': 'meta-cognition: uncertain_or_empty', 'modality': 'meta'}
+focus after soft nudge (no select_focus): user_input
+focus after select_focus: user_input
+meta urgency-only score=0.235; meta with priority=0.7 score=0.5375
+BUG_HINT urgency_ignored: True
+
+--- E) STALE competitors across evaluate turns ---
+turn1 focus=user_input keys=['ambient_noise', 'entity:Bandersnatch', 'novelty:novel_entity:Bandersnatch', 'user_input']
+turn2 focus=user_input keys=['ambient_noise', 'entity:Bandersnatch', 'novelty:novel_entity:Bandersnatch', 'user_input']
+turn2 scores: {'user_input': 0.9762, 'novelty:novel_entity:Bandersnatch': 0.858, 'entity:Bandersnatch': 0.416, 'ambient_noise': 0.2125}
+stale_novelty_entity_still_present: ['novelty:novel_entity:Bandersnatch', 'entity:Bandersnatch']
+turn3 focus=user_input stale_still=['novelty:novel_entity:Bandersnatch', 'entity:Bandersnatch']
+turn3 scores: {'user_input': 0.7717, 'novelty:novel_entity:Bandersnatch': 0.6864, 'entity:Bandersnatch': 0.3328, 'ambient_noise': 0.2125}
+
+--- F) DOUBLE evaluate (Attention-twice regression) ---
+after1 user_input=0.7925 after2=0.7925
+double_eval_score_delta: 0.0
+
+--- G) route_focus ---
+route_focus: routed=True reason=None payload_focus=user_input
+no_focus route: {'routed': False, 'reason': 'no_focus'}
+
+--- H) LIVE PATH process_user_input ---
+reply[:100]: 'Hello! How can I help?'
+live focus=user_input
+live salience top: [('user_input', 1.3164), ('perception_envelope', 1.0314), ('novelty:novel_concept:hello', 0.8314), ('novelty:novel_concept:there', 0.8314), ('novelty:novelty_low', 0.8114), ('si:text', 0.6675), ('executive:current_goal', 0.584), ('ambient_noise', 0.2125)]
+live exec keys: ['executive:current_goal']
+live meta keys: []
+last_executive.goal=social steer={'steered': True, 'reason': 'salience_updated', 'goal_signal_present': True, 'focus': 'user_input', 'goal_signal_keys': ['executive:current_goal']}
+
+--- I) LIVE teach + fact ask (exec steer + focus) ---
+fact reply[:100]: 'I remember your favorite color is teal.'
+last_executive.goal=fact_answer priority=0.95
+steer={'steered': True, 'reason': 'salience_updated', 'goal_signal_present': True, 'focus': 'perception_envelope', 'goal_signal_keys': ['executive:current_goal']}
+focus=perception_envelope
+salience top: [('perception_envelope', 1.0097, 'perception'), ('novelty:novel_concept:favorite', 0.888, 'perception'), ('novelty:novel_concept:color', 0.882, 'perception'), ('novelty:novel_concept:teal', 0.88, 'perception'), ('novelty:novel_token:color', 0.878, 'perception'), ('executive:current_goal', 0.8535, 'executive_control'), ('user_input', 0.7869, 'executive_control'), ('si:text', 0.7325, 'sensory_integration'), ('novelty:novel_question', 0.64, 'perception'), ('novelty:novelty_low', 0.6325, 'perception'), ('novelty:novel_concept:hello', 0.5321, 'perception'), ('novelty:novel_concept:there', 0.5321, 'perception')]
+exec_keys count=1 keys=['executive:current_goal']
+ASSERT single exec current_goal: True
+
+--- J) SI Attention-once ---
+process_sensory_input sets route_attention=not continue_conversation: True
+SI continue=True reply[:80]="I'm still with you. I get the sense you're feeling neutral.\n\nI do not want to in"
+evaluate_count delta (expect 1 from live path only): 1
+SI continue=False type=dict focus=user_input
+evaluate_count delta (expect 1 from SI route): 1
+
+--- K) SOURCE / FIELD scoring honesty ---
+  source='user'                 salience(priority=0)=0.535
+  source='perception'           salience(priority=0)=0.385
+  source='executive_control'    salience(priority=0)=0.185
+  source='meta_cognition'       salience(priority=0)=0.185
+  source='novelty'              salience(priority=0)=0.185
+  source='sensory'              salience(priority=0)=0.385
+  source='ambient'              salience(priority=0)=0.205
+  source='unknown'              salience(priority=0)=0.185
+  urgency=0.9 → 0.1525; priority=0.9 → 0.5575; urgency_affects=False
+
+--- L) focus consistency after remove_signals ---
+before remove focus=other
+remove other: {'removed': ['other'], 'remaining': 1} focus_now=None
+BUG: focus None while salience_map non-empty ['user_input'] — select_focus not auto-called after remove
+after manual select_focus: user_input
+
+--- OBSERVED DEFECTS / NOTES ---
+1) Meta nudge sends 'urgency' but _compute_salience only reads priority/base_priority — urgency ignored.
+2) Sources executive_control / meta_cognition / novelty have no source prior (only user/perception/emotion/ambient).
+3) remove_signals clears focus if removed id matched, but does not re-select next-best focus.
+4) replace_signals does not re-select focus (Executive compensates with select_focus).
+5) Stale novelty:/entity: competitors linger across turns until decay prunes (by design?) — check if wrong focus.
+6) evaluate always applies full decay_rate per call; double-attend burns salience fast (_last_decay_at unused; force unused).
+7) Check live path focus selection among competing exec/user/novelty.

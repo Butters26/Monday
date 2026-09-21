@@ -101,12 +101,28 @@ class AttentionLobe:
                 novelty_score = float(signal.get("novelty_score") or 0.0)
             except (TypeError, ValueError):
                 novelty_score = 0.0
+            # Priority: explicit priority/base_priority win; else Meta-style urgency.
+            if "priority" in signal or "base_priority" in signal:
+                try:
+                    raw_pri = signal.get("priority")
+                    if raw_pri is None:
+                        raw_pri = signal.get("base_priority")
+                    priority = float(raw_pri if raw_pri is not None else 0.0)
+                except (TypeError, ValueError):
+                    priority = 0.0
+            elif "urgency" in signal:
+                try:
+                    priority = float(signal.get("urgency") or 0.0)
+                except (TypeError, ValueError):
+                    priority = 0.0
+            else:
+                priority = 0.0
             norm: Dict[str, Any] = {
                 "id": AttentionLobe._signal_id(signal, index),
                 "text": text,
                 "source": str(signal.get("source") or "unknown"),
                 "modality": str(signal.get("modality") or "text"),
-                "priority": float(signal.get("priority") or signal.get("base_priority") or 0.0),
+                "priority": priority,
                 "novelty_flags": list(signal.get("novelty_flags") or []),
                 "novelty_score": novelty_score,
                 "emotions": list(signal.get("emotions") or []),
@@ -137,18 +153,30 @@ class AttentionLobe:
         tokens = set(lower.replace("?", " ? ").split())
         score = 0.15  # baseline so empty-ish signals still exist briefly
 
-        # Caller-supplied priority (0–1).
+        # Caller-supplied priority (0–1); urgency is Meta-style alias when
+        # priority is absent (normalize usually folds it in already).
         try:
-            score += min(1.0, max(0.0, float(signal.get("priority") or 0.0))) * 0.45
+            raw_pri = signal.get("priority")
+            if raw_pri is None:
+                raw_pri = signal.get("urgency")
+            score += min(1.0, max(0.0, float(raw_pri or 0.0))) * 0.45
         except (TypeError, ValueError):
             pass
 
         # Source priors: live user input outranks ambient/system.
+        # Include current injectors (executive / meta / novelty / SI) so steers
+        # and soft nudges are scored honestly — not invisible unknowns.
         source = str(signal.get("source") or "").lower()
         if source in {"user", "user_input", "chat"}:
             score += 0.35
-        elif source in {"perception", "sensory"}:
+        elif source in {"perception", "sensory", "sensory_integration"}:
             score += 0.20
+        elif source in {"executive_control", "executive"}:
+            score += 0.30
+        elif source in {"novelty"}:
+            score += 0.15
+        elif source in {"meta_cognition", "meta"}:
+            score += 0.10
         elif source in {"emotion", "inner", "autonomous"}:
             score += 0.15
         elif source in {"ambient", "background"}:
@@ -197,9 +225,24 @@ class AttentionLobe:
     # --- public API --------------------------------------------------------
 
     def decay(self, force: bool = False) -> Dict[str, Any]:
-        """Multiply stored scores by (1 - decay_rate); prune below min_salience."""
+        """Multiply stored scores by (1 - decay_rate); prune below min_salience.
+
+        Rapid back-to-back calls (<25ms) without force are no-ops so a
+        double-attend glitch cannot burn salience twice in one tick.
+        """
         now = time.time()
-        # Always allow explicit decay; evaluate also calls this each turn.
+        if (
+            not force
+            and self.salience_map
+            and (now - self._last_decay_at) < 0.025
+        ):
+            return {
+                "decay_rate": self.decay_rate,
+                "factor": 1.0,
+                "remaining": len(self.salience_map),
+                "dropped": [],
+                "skipped": True,
+            }
         factor = max(0.0, 1.0 - self.decay_rate)
         dropped: List[str] = []
         for sid in list(self.salience_map.keys()):
@@ -272,6 +315,9 @@ class AttentionLobe:
                 if self.current_focus == sid:
                     self.current_focus = None
                 removed.append(sid)
+        # Keep focus honest: if we cleared it (or it is gone), pick next-best.
+        if self.current_focus is None or self.current_focus not in self.salience_map:
+            self.select_focus()
         return {"removed": removed, "remaining": len(self.salience_map)}
 
     def replace_signals(self, input_signals: Any) -> List[Dict[str, Any]]:
@@ -289,6 +335,8 @@ class AttentionLobe:
             fresh = self._compute_salience(norm)
             self.salience_map[sid] = fresh
             self.signal_meta[sid] = norm
+        # Ranking may have changed; keep current_focus aligned with top score.
+        self.select_focus()
         return self.rank_signals()
 
     def rank_signals(self) -> List[Dict[str, Any]]:
@@ -320,11 +368,45 @@ class AttentionLobe:
         return self.current_focus
 
     def evaluate(self, input_signals: Any) -> Dict[str, Any]:
-        """Decay → update → select. One-shot live-path attention pass."""
-        decay_info = self.decay()
-        ranked = self.update_salience(input_signals)
+        """Decay → update → stale-absent decay → select.
+
+        Signals present in this pass are refreshed; competitors absent from
+        the batch take an extra decay tick so leftover novelty/entity/meta
+        entries cannot steal focus across turns.
+        """
+        decay_info = self.decay(force=True)
+        if input_signals is None:
+            batch: List[Any] = []
+        elif isinstance(input_signals, (list, tuple)):
+            batch = list(input_signals)
+        else:
+            batch = [input_signals]
+        incoming_ids = {
+            self._normalize_signal(raw, index)["id"] for index, raw in enumerate(batch)
+        }
+        ranked = self.update_salience(batch)
+        stale_dropped: List[str] = []
+        if self.salience_map and incoming_ids:
+            factor = max(0.0, 1.0 - self.decay_rate)
+            for sid in list(self.salience_map.keys()):
+                if sid in incoming_ids:
+                    continue
+                self.salience_map[sid] = round(self.salience_map[sid] * factor, 4)
+                if self.salience_map[sid] < self.min_salience:
+                    stale_dropped.append(sid)
+                    self.salience_map.pop(sid, None)
+                    self.signal_meta.pop(sid, None)
+                    if self.current_focus == sid:
+                        self.current_focus = None
+            if stale_dropped:
+                decay_info = dict(decay_info)
+                decay_info["stale_dropped"] = stale_dropped
+                decay_info["remaining"] = len(self.salience_map)
+            ranked = self.rank_signals()
         focus_id = self.select_focus()
-        focus_entry = ranked[0] if ranked else None
+        focus_entry = next((r for r in ranked if r.get("id") == focus_id), None)
+        if focus_entry is None:
+            focus_entry = ranked[0] if ranked else None
         self._evaluate_count += 1
         return {
             "focus": focus_id,

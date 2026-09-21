@@ -1,0 +1,90 @@
+=== ATTENTION AFTER PROOF ===
+time: 2026-09-21 06:39:03 MT
+runtime: /tmp/attn-after2-a0zn24l8
+
+DESIGN_JOB: Attention scores competing signals (user/perception/SI/novelty/
+executive:current_goal/meta:*), decays stale/absent competitors, selects
+honest focus, honors replace/remove, routes to reasoning — without faking
+focus or redesigning Executive/SI/Meta.
+DONE_MEANS: focus selects correctly among competitors; executive:current_goal
+remains single replaceable; decay works; live path + SI Attention-once work;
+Meta urgency soft-nudges; remove/replace keep focus honest.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+
+--- A) DIRECT evaluate: competing signals ---
+focus: executive:current_goal score=1.1635 source=executive_control
+top8: [('executive:current_goal', 1.1635, 'executive_control'), ('user_input', 0.9725, 'user'), ('novelty_score', 0.93, 'novelty'), ('si:text', 0.71, 'sensory_integration'), ('perception_envelope', 0.6875, 'perception'), ('meta:uncertain_or_empty', 0.65, 'meta_cognition'), ('ambient_noise', 0.2125, 'ambient')]
+meta urgency=0.7 → score=0.65 (BEFORE was 0.235)
+ASSERT focus in {user_input, executive:current_goal}: True
+ASSERT meta soft visible (>0.4): True
+ASSERT ambient not focus: True
+
+--- B) DECAY ---
+decay force factor=0.8 remaining=7
+rapid decay skipped=True factor=1.0
+full prune iterations=14 empty=True focus=None
+ASSERT pruned: True
+
+--- C) executive:current_goal replaceable ---
+steer.focus=executive:current_goal after_keys=['executive:current_goal'] text=executive goal: open_explore interesting
+ASSERT single: True
+
+--- D) META soft nudge ---
+nudged=True meta_score=0.65 focus=user_input
+ASSERT soft+user focus: True
+
+--- E) STALE absent decay ---
+nov 1.04 -> 0.6656 ratio=0.6399999999999999; turn3_stale=['novelty:novel_entity:Bandersnatch', 'entity:Bandersnatch']; focus=user_input
+ASSERT focus user: True
+ASSERT faster stale (ratio<=0.65): True
+
+--- F) remove reselects ---
+removed=other focus_now=user_input keys=['user_input']
+ASSERT reselected: True
+
+--- G) route_focus ---
+routed=True ASSERT=True
+
+--- H) LIVE greeting ---
+reply[:80]='Hello! How can I help?'
+focus=user_input exec_keys=['executive:current_goal'] steer_focus=user_input
+top=[('user_input', 1.3164), ('perception_envelope', 1.0314), ('executive:current_goal', 0.884), ('si:text', 0.8675), ('novelty:novel_concept:hello', 0.8314), ('novelty:novel_concept:there', 0.8314), ('novelty:novelty_low', 0.8114), ('ambient_noise', 0.2125)]
+ASSERT user focus + single exec: True
+
+--- I) LIVE teach + fact ask ---
+fact reply[:80]='Your favorite color is teal.'
+goal=fact_answer steer={'steered': True, 'reason': 'salience_updated', 'goal_signal_present': True, 'focus': 'executive:current_goal', 'goal_signal_keys': ['executive:current_goal']}
+focus=executive:current_goal exec_keys=['executive:current_goal']
+top=[('executive:current_goal', 1.1535, 'executive_control'), ('user_input', 1.0869, 'executive_control'), ('perception_envelope', 1.0097, 'perception'), ('si:text', 0.9325, 'sensory_integration'), ('novelty:novel_concept:favorite', 0.7104, 'perception'), ('novelty:novel_concept:color', 0.7056, 'perception'), ('novelty:novel_concept:teal', 0.704, 'perception'), ('novelty:novel_token:color', 0.7024, 'perception'), ('novelty:novel_question', 0.64, 'perception'), ('novelty:novelty_low', 0.6325, 'perception'), ('novelty_score', 0.5675, 'executive_control'), ('ambient_noise', 0.4925, 'executive_control')]
+ASSERT focus user|exec (BEFORE perception_envelope): True
+ASSERT single exec: True
+ASSERT stale hello novelty < user: True
+
+--- J) SI Attention-once ---
+continue=True delta=1; continue=False delta=1 focus=user_input
+ASSERT once each: True
+
+--- K) SOURCE / urgency ---
+  source='user'                   pri0=0.535
+  source='perception'             pri0=0.385
+  source='sensory_integration'    pri0=0.385
+  source='executive_control'      pri0=0.485
+  source='meta_cognition'         pri0=0.285
+  source='novelty'                pri0=0.335
+  source='ambient'                pri0=0.205
+  urgency=0.9 → 0.6575; priority=0.9 → 0.6575; honored=True
+
+--- BEFORE vs AFTER ---
+BEFORE: meta urgency ignored (~0.235); executive/meta/novelty/SI lacked source
+        priors; remove left focus=None; live fact-ask focused perception_envelope
+        with stale teach novelty:* above user_input after Executive replace.
+AFTER:  urgency≡priority; injector source priors; remove/replace reselect focus;
+        absent competitors take an extra decay tick per evaluate; live fact-ask
+        focus=executive:current_goal (or user_input); SI Attention-once preserved.
+
+REMAINING_GAPS:
+- Lexical/heuristic salience only — no learned value model.
+- Meta nudge is soft salience; does not force mid-turn re-rank (by design).
+- Executive still overwrites user_input source under fact_answer (Exec-owned).
+- No multi-focus / split attention.
