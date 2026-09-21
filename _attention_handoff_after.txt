@@ -1,0 +1,49 @@
+=== ATTENTION HANDOFF AFTER PROOF ===
+time: 2026-09-21 07:06:47 MT
+runtime: /tmp/attn-handoff-after-4f_ao5im
+FIX: thalamus._refresh_attention_payload_post_executive after Executive;
+     DirectMaximumSophisticationAdapter prefers _last_attention_focus on think.
+registered: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+
+teach reply[:80]='Got it — your favorite color is teal.'
+fact reply[:80]='I remember your favorite color is teal.'
+executive.last.goal=fact_answer
+executive.steer.focus=executive:current_goal
+attention.current_focus AFTER turn=executive:current_goal
+
+--- CAPTURED think() handoffs ---
+label=teach
+  Attention.state.focus = user_input
+  Attention.state.top3  = [('user_input', 1.4245, 'user'), ('novelty_score', 1.1463, 'novelty'), ('perception_envelope', 1.1395, 'perception')]
+  Reasoning.think attention.focus (payload) = user_input
+  Reasoning.think attention.focus_text = My favorite color is teal.
+  Reasoning.think attention.ranked[:3] = [('user_input', 1.4245), ('novelty_score', 1.1463), ('perception_envelope', 1.1395)]
+  Reasoning._last_attention_focus = user_input
+  effective_focus_for_think = user_input
+  mismatch state vs payload: False
+  mismatch state vs effective: False
+
+label=fact_ask
+  Attention.state.focus = executive:current_goal
+  Attention.state.top3  = [('executive:current_goal', 1.1535, 'executive_control'), ('user_input', 1.0869, 'executive_control'), ('si:text', 0.9325, 'sensory_integration')]
+  Reasoning.think attention.focus (payload) = executive:current_goal
+  Reasoning.think attention.focus_text = executive goal: fact_answer What is my favorite color?
+  Reasoning.think attention.ranked[:3] = [('executive:current_goal', 1.1535), ('user_input', 1.0869), ('si:text', 0.9325)]
+  Reasoning._last_attention_focus = executive:current_goal
+  effective_focus_for_think = executive:current_goal
+  mismatch state vs payload: False
+  mismatch state vs effective: False
+
+--- ASSERTIONS (AFTER expects PASS) ---
+Attention.focus == executive:current_goal: True (got executive:current_goal)
+Reasoning.payload.focus == executive:current_goal: True (got executive:current_goal)
+_last_attention_focus == executive:current_goal: True (got executive:current_goal)
+effective think focus == executive:current_goal: True (got executive:current_goal)
+SAME-TURN HANDOFF AGREE: True
+RESULT: PASS
+
+--- BEFORE vs AFTER ---
+BEFORE: Attention.state=executive:current_goal but Reasoning.think got user_input
+        (pre-Executive evaluate snapshot; route_focus not re-called).
+AFTER:  post-Executive refresh + re-route; Reasoning.think receives
+        executive:current_goal matching Attention.state.

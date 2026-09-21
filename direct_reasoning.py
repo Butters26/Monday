@@ -336,6 +336,17 @@ class DirectMaximumSophisticationAdapter:
         emotional_state = emotional_state if isinstance(emotional_state, dict) else {}
         attention_payload = direct_input.get("attention", {})
         attention_payload = attention_payload if isinstance(attention_payload, dict) else {}
+        # Prefer soft-routed Attention.route_focus when present (post-Executive re-route).
+        last_focus = getattr(self, "_last_attention_focus", None)
+        if isinstance(last_focus, dict) and last_focus.get("focus"):
+            attention_payload = dict(attention_payload)
+            attention_payload["focus"] = last_focus.get("focus")
+            if last_focus.get("focus_text") is not None:
+                attention_payload["focus_text"] = last_focus.get("focus_text")
+            if last_focus.get("score") is not None:
+                attention_payload["focus_score"] = last_focus.get("score")
+            if last_focus.get("source") is not None:
+                attention_payload["focus_source"] = last_focus.get("source")
         legacy_input = {
             "user_input": user_input,
             "user_id": direct_input.get("user_id", "default"),

@@ -1,0 +1,35 @@
+=== ATTENTION HANDOFF BEFORE BASELINE ===
+time: 2026-09-21 07:05:59 MT
+runtime: /tmp/attn-handoff-before-h4dqssbf
+HEAD note: expect pre-fix mismatch on fact-ask
+registered: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+
+teach reply[:80]='Got it — your favorite color is teal.'
+fact reply[:80]='Your favorite color is teal.'
+executive.last={'goal': 'fact_answer', 'priority': 0.95, 'detail': 'What is my favorite color?', 'source': 'conversation:question', 'inhibited_actions': ['aside', 'curiosity', 'curiosity_follow_up', 'speak_worthy_aside'], 'steer': {'steered': True, 'reason': 'salience_updated', 'goal_signal_present': True, 'focus': 'executive:current_goal', 'goal_signal_keys': ['executive:current_goal']}, 'last_inhibition': {'action': 'curiosity_follow_up', 'inhibited': True, 'reason': 'off_goal:fact_answer', 'goal': 'fact_answer'}}
+attention.current_focus AFTER turn=executive:current_goal
+
+--- CAPTURED think() handoffs ---
+label=teach
+  Attention.state.focus = user_input
+  Attention.state.top3  = [('user_input', 1.4245, 'user'), ('novelty_score', 1.1463, 'novelty'), ('perception_envelope', 1.1395, 'perception')]
+  Reasoning.think attention.focus = user_input
+  Reasoning.think attention.focus_text = My favorite color is teal.
+  Reasoning.think attention.ranked[:3] = [('user_input', 1.4245), ('novelty_score', 1.1463), ('perception_envelope', 1.1395)]
+  Reasoning._last_attention_focus = user_input
+  MISMATCH Attention.state vs Reasoning.input: False
+
+label=fact_ask
+  Attention.state.focus = executive:current_goal
+  Attention.state.top3  = [('executive:current_goal', 1.1535, 'executive_control'), ('user_input', 1.0869, 'executive_control'), ('si:text', 0.9325, 'sensory_integration')]
+  Reasoning.think attention.focus = user_input
+  Reasoning.think attention.focus_text = What is my favorite color?
+  Reasoning.think attention.ranked[:3] = [('user_input', 1.2025), ('si:text', 0.9325), ('perception_envelope', 0.9175)]
+  Reasoning._last_attention_focus = user_input
+  MISMATCH Attention.state vs Reasoning.input: True
+
+--- ASSERTIONS (BEFORE expects FAIL on handoff) ---
+Attention.focus == executive:current_goal: True (got executive:current_goal)
+Reasoning.input.focus == executive:current_goal: False (got user_input)
+SAME-TURN HANDOFF AGREE: False
+RESULT: FAIL

@@ -1119,6 +1119,85 @@ class Thalamus:
         self.last_executive = goal_info
         return goal_info
 
+    def _refresh_attention_payload_post_executive(
+        self, prior: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Same-turn handoff: rebuild attention_payload after Executive re-selects focus.
+
+        Executive.steer_attention calls select_focus but does not route_focus, and the
+        early evaluate snapshot would otherwise remain what Reasoning.think receives.
+        Re-route to Reasoning (soft ack) and refresh focus/ranked from live Attention.
+        """
+        payload: Dict[str, Any] = dict(prior) if isinstance(prior, dict) else {}
+        with self.lobe_handlers_lock:
+            has_attention = "attention" in self.lobe_handlers
+        if not has_attention:
+            return payload
+        routed_payload: Dict[str, Any] = {}
+        try:
+            route_resp = self.send_and_wait(
+                "attention", "route_focus", {}, source="thalamus"
+            )
+            if route_resp.get("status") == "success":
+                body = self._content(route_resp)
+                candidate = body.get("payload") if isinstance(body, dict) else None
+                if isinstance(candidate, dict):
+                    routed_payload = candidate
+        except Exception:
+            routed_payload = {}
+        if routed_payload.get("focus"):
+            payload["focus"] = routed_payload.get("focus")
+            payload["focus_text"] = routed_payload.get("focus_text")
+            payload["focus_score"] = routed_payload.get("score")
+            payload["focus_source"] = routed_payload.get("source")
+        else:
+            try:
+                status_resp = self.send_and_wait(
+                    "attention", "get_status", {}, source="thalamus"
+                )
+                if status_resp.get("status") == "success":
+                    status = self._content(status_resp)
+                    focus = status.get("current_focus")
+                    if focus:
+                        payload["focus"] = focus
+                        top = status.get("top") or []
+                        if isinstance(top, list) and top:
+                            head = top[0] if isinstance(top[0], dict) else {}
+                            if head.get("id") == focus:
+                                payload["focus_text"] = head.get("text")
+                                payload["focus_score"] = head.get("score")
+                                payload["focus_source"] = head.get("source")
+            except Exception:
+                pass
+        try:
+            rank_resp = self.send_and_wait(
+                "attention", "rank", {}, source="thalamus"
+            )
+            if rank_resp.get("status") == "success":
+                ranked = self._content(rank_resp).get("ranked")
+                if ranked is None:
+                    ranked = rank_resp.get("ranked")
+                if isinstance(ranked, list):
+                    payload["ranked"] = ranked
+                    # Keep focus fields coherent with refreshed ranking when missing text.
+                    focus_id = payload.get("focus")
+                    if focus_id:
+                        match = next(
+                            (
+                                r
+                                for r in ranked
+                                if isinstance(r, dict) and r.get("id") == focus_id
+                            ),
+                            None,
+                        )
+                        if match:
+                            payload.setdefault("focus_text", match.get("text"))
+                            payload.setdefault("focus_score", match.get("score"))
+                            payload.setdefault("focus_source", match.get("source"))
+        except Exception:
+            pass
+        return payload
+
     def _executive_should_inhibit(self, action: str) -> bool:
         """Tiny glue: ask Executive whether an off-goal action must be blocked."""
         with self.lobe_handlers_lock:
@@ -1375,6 +1454,11 @@ class Thalamus:
 
         # Executive: set/hold current goal from intent; steer Attention toward it.
         self._executive_set_goal_from_turn(user_input, understanding)
+        # Same-turn handoff: Executive may have re-selected focus — refresh
+        # attention_payload + re-route so Reasoning.think sees post-Executive focus.
+        attention_payload = self._refresh_attention_payload_post_executive(
+            attention_payload
+        )
 
         memory = self.send_and_wait(
             "notus", "store", {"role": "user", "content": user_input, "user_id": user_id}
