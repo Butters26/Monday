@@ -79,10 +79,11 @@ class PareidoliaPattern:
 class AdvancedPatternRecognition:
     """Human-like pattern recognition - sees everything"""
     
-    def __init__(self):
+    def __init__(self, thalamus=None):
         self.running = True
-        # Direct reference to Thalamus (NO SOCKETS)
-        self.thalamus = get_thalamus()
+        # Direct reference to Thalamus (NO SOCKETS). Prefer the live instance
+        # passed by run_abin so we do not attach to a separate singleton.
+        self.thalamus = thalamus if thalamus is not None else get_thalamus()
         
         # Basic patterns
         self.co_occurrences: Dict[Tuple[str, str], CoOccurrence] = {}
@@ -882,28 +883,42 @@ class AdvancedPatternRecognition:
             return None
     
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Process incoming message"""
+        """Process incoming message.
+
+        Thalamus envelopes use ``content``; older callers may still pass ``data``.
+        Accept either so the live path and direct tests both work.
+        """
         msg_type = message.get('type')
+        payload = message.get('content') if isinstance(message.get('content'), dict) else {}
+        if not payload and isinstance(message.get('data'), dict):
+            payload = message.get('data') or {}
+        if not isinstance(payload, dict):
+            payload = {}
+        # Nested ``data`` inside content (explicit observe envelope).
+        nested = payload.get('data') if isinstance(payload.get('data'), dict) else None
         
         # FIX: add health probe
         if msg_type == 'health':
-            return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
+            return {'status': 'success', 'healthy': True, 'pid': os.getpid(), 'content': {'healthy': True}}
         
         if msg_type == 'observe' or msg_type == 'process_input':
-            data = message.get('data', {})
+            data = nested if nested is not None else payload
             if not data and msg_type == 'process_input':
-                # If process_input called without data, create empty data dict
                 data = {}
-            patterns = self.observe(data)
-            return {'status': 'success', 'patterns': patterns}
+            patterns = self.observe(data if isinstance(data, dict) else {})
+            return {'status': 'success', 'patterns': patterns, 'content': {'patterns': patterns}}
             
-        elif msg_type == 'get_significant':
+        elif msg_type in ('get_significant', 'get_significant_patterns'):
             significant = self.get_significant_patterns_only()
-            return {'status': 'success', 'significant_patterns': significant}
+            return {
+                'status': 'success',
+                'significant_patterns': significant,
+                'content': {'significant_patterns': significant},
+            }
             
         elif msg_type == 'get_statistics':
             stats = {'total_co_occurrences': len(self.co_occurrences)}
-            return {'status': 'success', 'statistics': stats}
+            return {'status': 'success', 'statistics': stats, 'content': {'statistics': stats}}
             
         else:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}

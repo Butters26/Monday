@@ -1,0 +1,32 @@
+=== PATTERN WIRE BEFORE PROOF ===
+time: 2026-09-21 07:17:34 MDT
+
+DESIGN EXPECTATION (not yet met):
+  Pattern (AdvancedPatternRecognition) registered in core; live path feeds
+  observations; significant_patterns distributed as pattern_result to Reasoning.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+pattern_registered: False
+
+send→pattern health: {'status': 'error', 'message': 'Unknown destination: pattern'}
+send→pattern observe: {'status': 'error', 'message': 'Unknown destination: pattern'}
+send→pattern get_significant: {'status': 'error', 'message': 'Unknown destination: pattern'}
+
+--- live process_user_input ['2, 4, 6, 8'] user_id=pattern-before-proof ---
+live_reply_excerpt: 'I\'m here to help.\n\nI do not want to invent details - can you tell me more about what you meant by "2, 4, 6, 8"?'
+reasoning_input_keys: ['attention', 'emotion_result', 'memory_context', 'perception', 'understanding', 'user_id', 'user_input']
+reasoning_has_pattern_result: False
+reasoning_pattern_result: None
+
+--- live follow-up ['What comes next in the sequence 2, 4, 6, 8?'] ---
+live_followup_excerpt: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+reasoning_input_keys_followup: ['attention', 'emotion_result', 'memory_context', 'perception', 'understanding', 'user_id', 'user_input']
+reasoning_has_pattern_result_followup: False
+reasoning_pattern_result_followup: None
+
+=== SUMMARY ===
+pattern_registered: False (actual=False)
+observe/get_significant: Unknown destination
+reasoning_sees_pattern_result: False
+RESULT=FAIL (live path bypasses Pattern)
+PHASE=BEFORE

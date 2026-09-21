@@ -1228,13 +1228,225 @@ class Thalamus:
             self.last_executive = snap
         return inhibited
 
+
+    def _build_pattern_observation(
+        self,
+        user_input: str,
+        perception_payload: Optional[Dict[str, Any]] = None,
+        attention_payload: Optional[Dict[str, Any]] = None,
+        understanding: Optional[Dict[str, Any]] = None,
+        emotional_state: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Assemble Pattern.observe data from live Perception/Attention/Conversation/Emotion."""
+        perception_payload = perception_payload if isinstance(perception_payload, dict) else {}
+        attention_payload = attention_payload if isinstance(attention_payload, dict) else {}
+        understanding = understanding if isinstance(understanding, dict) else {}
+        emotional_state = emotional_state if isinstance(emotional_state, dict) else {}
+
+        items: List[str] = []
+        concepts = perception_payload.get("concepts")
+        if isinstance(concepts, list):
+            for concept in concepts:
+                if isinstance(concept, str) and concept.strip():
+                    items.append(concept.strip())
+                elif isinstance(concept, dict):
+                    name = concept.get("name") or concept.get("text") or concept.get("word")
+                    if name is not None and str(name).strip():
+                        items.append(str(name).strip())
+        elif isinstance(concepts, dict):
+            for word in concepts.get("words") or []:
+                if word is not None and str(word).strip():
+                    items.append(str(word).strip())
+
+        words: List[str] = []
+        for word in perception_payload.get("words") or []:
+            if word is not None and str(word).strip():
+                words.append(str(word).strip())
+        if not words:
+            words = list(items)
+
+        topics: List[str] = []
+        focus = attention_payload.get("focus_text") or attention_payload.get("focus")
+        if focus is not None and str(focus).strip():
+            topics.append(str(focus).strip())
+        for ranked in attention_payload.get("ranked") or []:
+            if isinstance(ranked, dict):
+                rid = ranked.get("id") or ranked.get("text")
+                if rid is not None and str(rid).strip():
+                    topics.append(str(rid).strip())
+            elif ranked is not None and str(ranked).strip():
+                topics.append(str(ranked).strip())
+        intent = understanding.get("intent")
+        if intent is not None and str(intent).strip():
+            topics.append(str(intent).strip())
+        for topic in understanding.get("topics") or []:
+            if topic is not None and str(topic).strip():
+                topics.append(str(topic).strip())
+
+        emotions: Dict[str, float] = {}
+        emotion_name = (
+            emotional_state.get("current_emotion")
+            or emotional_state.get("emotion")
+            or emotional_state.get("mood")
+        )
+        if emotion_name is not None and str(emotion_name).strip():
+            try:
+                intensity = float(
+                    emotional_state.get("intensity")
+                    or emotional_state.get("emotion_intensity")
+                    or 0.5
+                )
+            except (TypeError, ValueError):
+                intensity = 0.5
+            emotions[str(emotion_name).strip()] = intensity
+
+        if not items and isinstance(user_input, str):
+            # Fallback: tokenize so numeric sequences still reach Pattern.
+            items = [
+                token
+                for token in re.findall(r"[A-Za-z0-9]+", user_input)
+                if token
+            ]
+            if not words:
+                words = list(items)
+
+        # Dedup while preserving order.
+        def _dedupe(values: List[str]) -> List[str]:
+            seen = set()
+            out: List[str] = []
+            for value in values:
+                key = value.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(value)
+            return out
+
+        return {
+            "items": _dedupe(items),
+            "words": _dedupe(words),
+            "statement": user_input if isinstance(user_input, str) else "",
+            "emotions": emotions,
+            "topics": _dedupe(topics),
+        }
+
+    def _run_pattern_live(
+        self,
+        user_input: str,
+        perception_payload: Optional[Dict[str, Any]] = None,
+        attention_payload: Optional[Dict[str, Any]] = None,
+        understanding: Optional[Dict[str, Any]] = None,
+        emotional_state: Optional[Dict[str, Any]] = None,
+        user_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Observe + harvest significant_patterns as the existing pattern_result interface.
+
+        Pattern discovers; it does not answer. Discoveries are handed to Reasoning
+        (and optionally Attention) via pattern_result.
+        """
+        with self.lobe_handlers_lock:
+            has_pattern = "pattern" in self.lobe_handlers
+        if not has_pattern:
+            return {}
+
+        observation = self._build_pattern_observation(
+            user_input,
+            perception_payload=perception_payload,
+            attention_payload=attention_payload,
+            understanding=understanding,
+            emotional_state=emotional_state,
+        )
+        try:
+            observed = self.send_and_wait(
+                "pattern",
+                "observe",
+                observation,
+                source="thalamus",
+            )
+        except Exception:
+            observed = {"status": "error"}
+        if observed.get("status") != "success":
+            return {"status": "error", "significant_patterns": {}}
+
+        try:
+            significant_resp = self.send_and_wait(
+                "pattern",
+                "get_significant",
+                {},
+                source="thalamus",
+            )
+        except Exception:
+            significant_resp = {"status": "error"}
+
+        body = self._content(significant_resp) if significant_resp.get("status") == "success" else {}
+        significant = (
+            significant_resp.get("significant_patterns")
+            or body.get("significant_patterns")
+            or {}
+        )
+        if not isinstance(significant, dict):
+            significant = {}
+
+        pattern_result = {
+            "status": "success",
+            "significant_patterns": significant,
+            "observed_patterns": self._content(observed).get("patterns")
+            or observed.get("patterns")
+            or {},
+        }
+
+        # Soft Attention priority when Pattern found something worth noticing.
+        has_signal = any(
+            bool(significant.get(key))
+            for key in (
+                "strong_co_occurrences",
+                "reliable_sequences",
+                "behavioral_patterns",
+                "contradictions",
+                "meta_patterns",
+            )
+        )
+        if has_signal:
+            with self.lobe_handlers_lock:
+                has_attention = "attention" in self.lobe_handlers
+            if has_attention:
+                seq_bits = []
+                for seq in significant.get("reliable_sequences") or []:
+                    if isinstance(seq, dict) and seq.get("steps"):
+                        seq_bits.append("→".join(str(s) for s in seq.get("steps") or []))
+                text = (
+                    "pattern:" + (", ".join(seq_bits) if seq_bits else "significant discovery")
+                )
+                try:
+                    self.send_and_wait(
+                        "attention",
+                        "update_salience",
+                        {
+                            "signals": [
+                                {
+                                    "id": "pattern:discovery",
+                                    "text": text,
+                                    "source": "pattern",
+                                    "modality": "internal",
+                                    "priority": 0.55,
+                                    "user_id": user_id,
+                                }
+                            ]
+                        },
+                        source="thalamus",
+                    )
+                except Exception:
+                    pass
+
+        return pattern_result
+
     def process_user_input(
         self,
         user_input: str,
         user_id: str = "default",
         perception_payload: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Run the sole prompted path: perception → attention → conversation → Notus → emotion → reasoning → language → (aside/curiosity) → output → Notus monday speech."""
+        """Run the sole prompted path: perception → attention → conversation → Notus → emotion → Pattern → reasoning → language → (aside/curiosity) → output → Notus monday speech."""
         if not isinstance(user_input, str) or not user_input.strip():
             return "Please send a message."
 
@@ -1591,6 +1803,17 @@ class Thalamus:
         ctx = dict(ctx)
         ctx["memories"] = memories
 
+        # Pattern: continuous observe from Perception/Attention/Conversation/Emotion,
+        # then distribute significant_patterns as the existing pattern_result interface.
+        pattern_result = self._run_pattern_live(
+            user_input,
+            perception_payload=perception_payload,
+            attention_payload=attention_payload,
+            understanding=understanding,
+            emotional_state=emotional_state,
+            user_id=user_id,
+        )
+
         reasoning = self.send_and_wait(
             "reasoning",
             "think",
@@ -1603,6 +1826,7 @@ class Thalamus:
                     "emotion_result": emotional_state,
                     "perception": perception_payload,
                     "attention": attention_payload,
+                    "pattern_result": pattern_result,
                 },
             },
         )

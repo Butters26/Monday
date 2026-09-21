@@ -1,0 +1,18 @@
+=== PATTERN WIRE AFTER PROOF (focused) ===
+time: 2026-09-21 07:23:12 MDT
+pattern_registered: True
+primed_reliable_sequences: [{'steps': ['2', '4', '6'], 'confidence': 1.0}, {'steps': ['4', '6', '8'], 'confidence': 1.0}, {'steps': ['2', '4', '6', '8'], 'confidence': 1.0}, {'steps': ['6', '8', '2'], 'confidence': 0.6}, {'steps': ['8', '2', '4'], 'confidence': 0.6}, {'steps': ['4', '6', '8', '2'], 'confidence': 0.6}, {'steps': ['6', '8', '2', '4'], 'confidence': 0.6}, {'steps': ['8', '2', '4', '6'], 'confidence': 0.6}, {'steps': ['2', '4', '6', '8', '2'], 'confidence': 0.6}, {'steps': ['4', '6', '8', '2', '4'], 'confidence': 0.6}, {'steps': ['6', '8', '2', '4', '6'], 'confidence': 0.6}, {'steps': ['8', '2', '4', '6', '8'], 'confidence': 0.6}]
+--- live ['What comes next in the sequence 2, 4, 6, 8?'] ---
+live_reply: 'The pattern is 2, 4, 6, 8, so the next item is 10.'
+reasoning_has_pattern_result: True
+reasoning_pattern_status: success
+reasoning_seqs_sample: [{'steps': ['2', '4', '6'], 'confidence': 1.0}, {'steps': ['4', '6', '8'], 'confidence': 1.0}, {'steps': ['2', '4', '6', '8'], 'confidence': 1.0}]
+=== CHECKS ===
+pattern_registered: True
+reasoning_sees_pattern_result: True
+pattern_status_success: True
+reply_has_10: True
+reply_mentions_pattern_or_sequence: True
+RESULT=PASS
+PHASE=AFTER
+GAPS: #5 Pattern-owned persistence deferred; #6 soft ceilings/composability deferred

@@ -1771,6 +1771,17 @@ class MaximumSophisticationReasoning:
         patterns = {}
         if pattern_result.get('status') == 'success':
             patterns = pattern_result.get('significant_patterns', {})
+
+        # Consume pattern_result: Pattern identifies; Reasoning may infer next.
+        pattern_inference = None
+        if patterns:
+            try:
+                from direct_reasoning import DirectMaximumSophisticationAdapter
+                pattern_inference = DirectMaximumSophisticationAdapter._answer_from_patterns(
+                    pattern_result, user_input
+                )
+            except Exception:
+                pattern_inference = None
         
         # Extract understanding from Perception if available
         understanding = {}
@@ -1883,8 +1894,13 @@ class MaximumSophisticationReasoning:
             'how_this_feels': qualia_experience if 'qualia_experience' in locals() else 'neutral',
             'theories': [],
             'composed_response': '',
-            'key_concepts': key_concepts  # PASS CONCEPTS TO _build_semantic_input
+            'key_concepts': key_concepts,  # PASS CONCEPTS TO _build_semantic_input
+            'pattern_result': pattern_result if isinstance(pattern_result, dict) else {},
+            'discovered_patterns': patterns if isinstance(patterns, dict) else {},
         }
+        if pattern_inference:
+            response['composed_response'] = pattern_inference
+            response['thoughts'].append(f"Pattern discovery used: {pattern_inference}")
         
         # Use understanding from Thalamus (if provided) instead of re-detecting
         is_question = False

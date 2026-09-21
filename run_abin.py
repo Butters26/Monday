@@ -6,6 +6,7 @@ Direct-call path (no sockets): prompted lobes including PerceptionLobe
 AutonomousThinkingLoop so mood can move from inner thoughts without user text —
 plus MetaCognitionLobe watching reasoning/language for uncertainty —
 plus ExecutiveControlLobe setting goals, inhibiting off-goal moves, steering Attention —
+plus AdvancedPatternRecognition discovering patterns for Reasoning via pattern_result —
 not the full legacy socket stack.
 """
 
@@ -23,6 +24,7 @@ from language_generation import LanguageGenerator
 from notus_memory_core import ActiveNotusMemorySystem
 from output import OutputLobe
 from novelty_lobe import NoveltyLobe
+from pattern_recognition import AdvancedPatternRecognition
 from perception import PerceptionLobe
 from sensory_integration_lobe import SensoryIntegrationLobe
 from meta_cognition_lobe import MetaCognitionLobe
@@ -60,6 +62,7 @@ def create_core_systems(
         "sensory_integration": SensoryIntegrationLobe(thalamus=thalamus),
         "attention": AttentionLobe(thalamus=thalamus),
         "novelty": NoveltyLobe(thalamus=thalamus),
+        "pattern": AdvancedPatternRecognition(thalamus=thalamus),
         "conversation": ConversationSystem(thalamus=thalamus),
         "notus": ActiveNotusMemorySystem(thalamus=thalamus),
         "emotion": EmotionalProcess(
@@ -79,6 +82,7 @@ def create_core_systems(
         "sensory_integration",
         "attention",
         "novelty",
+        "pattern",
         "conversation",
         "notus",
         "emotion",
@@ -112,6 +116,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "emotion",
         "notus",
         "conversation",
+        "pattern",
         "novelty",
         "attention",
         "sensory_integration",

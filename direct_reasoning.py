@@ -281,6 +281,139 @@ class DirectMaximumSophisticationAdapter:
         # that is not a conclusion. Let Thalamus use its emergency fallback.
         return None
 
+
+    @staticmethod
+    def _significant_patterns(pattern_result: Any) -> Dict[str, Any]:
+        if not isinstance(pattern_result, dict):
+            return {}
+        if pattern_result.get("status") != "success":
+            return {}
+        patterns = pattern_result.get("significant_patterns") or {}
+        return patterns if isinstance(patterns, dict) else {}
+
+    @classmethod
+    def _infer_next_from_sequence(cls, steps: Any) -> Optional[str]:
+        """Reasoning job: given Pattern's discovered sequence, infer the next item.
+
+        Pattern only identifies the relationship; it does not extrapolate.
+        """
+        if not isinstance(steps, (list, tuple)) or len(steps) < 2:
+            return None
+        values: List[float] = []
+        as_ints = True
+        for step in steps:
+            try:
+                number = float(str(step).strip())
+            except (TypeError, ValueError):
+                return None
+            values.append(number)
+            if not float(number).is_integer():
+                as_ints = False
+        deltas = [values[i + 1] - values[i] for i in range(len(values) - 1)]
+        if not deltas:
+            return None
+        # Constant delta (arithmetic progression) — e.g. 2,4,6,8 → 10.
+        if all(abs(delta - deltas[0]) < 1e-9 for delta in deltas):
+            nxt = values[-1] + deltas[0]
+            if as_ints:
+                return str(int(nxt))
+            return str(nxt)
+        # Constant ratio (geometric) when ratios are stable and non-zero.
+        if all(abs(v) > 1e-12 for v in values[:-1]):
+            ratios = [values[i + 1] / values[i] for i in range(len(values) - 1)]
+            if all(abs(ratio - ratios[0]) < 1e-9 for ratio in ratios):
+                nxt = values[-1] * ratios[0]
+                if as_ints and float(nxt).is_integer():
+                    return str(int(nxt))
+                return str(nxt)
+        return None
+
+
+    @classmethod
+    def _answer_from_patterns(
+        cls, pattern_result: Any, user_input: str
+    ) -> Optional[str]:
+        """Use Pattern discoveries (pattern_result) without Pattern doing the inference."""
+        patterns = cls._significant_patterns(pattern_result)
+        if not patterns:
+            return None
+        text = (user_input or "").strip().lower()
+        asks_next = any(
+            cue in text
+            for cue in (
+                "what comes next",
+                "what's next",
+                "whats next",
+                "next in the",
+                "next number",
+                "what follows",
+                "continue the",
+                "what is next",
+            )
+        ) or ("next" in text and ("sequence" in text or "pattern" in text))
+        sequences = patterns.get("reliable_sequences") or []
+        input_tokens = {
+            tok for tok in __import__("re").findall(r"[a-z0-9]+", text) if tok
+        }
+
+        ranked = []
+        for seq in sequences:
+            if not isinstance(seq, dict):
+                continue
+            steps = seq.get("steps") or []
+            if not isinstance(steps, (list, tuple)) or len(steps) < 2:
+                continue
+            try:
+                conf = float(seq.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            nxt = cls._infer_next_from_sequence(steps)
+            step_tokens = {str(s).strip().lower() for s in steps}
+            overlap = len(step_tokens & input_tokens) if input_tokens else 0
+            # Reject wraparound loops (first == last) unless that is all we have.
+            wraps = len(steps) >= 3 and str(steps[0]).strip() == str(steps[-1]).strip()
+            ranked.append(
+                {
+                    "seq": seq,
+                    "steps": list(steps),
+                    "conf": conf,
+                    "next": nxt,
+                    "length": len(steps),
+                    "overlap": overlap,
+                    "wraps": wraps,
+                    "inferable": nxt is not None,
+                }
+            )
+        if not ranked:
+            return None
+
+        # Prefer inferable non-wrap sequences that overlap the prompt, then longer/higher conf.
+        ranked.sort(
+            key=lambda row: (
+                1 if row["inferable"] else 0,
+                0 if row["wraps"] else 1,
+                row["overlap"],
+                row["length"],
+                row["conf"],
+            ),
+            reverse=True,
+        )
+        best = ranked[0]
+        steps = best["steps"]
+        nxt = best["next"]
+        joined = ", ".join(str(s) for s in steps)
+        if nxt is None:
+            if asks_next or steps:
+                return (
+                    f"I see a sequence pattern ({joined}), "
+                    f"but I cannot confidently infer the next item yet."
+                )
+            return None
+        if asks_next:
+            return f"The pattern is {joined}, so the next item is {nxt}."
+        return f"I noticed the sequence {joined}; the next item would be {nxt}."
+
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         if message.get("type") == "health":
             return {"status": "success", "content": {"healthy": self.running}}
@@ -347,6 +480,9 @@ class DirectMaximumSophisticationAdapter:
                 attention_payload["focus_score"] = last_focus.get("score")
             if last_focus.get("source") is not None:
                 attention_payload["focus_source"] = last_focus.get("source")
+        pattern_result = direct_input.get("pattern_result", {})
+        if not isinstance(pattern_result, dict):
+            pattern_result = {}
         legacy_input = {
             "user_input": user_input,
             "user_id": direct_input.get("user_id", "default"),
@@ -361,6 +497,8 @@ class DirectMaximumSophisticationAdapter:
             "memory_context": {"memories": evidence},
             "understanding": understanding,
             "attention": attention_payload,
+            # Existing Reasoning interface — do not invent a parallel channel.
+            "pattern_result": pattern_result,
         }
         # Prefer teaching ack / fact answers over legacy composition noise.
         teaching = self._teaching_ack(user_input)
@@ -393,10 +531,13 @@ class DirectMaximumSophisticationAdapter:
                     if "filler" in u_low or "weather is fine" in u_low:
                         usable = None
                         break
-        empathic = None
+        pattern_answer = None
         if not teaching and not fact_structures and not fact_answer:
+            pattern_answer = self._answer_from_patterns(pattern_result, user_input)
+        empathic = None
+        if not teaching and not fact_structures and not fact_answer and not pattern_answer:
             empathic = empathic_grounded_reply(user_input, emotional_state)
-        answer = teaching or fact_answer or empathic or usable
+        answer = teaching or fact_answer or pattern_answer or empathic or usable
         # If usable/teaching still produced finished fact prose, prefer structures.
         if not fact_structures and isinstance(answer, str) and answer.strip():
             stripped = prose_answer_to_structures(answer)
@@ -410,6 +551,11 @@ class DirectMaximumSophisticationAdapter:
             "emotion": emotional_state.get("current_emotion", "neutral"),
             "memory_context": evidence,
         }
+        if pattern_result:
+            semantic_input["pattern_result"] = pattern_result
+            significant = self._significant_patterns(pattern_result)
+            if significant:
+                semantic_input["discovered_patterns"] = significant
         if attention_payload:
             semantic_input["attention_focus"] = attention_payload.get("focus")
             semantic_input["attention_focus_text"] = attention_payload.get("focus_text")
