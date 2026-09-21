@@ -1,0 +1,48 @@
+=== AutonomousSpeech QUEUE AFTER proof ===
+time: 2026-09-21 12:02:51 MT
+handlers=['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'speech', 'voice']
+PASS: speech_registered
+PASS: voice_still
+PASS: language_still
+PASS: autonomous_still
+PASS: meta_awareness_still
+PASS: meta_cognition_still
+PASS: output_still
+PASS: social_context_still
+1_eval should_speak=True timing=now pending 0->0
+PASS: 1_clean_live_eval_should_speak — {'thought_id': 'clean1', 'content': 'I keep thinking about that quiet walk.', 'should_speak': True, 'reason': 'Passed all filters', 'timing': 'now', 'priority': 0.85}
+PASS: 1_clean_live_eval_pending_zero — pending=0
+PASS: 1_last_decision_updated
+2_attach_out='Main reply here.\n\nI keep noticing how quiet it feels.'
+2_last_speech_decision={'should_speak': True, 'reason': 'Passed all filters', 'timing': 'now', 'priority': 0.9, 'thought_id': 'aside1', 'content': 'I keep noticing how quiet it feels.'}
+2_pending 0->0 last_speech_time 0.0->1790013771.3830483
+PASS: 2_aside_attached_exactly_once — count=1
+PASS: 2_last_speech_decision_should_speak
+PASS: 2_speech_delivered_updates_pacing
+PASS: 2_pending_unchanged_zero — pending=0
+3_blocked_out='Main reply here.' decision={'should_speak': False, 'reason': 'Too robotic, keep internal', 'timing': 'never', 'priority': 0.95, 'thought_id': 'rob1', 'content': 'processing computing analyzing data'}
+PASS: 3_should_speak_false
+PASS: 3_not_attached
+PASS: 3_pending_remains_zero — pending=0
+PASS: 3b_direct_robotic_veto — {'thought_id': 'rob1', 'content': 'processing computing analyzing data', 'should_speak': False, 'reason': 'Too robotic, keep internal', 'timing': 'never', 'priority': 0.95}
+4_queue_speech id=speech_1790013771386 pending=1
+PASS: 4_legacy_queue_len_1
+4_get_pending={'status': 'success', 'speech': {'thought_id': 'speech_1790013771386', 'content': 'legacy queue item', 'priority': 0.5, 'timing': 'wait', 'queued_at': 1790013771.3863742}, 'content': {'speech': {'thought_id': 'speech_1790013771386', 'content': 'legacy queue item', 'priority': 0.5, 'timing': 'wait', 'queued_at': 1790013771.3863742}}}
+PASS: 4_get_pending_returns_item
+PASS: 4_pending_drained_to_0
+PASS: 4_interval_blocks — {'status': 'success', 'speech': None, 'reason': 'Waiting for speech interval', 'content': {'speech': None, 'reason': 'Waiting for speech interval'}}
+PASS: 17_no_generate_natural_on_live
+PASS: 17b_no_should_initiate_on_live
+PASS: 17c_speech_evaluate_glue_present
+PASS: 17d_dual_stream_thinking_unwired
+PASS: language_owns_wording
+PASS: voice_owns_synthesis
+PASS: meta_awareness_primary_aside
+PASS: generators_attached — True
+PASS: fact_path_alive — I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.
+PASS: voice_still_healthy
+PASS: evaluate_no_pending_append
+PASS: evaluate_decision_only_comment
+PASS: legacy_queue_speech_still_appends
+
+OVERALL: PASS  passes=36 fails=0 []

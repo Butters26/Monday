@@ -1,0 +1,15 @@
+=== AutonomousSpeech QUEUE BEFORE proof (bug documented) ===
+time: 2026-09-21 12:01:56 MT
+HEAD: expecting ~dec323e
+pending_speech_before_eval=0
+evaluate_status=success should_speak=True timing=now reason='Passed all filters'
+pending_speech_after_eval=1
+BUG_CONFIRMED: live allow enqueued into pending_speech — pending grew 0->1
+attach_out='Main reply here.'
+last_speech_decision=None
+pending_before_attach=0 pending_after_attach=0
+speech.last_speech_time_updated=False
+aside_attached_once=False
+pending stayed zero on attach
+robotic should_speak=False reason='Too robotic, keep internal' pending=0
+legacy_queue_len=1

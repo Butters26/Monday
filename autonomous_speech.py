@@ -202,17 +202,9 @@ class AutonomousSpeechSystem:
             priority=intensity,
         )
 
-        # Legacy queue (live path does not drain this; Thalamus pulls asides)
-        if timing in ['now', 'wait']:
-            with self.lock:
-                self.pending_speech.append({
-                    'thought_id': thought_id,
-                    'content': content,
-                    'priority': intensity,
-                    'timing': timing,
-                    'queued_at': time.time(),
-                })
-                self.pending_speech.sort(key=lambda x: x['priority'], reverse=True)
+        # Decision-only on live path: do NOT enqueue into pending_speech.
+        # Thalamus delivers allowed asides directly; pending_speech remains
+        # for legacy queue_speech / generate_unprompted / get_pending_speech.
 
         payload = asdict(decision)
         self.last_decision = dict(payload)
