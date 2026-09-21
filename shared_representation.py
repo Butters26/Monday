@@ -2,7 +2,9 @@
 """Shared Representation — common semantic substrate for Monday lobes.
 
 Owns stable concept identity, canonical names/aliases, structured relationships,
-activation state, and bounded spreading activation. Does NOT own Pattern
+activation state, and bounded spreading activation. Concept identity is
+extremely conservative: exact normalized surface match, then explicit
+add_alias(); no automatic plural/morphology folding. Does NOT own Pattern
 discovery, Reasoning conclusions, Attention focus, Emotion, Notus memory,
 Language wording, MetaCognition/MetaAwareness, Executive, or Learning.
 
@@ -212,60 +214,29 @@ class SharedRepresentationSystem:
         t = re.sub(r"\s+", " ", t).strip()
         return t
 
-    @staticmethod
-    def _plural_fold(term: str) -> str:
-        """Deliberate English plural fold — NOT fuzzy merge.
-
-        Conservative morphology only. Prefer distinct concepts when
-        uncertain over collapsing unrelated words. Exact aliases still
-        unify deliberately. No blind trailing-s strip.
-        """
-        if len(term) <= 2:
-            return term
-        # categories → category
-        if term.endswith("ies") and len(term) > 4:
-            return term[:-3] + "y"
-        # boxes→box, quizzes→quiz, churches→church, dishes→dish, classes→class
-        if term.endswith(("sses", "xes", "zes", "ches", "shes")):
-            return term[:-2]
-        # Latinate / non-English-plural endings — leave intact
-        # (gas, bus, status, basis, … stay their own surfaces)
-        if term.endswith(("us", "is", "as", "os")):
-            return term
-        # Regular plural -s after a consonant stem ending.
-        # Refuse when the stem would end in a vowel or w (blocks
-        # news→new and similar false collapses without word lists).
-        if term.endswith("s") and not term.endswith("ss"):
-            stem = term[:-1]
-            if len(stem) < 3:
-                return term
-            if stem[-1] in "aeiouw":
-                return term
-            return stem
-        return term
-
     def _canonical_key(self, term: str) -> str:
+        """Identity key: exact normalized surface, else explicit alias.
+
+        No automatic morphology. Plurals/variants unify only via
+        add_alias(). Prefer separate concepts over false merges.
+        """
         surface = self._normalize_surface(term)
         if not surface:
             return ""
-        folded = self._plural_fold(surface)
-        # Prefer existing alias hit for either form.
         if surface in self._alias_index:
             cid = self._alias_index[surface]
-            return self.concepts[cid].canonical_name if cid in self.concepts else folded
-        if folded in self._alias_index:
-            cid = self._alias_index[folded]
-            return self.concepts[cid].canonical_name if cid in self.concepts else folded
-        return folded
+            if cid in self.concepts:
+                return self.concepts[cid].canonical_name
+        return surface
 
     def _new_concept_id(self) -> str:
         return f"c_{uuid.uuid4().hex[:12]}"
 
     def _index_concept(self, concept: Concept) -> None:
         self.concepts[concept.concept_id] = concept
+        # Index only exact canonical + explicit aliases — never morphology.
         names = {concept.canonical_name}
         names.update(self._normalize_surface(a) for a in concept.aliases)
-        names.add(self._plural_fold(concept.canonical_name))
         for n in names:
             if n:
                 self._alias_index[n] = concept.concept_id
@@ -404,26 +375,17 @@ class SharedRepresentationSystem:
         if not surface or surface in _STOP:
             return None
         with self._lock:
-            # Exact alias / plural fold lookup
-            for key in (surface, self._plural_fold(surface)):
-                cid = self._alias_index.get(key)
-                if cid and cid in self.concepts:
-                    concept = self.concepts[cid]
-                    # Register plural/surface as alias if missing
-                    if surface not in concept.aliases and surface != concept.canonical_name:
-                        concept.aliases.append(surface)
-                        self._alias_index[surface] = cid
-                        concept.updated_at = time.time()
-                        self._persist()
-                    return concept
+            # Exact normalized surface / explicit alias only — no morphology.
+            cid = self._alias_index.get(surface)
+            if cid and cid in self.concepts:
+                return self.concepts[cid]
             if not create:
                 return None
             now = time.time()
-            canonical = self._plural_fold(surface)
             concept = Concept(
                 concept_id=self._new_concept_id(),
-                canonical_name=canonical,
-                aliases=[] if surface == canonical else [surface],
+                canonical_name=surface,
+                aliases=[],
                 concept_type=concept_type or "unknown",
                 properties=dict(properties or {}),
                 activation=0.0,

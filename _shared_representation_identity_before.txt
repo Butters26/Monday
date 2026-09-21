@@ -1,0 +1,51 @@
+=== SHARED REPRESENTATION IDENTITY BEFORE (bug) ===
+time: 2026-09-21 14:10 MT
+HEAD: 93a8b8f
+
+Policy still in shared_representation.py::_plural_fold (post-93a8b8f):
+  - ies → y   (len>4)
+  - sses/xes/zes/ches/shes → strip es
+  - block -us/-is/-as/-os
+  - regular -s after consonant stem (len>=3), refuse vowel/w stems
+
+False merges still produced by automatic morphology:
+  fold('species')='specy'   → species ≡ specy
+  fold('cookies')='cooky'   → cookies ≡ cooky
+  fold('movies')='movy'     → movies ≡ movy
+  fold('lens')='len'        → lens ≡ len
+  fold('Mars')='mar'        → mars ≡ mar
+  fold('Athens')='athen'    → athens ≡ athen
+
+Previously-fixed (still distinct under 93a8b8f):
+  news≠new, gas≠ga, bus≠bu, status≠statu
+
+Still auto-unified (will become explicit-alias-only after this fix):
+  dogs→dog, boxes→box, categories→category
+
+Design intent for this job:
+  REMOVE general automatic plural folding from concept identity.
+  Identity priority: (1) exact normalized surface (2) explicit alias
+  (3) no morphology by default (4) otherwise separate concept.
+  dog/dogs unify only via add_alias().
+
+--- live fold+resolve before ---
+  fold 'species'->'specy' 'specy'->'specy' fold_merge=True
+  fold 'cookies'->'cooky' 'cooky'->'cooky' fold_merge=True
+  fold 'movies'->'movy' 'movy'->'movy' fold_merge=True
+  fold 'lens'->'len' 'len'->'len' fold_merge=True
+  fold 'Mars'->'mar' 'mar'->'mar' fold_merge=True
+  fold 'Athens'->'athen' 'athen'->'athen' fold_merge=True
+  fold 'news'->'news' 'new'->'new' fold_merge=False
+  fold 'gas'->'gas' 'ga'->'ga' fold_merge=False
+  fold 'bus'->'bus' 'bu'->'bu' fold_merge=False
+  fold 'status'->'status' 'statu'->'statu' fold_merge=False
+  resolve species/specy ids=c_bca272ae1b69/c_bca272ae1b69 SAME=True
+  resolve cookies/cooky ids=c_caecd396fd73/c_caecd396fd73 SAME=True
+  resolve movies/movy ids=c_59951552198f/c_59951552198f SAME=True
+  resolve lens/len ids=c_773af19c74b9/c_773af19c74b9 SAME=True
+  resolve Mars/mar ids=c_081a366321be/c_081a366321be SAME=True
+  resolve Athens/athen ids=c_780be0d2d0bf/c_780be0d2d0bf SAME=True
+  resolve news/new ids=c_6af909a89d1a/c_1346f667f581 SAME=False
+  resolve gas/ga ids=c_c0c5ba184e7b/c_f368165e09e8 SAME=False
+  resolve bus/bu ids=c_5deadd6071c9/c_5cd06d8e812f SAME=False
+  resolve status/statu ids=c_c212c5ab5437/c_a2f03eea812a SAME=False

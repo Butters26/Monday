@@ -1,0 +1,109 @@
+=== SHARED REPRESENTATION IDENTITY AFTER PROOF ===
+time: 2026-09-21 14:11:43 MT
+HEAD (worktree pre-commit): 93a8b8f
+runtime: /tmp/sr-id-after-6e50ot7e
+
+--- POLICY ---
+Identity priority:
+  1. exact normalized surface match (case/punct/spacing)
+  2. explicit alias lookup (add_alias)
+  3. NO automatic morphology / plural folding
+  4. otherwise separate concept
+_plural_fold present: False
+[PASS] automatic plural fold removed
+
+--- SAFE DISTINCT (no false merges) ---
+  species≠specy: ids=c_57e2a288bf7a/c_07c5d9bf94bb distinct=True canon='species'/'specy'
+  cookies≠cooky: ids=c_e728c466584a/c_19fda791f78e distinct=True canon='cookies'/'cooky'
+  movies≠movy: ids=c_e6a8e11b986f/c_88ca2c3870ea distinct=True canon='movies'/'movy'
+  lens≠len: ids=c_213c885d819e/c_3c727ba8d91b distinct=True canon='lens'/'len'
+  Mars≠mar: ids=c_e03bc2f1d55c/c_3ecdb99d80d7 distinct=True canon='mars'/'mar'
+  Athens≠athen: ids=c_d3ce455a17ba/c_47938c7e11a5 distinct=True canon='athens'/'athen'
+  news≠new: ids=c_512876f34066/c_043634da8cd3 distinct=True canon='news'/'new'
+  gas≠ga: ids=c_f65cda38fd81/c_f80a3a16a2ee distinct=True canon='gas'/'ga'
+  bus≠bu: ids=c_a43257483f22/c_f8a06fa59be4 distinct=True canon='bus'/'bu'
+  status≠statu: ids=c_53a599a0de06/c_b0be0ab73a48 distinct=True canon='status'/'statu'
+[PASS] SAFE DISTINCT — species/cookies/movies/lens/Mars/Athens/news/gas/bus/status
+  dog vs dogs WITHOUT alias: c_bb98fe315445/c_41d55eccde58 distinct=True
+[PASS] dog/dogs stay separate without explicit alias (false separation OK)
+
+--- DELIBERATE ALIAS ---
+  create dog=c_bd3d5856eed9; add_alias dogs→dog ok=True
+  dog/dogs/dog again = c_bd3d5856eed9/c_bd3d5856eed9/c_bd3d5856eed9
+  aliases=['dogs']
+[PASS] DELIBERATE ALIAS — dog/dogs/dog same ID c_bd3d5856eed9
+
+--- ALIAS COLLISION ---
+  dog=c_f97e66d63a81 cat=c_54902d15a147 add_alias(dog,'cat')=False
+[PASS] ALIAS COLLISION — add_alias(dog_id,'cat') FAIL; cat keeps own ID
+
+--- PERSISTENCE ---
+  dog ID preserved: c_38ae98a895b1 expected=c_38ae98a895b1 same=True
+  dogs→dog: c_38ae98a895b1 == dog? True
+  relationship survives: n=1 (pre=1)
+  Mars≠mar after reload: c_ef5c86e3d4ec≠c_37208e7ec16b = True
+  species≠specy after reload: c_6bc6fe3fd48e≠c_8fc33e185c17 = True
+[PASS] PERSISTENCE — dog ID, dogs→dog alias, relationship, unrelated stay distinct
+
+--- MIGRATION (no silent reassign / no auto-merge) ---
+  old specy ID preserved: c_oldspecy01 (expect c_oldspecy01)
+  species via stored alias → same old ID: c_oldspecy01
+  old dog ID preserved: c_olddog0001; dogs→c_olddog0001
+  new cookies≠cooky (no auto-merge of malformed): c_bb619669da5e≠c_cde407da3104
+[PASS] MIGRATION — stable IDs preserved; no silent merge of new surfaces
+  NOTE: if an old store folded 'species'→canonical 'specy' WITHOUT aliasing
+  'species', a fresh 'species' resolve creates a NEW concept. We do NOT
+  auto-rename or auto-merge malformed old canonicals. Documented; no auto-merge.
+
+--- RELATIONSHIPS / SPREADING / ISOLATION ---
+  activation_map keys=['c_4de7ec581df9', 'c_fc01dfdde1ee'] seed=1.0 neigh=0.5850000000000001
+  runaway_n=5 cap_check=True
+  after_decay=0.5 reset=0.0
+[PASS] relationships + spreading bounded + decay/reset
+  alice_personal=1 bob_personal=0 bob_leak=0
+  alice_pet_act=0.5850000000000001 bob_pet_act=0.325
+[PASS] Alice/Bob isolation
+
+--- LIVE REASONING HANDOFF ---
+  registered: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'shared_representation', 'social_context', 'speech', 'voice']
+[PASS] Shared Representation still registered
+  last_representation status=success
+  last concept_ids=['c_b1b4cb405397', 'c_c0b979d489cc', 'c_765f3a965da7', 'c_2495a394dd22']
+  last highly_active[:3]=[{'id': 'c_765f3a965da7', 'concept_id': 'c_765f3a965da7', 'name': 'dog', 'canonical_name': 'dog', 'activation': 1.0, 'concept_type': 'unknown'}, {'id': 'c_b1b4cb405397', 'concept_id': 'c_b1b4cb405397', 'name': 'please', 'canonical_name': 'please', 'activation': 1.0, 'concept_type': 'unknown'}, {'id': 'c_2495a394dd22', 'concept_id': 'c_2495a394dd22', 'name': 'qorvex_live_token_510', 'canonical_name': 'qorvex_live_token_510', 'activation': 1.0, 'concept_type': 'unknown'}]
+  reply[:120]='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  resolved names sample=['dog', 'please', 'qorvex_live_token_510', 'tell']
+  direct_reasoning mentions representation_result: True
+  live dogs→dog: c_765f3a965da7==c_765f3a965da7? True
+[PASS] Live Reasoning handoff — registered; last_representation.status==success; concept IDs; reply works
+[PASS] Reasoning path has representation_result (adapter) + highly_active_concepts present in envelope
+  Evidence: thalamus passes representation_result into Reasoning think;
+  direct_reasoning adapter forwards representation_result → concept_ids +
+  representation_highly_active; last_representation.status==success with dog ID
+  among concept_ids and highly_active_concepts (dogs aliased → dog).
+
+--- REGRESSIONS ---
+  Learning rules has shared_representation=False representation(historical)=True
+[PASS] Learning unchanged — no shared_representation skill; historical representation kept
+  dirty files vs HEAD:
+shared_representation.py
+
+[PASS] Pattern/CTG/old representation/dual_stream/Learning/closed lobes untouched
+  old representation imported in run_abin=False
+  dual_stream in run_abin=True
+[PASS] old representation.py unwired (not in create_core_systems)
+[PASS] dual_stream_thinking unwired
+[PASS] CTG / Pattern not reopened this job
+
+[INFO] CloudAgent: not used this job
+
+============================================================
+OVERALL: PASS  (17 pass, 0 fail)
+============================================================
+
+--- GENUINE REMAINING LIMITATION ---
+- No automatic inflection at all: dog/dogs, box/boxes, child/children
+  stay distinct until an explicit add_alias() unifies them.
+- Old stores that folded surfaces into malformed canonicals (e.g. species→specy)
+  keep those IDs; we never auto-rename or auto-merge on load.
+- Only Reasoning consumes representation_result on the live path.
+Confirm: no CloudAgent.
