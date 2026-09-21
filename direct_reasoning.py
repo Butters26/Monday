@@ -249,6 +249,28 @@ class DirectMaximumSophisticationAdapter:
         composed = composed.strip()
         if cls._looks_like_raw_triple(composed):
             return None
+        # Pattern sequence narration must not become the mouth via usable.
+        clow = composed.casefold()
+        if "sequence pattern" in clow or "cannot confidently infer" in clow or clow.startswith("i noticed the sequence"):
+            ask = (user_input or "").casefold()
+            asks_seq = (
+                any(
+                    cue in ask
+                    for cue in (
+                        "what comes next",
+                        "what's next",
+                        "whats next",
+                        "next in the",
+                        "next number",
+                        "what follows",
+                        "continue the",
+                        "what is next",
+                    )
+                )
+                or ("next" in ask and ("sequence" in ask or "pattern" in ask))
+            )
+            if not asks_seq:
+                return None
         # Don't let an unrelated stored fact become the spoken answer to a
         # check-in / social prompt.
         social = re.search(
@@ -333,7 +355,12 @@ class DirectMaximumSophisticationAdapter:
     def _answer_from_patterns(
         cls, pattern_result: Any, user_input: str
     ) -> Optional[str]:
-        """Use Pattern discoveries (pattern_result) without Pattern doing the inference."""
+        """Use Pattern discoveries (pattern_result) without Pattern doing the inference.
+
+        Pattern owns discovery; Reasoning may infer next. Spoken sequence narration
+        is only for explicit sequence/next asks — never the mouth for fact recall,
+        social/emotion, motor, or ordinary conversation.
+        """
         patterns = cls._significant_patterns(pattern_result)
         if not patterns:
             return None
@@ -351,6 +378,9 @@ class DirectMaximumSophisticationAdapter:
                 "what is next",
             )
         ) or ("next" in text and ("sequence" in text or "pattern" in text))
+        # Not a sequence ask → do not speak Pattern. Still available as pattern_result.
+        if not asks_next:
+            return None
         sequences = patterns.get("reliable_sequences") or []
         input_tokens = {
             tok for tok in __import__("re").findall(r"[a-z0-9]+", text) if tok
@@ -387,6 +417,14 @@ class DirectMaximumSophisticationAdapter:
         if not ranked:
             return None
 
+        # Prefer sequences that overlap the ask; never narrate unrelated sequences.
+        with_overlap = [row for row in ranked if row["overlap"] > 0]
+        if with_overlap:
+            ranked = with_overlap
+        else:
+            # Ask mentions a sequence but none of our discoveries overlap — stay silent.
+            return None
+
         # Prefer inferable non-wrap sequences that overlap the prompt, then longer/higher conf.
         ranked.sort(
             key=lambda row: (
@@ -403,15 +441,11 @@ class DirectMaximumSophisticationAdapter:
         nxt = best["next"]
         joined = ", ".join(str(s) for s in steps)
         if nxt is None:
-            if asks_next or steps:
-                return (
-                    f"I see a sequence pattern ({joined}), "
-                    f"but I cannot confidently infer the next item yet."
-                )
-            return None
-        if asks_next:
-            return f"The pattern is {joined}, so the next item is {nxt}."
-        return f"I noticed the sequence {joined}; the next item would be {nxt}."
+            return (
+                f"I see a sequence pattern ({joined}), "
+                f"but I cannot confidently infer the next item yet."
+            )
+        return f"The pattern is {joined}, so the next item is {nxt}."
 
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -537,13 +571,14 @@ class DirectMaximumSophisticationAdapter:
                     if "filler" in u_low or "weather is fine" in u_low:
                         usable = None
                         break
-        pattern_answer = None
-        if not teaching and not fact_structures and not fact_answer:
-            pattern_answer = self._answer_from_patterns(pattern_result, user_input)
+        # Empathic/social affect before Pattern narration — Pattern must not be the mouth.
         empathic = None
-        if not teaching and not fact_structures and not fact_answer and not pattern_answer:
+        if not teaching and not fact_structures and not fact_answer:
             empathic = empathic_grounded_reply(user_input, emotional_state)
-        answer = teaching or fact_answer or pattern_answer or empathic or usable
+        pattern_answer = None
+        if not teaching and not fact_structures and not fact_answer and not empathic:
+            pattern_answer = self._answer_from_patterns(pattern_result, user_input)
+        answer = teaching or fact_answer or empathic or pattern_answer or usable
         # If usable/teaching still produced finished fact prose, prefer structures.
         if not fact_structures and isinstance(answer, str) and answer.strip():
             stripped = prose_answer_to_structures(answer)

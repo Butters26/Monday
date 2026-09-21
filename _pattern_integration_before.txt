@@ -1,0 +1,57 @@
+=== PATTERN INTEGRATION BEFORE PROOF ===
+time: 2026-09-21 14:54:38 MT
+runtime: /tmp/pattern-integ-before-iusmzkhp
+registered: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'shared_representation', 'social_context', 'speech', 'voice']
+
+--- FAIL-1/2 Alice → Bob multi-turn ---
+A teach: 'Got it — your favorite color is teal.'
+A ask: 'Your favorite color is teal.'
+A cont: 'Got it — your favorite color is teal.'
+B greet: 'Hi there'
+B music teach: 'Got it — your favorite music is jazz.'
+B music ask: 'I remember your favorite music is jazz.'
+B color ask (must not be Alice teal via Pattern): 'I see a sequence pattern (what, is, my, favorite, color), but I cannot confidently infer the next item yet.'
+B token ask: 'I see a sequence pattern (what, is, my, favorite, color), but I cannot confidently infer the next item yet.'
+alice reliable_sequences count=10 sample=[{'steps': ['my', 'favorite', 'color'], 'confidence': 1.0, 'durable': True}, {'steps': ['favorite', 'color', 'is'], 'confidence': 0.8, 'durable': True}, {'steps': ['color', 'is', 'teal'], 'confidence': 0.8, 'durable': True}]
+bob reliable_sequences count=10 sample=[{'steps': ['my', 'favorite', 'color'], 'confidence': 1.0, 'durable': True}, {'steps': ['favorite', 'color', 'is'], 'confidence': 0.8, 'durable': True}, {'steps': ['color', 'is', 'teal'], 'confidence': 0.8, 'durable': True}]
+bob_sig_has_favorite_color=True
+
+--- FAIL-3 Emotion share ---
+E0: 'Hello'
+E1 reply: 'I see a sequence pattern (what, is, my, favorite, color), but I cannot confidently infer the next item yet.\n\nI do not want to invent details - can you tell me more about what you meant by "Today reall'
+E1 social: {'last_cue': 'greeting', 'is_social_turn': False, 'continuity': 'ongoing'}
+
+--- FAIL-4 Fact recall vs Pattern ---
+pet teach: "Got it — your pet's name is Whiskers."
+pet ask: 'I see a sequence pattern (what, is, my, favorite, color), but I cannot confidently infer the next item yet.'
+
+--- FAIL-1 Motor reminder ---
+motor reply: 'I see a sequence pattern (what, is, my, favorite, color), but I cannot confidently infer the next item yet.'
+motor envelope hint: no_actuator
+
+--- REGRESSION sequence infer ---
+seq ask: 'I see a sequence pattern (reminder, to, stretch, the, sequence), but I cannot confidently infer the next item yet.'
+last_pattern_result status: None
+missing closed lobes: []
+
+=== CHECKS ===
+FAIL1_bob_music_not_pattern_spam: True
+FAIL1_bob_music_has_jazz: True
+FAIL2_bob_color_not_alice_teal_in_pattern: True
+FAIL2_bob_color_not_pattern_spam: False
+FAIL2_bob_significant_no_alice_favorite_color: False
+FAIL3_not_pattern_spam: False
+FAIL3_social_cue: False
+FAIL3_is_social_turn: False
+FAIL3_empathic_or_social_wording: False
+FAIL4_pet_not_spam: False
+FAIL4_pet_has_whiskers: False
+FAIL1_motor_not_spam: False
+REG_seq_infer_10: False
+REG_pattern_result_present: False
+REG_closed_lobes: True
+REG_learning_importable: True
+
+RESULT=FAIL
+PHASE=BEFORE
+Confirm: no Learning edits; no CloudAgent.

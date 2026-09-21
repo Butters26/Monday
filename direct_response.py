@@ -559,6 +559,14 @@ def _attribute_asked(query: str) -> Optional[str]:
     )
     if name_poss:
         return " ".join(name_poss.group(1).lower().split()) + " name"
+    # "what is my pet named" / "what is my dog named" → same as noun name attribute
+    named_q = re.search(
+        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)\s+named\b",
+        q,
+        re.IGNORECASE,
+    )
+    if named_q:
+        return " ".join(named_q.group(1).lower().split()) + " name"
     # Plain self-name (including compounds: "what is my name and where...")
     if re.search(r"\bwhat(?:'s|\s+is)\s+my\s+name\b", q, re.IGNORECASE):
         return "name"
@@ -762,6 +770,13 @@ def answer_from_grounded_memories(
             q,
             re.IGNORECASE,
         )
+        # "what is my pet named" — same noun-name slot (Pattern must not own this)
+        if not name_q:
+            name_q = re.search(
+                r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)\s+named\b",
+                q,
+                re.IGNORECASE,
+            )
         if name_q:
             noun = " ".join(name_q.group(1).lower().split())
             needle = f"your {noun}'s name is "

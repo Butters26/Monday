@@ -203,6 +203,15 @@ class GrammarEngine:
             if len(composed_props) > len(ans):
                 return composed_props
             return ans
+        # Pattern sequence narration must not displace Language as the mouth
+        # unless the user explicitly asked for a sequence/next inference.
+        if (
+            isinstance(answer, str)
+            and answer.strip()
+            and self._is_pattern_sequence_narration(answer)
+            and not self._user_asks_sequence_next(semantic_input)
+        ):
+            answer = ""
         if isinstance(answer, str) and answer.strip() and not self._is_grounding_refusal(answer):
             return answer.strip()
         # Honest empty: keep the grounded refusal — do not invent via grammar.
@@ -302,6 +311,43 @@ class GrammarEngine:
             "i am sitting", "i'm sitting", "i'm listening", "i am listening",
             "i'm still with you", "i am still with you",
         ))
+
+    @staticmethod
+    def _is_pattern_sequence_narration(answer: Optional[str]) -> bool:
+        """True when Reasoning handed Pattern sequence prose (not Language's job)."""
+        if not isinstance(answer, str):
+            return False
+        low = answer.strip().lower()
+        return (
+            "sequence pattern" in low
+            or "cannot confidently infer" in low
+            or low.startswith("i noticed the sequence")
+            or low.startswith("the pattern is ")
+        )
+
+    @staticmethod
+    def _user_asks_sequence_next(semantic_input: Optional[Dict[str, Any]]) -> bool:
+        semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
+        text = str(
+            semantic_input.get("user_input")
+            or semantic_input.get("user_text")
+            or ""
+        ).strip().lower()
+        if not text:
+            return False
+        return any(
+            cue in text
+            for cue in (
+                "what comes next",
+                "what's next",
+                "whats next",
+                "next in the",
+                "next number",
+                "what follows",
+                "continue the",
+                "what is next",
+            )
+        ) or ("next" in text and ("sequence" in text or "pattern" in text))
 
     def _compose_check_in(
         self, emotion: str, social_context: Optional[Dict[str, Any]] = None

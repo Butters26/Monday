@@ -35,13 +35,14 @@ class CoOccurrence:
 
 @dataclass
 class Sequence:
-    """Multi-step sequence A→B→C→D"""
+    """Multi-step sequence A→B→C→D (user-scoped like signal combos)."""
     steps: List[str]
     count: int = 0
     confidence: float = 0.0
     last_seen: float = 0.0
     average_time_between_steps: float = 0.0
     durable: bool = False  # promoted beyond working-window / persisted
+    user_id: str = "default"
 
 @dataclass
 class BehavioralPattern:
@@ -106,6 +107,7 @@ class AdvancedPatternRecognition:
         
         # Basic patterns
         self.co_occurrences: Dict[Tuple[str, str], CoOccurrence] = {}
+        # key = (user_id, steps_tuple) — same scoping spirit as signal combos
         self.sequences: Dict[Tuple, Sequence] = {}
         
         # Advanced patterns
@@ -157,7 +159,9 @@ class AdvancedPatternRecognition:
         # Wire pattern_config.json before constructing bounded buffers
         self._apply_pattern_config()
 
-        self.recent_items = deque(maxlen=self.working_window_size)
+        # Per-user working windows so Alice's tokens do not seed Bob's sequences.
+        self._recent_items_by_user: Dict[str, deque] = {}
+        self._active_user_id = "default"
         self.recent_emotions = deque(maxlen=30)
         self.recent_topics = deque(maxlen=self.max_recent_concepts)
         self.recent_word_choices = deque(maxlen=100)
@@ -418,13 +422,17 @@ class AdvancedPatternRecognition:
                 return True
         return False
 
-    def _iter_wrap_reference_periods(self):
+    def _iter_wrap_reference_periods(self, user_id: Any = None):
         """Periods trusted for wrap detection: linear progressions, then other durables.
 
         Rotations of a linear period are not references (they are wrap noise themselves).
+        When user_id is set, only that user's sequences are references (no cross-user wrap).
         """
+        scope_uid = self._normalize_user_id(user_id) if user_id is not None else None
         linear: List[List[str]] = []
         for seq in self.sequences.values():
+            if scope_uid is not None and self._normalize_user_id(getattr(seq, "user_id", "default")) != scope_uid:
+                continue
             period = [str(x) for x in seq.steps]
             if len(period) < 2:
                 continue
@@ -432,6 +440,8 @@ class AdvancedPatternRecognition:
                 linear.append(period)
                 yield period
         for seq in self.sequences.values():
+            if scope_uid is not None and self._normalize_user_id(getattr(seq, "user_id", "default")) != scope_uid:
+                continue
             period = [str(x) for x in seq.steps]
             if len(period) < 2 or not seq.durable:
                 continue
@@ -441,7 +451,7 @@ class AdvancedPatternRecognition:
                 continue
             yield period
 
-    def _is_wrap_noise(self, steps: List[str]) -> bool:
+    def _is_wrap_noise(self, steps: List[str], user_id: Any = None) -> bool:
         """Reject cyclic/wrap batch noise (e.g. 2,4,6,8,2) from durable promotion.
 
         Keeps genuine linear periods (2,4,6,8) and their contiguous substrings
@@ -455,7 +465,7 @@ class AdvancedPatternRecognition:
             period = steps[:p]
             if all(steps[i] == period[i % p] for i in range(len(steps))):
                 return True
-        for period in self._iter_wrap_reference_periods():
+        for period in self._iter_wrap_reference_periods(user_id=user_id):
             if period == steps:
                 continue
             if len(period) != len(steps):
@@ -520,7 +530,8 @@ class AdvancedPatternRecognition:
                 if not isinstance(steps, list) or len(steps) < 2:
                     continue
                 steps_s = [str(s) for s in steps][: self.max_composed_sequence_length]
-                key = tuple(steps_s)
+                uid = str(seq_data.get("user_id") or "default").strip() or "default"
+                key = (uid, tuple(steps_s))
                 self.sequences[key] = Sequence(
                     steps=steps_s,
                     count=int(seq_data.get("count", 1) or 1),
@@ -530,6 +541,7 @@ class AdvancedPatternRecognition:
                         seq_data.get("average_time_between_steps", 0.0) or 0.0
                     ),
                     durable=True,
+                    user_id=uid,
                 )
 
             # Drop legacy wrap-noise / low-info / short near-dup sequences that should never have been durable
@@ -628,6 +640,7 @@ class AdvancedPatternRecognition:
                     "last_seen": float(seq.last_seen),
                     "average_time_between_steps": float(seq.average_time_between_steps),
                     "durable": True,
+                    "user_id": str(getattr(seq, "user_id", None) or "default"),
                 })
 
             co_out = []
@@ -702,17 +715,22 @@ class AdvancedPatternRecognition:
         finally:
             self._saving_knowledge = False
 
-    def _promote_significant_to_durable(self) -> None:
+    def _promote_significant_to_durable(self, user_id: Any = None) -> None:
         """Mark reliable local discoveries durable so they outlive the working window.
 
         Cyclic/wrap noise from batch cycling (e.g. 2,4,6,8,2) is never promoted.
         Shorter genuine sequences are promoted first so wrap checks see them.
+        When user_id is set, only that user's sequences are considered.
         """
+        scope_uid = self._normalize_user_id(user_id) if user_id is not None else None
         changed = False
         # Demote wrap noise / low-info / short near-dup spam that should never stay durable
         for seq in self.sequences.values():
+            if scope_uid is not None and self._normalize_user_id(getattr(seq, "user_id", "default")) != scope_uid:
+                continue
+            uid = self._normalize_user_id(getattr(seq, "user_id", "default"))
             if seq.durable and (
-                self._is_wrap_noise(list(seq.steps))
+                self._is_wrap_noise(list(seq.steps), user_id=uid)
                 or self._is_low_information_sequence(list(seq.steps))
                 or self._is_short_near_dup_sequence(list(seq.steps))
             ):
@@ -722,11 +740,14 @@ class AdvancedPatternRecognition:
         long_candidates = []
         local_candidates = []
         for seq in self.sequences.values():
+            if scope_uid is not None and self._normalize_user_id(getattr(seq, "user_id", "default")) != scope_uid:
+                continue
             if seq.durable:
                 continue
             steps = list(seq.steps)
+            uid = self._normalize_user_id(getattr(seq, "user_id", "default"))
             if (
-                self._is_wrap_noise(steps)
+                self._is_wrap_noise(steps, user_id=uid)
                 or self._is_low_information_sequence(steps)
                 or self._is_short_near_dup_sequence(steps)
             ):
@@ -755,12 +776,14 @@ class AdvancedPatternRecognition:
         )
         for seq in local_candidates:
             steps = list(seq.steps)
-            if self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps):
+            uid = self._normalize_user_id(getattr(seq, "user_id", "default"))
+            if self._is_wrap_noise(steps, user_id=uid) or self._is_short_near_dup_sequence(steps):
                 continue
             seq.durable = True
             changed = True
         for seq in long_candidates:
-            if self._is_wrap_noise(list(seq.steps)):
+            uid = self._normalize_user_id(getattr(seq, "user_id", "default"))
+            if self._is_wrap_noise(list(seq.steps), user_id=uid):
                 continue
             seq.durable = True
             changed = True
@@ -775,38 +798,45 @@ class AdvancedPatternRecognition:
         *,
         durable: bool = False,
         boost_count: int = 1,
+        user_id: Any = None,
     ) -> None:
         """Insert/update a sequence; composed/long sequences are marked durable."""
         if not steps or len(steps) < 2:
             return
         steps = [str(s) for s in steps][: self.max_composed_sequence_length]
+        uid = self._normalize_user_id(
+            user_id if user_id is not None else getattr(self, "_active_user_id", "default")
+        )
         # Refuse constant / low-information spam entirely (no ephemeral flood either)
         if self._is_low_information_sequence(steps):
             return
         # Never durable-promote cyclic/wrap noise or short near-dup junk (p0,t,t)
         if durable and (
-            self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps)
+            self._is_wrap_noise(steps, user_id=uid)
+            or self._is_short_near_dup_sequence(steps)
         ):
             durable = False
-        key = tuple(steps)
+        key = self._sequence_key(uid, steps)
         now = time.time()
         became_durable = False
         if key in self.sequences:
             seq = self.sequences[key]
             seq.count += boost_count
             seq.last_seen = now
+            seq.user_id = uid
             seq.confidence = min(1.0, seq.count / 5.0)
             if avg_time:
                 seq.average_time_between_steps = avg_time
             # Scrub existing durable short near-dups / wrap noise on touch
             if seq.durable and (
-                self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps)
+                self._is_wrap_noise(steps, user_id=uid)
+                or self._is_short_near_dup_sequence(steps)
             ):
                 seq.durable = False
                 self._knowledge_dirty = True
             want_durable = durable or (
                 len(steps) > max(self.local_seq_lengths)
-                and not self._is_wrap_noise(steps)
+                and not self._is_wrap_noise(steps, user_id=uid)
                 and not self._is_short_near_dup_sequence(steps)
             )
             if want_durable and not seq.durable:
@@ -818,7 +848,7 @@ class AdvancedPatternRecognition:
             count = max(1, boost_count)
             is_durable = (
                 durable or len(steps) > max(self.local_seq_lengths)
-            ) and not self._is_wrap_noise(steps) and not self._is_short_near_dup_sequence(steps)
+            ) and not self._is_wrap_noise(steps, user_id=uid) and not self._is_short_near_dup_sequence(steps)
             self.sequences[key] = Sequence(
                 steps=steps,
                 count=count,
@@ -826,6 +856,7 @@ class AdvancedPatternRecognition:
                 last_seen=now,
                 average_time_between_steps=avg_time,
                 durable=is_durable,
+                user_id=uid,
             )
             became_durable = is_durable
         if became_durable:
@@ -945,17 +976,22 @@ class AdvancedPatternRecognition:
     # MULTI-STEP SEQUENCE DETECTION
     # ========================================================================
     
-    def detect_multi_step_sequences(self):
+    def detect_multi_step_sequences(self, user_id: Any = None):
         """Detect A→B→C→D sequences inside the working window, then compose beyond it.
 
         Working window stays bounded. Significant / composed sequences become durable
         so growth is not lost when observations scroll out of the window.
+        Sequences are discovered per-user (recent_items + sequence keys scoped).
         """
-        if len(self.recent_items) < 3:
-            self._compose_sequences_beyond_window()
+        uid = self._normalize_user_id(
+            user_id if user_id is not None else getattr(self, "_active_user_id", "default")
+        )
+        recent_q = self._user_recent_items(uid)
+        if len(recent_q) < 3:
+            self._compose_sequences_beyond_window(user_id=uid)
             return
         
-        recent_list = list(self.recent_items)[-self.sequence_detect_slice:]
+        recent_list = list(recent_q)[-self.sequence_detect_slice:]
 
         # Local discovery: manageable lengths inside the observation slice
         for seq_length in self.local_seq_lengths:
@@ -972,11 +1008,11 @@ class AdvancedPatternRecognition:
                 if avg_time > self.max_sequence_time_gap:  # Too far apart
                     continue
 
-                self._record_or_update_sequence(steps, avg_time)
+                self._record_or_update_sequence(steps, avg_time, user_id=uid)
 
         # Grow durable patterns past the immediate observation window
-        self._compose_sequences_beyond_window()
-        self._promote_significant_to_durable()
+        self._compose_sequences_beyond_window(user_id=uid)
+        self._promote_significant_to_durable(user_id=uid)
         if self._knowledge_dirty:
             self._persist_durable_knowledge()
 
@@ -1066,17 +1102,20 @@ class AdvancedPatternRecognition:
                 run = 1
         return False
 
-    def _would_be_cyclic_wrap(self, new_steps: List[str]) -> bool:
+    def _would_be_cyclic_wrap(self, new_steps: List[str], user_id: Any = None) -> bool:
         """Reject composed results that are just cycling an already-known durable period."""
         if len(new_steps) < 2:
             return False
-        if self._is_wrap_noise(list(new_steps)):
+        scope_uid = self._normalize_user_id(user_id) if user_id is not None else None
+        if self._is_wrap_noise(list(new_steps), user_id=scope_uid):
             return True
         own = self._minimal_period(new_steps)
         if len(own) < len(new_steps) and self._is_periodic_repeat(own, new_steps):
             return True
         for seq in self.sequences.values():
             if not seq.durable:
+                continue
+            if scope_uid is not None and self._normalize_user_id(getattr(seq, "user_id", "default")) != scope_uid:
                 continue
             period = self._minimal_period(list(seq.steps))
             if len(period) < 2:
@@ -1090,7 +1129,7 @@ class AdvancedPatternRecognition:
         return False
 
 
-    def _compose_sequences_beyond_window(self):
+    def _compose_sequences_beyond_window(self, user_id: Any = None):
         """Extend durable sequences when the window ends with a true continuation.
 
         Example: durable [a1..a5] scrolled out; fresh ends with [a4,a5,a6,a7,a8]
@@ -1103,9 +1142,13 @@ class AdvancedPatternRecognition:
           near-duplicates do not fan out into many composed patterns.
         - Cap new composed records per observe via max_compose_per_observe.
         """
-        if not self.recent_items:
+        uid = self._normalize_user_id(
+            user_id if user_id is not None else getattr(self, "_active_user_id", "default")
+        )
+        recent_q = self._user_recent_items(uid)
+        if not recent_q:
             return
-        fresh = [item for item, _ts in list(self.recent_items)[-self.sequence_detect_slice:]]
+        fresh = [item for item, _ts in list(recent_q)[-self.sequence_detect_slice:]]
         if len(fresh) < 3:
             return
         max_grow = max(self.local_seq_lengths)
@@ -1114,7 +1157,9 @@ class AdvancedPatternRecognition:
         existing = [
             (list(seq.steps), seq)
             for seq in list(self.sequences.values())
-            if seq.durable and len(seq.steps) >= min_overlap
+            if seq.durable
+            and len(seq.steps) >= min_overlap
+            and self._normalize_user_id(getattr(seq, "user_id", "default")) == uid
         ]
         # (score, anchor_key, new_steps, seq) — one winner per anchor later
         candidates = []
@@ -1160,7 +1205,7 @@ class AdvancedPatternRecognition:
                     new_steps = steps + extension
                     if len(new_steps) > self.max_composed_sequence_length:
                         new_steps = new_steps[: self.max_composed_sequence_length]
-                    if new_steps == steps or self._would_be_cyclic_wrap(new_steps):
+                    if new_steps == steps or self._would_be_cyclic_wrap(new_steps, user_id=uid):
                         continue
                     if self._is_low_information_sequence(new_steps):
                         continue
@@ -1201,6 +1246,7 @@ class AdvancedPatternRecognition:
                 seq.average_time_between_steps,
                 durable=True,
                 boost_count=max(1, min(seq.count, 3)),
+                user_id=uid,
             )
             composed_n += 1
             if composed_n >= cap:
@@ -1233,6 +1279,25 @@ class AdvancedPatternRecognition:
         if not isinstance(user_id, str) or not user_id.strip():
             return "default"
         return user_id.strip()
+
+    def _user_recent_items(self, user_id: Any = None) -> deque:
+        uid = self._normalize_user_id(
+            user_id if user_id is not None else getattr(self, "_active_user_id", "default")
+        )
+        q = self._recent_items_by_user.get(uid)
+        if q is None:
+            q = deque(maxlen=self.working_window_size)
+            self._recent_items_by_user[uid] = q
+        return q
+
+    @property
+    def recent_items(self) -> deque:
+        """Active-user working window (compat for stats / pareidolia)."""
+        return self._user_recent_items(self._active_user_id)
+
+    def _sequence_key(self, user_id: Any, steps: List[str]) -> Tuple[str, Tuple[str, ...]]:
+        uid = self._normalize_user_id(user_id)
+        return (uid, tuple(str(s) for s in steps))
 
     def _combo_key(self, user_id: str, signals: Tuple[str, ...]) -> Tuple[str, Tuple[str, ...]]:
         return (self._normalize_user_id(user_id), tuple(signals))
@@ -1794,6 +1859,8 @@ class AdvancedPatternRecognition:
     def _observe_body(self, data: Dict[str, Any]) -> Dict[str, Any]:
         current_time = time.time()
         self._observe_id = int(getattr(self, "_observe_id", 0) or 0) + 1
+        uid = self._normalize_user_id(data.get("user_id", "default"))
+        self._active_user_id = uid
         
         items = data.get('items', [])
         emotions = data.get('emotions', {})
@@ -1812,9 +1879,10 @@ class AdvancedPatternRecognition:
             'new_patterns': False
         }
         
-        # Update history
+        # Update history (per-user working window for sequences)
+        recent_q = self._user_recent_items(uid)
         for item in items:
-            self.recent_items.append((item, current_time))
+            recent_q.append((item, current_time))
         
         if emotions:
             self.recent_emotions.append((emotions, current_time))
@@ -1833,8 +1901,8 @@ class AdvancedPatternRecognition:
             for item_b in items[i+1:]:
                 self._record_co_occurrence(item_a, item_b, current_time, statement)
         
-        # Detect multi-step sequences
-        self.detect_multi_step_sequences()
+        # Detect multi-step sequences (user-scoped)
+        self.detect_multi_step_sequences(user_id=uid)
         
         # Detect behavioral patterns
         self.detect_behavioral_patterns(data)
@@ -1862,11 +1930,14 @@ class AdvancedPatternRecognition:
                 })
         
         for seq_key, sequence in self.sequences.items():
+            if self._normalize_user_id(getattr(sequence, "user_id", "default")) != uid:
+                continue
             if sequence.confidence >= 0.4:
                 patterns_found['sequences'].append({
                     'steps': sequence.steps,
                     'confidence': sequence.confidence,
-                    'count': sequence.count
+                    'count': sequence.count,
+                    'user_id': uid,
                 })
         
         for name, behavior in self.behavioral_patterns.items():
@@ -1963,8 +2034,9 @@ class AdvancedPatternRecognition:
     def get_significant_patterns_only(self, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Return only significant patterns for reasoning.
 
-        When user_id is provided, discovered signal combinations are scoped to
-        that user so multi-user live traffic does not mix learned combos.
+        When user_id is provided, sequences and discovered signal combinations are
+        scoped to that user so multi-user live traffic does not mix reply-relevant
+        Pattern state (same spirit as signal-combo scoping).
         """
         scope_uid = self._normalize_user_id(user_id) if user_id is not None else None
         significant = {
@@ -1987,14 +2059,18 @@ class AdvancedPatternRecognition:
         
         # Reliable sequences (include durable composed patterns; exclude wrap / short near-dup noise)
         for seq_key, seq in self.sequences.items():
+            seq_uid = self._normalize_user_id(getattr(seq, "user_id", "default"))
+            if scope_uid is not None and seq_uid != scope_uid:
+                continue
             steps = list(seq.steps)
-            if self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps):
+            if self._is_wrap_noise(steps, user_id=seq_uid) or self._is_short_near_dup_sequence(steps):
                 continue
             if seq.confidence >= 0.6 or (seq.durable and seq.confidence >= 0.4):
                 significant['reliable_sequences'].append({
                     'steps': seq.steps,
                     'confidence': seq.confidence,
                     'durable': bool(seq.durable),
+                    'user_id': seq_uid,
                 })
         
         # Confirmed behavioral patterns

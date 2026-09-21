@@ -1,0 +1,57 @@
+=== PATTERN INTEGRATION AFTER PROOF ===
+time: 2026-09-21 15:02:56 MT
+runtime: /tmp/pattern-integ-after-izaibxrr
+registered: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'shared_representation', 'social_context', 'speech', 'voice']
+
+--- FAIL-1/2 Alice → Bob multi-turn ---
+A teach: 'Got it — your favorite color is teal.'
+A ask: 'I remember your favorite color is teal.'
+A cont: 'Got it — your favorite color is teal.'
+B greet: 'Hi there'
+B music teach: 'Got it — your favorite music is jazz.'
+B music ask: 'I remember your favorite music is jazz.'
+B color ask (must not be Alice teal via Pattern): 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+B token ask: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+alice reliable_sequences count=6 sample=[{'steps': ['my', 'favorite', 'color'], 'confidence': 1.0, 'durable': True, 'user_id': 'AlicePatInteg'}, {'steps': ['favorite', 'color', 'is'], 'confidence': 0.6, 'durable': True, 'user_id': 'AlicePatInteg'}, {'steps': ['color', 'is', 'teal'], 'confidence': 0.6, 'durable': True, 'user_id': 'AlicePatInteg'}]
+bob reliable_sequences count=4 sample=[{'steps': ['my', 'favorite', 'music'], 'confidence': 0.8, 'durable': True, 'user_id': 'BobPatInteg'}, {'steps': ['what', 'is', 'my'], 'confidence': 0.8, 'durable': True, 'user_id': 'BobPatInteg'}, {'steps': ['is', 'my', 'favorite'], 'confidence': 0.8, 'durable': False, 'user_id': 'BobPatInteg'}]
+bob_sig_has_favorite_color=False
+
+--- FAIL-3 Emotion share ---
+E0: 'Hello'
+E1 reply: 'I hear you.'
+E1 social: {'last_cue': 'emotional_share', 'is_social_turn': True, 'continuity': 'first_emotional_share'}
+
+--- FAIL-4 Fact recall vs Pattern ---
+pet teach: "Got it — your pet's name is Whiskers."
+pet ask: "I remember your pet's name is Whiskers."
+
+--- FAIL-1 Motor reminder ---
+motor reply: "There's something beautiful and sad about that. I get the sense you're feeling neutral."
+motor envelope hint: no_actuator
+
+--- REGRESSION sequence infer ---
+seq ask: 'The pattern is 2, 4, 6, 8, so the next item is 10.'
+pattern get_significant status: success seqs=11
+missing closed lobes: []
+
+=== CHECKS ===
+FAIL1_bob_music_not_pattern_spam: True
+FAIL1_bob_music_has_jazz: True
+FAIL2_bob_color_not_alice_teal_in_pattern: True
+FAIL2_bob_color_not_pattern_spam: True
+FAIL2_bob_significant_no_alice_favorite_color: True
+FAIL3_not_pattern_spam: True
+FAIL3_social_cue: True
+FAIL3_is_social_turn: True
+FAIL3_empathic_or_social_wording: True
+FAIL4_pet_not_spam: True
+FAIL4_pet_has_whiskers: True
+FAIL1_motor_not_spam: True
+REG_seq_infer_10: True
+REG_pattern_result_present: True
+REG_closed_lobes: True
+REG_learning_importable: True
+
+RESULT=PASS
+PHASE=AFTER
+Confirm: no Learning edits; no CloudAgent.
