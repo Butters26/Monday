@@ -1,0 +1,77 @@
+=== METACOGNITION CONTRADICTION PROOF ===
+time: 2026-09-20 20:54:56 MDT
+runtime: /tmp/mc-contradict-cqtujsk3
+
+DONE_MEANS: When Meta detects contradictory grounded structures
+(e.g. favorite_color=red AND teal), Language does not receive both
+as composable content; live reply is uncertainty/refusal; conflicting
+structures remain on meta findings / diagnostic payload. Notus untouched.
+Non-conflicting grounded and empty paths still behave correctly.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+meta_cognition_registered: True
+
+--- 1) LIVE PATH: inject conflicting favorite_color red+teal ---
+query: What is my favorite color?
+reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+meta.path: uncertain_or_empty
+meta.findings: ["conflicting values for user.favorite_color: ['red', 'teal']"]
+meta.signals: {'force_grounded_refusal': False, 'flag_uncertainty': True, 'nudge_attention': True, 'ok_grounded': False}
+meta.contradiction_blocked: True
+meta.conflicting_structures: [{'subject': 'user', 'relation': 'favorite_color', 'predicate': 'favorite_color', 'value': 'red', 'object': 'red', 'certainty': 1.0}, {'subject': 'user', 'relation': 'favorite_color', 'predicate': 'favorite_color', 'value': 'teal', 'object': 'teal', 'certainty': 1.0}]
+last_grounded_structures (diagnostic): [{'subject': 'user', 'relation': 'favorite_color', 'predicate': 'favorite_color', 'value': 'red', 'object': 'red', 'certainty': 1.0}, {'subject': 'user', 'relation': 'favorite_color', 'predicate': 'favorite_color', 'value': 'teal', 'object': 'teal', 'certainty': 1.0}]
+color_assert_flags: {'mentions_red': False, 'mentions_teal': False, 'asserts_red': False, 'asserts_teal': False}
+flag_uncertainty: True
+reply_is_uncertainty_or_refusal: True
+asserts_either_color_as_true: False
+preserved_conflict_values: ['red', 'teal']
+
+--- 2) apply_to_semantic control (Language handoff payload) ---
+verdict.findings: ["conflicting values for user.favorite_color: ['red', 'teal']"]
+verdict.signals: {'force_grounded_refusal': False, 'flag_uncertainty': True, 'nudge_attention': True, 'ok_grounded': False}
+verdict.conflicting_structures values: ['red', 'teal']
+applied.grounded_structures: []
+applied.answer[:80]: 'I do not have enough grounded information to answer that. Please provide more co'
+applied.intent: express_uncertainty
+applied.memory_context: []
+applied.uncertainty_flagged: True
+applied.meta.conflicting_structures values: ['red', 'teal']
+language_handoff_cleared: True
+
+--- 3) GROUNDED non-conflicting (teal alone) ---
+teach reply: 'Got it — your favorite color is teal.'
+ask reply: 'Your favorite color is teal.'
+meta.path: grounded
+meta.findings: ['grounded_structures_present']
+meta.signals: {'force_grounded_refusal': False, 'flag_uncertainty': False, 'nudge_attention': False, 'ok_grounded': True}
+last_grounded_structures: [{'subject': 'user', 'relation': 'favorite_color', 'predicate': 'favorite_color', 'value': 'teal', 'object': 'teal', 'certainty': 1.0}]
+normal_grounded_teal_answer: True
+
+--- 4) EMPTY path still refuses honestly ---
+query: What is the atomic weight of unobtainium-42?
+reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+meta.path: uncertain_or_empty
+meta.findings: ['empty_or_refusal_grounding']
+meta.signals: {'force_grounded_refusal': False, 'flag_uncertainty': True, 'nudge_attention': True, 'ok_grounded': False}
+empty_refuses_honestly: True
+invented_fact_phrases: False
+
+--- PROOF GATES ---
+gate_meta_contradiction_flagged: True
+gate_live_reply_not_asserting_color: True
+gate_conflicts_preserved_for_diagnosis: True
+gate_nonconflicting_grounded_works: True
+gate_empty_refuses: True
+gate_language_handoff_cleared_structures: True
+ALL_GATES_PASS: True
+
+CONTROL_BEHAVIOR:
+  Meta detects surface contradiction among grounded structures →
+  flag_uncertainty=True, nudge_attention=True, contradiction_blocked=True.
+  apply_to_semantic clears grounded_structures/memory_context for Language,
+  sets grounded refusal + express_uncertainty, preserves conflicting_structures
+  on meta_cognition for diagnosis. Thalamus keeps last_grounded_structures
+  as the conflicting set. Notus is not deleted. Language second-look forces
+  refusal if a color is still asserted despite contradiction.
+
+meta status: {'monitor_count': 8, 'last_path': 'uncertain_or_empty', 'last_findings': ['empty_or_refusal_grounding'], 'last_signals': {'force_grounded_refusal': False, 'flag_uncertainty': True, 'nudge_attention': True, 'ok_grounded': False}, 'error_log_len': 0, 'history_len': 8}

@@ -1553,10 +1553,27 @@ class Thalamus:
         semantic_input = self._meta_cognition_watch_reasoning(
             user_input, semantic_input, reasoning_answer, memories
         )
-        # If meta forced a grounded refusal, keep structures cleared.
+        # Meta control: contradiction → Language cleared, diagnostics kept;
+        # force_refusal → structures cleared entirely.
         if isinstance(semantic_input.get("meta_cognition"), dict):
-            sigs = (semantic_input["meta_cognition"].get("signals") or {})
-            if sigs.get("force_grounded_refusal"):
+            meta = semantic_input["meta_cognition"]
+            sigs = meta.get("signals") or {}
+            if meta.get("contradiction_blocked"):
+                # Do not compose either conflicting value; preserve for diagnosis.
+                conflicting = meta.get("conflicting_structures")
+                if isinstance(conflicting, list) and conflicting:
+                    self.last_grounded_structures = [
+                        dict(item) if isinstance(item, dict) else item
+                        for item in conflicting
+                    ]
+                if isinstance(self.last_meta_cognition, dict):
+                    merged = dict(self.last_meta_cognition)
+                    if isinstance(conflicting, list):
+                        merged["conflicting_structures"] = list(conflicting)
+                    merged["contradiction_blocked"] = True
+                    self.last_meta_cognition = merged
+                reasoning_answer = semantic_input.get("answer")
+            elif sigs.get("force_grounded_refusal"):
                 grounded_structures = None
                 self.last_grounded_structures = None
                 reasoning_answer = semantic_input.get("answer")

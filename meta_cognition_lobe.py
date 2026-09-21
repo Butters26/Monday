@@ -196,6 +196,17 @@ class MetaCognitionLobe:
                 n += 1
         return n
 
+
+    @staticmethod
+    def _findings_have_contradiction(findings: Any) -> bool:
+        for item in findings or []:
+            if not isinstance(item, str):
+                continue
+            low = item.lower()
+            if "conflicting values" in low or "affirms and negates" in low:
+                return True
+        return False
+
     def monitor_reasoning(
         self,
         *,
@@ -313,6 +324,14 @@ class MetaCognitionLobe:
             ),
             "observed_at": time.time(),
         }
+        # Preserve conflicting grounded structures for diagnosis — do not
+        # delete from Notus; Language handoff clears them in apply_to_semantic.
+        if contradictions and structures:
+            verdict["conflicting_structures"] = [
+                dict(item) if isinstance(item, dict) else item
+                for item in structures
+            ]
+            verdict["contradiction_blocked"] = True
         self.last_verdict = verdict
         self.monitor_count += 1
         self._history.append({"phase": "reasoning", **verdict})
@@ -326,12 +345,32 @@ class MetaCognitionLobe:
         """Mutate a copy of semantic_input per control signals."""
         out = dict(semantic_input or {})
         signals = (verdict or {}).get("signals") or {}
-        out["meta_cognition"] = {
+        findings = list((verdict or {}).get("findings") or [])
+        conflicting = (verdict or {}).get("conflicting_structures")
+        if not isinstance(conflicting, list) or not conflicting:
+            conflicting = None
+            raw = out.get("grounded_structures")
+            if (
+                self._findings_have_contradiction(findings)
+                and isinstance(raw, list)
+                and raw
+            ):
+                conflicting = [
+                    dict(item) if isinstance(item, dict) else item for item in raw
+                ]
+
+        meta: Dict[str, Any] = {
             "path": verdict.get("path"),
-            "findings": list(verdict.get("findings") or []),
+            "findings": findings,
             "signals": dict(signals),
             "limits": verdict.get("limits"),
         }
+        if conflicting:
+            # Diagnosis only — Notus untouched; Language must not compose either.
+            meta["conflicting_structures"] = conflicting
+            meta["contradiction_blocked"] = True
+        out["meta_cognition"] = meta
+
         if signals.get("force_grounded_refusal"):
             out["grounded_structures"] = []
             out["propositions"] = [GROUNDED_REFUSAL]
@@ -342,14 +381,30 @@ class MetaCognitionLobe:
             except (TypeError, ValueError):
                 out["certainty"] = 0.3
         elif signals.get("flag_uncertainty"):
-            if not verdict.get("has_structures"):
+            if conflicting:
+                # Safe effect like force_grounded_refusal for composition, but
+                # keep conflicting_structures on meta for diagnosis/logging.
+                out["grounded_structures"] = []
+                out["propositions"] = [GROUNDED_REFUSAL]
+                out["answer"] = GROUNDED_REFUSAL
+                out["intent"] = "express_uncertainty"
+                # Prevent Language salvage from picking one conflicting side.
+                out["memory_context"] = []
+                try:
+                    out["certainty"] = min(float(out.get("certainty") or 0.3), 0.3)
+                except (TypeError, ValueError):
+                    out["certainty"] = 0.3
+                out["uncertainty_flagged"] = True
+            elif not verdict.get("has_structures"):
                 if not self._is_refusal(self._text(out.get("answer"))):
                     out.setdefault("intent", "express_uncertainty")
                 try:
                     out["certainty"] = min(float(out.get("certainty") or 0.4), 0.4)
                 except (TypeError, ValueError):
                     out["certainty"] = 0.4
-            out["uncertainty_flagged"] = True
+                out["uncertainty_flagged"] = True
+            else:
+                out["uncertainty_flagged"] = True
         return out
 
     def monitor_language(
@@ -376,6 +431,9 @@ class MetaCognitionLobe:
             "overconfident_ungrounded",
         } or bool((prior.get("signals") or {}).get("flag_uncertainty"))
         has_structures = bool(prior.get("has_structures"))
+        prior_contradiction = self._findings_have_contradiction(findings) or bool(
+            prior.get("contradiction_blocked")
+        )
         if (
             prior_empty
             and text
@@ -385,6 +443,17 @@ class MetaCognitionLobe:
             and self._has_overconfident_markers(text)
         ):
             findings.append("language_overconfident_after_empty_grounding")
+            signals["force_grounded_refusal"] = True
+            signals["flag_uncertainty"] = True
+
+        # Safety net: never let Language assert a side when Meta saw conflict.
+        if (
+            prior_contradiction
+            and text
+            and not self._is_refusal(text)
+            and not self._is_social_or_empathic(text)
+        ):
+            findings.append("language_asserted_despite_contradiction")
             signals["force_grounded_refusal"] = True
             signals["flag_uncertainty"] = True
 
@@ -398,6 +467,10 @@ class MetaCognitionLobe:
             path = "uncertain_or_empty"
 
         corrected = GROUNDED_REFUSAL if signals.get("force_grounded_refusal") else None
+
+        conflicting = prior.get("conflicting_structures")
+        if isinstance(meta, dict) and isinstance(meta.get("conflicting_structures"), list):
+            conflicting = meta.get("conflicting_structures")
 
         verdict = {
             "path": path,
@@ -416,6 +489,9 @@ class MetaCognitionLobe:
             ),
             "observed_at": time.time(),
         }
+        if isinstance(conflicting, list) and conflicting:
+            verdict["conflicting_structures"] = conflicting
+            verdict["contradiction_blocked"] = True
         self.last_verdict = verdict
         self.monitor_count += 1
         self._history.append({"phase": "language", **verdict})
