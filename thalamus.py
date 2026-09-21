@@ -79,6 +79,7 @@ _LOBE_LEARNING_RULES = {
     "meta_awareness": {"feedback", "correction"},
     "speech": {"feedback", "correction"},
     "autonomous": {"skill", "feedback", "correction"},
+    "shared_representation": {"skill"},
     "representation": {"skill"},
     "reflection": {"feedback", "correction"},
     "experience": {"skill", "feedback"},
@@ -126,6 +127,8 @@ class Thalamus:
         self.last_meta_awareness_aside: Optional[Dict[str, Any]] = None
         # Last AutonomousSpeech social WHEN/WHETHER decision (not Voice audio).
         self.last_speech_decision: Optional[Dict[str, Any]] = None
+        # Last SharedRepresentation envelope (stable concept IDs / activation).
+        self.last_representation: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1416,6 +1419,98 @@ class Thalamus:
 
 
 
+
+    def _resolve_representation_live(
+        self,
+        user_input: str,
+        perception_payload: Optional[Dict[str, Any]] = None,
+        user_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Tiny glue: resolve Perception terms → stable concept IDs + activation.
+
+        SharedRepresentation owns identity/relationships/activation.
+        Stashes last_representation; returns representation_result for Reasoning.
+        """
+        empty: Dict[str, Any] = {
+            "status": "absent",
+            "resolved": [],
+            "concept_ids": [],
+            "highly_active_concepts": [],
+            "active_concepts": [],
+            "activation": {},
+            "user_id": user_id,
+            "source": "shared_representation",
+        }
+        with self.lobe_handlers_lock:
+            has = "shared_representation" in self.lobe_handlers
+        if not has:
+            self.last_representation = None
+            return empty
+
+        extra_terms: List[str] = []
+        if isinstance(perception_payload, dict):
+            concepts = perception_payload.get("concepts")
+            if isinstance(concepts, list):
+                for c in concepts:
+                    if isinstance(c, str) and c.strip():
+                        extra_terms.append(c.strip())
+                    elif isinstance(c, dict):
+                        name = c.get("name") or c.get("word") or c.get("canonical_name")
+                        if name:
+                            extra_terms.append(str(name))
+            elif isinstance(concepts, dict):
+                for w in concepts.get("words") or []:
+                    if w:
+                        extra_terms.append(str(w))
+
+        try:
+            resp = self.send_and_wait(
+                "shared_representation",
+                "resolve_from_text",
+                {
+                    "text": user_input or "",
+                    "terms": extra_terms,
+                    "user_id": user_id,
+                    "activate": True,
+                },
+                source="thalamus",
+            )
+        except Exception:
+            self.last_representation = None
+            return empty
+
+        if resp.get("status") != "success":
+            self.last_representation = None
+            return empty
+
+        body = self._content(resp)
+        if not isinstance(body, dict):
+            body = {}
+        # Prefer body fields; fall back to top-level resp keys from process_message.
+        env = {
+            "status": "success",
+            "resolved": list(body.get("resolved") or resp.get("resolved") or []),
+            "concept_ids": list(body.get("concept_ids") or resp.get("concept_ids") or []),
+            "highly_active_concepts": list(
+                body.get("highly_active_concepts")
+                or resp.get("highly_active_concepts")
+                or []
+            ),
+            "active_concepts": list(
+                body.get("active_concepts") or resp.get("active_concepts") or []
+            ),
+            "activation": dict(body.get("activation") or resp.get("activation") or {}),
+            "user_id": body.get("user_id", user_id),
+            "source": "shared_representation",
+            "timestamp": body.get("timestamp"),
+        }
+        self.last_representation = dict(env)
+        # Annotate perception envelope with stable IDs (non-destructive).
+        if isinstance(perception_payload, dict):
+            perception_payload["concept_ids"] = list(env["concept_ids"])
+            perception_payload["resolved_concepts"] = list(env["resolved"])
+        return env
+
     def _motor_plan_from_turn(
         self,
         user_input: str,
@@ -2015,6 +2110,12 @@ class Thalamus:
                 perception_payload["attention_priority"] = ranked_ids[:8]
                 perception_payload["attention_focus"] = attention_payload.get("focus")
 
+        # SharedRepresentation: resolve Perception terms → stable concept_ids.
+        # Semantic availability for Reasoning; NOT Attention focus.
+        representation_result: Dict[str, Any] = self._resolve_representation_live(
+            user_input, perception_payload, user_id=user_id
+        )
+
         # Tell autonomous which user is present BEFORE aside mint/memory grounding.
         with self.lobe_handlers_lock:
             _has_auto_early = "autonomous" in self.lobe_handlers
@@ -2271,6 +2372,9 @@ class Thalamus:
                     "perception": perception_payload,
                     "attention": attention_payload,
                     "pattern_result": pattern_result,
+                    "representation_result": representation_result
+                    if isinstance(representation_result, dict)
+                    else (self.last_representation or {}),
                     "social_context": social_context
                     if isinstance(social_context, dict)
                     else self.last_social_context,

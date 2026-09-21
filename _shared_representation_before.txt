@@ -1,0 +1,27 @@
+=== SHARED REPRESENTATION BEFORE PROOF ===
+time: 2026-09-21 13:23 MDT
+HEAD expect ~78c4718
+HEAD actual: 78c4718a1cd4
+runtime: /tmp/sr-before-u3o1ardt
+
+registered: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'speech', 'voice']
+shared_representation in registry: False
+representation in registry: False
+hasattr last_representation: False
+live reply[:100]='That makes me feel nostalgic and happy at once.'
+last_representation after turn: None
+adapter process_message mentions representation_result: False
+run_abin imports representation.py: False
+run_abin.py imports RepresentationLayer/representation.py: False
+CTG has mock associations comment: True
+dual_stream_thinking in registry: False
+run_abin imports dual_stream: True
+learning/ present: True
+shared_representation.py exists: False
+shared_representation.json exists: False
+old representation.py exists: True
+old RepresentationLayer in systems values: False
+
+BEFORE SUMMARY: shared semantic substrate MISSING on live path.
+EXPECT AFTER: registered shared_representation, stable IDs, relationships,
+spreading, persistence, user isolation, Reasoning consumes representation_result.

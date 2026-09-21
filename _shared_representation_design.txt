@@ -1,0 +1,181 @@
+=== SHARED REPRESENTATION DESIGN JOB ===
+time: 2026-09-21 13:22 MDT
+HEAD: 78c4718 (pre-implement)
+NO CloudAgent. Learning Stack / Experience / Beliefs / BehavioralReinforcement untouched.
+dual_stream_thinking.py stays unwired. Old representation.py stays UNWIRED.
+
+DONE_MEANS
+  A new SharedRepresentation system owns the common semantic substrate:
+    surface term → stable concept_id → shared relationships → activation/relevance
+  Multiple lobes can refer to the SAME internal concept by ID.
+  Live path: user turn → resolve concepts → stable IDs in handoff → one
+  downstream consumer (Reasoning) uses representation_result → reply works.
+  Persistence survives recreate against the same runtime store.
+  User-scoped personal edges do not leak across users.
+  PASS only with actual proofs in _shared_representation_after.txt.
+
+BEFORE (no substrate)
+  - create_core_systems does NOT register representation / shared_representation
+  - Thalamus envelopes pass Perception string word lists — transport ≠ identity
+  - Pattern co_occurrences are Pattern-local discovery, not shared concept_ids
+  - Attention focus ≠ concept activation state
+  - Reasoning.think_about reads representation_result.highly_active_concepts
+    but DirectMaximumSophisticationAdapter never supplies representation_result
+  - CTG hardcodes mock associations ("would come from representation lobe")
+  - Old representation.py: singleton get_thalamus self-register, stale Notus
+    APIs, toy emotion/action seeds, empty translate_from, idle loop — UNWIRED
+
+AFTER (target)
+  - New module shared_representation.py (SharedRepresentationSystem)
+  - Registered as "shared_representation" in create_core_systems + shutdown
+  - Thalamus glue: after Perception/Attention, resolve+activate turn concepts;
+    stash last_representation; pass representation_result into Reasoning think
+  - Adapter forwards representation_result into legacy_input (satisfies dangling
+    highly_active_concepts read without redesigning MaximumSophisticationReasoning)
+  - Own JSON persistence under runtime_dir()/shared_representation.json
+  - Old representation.py remains importable but NOT instantiated/registered
+
+===============================================================================
+ARCHITECTURAL OWNERSHIP
+===============================================================================
+SharedRepresentation OWNS:
+  - Stable concept identity (concept_id for life of store)
+  - Canonical names + deliberate aliases (dog/dogs → same; no fuzzy merge)
+  - Structured relationships: source, target, type, strength/confidence
+  - Activation state + bounded spreading activation (decay, depth/node caps)
+  - Common concept envelope for handoff
+  - Global vs user-scoped personal association edges (no cross-user leak)
+
+SharedRepresentation does NOT own:
+  - Pattern discovery (co_occurrence / sequences stay in Pattern)
+  - Reasoning conclusions / grounded meaning composition
+  - Attention focus / salience ranking
+  - Emotion affect / PAD
+  - Notus memory DB (facts, episodes, conversations)
+  - Language wording / Output delivery
+  - MetaCognition epistemic watch / MetaAwareness process mode
+  - Executive goals / Motor actions / Voice synthesis
+  - Learning stack / Experience / Beliefs / BehavioralReinforcement
+
+Boundary with Pattern:
+  Pattern may *propose* semantic edges later. Representation *stores/exposes*
+  accepted edges. Pattern's current CoOccurrence (token strings, local strength)
+  is unsuitable for direct handoff into concept_id edges without a mapping
+  layer (token→concept_id, confidence calibration, acceptance policy).
+  FUTURE HANDOFF (documented, NOT implemented this job):
+    Pattern → propose_edge({source_token, target_token, type, strength})
+    → SharedRepresentation.resolve tokens → accept_relationship if policy OK
+  Do NOT reopen/redesign Pattern in this job.
+
+===============================================================================
+PERSISTENCE DECISION (BEFORE IMPLEMENT)
+===============================================================================
+CHOICE: Own JSON file under runtime_dir() — shared_representation.json
+  Same pattern as Pattern (pattern_knowledge.json) and Emotion state file.
+  NOT dumped into Notus.
+WHY NOT Notus:
+  - Notus = episodic/semantic memory, facts, conversations — different ownership
+  - Live Notus has no concept_exists / get_related_concepts / active-concept API
+  - Putting the graph in Notus would duplicate "memory" vs "shared semantic
+    identity" and couple representation to Postgres availability
+  - Concept IDs must be stable for the life of *this* store; a dedicated file
+    keeps schema and migration ownership clear
+ACTIVATION: activation levels are turn-ephemeral (decay/reset); persisted are
+  concepts, aliases, global relationships, user-scoped personal relationships.
+  Do not persist transient activation as durable "memory."
+
+===============================================================================
+GLOBAL vs USER MODEL
+===============================================================================
+GLOBAL:
+  - Concept identity (concept_id, canonical_name, aliases, concept_type,
+    properties) — shared across users ("dog" is the same concept for Alice/Bob)
+  - Global relationships (is_a, similar_to, etc.) — shared semantic structure
+USER-SCOPED:
+  - Personal association edges keyed by user_id (e.g. Alice's dog→fluffy)
+  - Retrieved only when that user_id is supplied
+  - Alice's personal edge MUST NOT appear in Bob's get_relationships /
+    spreading that includes personal edges
+Spreading on live path: uses global edges + optional personal edges for the
+  active user_id only.
+
+===============================================================================
+SCHEMA (cleaner than old Concept)
+===============================================================================
+Concept:
+  concept_id: str          # stable, e.g. c_<hex> — never reused / reassigned
+  canonical_name: str      # lowercase canonical surface
+  aliases: list[str]       # deliberate aliases (plural forms, synonyms we add)
+  concept_type: str        # object|action|emotion|abstract|relation|unknown
+  properties: dict
+  created_at / updated_at: float
+  activation: float        # ephemeral, not a durable identity field
+
+Relationship (structured, not strings):
+  source_id: str
+  target_id: str
+  rel_type: str            # is_a | has_property | causes | similar_to |
+                           # opposite_of | associated_with | personal_assoc
+  strength: float          # 0..1 confidence/weight
+  scope: "global" | "user"
+  user_id: str | None      # required when scope=user
+  created_at: float
+
+Identity / canonicalization (deliberate, NOT fuzzy):
+  - lowercase, strip punctuation
+  - simple English plural fold: dogs→dog, boxes→box, categories→category
+  - exact alias lookup only
+  - NEVER merge by edit-distance / embedding similarity
+  - never-seen terms create NEW concepts (honest; no giant toy dictionary)
+
+Spreading activation (bounded, testable):
+  - BFS from seeds with max_depth, max_nodes, per-hop decay, threshold
+  - No recursion runaway; deterministic visit order (sorted edge keys)
+  - decay_all / reset_activation for turn boundaries
+  - Semantic availability ≠ Attention focus
+
+===============================================================================
+LIVE CONSUMER CHOICE: Reasoning
+===============================================================================
+Why Reasoning (not Pattern, not Attention):
+  - Already reads representation_result.highly_active_concepts (dangling)
+  - Adapter is the missing glue — one field forward, no Reasoning redesign
+  - Attention owns focus/salience — must not confuse with activation
+  - Pattern owns discovery — boundary documented; do not reopen
+
+Smallest glue:
+  1. shared_representation.py — SharedRepresentationSystem + process_message
+  2. run_abin.create_core_systems — construct + register + shutdown list
+  3. thalamus — last_representation; _resolve_representation_live after
+     perception concepts available; pass representation_result into reasoning
+     think input; optional learning-rules entry for shared_representation
+  4. direct_reasoning — forward representation_result into legacy_input
+
+===============================================================================
+DANGLING EXPECTATIONS DECISION
+===============================================================================
+Reasoning representation_result.highly_active_concepts:
+  SATISFY with new system (this job). Adapter supplies representation_result
+  from Thalamus live resolve. Legacy key_concepts path works as designed.
+  Do NOT redesign Reasoning to drop the field.
+
+CTG mock associations ("would come from representation"):
+  REDESIGN EXPECTATION → future consumer, NOT this job.
+  CTG sits under MetaAwareness as spontaneous generator; dual-stream leftovers
+  closed. Document: later CTG may call get_related(concept_id) instead of the
+  hardcoded associations dict. Do NOT wire CTG now. Do NOT reopen MetaAwareness.
+
+===============================================================================
+SUCCESS CRITERIA (pass/fail)
+===============================================================================
+  1 STABLE IDENTITY — dog/dogs/dog again same id; unrelated not collapsed
+  2 RELATIONSHIPS — structured; retrieve by ID
+  3 SPREADING — activate + decay/reset; no runaway
+  4 PERSISTENCE — recreate same runtime_dir → same ids/edges
+  5 USER ISOLATION — Alice personal edge invisible to Bob; global shared OK
+  6 LIVE PATH — registered; resolution; IDs in handoff; Reasoning consumes;
+                reply works
+  7 REGRESSIONS — closed systems list; dual_stream unwired; Learning untouched;
+                  old representation.py unwired; no sockets
+
+Partial / design unmet = FAIL.

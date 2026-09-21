@@ -14,6 +14,7 @@ plus VoiceLobe synthesizing speech / voice envelopes from Output text
 (honest synthesized/play_unavailable; no fake "she spoke") —
 plus AutonomousSpeechSystem as social WHEN/WHETHER filter for speak-worthy
 asides (does not invent wording or audio) —
+plus SharedRepresentationSystem as common semantic substrate (stable concept IDs) —
 plus MetaAwareness tracking process / dual-stream mode (wandering vs focused;
 distinct from MetaCognition epistemic watching), with ContinuousThoughtGenerator
 and ControlledThinking attached as spontaneous/controlled stream generators —
@@ -44,6 +45,7 @@ from social_context_lobe import SocialContextLobe
 from motor_action_lobe import MotorActionLobe
 from voice_lobe import VoiceLobe
 from meta_awareness import MetaAwareness
+from shared_representation import SharedRepresentationSystem
 from continuous_thought_generator import ContinuousThoughtGenerator
 from controlled_thinking import ControlledThinking
 from runtime_paths import runtime_dir
@@ -98,6 +100,10 @@ def create_core_systems(
         "voice": VoiceLobe(thalamus=thalamus),
         "speech": AutonomousSpeechSystem(thalamus=thalamus),
         "meta_awareness": MetaAwareness(thalamus=thalamus),
+        "shared_representation": SharedRepresentationSystem(
+            thalamus=thalamus,
+            store_path=str(directory / "shared_representation.json"),
+        ),
     }
     for name in (
         "perception",
@@ -118,6 +124,7 @@ def create_core_systems(
         "voice",
         "speech",
         "meta_awareness",
+        "shared_representation",
     ):
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
@@ -148,6 +155,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "voice",
         "speech",
         "meta_awareness",
+        "shared_representation",
         "language",
         "motor_action",
         "social_context",

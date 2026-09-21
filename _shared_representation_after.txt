@@ -1,0 +1,69 @@
+=== SHARED REPRESENTATION AFTER PROOF ===
+time: 2026-09-21 13:26:00 MT
+HEAD (pre-commit worktree): 78c4718a1cd4
+runtime: /tmp/sr-after-e76bgxwa
+
+registered: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'shared_representation', 'social_context', 'speech', 'voice']
+
+--- 1 STABLE IDENTITY ---
+[PASS] STABLE IDENTITY — dog=c_f73c582ef4ac dogs=c_f73c582ef4ac dog2=c_f73c582ef4ac cat=c_17704a294daf novel=c_d105cabfc106
+  canonical dog='dog' aliases=['dogs']
+  unrelated collapse? False
+
+--- 2 RELATIONSHIPS ---
+[PASS] RELATIONSHIPS structured retrieve by ID — rels=[{'source_id': 'c_f73c582ef4ac', 'target_id': 'c_17704a294daf', 'source': 'c_f73c582ef4ac', 'target': 'c_17704a294daf', 'rel_type': 'similar_to', 'type': 'similar_to', 'strength': 0.75, 'confidence': 0.75, 'scope': 'global', 'user_id': None, 'created_at': 1790018766.9935248}]
+
+--- 3 SPREADING ACTIVATION ---
+  activation_map={'c_f73c582ef4ac': 1.0, 'c_17704a294daf': 0.48750000000000004}
+  highly_active=[{'id': 'c_f73c582ef4ac', 'concept_id': 'c_f73c582ef4ac', 'name': 'dog', 'canonical_name': 'dog', 'activation': 1.0, 'concept_type': 'unknown'}]
+  runaway_activated=6 cap=12
+[PASS] SPREADING + decay/reset + no runaway — seed=1.000 neighbor=0.488 after_decay=0.500 reset=0.0 runaway_ok=True
+
+--- 4 PERSISTENCE ---
+  store_exists=True path=/tmp/sr-after-e76bgxwa/shared_representation.json
+[PASS] PERSISTENCE across recreate — dogs→c_f73c582ef4ac expected=c_f73c582ef4ac edge_count=1
+
+--- 5 USER ISOLATION ---
+[PASS] USER ISOLATION — alice_personal=1 bob_leak=0 bob_global=1 alice_fluffy_act=0.585 bob_fluffy_act=0.000 bob_cat_act=0.488
+
+--- 6 LIVE PATH ---
+  registered shared_representation: True
+  last_representation status=success
+  last concept_ids=['c_6e275d440f41', 'c_f73c582ef4ac', 'c_ccde3a488e06', 'c_f8cea94ae467']
+  last highly_active[:3]=[{'id': 'c_f73c582ef4ac', 'concept_id': 'c_f73c582ef4ac', 'name': 'dog', 'canonical_name': 'dog', 'activation': 1.0, 'concept_type': 'unknown'}, {'id': 'c_f8cea94ae467', 'concept_id': 'c_f8cea94ae467', 'name': 'please', 'canonical_name': 'please', 'activation': 1.0, 'concept_type': 'unknown'}, {'id': 'c_ccde3a488e06', 'concept_id': 'c_ccde3a488e06', 'name': 'qorvex_live_token_55', 'canonical_name': 'qorvex_live_token_55', 'activation': 1.0, 'concept_type': 'unknown'}]
+  reply[:120]='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  Reasoning received representation_result status=success
+  Reasoning concept_ids=['c_6e275d440f41', 'c_f73c582ef4ac', 'c_ccde3a488e06', 'c_f8cea94ae467']
+  Reasoning highly_active count=4
+[PASS] LIVE PATH — reg=True ids=True handoff=True reply_ok=True
+  resolved names sample=['dog', 'please', 'qorvex_live_token_55', 'tell']
+
+--- 7 REGRESSIONS ---
+[PASS] old representation.py unwired — wired=False in_reg=False
+[PASS] dual_stream_thinking unwired
+[PASS] Learning stack untouched — git=''
+[PASS] closed systems still registered — missing=[]
+[PASS] shared_representation no sockets
+[PASS] Experience/Beliefs/Reinforcement not pulled into core
+  [INFO] CloudAgent: not used this job
+
+============================================================
+OVERALL: PASS
+============================================================
+
+--- GENUINE REMAINING LIMITATIONS ---
+- Only Reasoning consumes representation_result on the live path (smallest glue).
+  Pattern / Attention / Language / CTG do not yet read shared concept_ids.
+- CTG still uses hardcoded mock associations (future handoff documented in design).
+- Pattern→Representation edge acceptance not implemented (co_occurrence unsuitable
+  for direct handoff without token→concept_id mapping + acceptance policy).
+- Canonicalization is deliberate plural/alias only — no synonym ontology beyond
+  what is explicitly aliased; never-seen terms always create new concepts.
+- Activation is turn-ephemeral (reset each resolve); not a durable "memory" of
+  what was recently relevant across sessions.
+- Stopword list is minimal; surface noise like "please"/"tell" may become concepts.
+- Own JSON store under runtime_dir — not replicated / multi-process locked.
+- Old representation.py file still present on disk but unwired (historical only).
+
+Confirm: old representation.py UNWIRED; Learning untouched; no CloudAgent.
+OVERALL: PASS

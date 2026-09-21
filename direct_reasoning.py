@@ -499,6 +499,12 @@ class DirectMaximumSophisticationAdapter:
             "attention": attention_payload,
             # Existing Reasoning interface — do not invent a parallel channel.
             "pattern_result": pattern_result,
+            # SharedRepresentation substrate — satisfies dangling highly_active_concepts.
+            "representation_result": (
+                direct_input.get("representation_result")
+                if isinstance(direct_input.get("representation_result"), dict)
+                else {}
+            ),
         }
         # Prefer teaching ack / fact answers over legacy composition noise.
         teaching = self._teaching_ack(user_input)
@@ -560,6 +566,14 @@ class DirectMaximumSophisticationAdapter:
             semantic_input["attention_focus"] = attention_payload.get("focus")
             semantic_input["attention_focus_text"] = attention_payload.get("focus_text")
             semantic_input["attention_ranked"] = list(attention_payload.get("ranked") or [])[:5]
+        representation_result = direct_input.get("representation_result") or {}
+        if isinstance(representation_result, dict) and representation_result.get("status") == "success":
+            semantic_input["representation_concept_ids"] = list(
+                representation_result.get("concept_ids") or []
+            )
+            semantic_input["representation_highly_active"] = list(
+                representation_result.get("highly_active_concepts") or []
+            )[:12]
         if fact_structures:
             # Reasoning owns grounded meaning — Language owns sentence construction.
             semantic_input["grounded_structures"] = fact_structures
