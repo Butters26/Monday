@@ -58,6 +58,45 @@ _MILD_SOCIAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Short goodbye / closing phrases — ineligible for curiosity follow-ups.
+# Kept separate from is_mild_social_turn so Conversation does not map closings→greeting.
+_CLOSING_SOCIAL_EXACT = frozenset(
+    {
+        "bye", "goodbye", "good bye", "farewell", "goodnight", "good night",
+        "later", "see you", "see you later", "talk later", "talk to you later",
+        "i gotta go", "i have to go", "i need to go",
+        "gotta go", "have to go", "need to go",
+        "i gotta go, bye", "i have to go, bye", "i need to go, bye",
+        "gotta go, bye", "bye bye",
+    }
+)
+_CLOSING_SOCIAL_RE = re.compile(
+    r"(?i)(?:"
+    r"^\s*(?:bye|goodbye|good\s*bye|farewell|good\s*night|goodnight|"
+    r"see\s+you(?:\s+later)?|later)\b|"
+    r"\b(?:i\s+)?(?:gotta|have\s+to|need\s+to)\s+go\b|"
+    r"\btalk\s+(?:to\s+you\s+)?later\b|"
+    r"\bsee\s+you\s+later\b"
+    r")"
+)
+
+
+def is_closing_social_turn(user_input: str, intent: Optional[str] = None) -> bool:
+    """True for short goodbye/closing turns that must not get curiosity follow-ups."""
+    if intent == "goodbye":
+        text = (user_input or "").strip()
+        return (not text) or len(text.split()) <= 14
+    text = (user_input or "").strip()
+    if not text:
+        return False
+    lower = text.lower().rstrip()
+    bare = lower.rstrip("!.?")
+    if bare in _CLOSING_SOCIAL_EXACT or lower in _CLOSING_SOCIAL_EXACT:
+        return True
+    if _CLOSING_SOCIAL_RE.search(text) and len(text.split()) <= 14:
+        return True
+    return False
+
 
 def is_mild_social_turn(user_input: str, intent: Optional[str] = None) -> bool:
     """True for short greetings / social filler that must not force curiosity spam."""

@@ -20,6 +20,7 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
 from direct_response import (
+    is_closing_social_turn,
     DeterministicResponseProvider,
     ResponseProvider,
     answer_from_grounded_memories,
@@ -2382,7 +2383,7 @@ class Thalamus:
         Owned by emotion/conversation/direct_response. Novelty lobe supplies
         novelty_score (via understanding/perception) as an eligibility signal;
         it does not generate the question text here.
-        Mild hello/social turns never force a question.
+        Mild hello/social and goodbye/closing turns never force a question.
         """
         if not isinstance(reply, str) or not reply.strip():
             return reply
@@ -2398,6 +2399,21 @@ class Thalamus:
         # Teaching ack already grounded — do not invent a follow-up about the fact itself.
         if not force and reply.lstrip().lower().startswith("got it"):
             return reply
+
+        # Goodbye / closing social turns: Language owns the farewell; never append curiosity.
+        intent_hint = None
+        if isinstance(understanding, dict):
+            intent_hint = understanding.get("intent")
+        if not force and is_closing_social_turn(user_input, intent_hint):
+            return reply
+        sc = getattr(self, "last_social_context", None) or {}
+        if not force and isinstance(sc, dict):
+            if (
+                sc.get("last_cue") == "goodbye"
+                or sc.get("continuity") == "closing"
+                or sc.get("stance") == "closing"
+            ):
+                return reply
 
         now = time.time()
         if not force and (now - float(getattr(self, "_last_curiosity_time", 0.0) or 0.0)) < float(
@@ -2429,6 +2445,8 @@ class Thalamus:
             unresolved = emotional_state.get("unresolved_appraisals") or []
             if force or (
                 not is_mild_social_turn(user_input, intent)
+                and not is_closing_social_turn(user_input, intent)
+                and intent != "goodbye"
                 and (unresolved or intensity >= 0.70)
             ):
                 if force or unresolved:

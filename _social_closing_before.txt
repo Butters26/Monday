@@ -1,0 +1,105 @@
+=== SOCIAL CLOSING BEFORE (curiosity leak on goodbye) ===
+time: 2026-09-21 10:00:54 MT
+runtime: /tmp/social-closing-0dhxxwpy
+mode: before
+
+--- 1) PRIMARY: 'I gotta go, bye' ---
+input: 'I gotta go, bye'
+reply: 'Okay, see you later.\n\nI do not want to invent details - can you tell me more about what you meant by "I gotta go, bye"?'
+social_context: {"already_greeted": true, "continuing_social_thread": false, "continuity": "closing", "cue_count": 1, "greeting_count": 1, "is_social_turn": true, "last_cue": "goodbye", "previous_cue": "greeting", "recent_cues": ["greeting", "goodbye"], "social_turn_count": 2, "stance": "closing", "turn_count": 2, "user_id": "byeUser"}
+has_curiosity: True
+clean_closing: False
+
+--- 2) OTHER CLOSINGS ---
+  'bye' -> 'Take care — talk soon.'
+    cue=goodbye continuity=closing clean=True
+  'goodbye' -> 'Bye for now — catching you later.'
+    cue=goodbye continuity=closing clean=True
+  'goodnight' -> 'Take care — talk soon.'
+    cue=goodbye continuity=closing clean=True
+  'see you later' -> 'Okay, see you later.'
+    cue=goodbye continuity=closing clean=True
+  'talk to you later' -> 'Take care — talk soon.'
+    cue=goodbye continuity=closing clean=True
+  'I gotta go' -> 'Okay, see you later.'
+    cue=goodbye continuity=closing clean=True
+  'I have to go' -> 'Bye for now — catching you later.'
+    cue=goodbye continuity=closing clean=True
+  'I need to go' -> 'Bye for now — catching you later.'
+    cue=goodbye continuity=closing clean=True
+
+--- 3) RESUME after goodbye ---
+bye reply: "Goodnight — I'll be here when you're back."
+resume hello reply: 'Hello again'
+resume social_context: {"already_greeted": true, "continuing_social_thread": true, "continuity": "re_greeting", "cue_count": 2, "greeting_count": 2, "is_social_turn": true, "last_cue": "greeting", "previous_cue": "goodbye", "recent_cues": ["greeting", "goodbye", "greeting"], "social_turn_count": 3, "stance": "returning", "turn_count": 3, "user_id": "resumeUser"}
+
+--- 4) REGRESSIONS ---
+G1: 'Hi there' sc={"already_greeted": true, "continuing_social_thread": false, "continuity": "first_contact", "cue_count": 1, "greeting_count": 1, "is_social_turn": true, "last_cue": "greeting", "previous_cue": null, "recent_cues": ["greeting"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "greetUser"}
+G2: "Hello again. What's on your mind?" sc={"already_greeted": true, "continuing_social_thread": true, "continuity": "re_greeting", "cue_count": 2, "greeting_count": 2, "is_social_turn": true, "last_cue": "greeting", "previous_cue": "greeting", "recent_cues": ["greeting", "greeting"], "social_turn_count": 2, "stance": "returning", "turn_count": 2, "user_id": "greetUser"}
+C1: 'Doing alright — thanks for asking. How about you?' sc={"already_greeted": false, "continuing_social_thread": false, "continuity": "first_check_in", "cue_count": 1, "greeting_count": 0, "is_social_turn": true, "last_cue": "check_in", "previous_cue": null, "recent_cues": ["check_in"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "checkUser"}
+C2: "I'm still here with you." sc={"already_greeted": false, "continuing_social_thread": true, "continuity": "repeated_check_in", "cue_count": 2, "greeting_count": 0, "is_social_turn": true, "last_cue": "check_in", "previous_cue": "check_in", "recent_cues": ["check_in", "check_in"], "social_turn_count": 2, "stance": "ongoing", "turn_count": 2, "user_id": "checkUser"}
+E1: 'I\'m listening.\n\nI do not want to invent details - can you tell me more about what you meant by "Today sucked."?' sc={"already_greeted": false, "continuing_social_thread": false, "continuity": "first_emotional_share", "cue_count": 1, "greeting_count": 0, "is_social_turn": true, "last_cue": "emotional_share", "previous_cue": null, "recent_cues": ["emotional_share"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "emoUser"}
+E2: "I'm listening — go on." sc={"already_greeted": false, "continuing_social_thread": true, "continuity": "continuing_emotional_share", "cue_count": 2, "greeting_count": 0, "is_social_turn": true, "last_cue": "emotional_share", "previous_cue": "emotional_share", "recent_cues": ["emotional_share", "emotional_share"], "social_turn_count": 2, "stance": "ongoing", "turn_count": 2, "user_id": "emoUser"}
+isoB hello: 'Hello' sc={"already_greeted": true, "continuing_social_thread": false, "continuity": "first_contact", "cue_count": 1, "greeting_count": 1, "is_social_turn": true, "last_cue": "greeting", "previous_cue": null, "recent_cues": ["greeting"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "isoB"}
+fact teach: 'Got it — your favorite color is teal.'
+fact ask: 'I remember your favorite color is teal.'
+
+--- CHECKS ---
+  primary_cue_goodbye: True
+  primary_continuity_closing: True
+  primary_has_curiosity: True
+  primary_clean_closing: False
+  closing_0_bye_cue: True
+  closing_0_bye_continuity: True
+  closing_0_bye_clean: True
+  closing_0_bye_no_curiosity: True
+  closing_1_goodbye_cue: True
+  closing_1_goodbye_continuity: True
+  closing_1_goodbye_clean: True
+  closing_1_goodbye_no_curiosity: True
+  closing_2_goodnight_cue: True
+  closing_2_goodnight_continuity: True
+  closing_2_goodnight_clean: True
+  closing_2_goodnight_no_curiosity: True
+  closing_3_see_you_later_cue: True
+  closing_3_see_you_later_continuity: True
+  closing_3_see_you_later_clean: True
+  closing_3_see_you_later_no_curiosity: True
+  closing_4_talk_to_you_later_cue: True
+  closing_4_talk_to_you_later_continuity: True
+  closing_4_talk_to_you_later_clean: True
+  closing_4_talk_to_you_later_no_curiosity: True
+  closing_5_I_gotta_go_cue: True
+  closing_5_I_gotta_go_continuity: True
+  closing_5_I_gotta_go_clean: True
+  closing_5_I_gotta_go_no_curiosity: True
+  closing_6_I_have_to_go_cue: True
+  closing_6_I_have_to_go_continuity: True
+  closing_6_I_have_to_go_clean: True
+  closing_6_I_have_to_go_no_curiosity: True
+  closing_7_I_need_to_go_cue: True
+  closing_7_I_need_to_go_continuity: True
+  closing_7_I_need_to_go_clean: True
+  closing_7_I_need_to_go_no_curiosity: True
+  resume_not_closing: True
+  resume_still_greeted: True
+  resume_re_greeting_or_returning: True
+  resume_not_permanently_ended: True
+  reg_first_greeting: True
+  reg_re_greeting: True
+  reg_greeting_no_curiosity: True
+  reg_first_checkin: True
+  reg_repeated_checkin: True
+  reg_checkin_no_curiosity: True
+  reg_first_emo: True
+  reg_cont_emo: True
+  reg_iso_B_fresh: True
+  reg_fact_teach: True
+  reg_fact_ask: True
+  reg_fact_not_greeting: True
+  reg_language_owns_wording: True
+  reg_exec_present: True
+  reg_social_present: True
+
+BEFORE_STATUS: BUG_SHOWN
+Expected: closing + unwanted curiosity/grounding on 'I gotta go, bye'.

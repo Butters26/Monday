@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import re
 from thalamus import get_thalamus
 from direct_response import (
+    is_closing_social_turn,
     honest_curiosity_question,
     is_mild_social_turn,
     looks_like_teaching_turn,
@@ -162,8 +163,19 @@ class ConversationSystem:
             return "conversation"
         lower = raw.lower()
 
-        # Goodbye first (short closings).
-        if re.search(r"(?i)\b(?:goodbye|bye\b|see\s+you|farewell)\b", lower) and len(raw.split()) <= 6:
+        # Goodbye first (short closings). Keep ahead of mild-social→greeting.
+        if (
+            re.search(
+                r"(?i)(?:"
+                r"\b(?:goodbye|bye\b|farewell|good\s*night|goodnight)\b|"
+                r"\bsee\s+you(?:\s+later)?\b|"
+                r"\btalk\s+(?:to\s+you\s+)?later\b|"
+                r"\b(?:i\s+)?(?:gotta|have\s+to|need\s+to)\s+go\b"
+                r")",
+                lower,
+            )
+            and len(raw.split()) <= 14
+        ):
             return "goodbye"
 
         # Monday-speech ask before generic question.
@@ -610,7 +622,11 @@ class ConversationSystem:
         understanding = understanding if isinstance(understanding, dict) else {}
         intent = understanding.get("intent")
 
-        if is_mild_social_turn(user_input, intent) and not force:
+        if (
+            is_mild_social_turn(user_input, intent)
+            or is_closing_social_turn(user_input, intent)
+            or intent == "goodbye"
+        ) and not force:
             return None
         # Clear fact-teaching turns must not get "what did you mean by …" spam.
         if looks_like_teaching_turn(user_input) and not force:
