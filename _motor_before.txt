@@ -1,0 +1,45 @@
+=== MOTORACTION BEFORE PROOF ===
+time: 2026-09-21 10:21:55 MT
+runtime: /tmp/motor-before-y9dxnc3_
+
+DONE_MEANS (for AFTER): Motor registered; request turn plans/queues
+action envelope; Output sees motor_action; Executive inhibit blocks
+when appropriate; fact/social regressions not broken.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context']
+motor_action_registered: False
+thalamus.last_motor_action attr: False
+systems has motor_action key: False
+output.motor_output response: {'status': 'error', 'message': 'Unknown message type: motor_output'}
+output.has last_motor_action: False
+
+--- LIVE REQUEST (needs Motor after) ---
+input: 'Please remind me to call mom.'
+reply[:120]: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+conversation.intent: question
+executive.goal: fact_answer
+thalamus.last_motor_action: None
+envelope.motor_action: None
+output.last_motor_action: None
+
+--- FACT REGRESSION BASELINE ---
+teach[:80]: 'Got it — your favorite color is teal.'
+ask[:80]: 'I remember your favorite color is teal.'
+fact_ask_has_teal: True
+hello[:80]: 'Hello! Nice to meet you'
+
+--- FAIL CONDITIONS (expected BEFORE) ---
+absent_from_registry: True
+no_action_envelope_on_request: True
+output_rejects_or_ignores_motor_output: True
+request_intent_detected: False
+
+BEFORE_STATUS: PASS (Motor absent as expected)
+
+HONEST: Conversation may detect request; Executive may set fulfill_request;
+no MotorActionLobe plans/queues/surfaces an action envelope on the live path.
+
+NOTE (scenario phrase): "Please remind me to call mom." is Conversation-classified
+as question (looks_questionish steals before request). AFTER live scenario uses
+"Please set a reminder to call mom." which Conversation classifies as request →
+Executive fulfill_request. Motor absence proof above still holds for any request.

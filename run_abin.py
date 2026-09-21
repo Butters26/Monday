@@ -8,6 +8,8 @@ plus MetaCognitionLobe watching reasoning/language for uncertainty —
 plus ExecutiveControlLobe setting goals, inhibiting off-goal moves, steering Attention —
 plus AdvancedPatternRecognition discovering patterns for Reasoning via pattern_result —
 plus SocialContextLobe tracking social cues/stance across turns for Language —
+plus MotorActionLobe planning/queuing action envelopes when Monday should do
+something beyond talk (honest no_actuator status; no fake limbs) —
 not the full legacy socket stack.
 """
 
@@ -31,6 +33,7 @@ from sensory_integration_lobe import SensoryIntegrationLobe
 from meta_cognition_lobe import MetaCognitionLobe
 from executive_control_lobe import ExecutiveControlLobe
 from social_context_lobe import SocialContextLobe
+from motor_action_lobe import MotorActionLobe
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -79,6 +82,7 @@ def create_core_systems(
         "meta_cognition": MetaCognitionLobe(thalamus=thalamus),
         "executive_control": ExecutiveControlLobe(thalamus=thalamus),
         "social_context": SocialContextLobe(thalamus=thalamus),
+        "motor_action": MotorActionLobe(thalamus=thalamus),
     }
     for name in (
         "perception",
@@ -95,6 +99,7 @@ def create_core_systems(
         "meta_cognition",
         "executive_control",
         "social_context",
+        "motor_action",
     ):
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
@@ -114,6 +119,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "autonomous",
         "output",
         "language",
+        "motor_action",
         "social_context",
         "executive_control",
         "meta_cognition",

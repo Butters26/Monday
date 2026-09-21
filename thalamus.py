@@ -113,6 +113,8 @@ class Thalamus:
         # Last Executive control snapshot (goal / inhibition / steer).
         self.last_executive: Optional[Dict[str, Any]] = None
         self.last_social_context: Optional[Dict[str, Any]] = None
+        # Last Motor action envelope (planned/queued/blocked/no_actuator).
+        self.last_motor_action: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1267,6 +1269,87 @@ class Thalamus:
         return inhibited
 
 
+
+    def _motor_plan_from_turn(
+        self,
+        user_input: str,
+        understanding: Dict[str, Any],
+        user_id: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Tiny glue: Motor plans/queues when request / fulfill_request (honors inhibit)."""
+        with self.lobe_handlers_lock:
+            has_motor = "motor_action" in self.lobe_handlers
+        if not has_motor:
+            self.last_motor_action = None
+            return None
+        goal = None
+        if isinstance(getattr(self, "last_executive", None), dict):
+            goal = self.last_executive.get("goal")
+        try:
+            resp = self.send_and_wait(
+                "motor_action",
+                "plan_from_turn",
+                {
+                    "user_input": user_input,
+                    "understanding": understanding,
+                    "user_id": user_id,
+                    "goal": goal,
+                },
+                source="thalamus",
+            )
+        except Exception:
+            self.last_motor_action = None
+            return None
+        if resp.get("status") != "success":
+            self.last_motor_action = None
+            return None
+        body = self._content(resp)
+        action = body.get("action") if isinstance(body, dict) else None
+        if not isinstance(action, dict):
+            action = resp.get("action") if isinstance(resp.get("action"), dict) else None
+        # Stash planned/blocked snapshot; delivery may update status to no_actuator.
+        if isinstance(action, dict):
+            self.last_motor_action = dict(action)
+        else:
+            # Not actionable this turn — clear stale envelope.
+            if not (isinstance(body, dict) and body.get("planned")):
+                self.last_motor_action = None
+        return dict(body) if isinstance(body, dict) else {"action": action}
+
+    def _motor_deliver_to_output(self, user_id: str = "default") -> Optional[Dict[str, Any]]:
+        """Tiny glue: dequeue + surface motor_output to Output after reply envelope."""
+        with self.lobe_handlers_lock:
+            has_motor = "motor_action" in self.lobe_handlers
+        if not has_motor:
+            return None
+        # Only deliver if something was planned/queued this turn (or still queued).
+        try:
+            resp = self.send_and_wait(
+                "motor_action",
+                "execute_next",
+                {"user_id": user_id},
+                source="thalamus",
+            )
+        except Exception:
+            return None
+        if resp.get("status") != "success":
+            return None
+        body = self._content(resp)
+        action = None
+        if isinstance(body, dict):
+            action = body.get("action")
+        if not isinstance(action, dict):
+            action = resp.get("action") if isinstance(resp.get("action"), dict) else None
+        if isinstance(action, dict):
+            self.last_motor_action = dict(action)
+            # Ensure live envelope carries motor_action even if Output attach raced.
+            if isinstance(self.last_output_envelope, dict):
+                env = dict(self.last_output_envelope)
+                env["motor_action"] = dict(action)
+                self.last_output_envelope = env
+            return dict(action)
+        return None
+
     def _build_pattern_observation(
         self,
         user_input: str,
@@ -1713,6 +1796,8 @@ class Thalamus:
         social_context = self._social_observe_turn(
             user_input, understanding, user_id=user_id
         )
+        # Motor: plan/queue structured action when request / fulfill_request.
+        self._motor_plan_from_turn(user_input, understanding, user_id=user_id)
         # Same-turn handoff: Executive may have re-selected focus — refresh
         # attention_payload + re-route so Reasoning.think sees post-Executive focus.
         attention_payload = self._refresh_attention_payload_post_executive(
@@ -2133,6 +2218,11 @@ class Thalamus:
                 "intensity": emotional_state.get("intensity", 0.5),
             }
         self.last_output_envelope = envelope
+        # Motor: deliver queued action envelope to Output (honest no_actuator).
+        self._motor_deliver_to_output(user_id=user_id)
+        # Refresh local envelope view if Motor attached motor_action.
+        if isinstance(self.last_output_envelope, dict):
+            envelope = self.last_output_envelope
         reply = envelope.get("text") or output_body.get("text", final_text)
 
         # Persist exact envelope text — continuous someone, not user-only amnesia.

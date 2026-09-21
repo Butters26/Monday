@@ -185,6 +185,7 @@ class OutputLobe:
         self.last_emotion_meta = {}
         self.last_output = None
         self.last_envelope: Optional[Dict[str, Any]] = None
+        self.last_motor_action: Optional[Dict[str, Any]] = None
         # Honest TTS stub: write spoken lines to a runtime buffer when no speaker.
         try:
             self._speech_buffer_path = Path(runtime_dir()) / "output_speech_buffer.txt"
@@ -905,6 +906,7 @@ class OutputLobe:
                 'last_envelope_present': bool(self.last_envelope),
                 'last_expression': (env.get('expression') if env else None),
                 'last_delivery_markers': list(delivery.get('markers') or []),
+                'last_motor_action': dict(self.last_motor_action) if self.last_motor_action else None,
                 'content': {
                     'tts_available': self.tts_available,
                     'voice_enabled': self.voice_config['enabled'],
@@ -912,6 +914,33 @@ class OutputLobe:
                     'channel': env.get('channel'),
                     'last_envelope_present': bool(self.last_envelope),
                 },
+            }
+
+
+        elif msg_type == 'motor_output':
+            # MotorActionLobe surfaces a planned/queued action envelope (no actuators).
+            action = payload.get('action') if isinstance(payload, dict) else None
+            if action is None and isinstance(message.get('action'), dict):
+                action = message.get('action')
+            if not isinstance(action, dict):
+                return {'status': 'error', 'message': 'motor_output requires action dict'}
+            action = dict(action)
+            self.last_motor_action = action
+            # Attach onto last reply envelope when one exists this turn.
+            if isinstance(self.last_envelope, dict):
+                env = dict(self.last_envelope)
+                env['motor_action'] = action
+                self.last_envelope = env
+            return {
+                'status': 'success',
+                'content': {
+                    'action': action,
+                    'envelope_attached': bool(
+                        isinstance(self.last_envelope, dict)
+                        and self.last_envelope.get('motor_action')
+                    ),
+                },
+                'action': action,
             }
 
         elif msg_type == 'get_last_envelope':

@@ -1,0 +1,62 @@
+=== MotorActionLobe DESIGN JOB ===
+time: 2026-09-21 (MT)
+HEAD: 2541582 (pre-implement)
+
+DONE_MEANS
+  MotorActionLobe is registered on the live prompted path. When Conversation
+  reports an actionable intent (request) — or an explicit plan_action message
+  arrives — Motor plans a structured action envelope, queues it per-user, and
+  routes motor_output to Output so the live path can see it. It honors
+  Executive inhibit / current goal (blocks when off-goal or globally inhibited).
+  Status is honest: planned / queued / blocked_by_inhibit / no_actuator.
+  No fake physical execution or robot-limb claims.
+
+OWNERSHIP BOUNDARIES
+  Motor owns:
+    - Action planning / selection / queuing of executable action envelopes
+      when Monday should *do* something beyond talk.
+    - Honest status transitions; per-user queue isolation.
+    - Emitting motor_output to Output (action envelope surface).
+  Conversation owns: intent / slots (Motor consumes request; does not re-classify).
+  Executive owns: goals / inhibition — Motor queries should_inhibit and
+    current goal; does not invent goals.
+  Language owns: wording of spoken replies (Motor does not compose speech).
+  Output owns: delivery / final stage; surfaces motor_action on the envelope
+    / last_motor_action (does not plan actions).
+  Reasoning / Pattern / Social / Attention: untouched except tiny Thalamus glue.
+
+SMALLEST ARCHITECTURAL CORRECTION
+  1. Flesh motor_action_lobe.py: plan_from_turn / plan_action / execute_action /
+     process_message with per-user queues and Executive inhibit check.
+  2. Register motor_action in run_abin.create_core_systems (+ shutdown list).
+  3. Tiny Thalamus glue after Executive goal-from-turn:
+       if actionable (intent=request or goal=fulfill_request) → Motor.plan_from_turn
+       after Output generate_output → Motor.deliver / execute_next → Output.motor_output
+       stash thalamus.last_motor_action for live path visibility.
+  4. Tiny Output glue: handle motor_output; keep last_motor_action; attach
+       motor_action onto last_envelope when present.
+  5. Tiny Executive glue: add "motor_action" to inhibitables; inhibit under
+       fact_answer / global inhibition_state (fulfill_request allows it).
+  No rewrite theater; no Social/Pattern/Attention redesign.
+
+LIVE SCENARIO (honest, from code)
+  Request: "Please set a reminder to call mom."
+  BEFORE: motor_action absent from registry; no action envelope; Output has no
+          motor_output handler; request still gets a talk reply only.
+  AFTER:  motor_action registered; plans/queues a reminder-class envelope;
+          Output last_envelope.motor_action / last_motor_action present with
+          status no_actuator (honest — no limbs); fact-ask does not mint motor;
+          Executive inhibit blocks motor_action under fact_answer / global inhibit.
+
+ACTION ENVELOPE (structured, not prose)
+  {
+    id, kind (reminder|note|generic_request),
+    intent_text, user_id, source_intent, goal_honored,
+    status: planned|queued|blocked_by_inhibit|no_actuator,
+    inhibit_reason (optional), actuator: none, timestamp
+  }
+
+HONEST LIMITS (expected)
+  No real actuators / OS side-effects / calendar writes. "Execute" means
+  dequeue + mark no_actuator + surface to Output. Kind heuristics from
+  request text only. Per-process in-memory queues (not durable).

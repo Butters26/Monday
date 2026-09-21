@@ -38,6 +38,7 @@ _INHIBITABLE_ACTIONS = frozenset(
         "speak_worthy_aside",
         "aside",
         "curiosity",
+        "motor_action",
     }
 )
 
@@ -140,6 +141,7 @@ class ExecutiveControlLobe:
                     "speak_worthy_aside",
                     "aside",
                     "curiosity",
+                    "motor_action",
                 }
             )
         elif goal == "teach_ack":
@@ -207,6 +209,8 @@ class ExecutiveControlLobe:
             action_s = "speak_worthy_aside"
         if action_s in ("curiosity", "curiosity_question", "follow_up"):
             action_s = "curiosity_follow_up"
+        if action_s in ("motor", "motor_execute", "execute_action", "plan_action"):
+            action_s = "motor_action"
 
         inhibited = False
         reason = "allowed"

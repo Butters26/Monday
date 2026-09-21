@@ -1,0 +1,83 @@
+=== MOTORACTION AFTER PROOF ===
+time: 2026-09-21 10:25:13 MT
+runtime: /tmp/motor-after-go75sum8
+
+DESIGN_JOB: Motor registered; request→plan/queue; Output sees
+motor_action; Executive inhibit blocks; honest no_actuator; no fake limbs.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context']
+motor_action_registered: True
+--- A) LIVE REQUEST ---
+input: 'Please set a reminder to call mom.'
+reply[:120]: "I'm here to ...help..."
+conversation.intent: request
+executive.goal: fulfill_request
+thalamus.last_motor_action: {'id': 'ff505e21-bd3b-4f9d-b42f-49ba7c0b2c2f', 'kind': 'reminder', 'status': 'no_actuator', 'intent_text': 'Please set a reminder to call mom.', 'user_id': 'motor-after-req', 'source_intent': 'request', 'goal_honored': 'fulfill_request', 'actuator': 'none'}
+envelope.motor_action: {'id': 'ff505e21-bd3b-4f9d-b42f-49ba7c0b2c2f', 'kind': 'reminder', 'status': 'no_actuator', 'intent_text': 'Please set a reminder to call mom.', 'user_id': 'motor-after-req', 'source_intent': 'request', 'goal_honored': 'fulfill_request', 'actuator': 'none'}
+output.last_motor_action: {'id': 'ff505e21-bd3b-4f9d-b42f-49ba7c0b2c2f', 'kind': 'reminder', 'status': 'no_actuator', 'intent_text': 'Please set a reminder to call mom.', 'user_id': 'motor-after-req', 'source_intent': 'request', 'goal_honored': 'fulfill_request', 'actuator': 'none'}
+motor.queue_depth after deliver: 0
+
+--- B) FACT ASK (no motor) ---
+teach[:80]: 'Got it — your favorite color is teal.'
+ask[:80]: 'I remember your favorite color is teal.'
+last_motor_action after fact ask: None
+envelope.motor_action after fact: None
+executive.goal after fact: fact_answer
+
+--- C) EXECUTIVE INHIBIT ---
+should_inhibit motor_action under fact_answer: {'action': 'motor_action', 'inhibited': True, 'allowed': False, 'reason': 'off_goal:fact_answer', 'goal': 'fact_answer', 'priority': 0.95}
+plan_action under fact_answer: {'id': 'e02631bd-2adb-4327-a21c-b534ac630d4d', 'kind': 'reminder', 'status': 'blocked_by_inhibit', 'intent_text': 'Please set a reminder to stretch.', 'user_id': 'motor-inh', 'source_intent': 'request', 'goal_honored': 'fact_answer', 'actuator': 'none', 'inhibit_reason': 'off_goal:fact_answer'}
+should_inhibit under fulfill_request: {'action': 'motor_action', 'inhibited': False, 'allowed': True, 'reason': 'allowed', 'goal': 'fulfill_request', 'priority': 0.8}
+plan_action under fulfill_request: {'id': '937f8231-7bc6-4854-96d0-d592e8a2a55d', 'kind': 'reminder', 'status': 'queued', 'intent_text': 'Please set a reminder to stretch.', 'user_id': 'motor-ok', 'source_intent': 'request', 'goal_honored': 'fulfill_request', 'actuator': 'none'}
+global inhibition should_inhibit: {'action': 'motor_action', 'inhibited': True, 'allowed': False, 'reason': 'global_inhibition_state', 'goal': 'fulfill_request', 'priority': 0.8}
+plan under global inhibit: {'id': '8290c793-8e68-41d8-9fee-992befc6d209', 'kind': 'generic_request', 'status': 'blocked_by_inhibit', 'intent_text': 'Please open notes.', 'user_id': 'motor-glob', 'source_intent': 'request', 'goal_honored': '', 'actuator': 'none', 'inhibit_reason': 'global_inhibition_state'}
+
+--- D) SOCIAL / HELLO REGRESSION ---
+hello[:80]: 'Hi there'
+social continuity/stance: first_contact/new
+
+--- E) PER-USER ISOLATION ---
+queue ua: ['Please set a reminder for A.']
+queue ub: ['Please set a reminder for B.']
+
+--- F) OUTPUT motor_output ---
+direct motor_output: status=success action_id=probe2
+
+--- CHECKS ---
+  registered: True
+  A_intent_request: True
+  A_goal_fulfill: True
+  A_has_last_motor: True
+  A_status_no_actuator: True
+  A_kind_reminder: True
+  A_actuator_none: True
+  A_envelope_has_motor: True
+  A_output_has_motor: True
+  A_queue_drained: True
+  B_fact_teal: True
+  B_no_motor_on_fact: True
+  B_goal_fact_answer: True
+  C_inhibit_true: True
+  C_status_blocked: True
+  C_fulfill_allows: True
+  C_global_blocks: True
+  D_hello_ok: True
+  D_social_present: True
+  D_no_motor_on_hello: True
+  E_isolated: True
+  F_output_accepts: True
+
+AFTER_STATUS: PASS
+
+BEFORE→AFTER: Motor absent / Output rejected motor_output / no action
+envelope on request → Motor registered; request plans reminder envelope;
+Output/thalamus see status=no_actuator; fact ask mints none; Executive
+fact_answer + global inhibit block motor_action; social/fact ok.
+
+HONEST_LIMITS: no real actuators/OS side-effects; kind heuristics only;
+in-memory per-user queues; Conversation owns request classification.
+
+REMAINING_GAPS:
+- No durable reminder store / calendar write.
+- Does not drive Language ack text about the planned action.
+- Opportunistic motor only on Conversation request / fulfill_request.
