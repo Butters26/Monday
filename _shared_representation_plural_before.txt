@@ -1,0 +1,20 @@
+=== SHARED REPRESENTATION PLURAL BEFORE (bug) ===
+time: 2026-09-21 ~13:55 MT
+HEAD: b073bb5
+
+Unsafe rule in _plural_fold:
+  if term.endswith("s") and not term.endswith("ss"): return term[:-1]
+
+Demonstrated false collapses (fold + resolve):
+  fold('news')='new'  → news and new resolve to SAME concept_id
+  fold('gas')='ga'    → gas and ga resolve to SAME concept_id
+  fold('bus')='bu'    → bus and bu resolve to SAME concept_id
+  fold('status')='statu' → status and statu resolve to SAME concept_id
+
+Still works (but via the unsafe blind strip for dog):
+  dogs→dog same id
+  boxes→box (xes rule)
+  categories→category (ies rule)
+
+Accidental Learning ownership (b073bb5):
+  thalamus._LOBE_LEARNING_RULES has "shared_representation": {"skill"}

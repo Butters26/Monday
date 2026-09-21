@@ -79,7 +79,6 @@ _LOBE_LEARNING_RULES = {
     "meta_awareness": {"feedback", "correction"},
     "speech": {"feedback", "correction"},
     "autonomous": {"skill", "feedback", "correction"},
-    "shared_representation": {"skill"},
     "representation": {"skill"},
     "reflection": {"feedback", "correction"},
     "experience": {"skill", "feedback"},

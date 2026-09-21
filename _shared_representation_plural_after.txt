@@ -1,0 +1,75 @@
+=== SHARED REPRESENTATION PLURAL AFTER PROOF ===
+time: 2026-09-21 13:58:30 MT
+HEAD (worktree pre-commit): b073bb5c5c9e
+runtime: /tmp/sr-plural-reg-5sq5v6zq
+
+--- 0 LEARNING ENTRY ---
+[PASS] accidental shared_representation Learning entry gone — present=False
+[PASS] historical representation skill kept
+
+--- FIX1 PLURAL UNIT ---
+  fold dogs/dog: 'dog'/'dog' collapsed=True OK
+  fold boxes/box: 'box'/'box' collapsed=True OK
+  fold categories/category: 'category'/'category' collapsed=True OK
+  fold news/new: 'news'/'new' collapsed=False OK
+  fold gas/ga: 'gas'/'ga' collapsed=False OK
+  fold bus/bu: 'bus'/'bu' collapsed=False OK
+  fold status/statu: 'status'/'statu' collapsed=False OK
+[PASS] dog/dogs/dog identity — c_5c64673e90cd
+  canonical=dog aliases=['dogs']
+  news=c_1ee8b8008b93 new=c_c7a4f94879b6 distinct=True
+  gas=c_904c48ae4c36 ga=c_9adecb2f7ca4 distinct=True
+  bus=c_cf1816a8ff1e bu=c_c9f6d4f9a7b0 distinct=True
+  status=c_9a5c9155ce6d statu=c_74710da84609 distinct=True
+[PASS] false-collapse proof news/new gas/ga bus/bu status/statu
+[PASS] safe plurals boxes→box categories→category
+
+--- BOOT / REGISTRATION ---
+registered: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'shared_representation', 'social_context', 'speech', 'voice']
+[PASS] 1 Shared Representation still registered
+[PASS] 2 STABLE IDENTITY — dog=c_d5f93e3dcc30 dogs=c_d5f93e3dcc30 dog2=c_d5f93e3dcc30 cat=c_7ea5f2fdb4f1
+[PASS] 3 False-collapse proof (see above)
+[PASS] 4 Structured relationships — n=1
+  activation_map seed/neigh=1.0/0.48750000000000004 runaway_n=4 cap=64
+  after_decay=0.5 reset=0.0
+[PASS] 5 Spreading bounded + decay/reset
+  store_exists=True dogs→c_d5f93e3dcc30 expected=c_d5f93e3dcc30 edges=20
+[PASS] 6 Persistence same IDs/edges
+  alice_personal=1 bob_leak=0 bob_global=1 alice_fluffy=0.5850000000000001 bob_fluffy=0
+[PASS] 7 Alice/Bob isolation
+
+--- 8 LIVE REASONING HANDOFF ---
+  registered shared_representation: True
+  last_representation status=success
+  last concept_ids=['c_f2024a12f9f0', 'c_af5b0e42b60d', 'c_d5f93e3dcc30', 'c_3947f8bea9a7']
+  last highly_active[:3]=[{'id': 'c_d5f93e3dcc30', 'concept_id': 'c_d5f93e3dcc30', 'name': 'dog', 'canonical_name': 'dog', 'activation': 1.0, 'concept_type': 'unknown'}, {'id': 'c_f2024a12f9f0', 'concept_id': 'c_f2024a12f9f0', 'name': 'please', 'canonical_name': 'please', 'activation': 1.0, 'concept_type': 'unknown'}, {'id': 'c_3947f8bea9a7', 'concept_id': 'c_3947f8bea9a7', 'name': 'qorvex_live_token_55', 'canonical_name': 'qorvex_live_token_55', 'activation': 1.0, 'concept_type': 'unknown'}]
+  reply[:120]='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+  Reasoning received representation_result status=success
+  Reasoning concept_ids=['c_f2024a12f9f0', 'c_af5b0e42b60d', 'c_d5f93e3dcc30', 'c_3947f8bea9a7']
+  Reasoning highly_active count=4
+[PASS] 8 Live Reasoning gets representation_result / concept_ids / highly_active_concepts
+[PASS] 9 Normal reply works
+  resolved names sample=['dog', 'please', 'qorvex_live_token_55', 'tell']
+
+--- REGRESSIONS ---
+[PASS] 10 old representation.py unwired — wired_import=False in_reg=False
+[PASS] 11 CTG not wired to Representation
+[PASS] 12 Pattern not reopened — diff_names='shared_representation.py\nthalamus.py'
+[PASS] 13 dual_stream_thinking unwired
+  thalamus diff minus=['-    "shared_representation": {"skill"},'] plus=[]
+[PASS] 14 Learning otherwise unchanged (only remove that one dict entry)
+[PASS] Learning stack files untouched — git=''
+[PASS] closed systems still registered — missing=[]
+[PASS] shared_representation no sockets
+  [INFO] CloudAgent: not used this job
+
+============================================================
+OVERALL: PASS
+============================================================
+
+--- GENUINE REMAINING LIMITATION ---
+- Conservative plural fold still cannot lemmatize irregulars (mice/children)
+  or ambiguous forms where stem ends in vowel/w (cows/news-class) without
+  an explicit alias; prefer separate concepts over false merges.
+- Only Reasoning consumes representation_result on the live path.
+Confirm: no CloudAgent.

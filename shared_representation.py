@@ -214,17 +214,34 @@ class SharedRepresentationSystem:
 
     @staticmethod
     def _plural_fold(term: str) -> str:
-        """Deliberate English plural fold — NOT fuzzy merge."""
+        """Deliberate English plural fold — NOT fuzzy merge.
+
+        Conservative morphology only. Prefer distinct concepts when
+        uncertain over collapsing unrelated words. Exact aliases still
+        unify deliberately. No blind trailing-s strip.
+        """
         if len(term) <= 2:
             return term
+        # categories → category
         if term.endswith("ies") and len(term) > 4:
             return term[:-3] + "y"
-        if term.endswith("ses") or term.endswith("xes") or term.endswith("zes"):
+        # boxes→box, quizzes→quiz, churches→church, dishes→dish, classes→class
+        if term.endswith(("sses", "xes", "zes", "ches", "shes")):
             return term[:-2]
-        if term.endswith("ches") or term.endswith("shes"):
-            return term[:-2]
+        # Latinate / non-English-plural endings — leave intact
+        # (gas, bus, status, basis, … stay their own surfaces)
+        if term.endswith(("us", "is", "as", "os")):
+            return term
+        # Regular plural -s after a consonant stem ending.
+        # Refuse when the stem would end in a vowel or w (blocks
+        # news→new and similar false collapses without word lists).
         if term.endswith("s") and not term.endswith("ss"):
-            return term[:-1]
+            stem = term[:-1]
+            if len(stem) < 3:
+                return term
+            if stem[-1] in "aeiouw":
+                return term
+            return stem
         return term
 
     def _canonical_key(self, term: str) -> str:
