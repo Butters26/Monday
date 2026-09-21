@@ -18,15 +18,41 @@ local recovery files. Do not add runtime data to Git.
 All socket code has been removed. Lobes communicate through direct function
 calls via Thalamus.
 
-`run_abin.create_core_systems()` creates the prompted path:
-conversation → Notus → emotion → reasoning → language → output. Each lobe
-receives `{"type", "content", "source", "message_id"}` and `content` holds the
-message payload.
+`run_abin.create_core_systems()` builds the live prompted path (plus optional
+Perception / Attention / Novelty / AutonomousThinkingLoop). The memory→reply
+core order remains:
 
-The direct core intentionally excludes the legacy/experimental launcher,
-PostgreSQL-backed `notus.py`, GUI, socket integrations, and autonomous loops.
-They remain in the repository for compatibility work but are not imported by
-`run_abin.py`.
+conversation → Notus → emotion → reasoning → language → output
+
+Each lobe receives `{"type", "content", "source", "message_id"}` and `content`
+holds the message payload.
+
+### Notus memory
+
+- **Primary path:** PostgreSQL `ActiveNotusMemorySystem` (`notus_memory_core.py`)
+  when `create_core_systems()` is called without a custom `notus_factory`.
+- **Outage fallback:** if a Notus store/query returns an error or raises (caught
+  by Thalamus), the prompted path continues. Failed writes go into a bounded
+  per-user in-memory queue (`notus_outage_fallback.py`, max 64 records/user,
+  FIFO eviction). Each queued record gets its own stable `event_id` — identical
+  content is kept as separate events; retry idempotency is per event_id, not
+  per content. Query failures serve that per-user buffer. When QUERY succeeds
+  but pending rows remain (STORE still failing), pending memories for the same
+  user are merged into the returned context before Reasoning (ordered, no
+  cross-user leak, not claimed durable until synced). Recovery flush is strict
+  FIFO: on the first sync failure, later records are not attempted.
+  `Thalamus.retry_unsaved_notus_records()` uses event_ids so a double retry
+  cannot double-store the same queued record. This does **not** restore the
+  legacy `monday_memory` / `retrieve_relevant_memory` / `sync_memory_to_notus`
+  APIs.
+- **Tests / CI:** inject SQLite `DirectNotusProcess` via `notus_factory` and set
+  `enable_autonomous=False` so acceptance stays PostgreSQL-free, socket-free,
+  and without autonomous background loops. See
+  `test_direct_core_pipeline.py` and `test_notus_integration.py`.
+
+Live `create_core_systems()` still starts AutonomousThinkingLoop by default;
+pass `enable_autonomous=False` for a loop-free boot. GUI and legacy socket
+launchers remain in the tree but are not required for the direct-call path.
 
 ## Learning system (easy to find)
 
@@ -37,9 +63,10 @@ They remain in the repository for compatibility work but are not imported by
   lobe under runtime data)
 - `thalamus.py` — learning router and global `teach_monday`/`learning_overview`
   handlers
-- `direct_notus.py` — conversation memory adapter (separate from lobe-local
-  learning state)
-- `test_direct_core_pipeline.py` — learning behavior tests
+- `direct_notus.py` — SQLite conversation memory adapter (injectable for tests)
+- `notus_outage_fallback.py` — bounded per-user Notus outage queue
+- `test_direct_core_pipeline.py` / `test_notus_integration.py` — direct-core +
+  Notus fallback acceptance
 
 ## 3D model generator
 

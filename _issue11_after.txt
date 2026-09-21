@@ -1,0 +1,12 @@
+command: python -m pytest -q test_direct_core_pipeline.py test_notus_integration.py
+label: AFTER (23b9d37+ — event_id idempotency, strict FIFO, query-merge; CI workflow installed)
+head_note: proof refreshed after Matthew review of three fallback fixes
+============================================================
+....................                                                     [100%]
+=============================== warnings summary ===============================
+test_direct_core_pipeline.py::test_prompted_core_path_order_and_output
+  /workspace/Monday/.venv/lib/python3.13/site-packages/speech_recognition/__init__.py:7: DeprecationWarning: aifc was removed in Python 3.13. Please be aware that you are currently NOT using standard 'aifc', but instead a separately installed 'standard-aifc'.
+    import aifc
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+20 passed, 1 warning in 46.20s
