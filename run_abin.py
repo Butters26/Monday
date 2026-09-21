@@ -4,6 +4,7 @@
 Direct-call path (no sockets): prompted lobes including PerceptionLobe
 (text always; hearing/vision via file or live device when available) and AttentionLobe, plus
 AutonomousThinkingLoop so mood can move from inner thoughts without user text —
+plus MetaCognitionLobe watching reasoning/language for uncertainty —
 not the full legacy socket stack.
 """
 
@@ -23,6 +24,7 @@ from output import OutputLobe
 from novelty_lobe import NoveltyLobe
 from perception import PerceptionLobe
 from sensory_integration_lobe import SensoryIntegrationLobe
+from meta_cognition_lobe import MetaCognitionLobe
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -67,6 +69,7 @@ def create_core_systems(
         ),
         "language": LanguageGenerator(thalamus=thalamus),
         "output": OutputLobe(thalamus=thalamus, enable_tts=False),
+        "meta_cognition": MetaCognitionLobe(thalamus=thalamus),
     }
     for name in (
         "perception",
@@ -79,6 +82,7 @@ def create_core_systems(
         "reasoning",
         "language",
         "output",
+        "meta_cognition",
     ):
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
@@ -98,6 +102,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "autonomous",
         "output",
         "language",
+        "meta_cognition",
         "reasoning",
         "emotion",
         "notus",

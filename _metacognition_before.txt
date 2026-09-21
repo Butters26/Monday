@@ -1,0 +1,44 @@
+=== METACOGNITION BEFORE BASELINE ===
+time: 2026-09-20 20:29:49 MDT
+runtime: /tmp/mc-before-q44i141t
+
+DESIGN_JOB:
+Modules found:
+- meta_cognition_lobe.MetaCognitionLobe: designed as self-assessment / error log /
+  evaluate_thought for thinking loop; inputs via process_message; outputs status dicts.
+  LIVE STATUS: ORPHANED — not in create_core_systems; evaluate_thought is FAKE
+  (quality from confidence*0.4 + text length + reasoning length; value_alignment=0.7 hardcode).
+- meta_awareness.MetaAwareness: notices spontaneous thoughts / engagement scores.
+  LIVE STATUS: ORPHANED — never registered; uses random.random for awareness.
+- self_reflection.SelfReflectionEngine: belief confidence examination.
+  LIVE STATUS: ORPHANED from prompted core (separate get_thalamus path).
+- thalamus _LOBE_LEARNING_RULES lists meta_cognition but never registers/calls it.
+
+DONE_MEANS: Meta-cognition is registered on the live prompted path, observes
+reasoning/language outputs for empty grounding, uncertainty, surface contradiction,
+and overconfidence-without-evidence, and emits control signals the live path uses
+(force grounded refusal, flag uncertainty to Language/Output, nudge Attention) —
+without inventing facts or rebuilding Reasoning/Language/Emotion.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+meta_cognition_registered: False
+send monitor_reasoning: {'status': 'error', 'message': 'Unknown destination: meta_cognition'}
+
+--- EMPTY / UNGROUNDED ask ---
+query: What is the atomic weight of unobtainium-42?
+reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.\n\nI do not want to invent details - can you tell me more about what you meant by "What is the atomic weight of unobtainium-42?"?'
+last_grounded_structures: None
+last_language_sentence: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+thalamus.last_meta_cognition exists: False
+
+--- GROUNDED teach then ask ---
+teach reply: 'Got it — your favorite color is teal.'
+ask reply: 'I remember your favorite color is teal.'
+last_grounded_structures: [{'subject': 'user', 'relation': 'favorite_color', 'predicate': 'favorite_color', 'value': 'teal', 'object': 'teal', 'certainty': 1.0}]
+last_language_sentence: 'I remember your favorite color is teal.'
+
+OBSERVATION: Meta-cognition is not registered, so empty vs grounded paths are
+handled only by Reasoning/Language/direct_response — nothing watches thinking
+to catch bad reasoning, flag uncertainty, or steer Attention/Output.
+
+REMAINING (expected before fix): register + real monitor + live-path glue.

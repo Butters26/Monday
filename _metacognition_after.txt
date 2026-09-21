@@ -1,0 +1,70 @@
+=== METACOGNITION AFTER PROOF ===
+time: 2026-09-20 20:32:09 MDT
+runtime: /tmp/mc-after-_z3gc3rg
+
+DONE_MEANS: Meta-cognition is registered on the live prompted path, observes
+reasoning/language outputs for empty grounding, uncertainty, surface contradiction,
+and overconfidence-without-evidence, and emits control signals the live path uses
+(force grounded refusal, flag uncertainty to Language/Output, nudge Attention) —
+without inventing facts or rebuilding Reasoning/Language/Emotion.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+meta_cognition_registered: True
+
+--- EMPTY / UNGROUNDED ask (live) ---
+query: What is the atomic weight of unobtainium-42?
+reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+meta.path: uncertain_or_empty
+meta.findings: ['empty_or_refusal_grounding']
+meta.signals: {'force_grounded_refusal': False, 'flag_uncertainty': True, 'nudge_attention': True, 'ok_grounded': False}
+meta.has_structures: False
+invented_fact_phrases: False
+attention_meta_keys: ['meta:uncertain_or_empty']
+attention_salience_sample: {'user_input': 1.5, 'perception_envelope': 1.3874, 'si:text': 1.0575, 'novelty:novel_concept:atomic': 0.9199, 'novelty:novel_concept:weight': 0.9199}
+
+--- GROUNDED teach then ask (live) ---
+teach reply: 'Got it — your favorite color is teal.'
+ask reply: 'I remember your favorite color is teal.'
+meta.path: grounded
+meta.findings: ['grounded_structures_present']
+meta.signals: {'force_grounded_refusal': False, 'flag_uncertainty': False, 'nudge_attention': False, 'ok_grounded': True}
+meta.has_structures: True
+last_grounded_structures: [{'subject': 'user', 'relation': 'favorite_color', 'predicate': 'favorite_color', 'value': 'teal', 'object': 'teal', 'certainty': 1.0}]
+
+--- PATH DIFFERENTIATION ---
+empty_path=uncertain_or_empty grounded_path=grounded
+paths_differ: True
+empty_flag_uncertainty: True
+grounded_ok: True
+
+--- OVERCONFIDENT ungrounded control signal (via monitor_reasoning apply) ---
+over.path: overconfident_ungrounded
+over.signals: {'force_grounded_refusal': True, 'flag_uncertainty': True, 'nudge_attention': True, 'ok_grounded': False}
+over.findings: ['overconfidence without grounded structures/evidence']
+applied.answer[:80]: 'I do not have enough grounded information to answer that. Please provide more co'
+applied.intent: express_uncertainty
+attention_nudge: nudged=True reason=overconfident_ungrounded (meta:overconfident_ungrounded in salience_map)
+does_not_invent: True
+
+--- SURFACE CONTRADICTION ---
+contradiction.path: uncertain_or_empty
+contradiction.findings: ["conflicting values for user.favorite_color: ['red', 'teal']"]
+contradiction.signals: {'force_grounded_refusal': False, 'flag_uncertainty': True, 'nudge_attention': True, 'ok_grounded': False}
+
+--- BEFORE vs AFTER ---
+BEFORE: meta_cognition not registered; evaluate_thought was length/confidence theater;
+        empty vs grounded had no epistemic watcher or control signals.
+AFTER:  meta_cognition registered; live path calls monitor_reasoning before Language
+        and monitor_language after; empty→uncertain_or_empty+flag/nudge;
+        grounded→ok_grounded; overconfident→force_grounded_refusal.
+
+HONEST_LIMITS: surface heuristics on text/structures only; cannot verify external
+truth or deep logic; meta_awareness.py / self_reflection.py still orphaned.
+
+REMAINING_GAPS:
+- Subtle fallacies / world-knowledge errors still undetectable.
+- meta_awareness + self_reflection not on prompted core (out of scope).
+- Attention nudge is soft salience only — does not re-rank mid-turn focus.
+- Overconfident invention is rare on live path because Reasoning already refuses;
+  force_refusal proven via monitor apply + language second-look.
+meta status: {'monitor_count': 8, 'last_path': 'uncertain_or_empty', 'last_findings': ["conflicting values for user.favorite_color: ['red', 'teal']"], 'last_signals': {'force_grounded_refusal': False, 'flag_uncertainty': True, 'nudge_attention': True, 'ok_grounded': False}, 'error_log_len': 0, 'history_len': 8}

@@ -107,6 +107,8 @@ class Thalamus:
         self.last_language_sentence: Optional[str] = None
         # Complete final reply text assembled before Output (asides + curiosity).
         self._last_pre_output_final_text: Optional[str] = None
+        # Last Meta-cognition verdict (epistemic watch on reasoning/language).
+        self.last_meta_cognition: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -975,6 +977,91 @@ class Thalamus:
 
         return {"status": "error", "message": f"unknown modality: {modality}"}
 
+
+    def _meta_cognition_watch_reasoning(
+        self,
+        user_input: str,
+        semantic_input: Dict[str, Any],
+        reasoning_answer: Any,
+        memories: Any,
+    ) -> Dict[str, Any]:
+        """Tiny glue: Meta-cognition observes reasoning before Language.
+
+        Applies force-refusal / uncertainty flags onto semantic_input when
+        the lobe is registered. No-op when offline. Does not invent facts.
+        """
+        with self.lobe_handlers_lock:
+            has_meta = "meta_cognition" in self.lobe_handlers
+        if not has_meta:
+            return semantic_input
+        try:
+            watched = self.send_and_wait(
+                "meta_cognition",
+                "monitor_reasoning",
+                {
+                    "user_input": user_input,
+                    "semantic_input": semantic_input,
+                    "reasoning_answer": reasoning_answer,
+                    "memories": memories,
+                    "apply": True,
+                },
+            )
+        except Exception:
+            return semantic_input
+        if watched.get("status") != "success":
+            return semantic_input
+        body = self._content(watched)
+        verdict = body.get("verdict") or watched.get("verdict")
+        if isinstance(verdict, dict):
+            self.last_meta_cognition = verdict
+        applied = body.get("semantic_input") or watched.get("semantic_input")
+        if isinstance(applied, dict):
+            return applied
+        # Still attach a thin meta tag even if apply returned nothing
+        if isinstance(verdict, dict):
+            out = dict(semantic_input)
+            out["meta_cognition"] = {
+                "path": verdict.get("path"),
+                "findings": list(verdict.get("findings") or []),
+                "signals": dict(verdict.get("signals") or {}),
+                "limits": verdict.get("limits"),
+            }
+            return out
+        return semantic_input
+
+    def _meta_cognition_watch_language(
+        self,
+        sentence: str,
+        semantic_input: Dict[str, Any],
+    ) -> str:
+        """Tiny glue: second look after Language; may force grounded refusal."""
+        with self.lobe_handlers_lock:
+            has_meta = "meta_cognition" in self.lobe_handlers
+        if not has_meta:
+            return sentence
+        try:
+            watched = self.send_and_wait(
+                "meta_cognition",
+                "monitor_language",
+                {
+                    "sentence": sentence,
+                    "semantic_input": semantic_input,
+                    "prior_verdict": self.last_meta_cognition,
+                },
+            )
+        except Exception:
+            return sentence
+        if watched.get("status") != "success":
+            return sentence
+        body = self._content(watched)
+        verdict = body.get("verdict") or watched.get("verdict")
+        if isinstance(verdict, dict):
+            self.last_meta_cognition = verdict
+            corrected = verdict.get("corrected_sentence")
+            if isinstance(corrected, str) and corrected.strip():
+                return corrected.strip()
+        return sentence
+
     def process_user_input(
         self,
         user_input: str,
@@ -1462,10 +1549,25 @@ class Thalamus:
         self.last_grounded_structures = (
             list(grounded_structures) if grounded_structures else None
         )
+        # Meta-cognition: watch reasoning envelope; steer Language via signals.
+        semantic_input = self._meta_cognition_watch_reasoning(
+            user_input, semantic_input, reasoning_answer, memories
+        )
+        # If meta forced a grounded refusal, keep structures cleared.
+        if isinstance(semantic_input.get("meta_cognition"), dict):
+            sigs = (semantic_input["meta_cognition"].get("signals") or {})
+            if sigs.get("force_grounded_refusal"):
+                grounded_structures = None
+                self.last_grounded_structures = None
+                reasoning_answer = semantic_input.get("answer")
         language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
         if language["status"] != "success":
             return "I'm having trouble finding the words right now."
         response_text = self._content(language).get("sentence", "")
+        if isinstance(response_text, str):
+            response_text = self._meta_cognition_watch_language(
+                response_text, semantic_input
+            )
         self.last_language_sentence = (
             response_text if isinstance(response_text, str) else None
         )
@@ -1528,6 +1630,13 @@ class Thalamus:
                 "user_input": user_input,
                 "user_id": user_id,
                 "preserve_text": True,
+                "meta_cognition": self.last_meta_cognition,
+                "uncertainty_flagged": bool(
+                    isinstance(self.last_meta_cognition, dict)
+                    and (self.last_meta_cognition.get("signals") or {}).get(
+                        "flag_uncertainty"
+                    )
+                ),
             },
         )
         output_body = self._content(output)
