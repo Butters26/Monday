@@ -1,0 +1,62 @@
+=== PATTERN EMOTION COMBO LIVE PROOF ===
+time: 2026-09-21 09:08:25 MDT
+runtime: /tmp/pattern-emotion-combo-iusifut8
+entry: Thalamus._build_pattern_observation + Pattern.observe — NO behavioral_signals
+expected extracted combo: negative_emotion + short_responses + hesitation
+
+probe emotions: {'sad': 0.85}
+actually_extracted_signals: ['hesitation', 'negative_emotion', 'short_responses']
+has_required_trio: True
+
+--- first observation ---
+extracted: ['hesitation', 'negative_emotion', 'short_responses']
+combo_snap: occ=1 durable=False conf=0.3333333333333333
+first_provisional_not_durable: True
+first_not_in_significant: True
+same_observe_id_no_double_count: True (occ stayed 1)
+
+--- second observation ---
+extracted: ['hesitation', 'negative_emotion', 'short_responses']
+combo_snap: occ=2 durable=False conf=0.6666666666666666
+evidence_increased: True
+
+--- third observation (threshold) ---
+extracted: ['hesitation', 'negative_emotion', 'short_responses']
+combo_snap: occ=3 durable=True conf=1.0
+threshold_crossed_durable: True
+in_significant: True
+significant_sample: [{'signals': ['hesitation', 'negative_emotion', 'short_responses'], 'occurrences': 3, 'confidence': 1.0, 'durable': True, 'user_id': 'matt'}]
+no_invented_name_or_meaning: True
+
+--- other durable combos after one-shot noise: 0 ---
+noise_not_promoted_extra: True
+
+--- user scoping ---
+matt_occ=3 other_user_occ=1
+users_not_mixed: True
+
+--- persistence ---
+knowledge_has_discovered: True
+persisted_matching: [{'confidence': 1.0, 'durable': True, 'last_seen': 1790003305.9837046, 'occurrences': 3, 'signals': ['hesitation', 'negative_emotion', 'short_responses'], 'user_id': 'matt'}]
+survived_restart: True
+in_significant_after_restart: True
+restored: occ=3 durable=True
+
+--- live _run_pattern_live pattern_result ---
+discovered_signal_patterns hit: [{'signals': ['hesitation', 'negative_emotion', 'short_responses'], 'occurrences': 4, 'confidence': 1.0, 'durable': True, 'user_id': 'matt'}]
+live_path_surfaces_combo: True
+
+=== CHECKS ===
+real_extracted_trio: True
+first_provisional: True
+same_obs_no_double: True
+evidence_increases: True
+threshold_durable: True
+in_significant: True
+no_invented_name: True
+user_scoping: True
+survives_restart: True
+live_path_surfaces: True
+no_behavioral_signals_injected: True
+RESULT=PASS
+PHASE=COMBO_LIVE

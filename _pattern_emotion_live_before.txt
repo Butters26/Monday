@@ -1,0 +1,28 @@
+=== PATTERN EMOTION LIVE BEFORE PROOF ===
+time: 2026-09-21 09:07:15 MDT
+runtime: /tmp/pattern-emotion-before-87qguc6c
+BUG: Pattern reads emotion.get('type'/'intensity') but Thalamus sends {name: intensity}
+
+--- live Thalamus observation shape ---
+emotions: {'sad': 0.8}
+has_type_key: False
+has_intensity_key: False
+
+--- extract on live map emotions={'sad': 0.8} ---
+signals: ['short_responses']
+has_negative_emotion: False
+
+--- extract on typed emotions={'type':'sad','intensity':0.8} (control) ---
+signals: ['negative_emotion', 'short_responses']
+typed_has_negative_emotion: True
+
+--- strong angry map ---
+signals: []
+has_negative_emotion: False
+
+=== CHECKS ===
+live_map_missing_negative_emotion: True
+typed_form_still_works: True
+thalamus_emits_map_not_typed: True
+RESULT=PASS (BEFORE expects live map fails)
+PHASE=BEFORE

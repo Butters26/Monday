@@ -1,0 +1,37 @@
+=== PATTERN EMOTION LIVE AFTER PROOF ===
+time: 2026-09-21 09:07:42 MDT
+runtime: /tmp/pattern-emotion-after-8lwjdvlt
+FIX: Pattern._normalize_emotion_state accepts typed + live name→intensity map
+
+strong sad: emotions={'sad': 0.85} signals=['hesitation', 'negative_emotion', 'short_responses'] ok=True
+strong angry: emotions={'angry': 0.85} signals=['hesitation', 'negative_emotion', 'short_responses'] ok=True
+strong worried: emotions={'worried': 0.85} signals=['hesitation', 'negative_emotion', 'short_responses'] ok=True
+strong scared: emotions={'scared': 0.85} signals=['hesitation', 'negative_emotion', 'short_responses'] ok=True
+strong happy: emotions={'happy': 0.9} has_pos=True ok=True
+strong excited: emotions={'excited': 0.9} has_pos=True ok=True
+strong joy: emotions={'joy': 0.9} has_pos=True ok=True
+low-intensity sad=0.3: signals=['short_responses'] no_false_trigger=True
+typed happy still works: True signals=['positive_emotion', 'increased_verbosity']
+multi-key pick strongest: ('sad', 0.9) ok=True
+no emotion: signals=['short_responses'] no_fabricated=True
+live mismatch sad+great: signals=['emotion_mismatch', 'negative_emotion', 'short_responses'] ok=True
+live mismatch happy+hate: signals=['emotion_mismatch', 'positive_emotion', 'short_responses'] ok=True
+observe extracted path: stress_occ=1 conf=0.3333333333333333
+
+=== CHECKS ===
+neg_sad: True
+neg_angry: True
+neg_worried: True
+neg_scared: True
+pos_happy: True
+pos_excited: True
+pos_joy: True
+low_intensity: True
+typed_still: True
+multi_strongest: True
+no_fabricate: True
+mismatch_live: True
+mismatch_live_pos: True
+observe_stress: True
+RESULT=PASS
+PHASE=AFTER

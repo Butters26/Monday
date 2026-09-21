@@ -1,0 +1,54 @@
+=== PATTERN EMOTION REGRESSION PROOF ===
+time: 2026-09-21 09:11:09 MDT
+runtime: /tmp/pattern-emotion-regress-4wz07fvn
+
+--- taught behavioral + templates ---
+curiosity_spike occ=3 conf=1.0
+templates_present: True
+
+--- autonomous unlabeled combo ---
+combo durable occ=3 durable=True
+same_obs_no_double: True
+user_isolation: matt=3 other=1
+
+--- candidate cap / spam ---
+peak_candidates=40 final=40 max=40
+oversized_delta=0
+
+--- a1..a8 compose ---
+composed_a1_a8: True durable=True count=21
+
+--- wrap guard ---
+wrap_is_noise: True wrap_durable_promoted: False
+
+--- short near-dup scrub ---
+p0,t,t is_near_dup: True demoted: True
+refuse_promote_z_t_t: True
+2,4,6 not_flagged: True
+
+--- persistence/restart ---
+curiosity_spike_restored: True
+combo_restored: occ=3 durable=True
+
+--- 2,4,6,8 -> 10 ---
+live_next_answer: 'The pattern is 4, 6, 8, so the next item is 10.'
+reply_has_10: True
+
+--- live emotion extraction sanity ---
+signals: ['hesitation', 'negative_emotion', 'short_responses']
+
+=== CHECKS ===
+taught_behavioral_works: True
+autonomous_combo: True
+same_obs_no_double: True
+per_user_isolation: True
+candidate_cap: True
+oversized_bounded: True
+a1a8_compose: True
+wrap_guard: True
+short_near_dup: True
+persistence: True
+seq_2468: True
+live_emotion_still: True
+RESULT=PASS
+PHASE=REGRESS

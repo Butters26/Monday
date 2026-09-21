@@ -1485,6 +1485,51 @@ class AdvancedPatternRecognition:
                 
                 self.last_pattern_time = current_time
     
+    # Reserved keys in typed emotion dicts — not emotion-name map entries
+    _EMOTION_META_KEYS = frozenset({"type", "intensity", "emotion_intensity"})
+
+    def _normalize_emotion_state(self, emotion: Any) -> Tuple[str, float]:
+        """Normalize live emotion observation to ``(type, intensity)``.
+
+        Accepts both shapes Thalamus / callers may supply:
+        - typed: ``{"type": "sad", "intensity": 0.8}``
+        - map:   ``{"sad": 0.8}`` (multi-key → strongest numeric entry)
+
+        Returns ``("neutral", 0.0)`` when no valid emotional state is present —
+        does not fabricate positive/negative signals from empty or unparseable input.
+        """
+        if not isinstance(emotion, dict) or not emotion:
+            return ("neutral", 0.0)
+
+        raw_type = emotion.get("type")
+        if isinstance(raw_type, str) and raw_type.strip():
+            try:
+                intensity = float(emotion.get("intensity", 0) or 0)
+            except (TypeError, ValueError):
+                intensity = 0.0
+            return (raw_type.strip().lower(), intensity)
+
+        # Map form: emotion_name → intensity (live Thalamus path)
+        best_name: Optional[str] = None
+        best_intensity: Optional[float] = None
+        for key, val in emotion.items():
+            if not isinstance(key, str):
+                continue
+            name = key.strip().lower()
+            if not name or name in self._EMOTION_META_KEYS:
+                continue
+            try:
+                intensity = float(val)
+            except (TypeError, ValueError):
+                continue
+            if best_intensity is None or intensity > best_intensity:
+                best_name = name
+                best_intensity = intensity
+
+        if best_name is None or best_intensity is None:
+            return ("neutral", 0.0)
+        return (best_name, float(best_intensity))
+
     def _extract_behavioral_signals(self, data: Dict[str, Any]) -> List[str]:
         """Extract behavioral signals from current data.
 
@@ -1526,10 +1571,9 @@ class AdvancedPatternRecognition:
         if words and self._hesitation_detected(words):
             signals.append('hesitation')
         
-        # Emotion signals
-        emotion_type = emotion.get('type', 'neutral') if isinstance(emotion, dict) else 'neutral'
-        emotion_intensity = emotion.get('intensity', 0) if isinstance(emotion, dict) else 0
-        
+        # Emotion signals (typed dict or live name→intensity map)
+        emotion_type, emotion_intensity = self._normalize_emotion_state(emotion)
+
         if emotion_intensity > 0.6:
             if emotion_type in ['happy', 'excited', 'joy']:
                 signals.append('positive_emotion')
@@ -1640,7 +1684,7 @@ class AdvancedPatternRecognition:
         if not emotion or not words:
             return False
         
-        emotion_type = emotion.get('type', 'neutral')
+        emotion_type, _intensity = self._normalize_emotion_state(emotion)
         words_lower = [w.lower() for w in words]
         
         # Positive emotion but negative words
