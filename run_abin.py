@@ -12,6 +12,8 @@ plus MotorActionLobe planning/queuing action envelopes when Monday should do
 something beyond talk (honest no_actuator status; no fake limbs) —
 plus VoiceLobe synthesizing speech / voice envelopes from Output text
 (honest synthesized/play_unavailable; no fake "she spoke") —
+plus AutonomousSpeechSystem as social WHEN/WHETHER filter for speak-worthy
+asides (does not invent wording or audio) —
 plus MetaAwareness tracking process / dual-stream mode (wandering vs focused;
 distinct from MetaCognition epistemic watching), with ContinuousThoughtGenerator
 and ControlledThinking attached as spontaneous/controlled stream generators —
@@ -26,6 +28,7 @@ from typing import Any, Dict, Optional
 from advanced_emotional_engine import EmotionalProcess
 from attention_lobe import AttentionLobe
 from autonomous_thinking import AutonomousThinkingLoop
+from autonomous_speech import AutonomousSpeechSystem
 from conversation import ConversationSystem
 from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
@@ -93,6 +96,7 @@ def create_core_systems(
         "social_context": SocialContextLobe(thalamus=thalamus),
         "motor_action": MotorActionLobe(thalamus=thalamus),
         "voice": VoiceLobe(thalamus=thalamus),
+        "speech": AutonomousSpeechSystem(thalamus=thalamus),
         "meta_awareness": MetaAwareness(thalamus=thalamus),
     }
     for name in (
@@ -112,6 +116,7 @@ def create_core_systems(
         "social_context",
         "motor_action",
         "voice",
+        "speech",
         "meta_awareness",
     ):
         result = thalamus.register_lobe(name, systems[name])
@@ -141,6 +146,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "autonomous",
         "output",
         "voice",
+        "speech",
         "meta_awareness",
         "language",
         "motor_action",

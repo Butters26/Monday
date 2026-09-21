@@ -124,6 +124,8 @@ class Thalamus:
         # Aside/notice snapshot kept separate so it cannot replace the primary
         # observe_turn envelope for the active turn.
         self.last_meta_awareness_aside: Optional[Dict[str, Any]] = None
+        # Last AutonomousSpeech social WHEN/WHETHER decision (not Voice audio).
+        self.last_speech_decision: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1548,6 +1550,102 @@ class Thalamus:
             return dict(voice)
         return None
 
+    def _speech_notify_user_turn(self, user_id: str = "default") -> None:
+        """Tiny glue: tell speech the user spoke (presence / pacing).
+
+        Do not auto-set conversation_active=True on every turn — that would
+        permanently raise the intensity bar (module never clears it). Explicit
+        conversation_active messages remain available for future Social glue.
+        """
+        with self.lobe_handlers_lock:
+            has_speech = "speech" in self.lobe_handlers
+        if not has_speech:
+            return
+        try:
+            self.send_message(
+                "speech",
+                "user_spoke",
+                {"user_id": user_id},
+                source="thalamus",
+            )
+        except Exception:
+            pass
+
+    def _speech_notify_delivered(self) -> None:
+        """Tiny glue: aside (or spoken beat) was delivered — update speech interval."""
+        with self.lobe_handlers_lock:
+            has_speech = "speech" in self.lobe_handlers
+        if not has_speech:
+            return
+        try:
+            self.send_message("speech", "speech_delivered", {}, source="thalamus")
+        except Exception:
+            pass
+
+    def _speech_evaluate_aside(self, aside: Dict[str, Any]) -> Dict[str, Any]:
+        """Tiny glue: social WHEN/WHETHER filter before attaching a speak-worthy aside.
+
+        Returns a decision dict with at least should_speak (bool) and reason (str).
+        Missing speech lobe → allow (no veto). Does not invent wording or audio.
+        """
+        default = {
+            "should_speak": True,
+            "reason": "speech_absent",
+            "timing": "now",
+            "priority": float(aside.get("intensity", 0.5) or 0.5),
+        }
+        with self.lobe_handlers_lock:
+            has_speech = "speech" in self.lobe_handlers
+        if not has_speech:
+            self.last_speech_decision = dict(default)
+            return dict(default)
+        thought = {
+            "id": str(aside.get("id") or ""),
+            "content": str(aside.get("content") or ""),
+            "thought_type": str(aside.get("thought_type") or ""),
+            "intensity": float(aside.get("intensity", 0.5) or 0.5),
+        }
+        try:
+            resp = self.send_and_wait(
+                "speech",
+                "evaluate_thought",
+                {"thought": thought},
+                source="thalamus",
+            )
+        except Exception:
+            self.last_speech_decision = dict(default)
+            return dict(default)
+        if resp.get("status") != "success":
+            self.last_speech_decision = dict(default)
+            return dict(default)
+        body = self._content(resp)
+        decision = None
+        if isinstance(body, dict):
+            decision = body.get("decision")
+        if not isinstance(decision, dict):
+            decision = resp.get("decision") if isinstance(resp.get("decision"), dict) else None
+        if not isinstance(decision, dict):
+            self.last_speech_decision = dict(default)
+            return dict(default)
+        out = {
+            "should_speak": bool(decision.get("should_speak", True)),
+            "reason": str(decision.get("reason") or ""),
+            "timing": str(decision.get("timing") or "now"),
+            "priority": float(decision.get("priority", thought["intensity"]) or thought["intensity"]),
+            "thought_id": str(decision.get("thought_id") or thought["id"]),
+            "content": str(decision.get("content") or thought["content"]),
+        }
+        self.last_speech_decision = dict(out)
+        return out
+
+    @staticmethod
+    def _speech_block_is_temporary(reason: str) -> bool:
+        """Temporary social blocks → requeue; content blocks → demote."""
+        r = (reason or "").lower()
+        if any(k in r for k in ("robotic", "too short", "inappropriate")):
+            return False
+        return True
+
     def _build_pattern_observation(
         self,
         user_input: str,
@@ -1930,6 +2028,11 @@ class Thalamus:
                 )
             except Exception:
                 pass
+        # Speech social filter: user present / conversation active.
+        try:
+            self._speech_notify_user_turn(user_id=user_id)
+        except Exception:
+            pass
 
         # Capture speak-worthy inner-life BEFORE this turn's emotion process_input
         # can wash intensity / unresolved context. Her own prior feelings stay eligible
@@ -2694,6 +2797,33 @@ class Thalamus:
             except Exception:
                 pass
 
+        # AutonomousSpeech social WHEN/WHETHER filter (not Voice, not Language).
+        try:
+            speech_decision = self._speech_evaluate_aside(aside)
+        except Exception:
+            speech_decision = {"should_speak": True, "reason": "speech_eval_error"}
+        if not bool(speech_decision.get("should_speak", True)):
+            reason = str(speech_decision.get("reason") or "speech_blocked")
+            try:
+                aside["speech_gate_reason"] = reason
+            except Exception:
+                pass
+            if self._speech_block_is_temporary(reason):
+                if autonomous is not None:
+                    self._requeue_speak_worthy(autonomous, aside, now)
+            else:
+                demote = getattr(autonomous, "demote_aside_to_internal", None) if autonomous else None
+                if callable(demote):
+                    try:
+                        demote(aside)
+                    except Exception:
+                        pass
+                try:
+                    aside["speak_worthy"] = False
+                except Exception:
+                    pass
+            return reply
+
         # Speak-satiation bookkeeping when we actually surface.
         bump = getattr(autonomous, "_bump_speak_satiation", None) if autonomous else None
         if callable(bump):
@@ -2706,6 +2836,10 @@ class Thalamus:
         # Thread the active turn's user_id — never hardcode "default".
         try:
             self._meta_awareness_notice_thought(aside, user_id=user_id)
+        except Exception:
+            pass
+        try:
+            self._speech_notify_delivered()
         except Exception:
             pass
         self._last_spoken_aside_time = now

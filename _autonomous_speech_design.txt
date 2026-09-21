@@ -1,0 +1,103 @@
+=== AutonomousSpeechSystem DESIGN JOB ===
+time: 2026-09-21 11:50 MDT
+HEAD: 0669628 (pre-implement)
+
+MODULE
+  autonomous_speech.py → AutonomousSpeechSystem
+  Lobe name on live path: "speech" (already present in Thalamus learning rules).
+
+ONE-LINER
+  Social WHEN/WHETHER filter for already-formed speak-worthy autonomous
+  thoughts — decides if an aside may leave the mouth this turn; does not
+  invent wording and does not synthesize audio.
+
+DONE_MEANS
+  "speech" is registered on the live prompted path. Before Thalamus attaches
+  a speak-worthy aside to the reply, it consults speech.evaluate_thought.
+  If should_speak is False, the aside is requeued (temporary social block) or
+  demoted (content inappropriate) — never attached. On user turns, speech
+  is notified (user_spoke / conversation_active). On successful aside attach,
+  speech is notified (speech_delivered). Voice still synthesizes the final
+  Output text; Language still owns wording; AutonomousThinkingLoop still
+  owns thought generation + speak_worthy minting.
+
+OWNERSHIP BOUNDARIES
+  AutonomousSpeech ("speech") owns:
+    - Social timing / interruption awareness for unsolicited speak-worthy
+      thoughts (typing/busy/interval/conversation-active heuristics)
+    - Content appropriateness filter for speaking (e.g. too robotic → keep
+      internal)
+    - SpeechDecision envelope {should_speak, reason, timing, priority}
+  Voice owns (DO NOT STEAL / DO NOT BREAK):
+    - Speech synthesis / voice profile / audio envelope from text
+    - Honest synthesized | play_unavailable | played | no_tts_backend
+    - Fresh-user isolation of last envelopes
+  Language owns: wording / sentence construction (speech does NOT compose
+    reply text on the live path)
+  Output owns: delivery / final reply envelope
+  AutonomousThinkingLoop owns: generating autonomous thoughts + speak_worthy
+    minting / satiation / relevance gate (speech does not invent thoughts)
+  MetaAwareness owns: process / dual-stream notice of asides (observe only;
+    does not veto attach — speech is the social veto, MetaAwareness remains
+    notice-only)
+  MetaCognition owns: epistemic watch (untouched)
+  Social owns: continuity / stance cues (speech may consume conversation
+    activity signals; does not reclassify social cues)
+  Thalamus: tiny glue only — evaluate before aside attach; notify user_spoke /
+    speech_delivered; stash last_speech_decision for diagnostics
+  Motor / Pattern / Emotion / Reasoning / Executive / Attention: untouched
+    except Executive's existing speak_worthy_aside inhibit (already in place)
+  Learning stack: DO NOT TOUCH
+  dual_stream_thinking.py: DO NOT WIRE
+
+WHAT NOT TO DO
+  - Do NOT call generate_natural_speech / should_initiate_speech on the live
+    path (those invent Language-owned wording / unprompted chat starters —
+    needs redesign to be honest; leave as legacy/CLI helpers only)
+  - Do NOT synthesize audio or call Voice from speech
+  - Do NOT rewrite Language / Output / Voice / AutonomousThinkingLoop gates
+  - Do NOT replace Thalamus aside cooldown / intensity / relevance gates —
+    speech is an additional social filter, not a redesign of those
+  - Do NOT steal MetaAwareness aside notice or MetaCognition epistemic role
+  - Do NOT invent a redesign if the social-filter niche cannot attach with
+    small glue (stop after design + before)
+
+SMALLEST ARCHITECTURAL CORRECTION
+  1. autonomous_speech.py: accept thalamus=; do not auto-register via
+     get_thalamus() when create_core_systems owns registration; keep
+     process_message (evaluate_thought / user_spoke / speech_delivered /
+     conversation_active / health); add get_status; leave generate_* as
+     non-live helpers.
+  2. Register "speech" in run_abin.create_core_systems (+ shutdown list).
+  3. Tiny Thalamus glue in _maybe_attach_speak_worthy_aside (after relevance
+     gate, before attach):
+       _speech_evaluate_aside(aside) → if not should_speak:
+         temporary reasons → requeue; content reasons → demote
+       stash last_speech_decision
+       on attach → notify speech_delivered
+     Early in process_user_input (near autonomous user-present notify):
+       notify speech user_spoke (not auto conversation_active)
+  4. No Learning / Voice / Language / Output / MetaAwareness redesign.
+
+LIVE SCENARIO (honest, from code)
+  BEFORE: speech absent from create_core registry; autonomous_speech.py
+          orphan (self-only refs); asides attach via AutonomousThinkingLoop
+          + Thalamus gates only; no SpeechDecision on path; Voice still
+          synthesizes Output text.
+  AFTER:  speech registered; evaluate_thought consulted on aside candidates;
+          social/content veto can block attach; Voice still synthesizes the
+          same Output final text; Language wording unchanged; MetaAwareness
+          aside notice still runs when attach proceeds.
+
+HONEST LIMITS / REMAINING GAPS
+  - user_is_typing / user_is_busy have no live UI signals yet — defaults
+    False; speech_delivered interval + content filter still participate.
+  - conversation_active not auto-toggled on live turns (needs Social cue
+    glue later); message type remains available.
+  - generate_natural_speech / unprompted initiation remain unwired (Language
+    ownership conflict — needs separate redesign to pull wording from
+    Language, not invent starters here).
+  - timing='wait' is advisory on live path; Thalamus remains attach authority
+    once should_speak is True (avoids starving mid-intensity asides).
+  - Internal pending_speech queue unused on live path (Thalamus pulls asides
+    from AutonomousThinkingLoop, not from speech.queue).

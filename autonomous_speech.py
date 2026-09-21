@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Autonomous Speech System - Decides which thoughts to say out loud
-Takes autonomous thoughts and filters them based on social awareness.
+Autonomous Speech System - Social WHEN/WHETHER filter for speak-worthy thoughts.
+
+Takes already-formed autonomous thoughts and decides whether social context
+allows saying them out loud. Does not invent wording (Language) and does not
+synthesize audio (Voice). Live lobe name: "speech".
 """
 
 import time
@@ -27,13 +30,23 @@ class AutonomousSpeechSystem:
     Social awareness - knows when to stay quiet.
     """
     
-    def __init__(self):
-        self.thalamus = get_thalamus()
+    def __init__(self, thalamus=None, auto_register: bool = False):
+        """Social WHEN/WHETHER filter for speak-worthy autonomous thoughts.
+
+        Live path: create_core_systems passes thalamus= and registers lobe
+        name "speech". Do not invent wording (Language) or audio (Voice).
+        generate_natural_speech / should_initiate_speech are legacy helpers
+        only — not consulted on the live prompted path.
+        """
+        # Prefer explicit thalamus from create_core_systems; avoid get_thalamus()
+        # singleton (that instance is not the live core Thalamus).
+        self.thalamus = thalamus if thalamus is not None else None
         self.running = True
-        
-        # Speech queue
+        self.last_decision: Optional[Dict[str, Any]] = None
+
+        # Speech queue (legacy pull path; live path does not drain this)
         self.pending_speech: List[Dict[str, Any]] = []
-        
+
         # State
         self.user_is_typing = False
         self.user_is_busy = False
@@ -42,21 +55,26 @@ class AutonomousSpeechSystem:
         self.min_speech_interval = 15.0  # Natural pause between unsolicited comments
         self.conversation_active = False
         self.last_user_input_time = time.time()
-        
-        # Natural behavior
+
+        # Natural behavior (legacy unprompted helpers only)
         self.can_initiate = True  # Can start conversations
         self.silence_threshold = 120.0  # After 2 min silence, might say something
         self.curiosity_threshold = 0.7  # How curious before sharing
         self.excitement_threshold = 0.6  # How excited before blurting out
-        
+
         # Social rules - human-like
         self.interruption_threshold = 0.85  # High bar for interrupting
-        
-        # Register with Thalamus
-        self._register_with_thalamus()
-        
+
         # Lock
         self.lock = threading.Lock()
+
+        # Legacy CLI: construct without thalamus → singleton + self-register.
+        # Live path: create_core_systems passes thalamus= and registers "speech".
+        if thalamus is None:
+            self.thalamus = get_thalamus()
+            self._register_with_thalamus()
+        elif auto_register:
+            self._register_with_thalamus()
     
     def _register_with_thalamus(self):
         """Register with Thalamus"""
@@ -71,9 +89,15 @@ class AutonomousSpeechSystem:
             return False
     
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle incoming messages"""
+        """Handle incoming messages (Thalamus envelope or direct)."""
         msg_type = message.get('type')
-        
+        # Thalamus wraps payload under content={...}; flatten like Voice/Autonomous.
+        if isinstance(message.get('content'), dict):
+            flat = dict(message['content'])
+            flat['type'] = msg_type
+            message = flat
+        msg_type = message.get('type')
+
         if msg_type == 'evaluate_thought':
             return self._evaluate_thought(message)
         
@@ -114,6 +138,9 @@ class AutonomousSpeechSystem:
         
         elif msg_type == 'health':
             return {'status': 'success', 'healthy': True}
+
+        elif msg_type == 'get_status':
+            return {'status': 'success', **self.get_status()}
         
         else:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
@@ -128,10 +155,10 @@ class AutonomousSpeechSystem:
         thought_type = thought.get('thought_type', '')
         intensity = thought.get('intensity', 0.5)
         thought_id = thought.get('id', '')
-        
+
         # Check social context
         can_speak, reason = self._check_social_context(intensity)
-        
+
         if not can_speak:
             decision = SpeechDecision(
                 thought_id=thought_id,
@@ -139,16 +166,17 @@ class AutonomousSpeechSystem:
                 should_speak=False,
                 reason=reason,
                 timing='never',
-                priority=intensity
+                priority=intensity,
             )
-            return {
-                'status': 'success',
-                'decision': asdict(decision)
-            }
-        
+            payload = asdict(decision)
+            self.last_decision = dict(payload)
+            return {'status': 'success', 'decision': payload}
+
         # Check content appropriateness
-        is_appropriate, content_reason = self._check_content_appropriate(content, thought_type)
-        
+        is_appropriate, content_reason = self._check_content_appropriate(
+            content, thought_type
+        )
+
         if not is_appropriate:
             decision = SpeechDecision(
                 thought_id=thought_id,
@@ -156,26 +184,25 @@ class AutonomousSpeechSystem:
                 should_speak=False,
                 reason=content_reason,
                 timing='never',
-                priority=intensity
+                priority=intensity,
             )
-            return {
-                'status': 'success',
-                'decision': asdict(decision)
-            }
-        
+            payload = asdict(decision)
+            self.last_decision = dict(payload)
+            return {'status': 'success', 'decision': payload}
+
         # Decide timing
         timing = self._decide_timing(intensity)
-        
+
         decision = SpeechDecision(
             thought_id=thought_id,
             content=content,
             should_speak=True,
             reason="Passed all filters",
             timing=timing,
-            priority=intensity
+            priority=intensity,
         )
-        
-        # Add to queue if should speak
+
+        # Legacy queue (live path does not drain this; Thalamus pulls asides)
         if timing in ['now', 'wait']:
             with self.lock:
                 self.pending_speech.append({
@@ -183,15 +210,13 @@ class AutonomousSpeechSystem:
                     'content': content,
                     'priority': intensity,
                     'timing': timing,
-                    'queued_at': time.time()
+                    'queued_at': time.time(),
                 })
-                # Sort by priority
                 self.pending_speech.sort(key=lambda x: x['priority'], reverse=True)
-        
-        return {
-            'status': 'success',
-            'decision': asdict(decision)
-        }
+
+        payload = asdict(decision)
+        self.last_decision = dict(payload)
+        return {'status': 'success', 'decision': payload}
     
     def _check_social_context(self, intensity: float) -> tuple:
         """Check if social context allows speaking"""
@@ -294,14 +319,31 @@ class AutonomousSpeechSystem:
         result = self._get_pending_speech()
         return result.get('speech')
     
+    def get_status(self) -> Dict[str, Any]:
+        """Diagnostic snapshot for live-path proofs."""
+        with self.lock:
+            pending = len(self.pending_speech)
+        return {
+            "healthy": True,
+            "user_is_typing": self.user_is_typing,
+            "user_is_busy": self.user_is_busy,
+            "user_present": self.user_present,
+            "conversation_active": self.conversation_active,
+            "pending_speech": pending,
+            "last_speech_time": self.last_speech_time,
+            "last_user_input_time": self.last_user_input_time,
+            "last_decision": dict(self.last_decision) if self.last_decision else None,
+            "min_speech_interval": self.min_speech_interval,
+        }
+
     def start(self):
-        """Start the speech system"""
+        """Start the speech system (legacy CLI loop)."""
         print("🗣️ Autonomous Speech System running...")
         while self.running:
             time.sleep(1)
     
     def generate_natural_speech(self, trigger: str, context: Dict[str, Any]) -> Optional[str]:
-        """Generate human-like unprompted speech based on triggers"""
+        """Legacy helper — NOT used on live path (Language owns wording)."""
         
         emotion = context.get('emotion', 'neutral')
         curiosity = context.get('curiosity', 0.5)
@@ -342,7 +384,7 @@ class AutonomousSpeechSystem:
         return None
     
     def should_initiate_speech(self) -> tuple:
-        """Decide if Monday should speak without being prompted"""
+        """Legacy helper — NOT used on live path (would invent unprompted chat)."""
         
         # Don't speak if user literally just said something
         time_since_input = time.time() - self.last_user_input_time
@@ -386,7 +428,7 @@ class AutonomousSpeechSystem:
 
 if __name__ == "__main__":
     print("🗣️ Autonomous Speech System starting...")
-    system = AutonomousSpeechSystem()
+    system = AutonomousSpeechSystem(auto_register=True)
     
     try:
         system.start()

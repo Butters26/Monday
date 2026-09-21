@@ -1,0 +1,24 @@
+=== AutonomousSpeech BEFORE baseline ===
+time: 2026-09-21 11:50:36 MT
+HEAD expected ~0669628
+
+python refs: ['./autonomous_speech.py']
+PASS: orphan_self_only — True refs=['./autonomous_speech.py']
+handlers=['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'voice']
+PASS: speech_absent — True (has_speech=False)
+PASS: voice_present — True
+PASS: autonomous_present — True
+PASS: language_present — True
+PASS: output_present — True
+PASS: meta_awareness_present — True
+PASS: run_abin_no_import — True
+PASS: thalamus_no_speech_evaluate — True
+PASS: thalamus_no_last_speech_decision — True
+voice_status=synthesized profile=monday played=False
+PASS: voice_synth_ok — True
+meta_awareness stream attrs: ['controlled_system', 'notice_spontaneous_thought', 'set_controlled_system', 'set_spontaneous_system', 'spontaneous_system']
+systems has continuous_thought_generator: True
+systems has controlled_thinking: True
+PASS: dualstream_generators_attached — True
+
+OVERALL: BEFORE documents speech orphan / absent from live path

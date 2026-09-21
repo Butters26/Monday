@@ -1,0 +1,43 @@
+=== AutonomousSpeech AFTER proof ===
+time: 2026-09-21 11:54:06 MT
+
+handlers=['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'speech', 'voice']
+PASS: 1_speech_registered
+PASS: 1_voice_still
+PASS: 1_autonomous_still
+PASS: 1_meta_awareness_still
+PASS: 1_language_still
+PASS: 1_output_still
+PASS: 1_meta_cognition_still
+PASS: 1_motor_action_still
+PASS: 1_social_context_still
+PASS: 2_ctor_uses_live_thalamus
+allow_decision={'thought_id': 't1', 'content': 'I keep thinking about that walk.', 'should_speak': True, 'reason': 'Passed all filters', 'timing': 'wait', 'priority': 0.8}
+PASS: 3_evaluate_allows_clean
+robotic_decision={'thought_id': 't2', 'content': 'processing data and analyzing data now', 'should_speak': False, 'reason': 'Too robotic, keep internal', 'timing': 'never', 'priority': 0.9}
+PASS: 4_evaluate_blocks_robotic
+PASS: 5_glue_blocks_robotic
+PASS: 5b_last_speech_decision_set
+PASS: 6_glue_allows_clean
+PASS: 7_interval_blocks_mid
+PASS: 8_interval_allows_hot
+PASS: 9_user_spoke_updates
+attach_robotic='Main reply here.' decision={'should_speak': False, 'reason': 'Too robotic, keep internal', 'timing': 'never', 'priority': 0.95, 'thought_id': 'rob1', 'content': 'processing computing analyzing data'}
+PASS: 18_attach_vetoes_robotic
+attach_clean='Main reply here.\n\nI keep noticing how quiet it feels.' decision={'should_speak': True, 'reason': 'Passed all filters', 'timing': 'now', 'priority': 0.9, 'thought_id': 'cl1', 'content': 'I keep noticing how quiet it feels.'}
+PASS: 19_attach_allows_clean
+reply_snip='Hi there' voice=synthesized
+PASS: 10_live_turn_ok
+PASS: 10b_voice_envelope
+PASS: 11_voice_isolation_fresh_B_none
+PASS: 12_generators_attached
+PASS: 13_meta_awareness_primary_present
+PASS: 13b_aside_slot_separate
+fact_snip='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+PASS: 20_fact_path_alive
+PASS: 17_no_generate_natural_on_live
+PASS: 17b_no_should_initiate_on_live
+PASS: 17c_speech_evaluate_glue_present
+PASS: 17d_dual_stream_thinking_unwired — no import (comment-only note in run_abin)
+
+OVERALL: PASS
