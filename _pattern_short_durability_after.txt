@@ -1,0 +1,63 @@
+=== PATTERN SHORT DURABILITY AFTER PROOF ===
+time: 2026-09-21 08:16:09 MT
+runtime: /tmp/pattern-short-dur-after-ttihag3x
+FIX: targeted short_seq_near_dup scrub (len<=3 + adjacent token run, uniq>=2);
+demote-on-load / refuse-promote / skip-persist. NOT a blanket short diversity rule.
+
+--- config wiring ---
+short_near_dup_enabled=True
+short_near_dup_max_length=3
+short_near_dup_min_run=2
+pattern_config.short_seq_near_dup={'enabled': True, 'max_length': 3, 'min_run_length': 2}
+
+--- helper unit ---
+  p0,t,t -> short_near_dup=True
+  x,t,t -> short_near_dup=True
+  x,x,y -> short_near_dup=True
+  2,4,6 -> short_near_dup=False
+  a1,a2,a3 -> short_near_dup=False
+  a,b,c -> short_near_dup=False
+  plus,one,two -> short_near_dup=False
+  t,t,t -> short_near_dup=False
+
+--- demote-on-load ---
+near_dup_durable_count=0 sample=[]
+near_dup_ephemeral_count=9 sample=[['p0', 't', 't'], ['p1', 't', 't'], ['p2', 't', 't'], ['p3', 't', 't'], ['p4', 't', 't']]
+legit_short_durable=[['2', '4', '6'], ['a1', 'a2', 'a3'], ['a', 'b', 'c'], ['plus', 'one', 'two']]
+
+--- refuse promote / record ---
+promote_z_t_t_became_durable=False
+record_durable_w_t_t_stays_durable=False
+
+--- persist scrub + restart ---
+saved_near_dup_count=0
+saved_legit_short=[['2', '4', '6'], ['a1', 'a2', 'a3'], ['a', 'b', 'c'], ['plus', 'one', 'two']]
+restart_near_dup_durable=[]
+restart_legit_short_durable=[['2', '4', '6'], ['a1', 'a2', 'a3'], ['a', 'b', 'c'], ['plus', 'one', 'two']]
+
+--- Legit end-anchored compose a1..a5 + a4..a8 → a1..a8 ---
+had_durable_a1a5=True
+composed_a1_a8=True durable=True persisted_restart=True
+
+--- Wrap / 2,4,6,8 regression ---
+durable_seqs=[['2', '4', '6'], ['4', '6', '8'], ['2', '4', '6', '8']]
+durable_wraps=[]
+has_durable_2468=True
+live_next_answer='The pattern is 2, 4, 6, 8, so the next item is 10.'
+reply_has_10=True
+
+=== CHECKS ===
+near_dups_demoted: True
+legit_shorts_still_durable: True
+promote_refuses_near_dup: True
+record_refuses_near_dup_durable: True
+persist_excludes_near_dup: True
+restart_clean: True
+helper_targets_runs_only: True
+not_blanket_diversity: True
+config_wired: True
+legit_a1_a8_compose: True
+wrap_2468_ok: True
+live_2468_to_10: True
+RESULT=PASS
+PHASE=AFTER

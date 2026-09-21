@@ -112,6 +112,10 @@ class AdvancedPatternRecognition:
         self.max_dominant_token_fraction = 0.6  # refuse when one token dominates
         self.compose_min_unique_tokens = 2  # refuse constant / single-token sequences
         self.max_compose_per_observe = 4  # cap new composed records per observe
+        # Short near-dup durability scrub (narrow; not a blanket short-seq diversity rule)
+        self.short_near_dup_enabled = True
+        self.short_near_dup_max_length = 3  # len < 4
+        self.short_near_dup_min_run = 2  # adjacent repeated token pair
         self.max_durable_sequences = 500  # soft cap on persisted sequences
         self.persist_sequence_confidence = 0.6
         self.persist_co_occurrence_strength = 0.5
@@ -262,6 +266,21 @@ class AdvancedPatternRecognition:
         if "max_compose_per_observe" in compose:
             try:
                 self.max_compose_per_observe = max(1, int(compose["max_compose_per_observe"]))
+            except (TypeError, ValueError):
+                pass
+
+        short_nd = pr.get("short_seq_near_dup") if isinstance(pr.get("short_seq_near_dup"), dict) else {}
+        if "enabled" in short_nd:
+            self.short_near_dup_enabled = bool(short_nd["enabled"])
+        if "max_length" in short_nd:
+            try:
+                # max_length is inclusive upper bound for short-window check (default 3 => len < 4)
+                self.short_near_dup_max_length = max(2, int(short_nd["max_length"]))
+            except (TypeError, ValueError):
+                pass
+        if "min_run_length" in short_nd:
+            try:
+                self.short_near_dup_min_run = max(2, int(short_nd["min_run_length"]))
             except (TypeError, ValueError):
                 pass
 
@@ -451,14 +470,14 @@ class AdvancedPatternRecognition:
                     durable=True,
                 )
 
-            # Drop legacy wrap-noise / low-info sequences that should never have been durable
+            # Drop legacy wrap-noise / low-info / short near-dup sequences that should never have been durable
             for key, seq in list(self.sequences.items()):
                 steps = list(seq.steps)
                 if self._is_low_information_sequence(steps):
                     # Constant / spam sequences: drop entirely from persisted set
                     self.sequences.pop(key, None)
                     continue
-                if self._is_wrap_noise(steps):
+                if self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps):
                     seq.durable = False
                     # Keep ephemeral for local stats; do not treat as durable knowledge
             for co_data in raw.get("co_occurrences") or []:
@@ -499,8 +518,9 @@ class AdvancedPatternRecognition:
             sequences_out = []
             durable_seqs = []
             for s in self.sequences.values():
-                if self._is_wrap_noise(list(s.steps)):
-                    # Never persist cyclic/wrap batch noise
+                steps = list(s.steps)
+                if self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps):
+                    # Never persist cyclic/wrap batch noise or short near-dup junk
                     if s.durable:
                         s.durable = False
                     continue
@@ -577,11 +597,12 @@ class AdvancedPatternRecognition:
         Shorter genuine sequences are promoted first so wrap checks see them.
         """
         changed = False
-        # Demote wrap noise / low-info spam that should never stay durable
+        # Demote wrap noise / low-info / short near-dup spam that should never stay durable
         for seq in self.sequences.values():
             if seq.durable and (
                 self._is_wrap_noise(list(seq.steps))
                 or self._is_low_information_sequence(list(seq.steps))
+                or self._is_short_near_dup_sequence(list(seq.steps))
             ):
                 seq.durable = False
                 changed = True
@@ -592,7 +613,11 @@ class AdvancedPatternRecognition:
             if seq.durable:
                 continue
             steps = list(seq.steps)
-            if self._is_wrap_noise(steps) or self._is_low_information_sequence(steps):
+            if (
+                self._is_wrap_noise(steps)
+                or self._is_low_information_sequence(steps)
+                or self._is_short_near_dup_sequence(steps)
+            ):
                 continue
             if len(steps) > max(self.local_seq_lengths):
                 long_candidates.append(seq)
@@ -617,7 +642,8 @@ class AdvancedPatternRecognition:
             )
         )
         for seq in local_candidates:
-            if self._is_wrap_noise(list(seq.steps)):
+            steps = list(seq.steps)
+            if self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps):
                 continue
             seq.durable = True
             changed = True
@@ -645,8 +671,10 @@ class AdvancedPatternRecognition:
         # Refuse constant / low-information spam entirely (no ephemeral flood either)
         if self._is_low_information_sequence(steps):
             return
-        # Never durable-promote cyclic/wrap noise
-        if durable and self._is_wrap_noise(steps):
+        # Never durable-promote cyclic/wrap noise or short near-dup junk (p0,t,t)
+        if durable and (
+            self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps)
+        ):
             durable = False
         key = tuple(steps)
         now = time.time()
@@ -658,8 +686,16 @@ class AdvancedPatternRecognition:
             seq.confidence = min(1.0, seq.count / 5.0)
             if avg_time:
                 seq.average_time_between_steps = avg_time
+            # Scrub existing durable short near-dups / wrap noise on touch
+            if seq.durable and (
+                self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps)
+            ):
+                seq.durable = False
+                self._knowledge_dirty = True
             want_durable = durable or (
-                len(steps) > max(self.local_seq_lengths) and not self._is_wrap_noise(steps)
+                len(steps) > max(self.local_seq_lengths)
+                and not self._is_wrap_noise(steps)
+                and not self._is_short_near_dup_sequence(steps)
             )
             if want_durable and not seq.durable:
                 seq.durable = True
@@ -670,7 +706,7 @@ class AdvancedPatternRecognition:
             count = max(1, boost_count)
             is_durable = (
                 durable or len(steps) > max(self.local_seq_lengths)
-            ) and not self._is_wrap_noise(steps)
+            ) and not self._is_wrap_noise(steps) and not self._is_short_near_dup_sequence(steps)
             self.sequences[key] = Sequence(
                 steps=steps,
                 count=count,
@@ -888,6 +924,34 @@ class AdvancedPatternRecognition:
         diversity_floor = getattr(self, "min_compose_token_diversity", 0.35)
         if len(steps) >= 5 and self._token_diversity(steps) < diversity_floor:
             return True
+        return False
+
+    def _is_short_near_dup_sequence(self, steps: List[str]) -> bool:
+        """True for short token-run near-dups (e.g. p0,t,t / x,t,t).
+
+        Targeted durability scrub only: length <= short_near_dup_max_length (default 3,
+        i.e. len < 4) with >=2 unique tokens and an adjacent repeated-token run.
+        Does NOT raise a blanket short-sequence diversity floor — genuine shorts like
+        2,4,6 / a1,a2,a3 / a,b,a stay eligible for durable promotion.
+        """
+        if not getattr(self, "short_near_dup_enabled", True):
+            return False
+        steps = [str(s) for s in steps]
+        max_len = int(getattr(self, "short_near_dup_max_length", 3))
+        min_run = int(getattr(self, "short_near_dup_min_run", 2))
+        if len(steps) < 2 or len(steps) > max_len:
+            return False
+        if len(set(steps)) < 2:
+            # Constants are handled by _is_low_information_sequence
+            return False
+        run = 1
+        for i in range(1, len(steps)):
+            if steps[i] == steps[i - 1]:
+                run += 1
+                if run >= min_run:
+                    return True
+            else:
+                run = 1
         return False
 
     def _would_be_cyclic_wrap(self, new_steps: List[str]) -> bool:
@@ -1519,9 +1583,10 @@ class AdvancedPatternRecognition:
                     'count': pattern.count
                 })
         
-        # Reliable sequences (include durable composed patterns; exclude wrap noise)
+        # Reliable sequences (include durable composed patterns; exclude wrap / short near-dup noise)
         for seq_key, seq in self.sequences.items():
-            if self._is_wrap_noise(list(seq.steps)):
+            steps = list(seq.steps)
+            if self._is_wrap_noise(steps) or self._is_short_near_dup_sequence(steps):
                 continue
             if seq.confidence >= 0.6 or (seq.durable and seq.confidence >= 0.4):
                 significant['reliable_sequences'].append({

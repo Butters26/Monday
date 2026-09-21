@@ -34,6 +34,11 @@
       "max_dominant_token_fraction": 0.6,
       "min_unique_tokens": 2,
       "max_compose_per_observe": 4
+    },
+    "short_seq_near_dup": {
+      "enabled": true,
+      "max_length": 3,
+      "min_run_length": 2
     }
   }
 }

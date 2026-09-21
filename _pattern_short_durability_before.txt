@@ -1,0 +1,30 @@
+=== PATTERN SHORT DURABILITY BEFORE PROOF ===
+time: 2026-09-21 08:13:24 MT
+runtime: /tmp/pattern-short-dur-before-3hx8e7rt
+BASELINE: short near-dup durables (p{i},t,t / x,t,t) load & stay durable;
+compose tighten stopped growth but did not scrub/demote these shapes.
+
+--- seeded near-dup shorts after load ---
+near_dup_durable_count=9
+near_dup_durable_sample=[['p0', 't', 't'], ['p1', 't', 't'], ['p2', 't', 't'], ['p3', 't', 't'], ['p4', 't', 't'], ['p5', 't', 't'], ['p6', 't', 't'], ['p7', 't', 't'], ['x', 't', 't']]
+legit_short_durable=[['2', '4', '6'], ['a1', 'a2', 'a3']]
+has_246=True
+has_a1a2a3=True
+
+--- promote / record paths ---
+promote_z_t_t_became_durable=True
+record_durable_w_t_t_stays_durable=True
+
+--- low_info does NOT catch short near-dups ---
+  ['p0', 't', 't'] low_info=False
+  ['x', 't', 't'] low_info=False
+  ['2', '4', '6'] low_info=False
+  ['a1', 'a2', 'a3'] low_info=False
+
+=== CHECKS ===
+near_dups_present_as_durable: True
+legit_shorts_also_durable: True
+promote_still_allows_near_dup: True
+record_durable_allows_near_dup: True
+RESULT=BASELINE_NEAR_DUP_DURABLES_PRESENT
+PHASE=BEFORE
