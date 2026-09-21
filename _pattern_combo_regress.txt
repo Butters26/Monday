@@ -1,0 +1,34 @@
+=== PATTERN COMBO REGRESSION PROOF ===
+time: 2026-09-21 08:39:57 MDT
+runtime: /tmp/pattern-combo-regress-sncyzein
+
+--- taught behavioral + templates ---
+curiosity_spike occ=3 conf=1.0
+templates_present: True
+
+--- a1..a8 compose ---
+composed_a1_a8: True durable=True count=12
+
+--- 2,4,6,8 -> 10 ---
+live_next_answer: 'The pattern is 2, 4, 6, 8, so the next item is 10.'
+reply_has_10: True
+
+--- wrap guard ---
+wrap_is_noise: True wrap_durable_promoted: False
+
+--- short near-dup scrub ---
+p0,t,t is_near_dup: True demoted: True
+2,4,6 not_flagged: True
+
+--- combo alongside templates ---
+autonomous_combo_durable: True templates_intact: True
+
+=== CHECKS ===
+taught_behavioral_works: True
+a1a8_compose: True
+seq_2468: True
+wrap_guard: True
+short_near_dup: True
+combo_alongside: True
+RESULT=PASS
+PHASE=REGRESS

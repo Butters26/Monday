@@ -1,0 +1,62 @@
+=== PATTERN COMBO AFTER PROOF ===
+time: 2026-09-21 08:37:45 MDT
+runtime: /tmp/pattern-combo-after-4ko5p3ql
+novel_combo (NOT a hardcoded template): ['sig_alpha', 'sig_charlie', 'sig_foxtrot']
+entry: Pattern.observe() with behavioral_signals (real observe API)
+
+--- first observation ---
+discovered: [{'signals': ['sig_alpha', 'sig_charlie', 'sig_foxtrot'], 'occurrences': 1, 'confidence': 0.3333333333333333, 'durable': False, 'user_id': 'matt'}]
+first_provisional_not_durable: True
+first_not_in_significant: True
+
+--- second observation ---
+discovered: [{'signals': ['sig_alpha', 'sig_charlie', 'sig_foxtrot'], 'occurrences': 2, 'confidence': 0.6666666666666666, 'durable': False, 'user_id': 'matt'}]
+same_observe_id_no_double_count: True (occ stayed 2)
+
+--- third observation (threshold) ---
+discovered: [{'signals': ['sig_alpha', 'sig_charlie', 'sig_foxtrot'], 'occurrences': 3, 'confidence': 1.0, 'durable': True, 'user_id': 'matt'}]
+threshold_crossed_durable: True
+in_significant_pattern_result: True
+significant_sample: [{'signals': ['sig_alpha', 'sig_charlie', 'sig_foxtrot'], 'occurrences': 3, 'confidence': 1.0, 'durable': True, 'user_id': 'matt'}]
+no_invented_name_or_meaning: True
+
+--- noisy one-shot ---
+noise_pattern: occ=1 durable=False
+noise_not_promoted: True
+
+--- user scoping ---
+matt_occ=3 other_user_occ=1
+users_not_mixed: True
+
+--- persistence ---
+knowledge_has_discovered: True
+persisted: [{'confidence': 1.0, 'durable': True, 'last_seen': 1790001465.448262, 'occurrences': 3, 'signals': ['sig_alpha', 'sig_charlie', 'sig_foxtrot'], 'user_id': 'matt'}]
+survived_restart: True
+in_significant_after_restart: True
+restored: occ=3 durable=True
+
+--- live path pattern_result shape ---
+pattern_result.significant_patterns.discovered_signal_patterns: [{'signals': ['sig_alpha', 'sig_charlie', 'sig_foxtrot'], 'occurrences': 3, 'confidence': 1.0, 'durable': True, 'user_id': 'matt'}]
+
+=== CHECKS ===
+first_provisional: True
+evidence_increases: True
+threshold_durable: True
+in_pattern_result_significant: True
+survives_restart: True
+no_invented_name: True
+noise_not_promoted: True
+same_obs_no_double: True
+user_scoping: True
+not_hardcoded_template: True
+RESULT=PASS
+PHASE=AFTER
+
+--- user/session scoping finding + fix ---
+FINDING: Pattern previously had NO user_id on observe / knowledge. Live
+_thalamus._run_pattern_live received user_id but did not pass it into
+_build_pattern_observation, so all users shared one Pattern store.
+FIX: observation includes user_id; discovered_signal_patterns keyed by
+(user_id, signals); get_significant filters by user_id; thalamus passes
+user_id on observe + get_significant. Sequences/co-occurrences remain
+shared (pre-existing); new behavioral combos are user-scoped.

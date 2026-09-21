@@ -1,0 +1,22 @@
+=== PATTERN COMBO BEFORE PROOF ===
+time: 2026-09-21 08:35:33 MDT
+runtime: /tmp/pattern-combo-before-k8ldhynn
+novel_signals: ['sig_alpha', 'sig_charlie', 'sig_foxtrot']
+observations: 5+ separate observe() calls with same novel combo via behavioral_signals
+behavioral_template_names: ['lying', 'stress', 'excitement']
+learned_behavioral_keys: []
+has_discovered_signal_patterns_attr: False
+discovered_in_memory: None
+significant_keys: ['behavioral_patterns', 'contradictions', 'meta_patterns', 'reliable_sequences', 'strong_co_occurrences']
+significant_behavioral: []
+observe_result_keys: ['behavioral', 'co_occurrences', 'contradictions', 'meta_patterns', 'new_patterns', 'pareidolia', 'sequences']
+observe_has_discovered: False
+knowledge_keys: []
+knowledge_has_discovered: False
+templates_matching_novel: []
+
+=== CHECKS ===
+unknown_combo_NOT_learned_as_higher_level: True
+EXPECTED: novel unlabeled combo does NOT become discovered higher-level pattern
+RESULT=PASS
+PHASE=BEFORE

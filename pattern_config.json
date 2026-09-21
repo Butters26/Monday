@@ -39,6 +39,15 @@
       "enabled": true,
       "max_length": 3,
       "min_run_length": 2
+    },
+    "signal_combo_discovery": {
+      "min_combo_size": 2,
+      "max_combo_size": 4,
+      "max_candidates": 200,
+      "max_new_per_observe": 4,
+      "max_subsets_per_observe": 6,
+      "durable_occurrences": 3,
+      "significant_confidence": 0.6
     }
   }
 }

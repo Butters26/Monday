@@ -54,6 +54,20 @@ class BehavioralPattern:
     last_seen: float = 0.0
 
 @dataclass
+class DiscoveredSignalPattern:
+    """Unlabeled recurring signal combination discovered without a BehavioralPattern template.
+
+    Discovery only — no invented human label / meaning.
+    """
+    signals: Tuple[str, ...]  # sorted unique signal names
+    occurrences: int = 0
+    confidence: float = 0.0
+    durable: bool = False
+    last_seen: float = 0.0
+    user_id: str = "default"
+    last_observe_id: int = -1  # same-observation double-count guard
+
+@dataclass
 class Contradiction:
     """Detected contradiction"""
     statement_a: str
@@ -116,6 +130,14 @@ class AdvancedPatternRecognition:
         self.short_near_dup_enabled = True
         self.short_near_dup_max_length = 3  # len < 4
         self.short_near_dup_min_run = 2  # adjacent repeated token pair
+        # Autonomous signal-combo discovery bounds (pattern_config may override)
+        self.combo_min_size = 2
+        self.combo_max_size = 4
+        self.combo_max_candidates = 200
+        self.combo_max_new_per_observe = 4
+        self.combo_max_subsets_per_observe = 6
+        self.combo_durable_occurrences = 3
+        self.combo_significant_confidence = 0.6
         self.max_durable_sequences = 500  # soft cap on persisted sequences
         self.persist_sequence_confidence = 0.6
         self.persist_co_occurrence_strength = 0.5
@@ -148,6 +170,9 @@ class AdvancedPatternRecognition:
         # Pattern-owned learned knowledge (NOT Notus)
         self.learned_opposites: Dict[str, List[str]] = {}
         self.learned_behavioral_patterns: Dict[str, Dict] = {}
+        # Autonomous unlabeled signal combos: key = (user_id, signals_tuple)
+        self.discovered_signal_patterns: Dict[Tuple[str, Tuple[str, ...]], DiscoveredSignalPattern] = {}
+        self._observe_id = 0  # increments each observe(); combo reinforce once per id
         self._knowledge_dirty = False
         # Prefer Pattern-local file under runtime_dir(); tests set MONDAY_RUNTIME_DIR.
         self.knowledge_path = Path(runtime_dir()) / "pattern_knowledge.json"
@@ -281,6 +306,43 @@ class AdvancedPatternRecognition:
         if "min_run_length" in short_nd:
             try:
                 self.short_near_dup_min_run = max(2, int(short_nd["min_run_length"]))
+            except (TypeError, ValueError):
+                pass
+
+        combo = pr.get("signal_combo_discovery") if isinstance(pr.get("signal_combo_discovery"), dict) else {}
+        if "min_combo_size" in combo:
+            try:
+                self.combo_min_size = max(2, int(combo["min_combo_size"]))
+            except (TypeError, ValueError):
+                pass
+        if "max_combo_size" in combo:
+            try:
+                self.combo_max_size = max(self.combo_min_size, int(combo["max_combo_size"]))
+            except (TypeError, ValueError):
+                pass
+        if "max_candidates" in combo:
+            try:
+                self.combo_max_candidates = max(8, int(combo["max_candidates"]))
+            except (TypeError, ValueError):
+                pass
+        if "max_new_per_observe" in combo:
+            try:
+                self.combo_max_new_per_observe = max(1, int(combo["max_new_per_observe"]))
+            except (TypeError, ValueError):
+                pass
+        if "max_subsets_per_observe" in combo:
+            try:
+                self.combo_max_subsets_per_observe = max(1, int(combo["max_subsets_per_observe"]))
+            except (TypeError, ValueError):
+                pass
+        if "durable_occurrences" in combo:
+            try:
+                self.combo_durable_occurrences = max(2, int(combo["durable_occurrences"]))
+            except (TypeError, ValueError):
+                pass
+        if "significant_confidence" in combo:
+            try:
+                self.combo_significant_confidence = min(1.0, max(0.1, float(combo["significant_confidence"])))
             except (TypeError, ValueError):
                 pass
 
@@ -495,6 +557,33 @@ class AdvancedPatternRecognition:
                     last_seen=float(co_data.get("last_seen", time.time()) or time.time()),
                     contexts=list(co_data.get("contexts") or [])[:5],
                 )
+
+            for combo_data in raw.get("discovered_signal_patterns") or []:
+                if not isinstance(combo_data, dict):
+                    continue
+                sigs = combo_data.get("signals")
+                if not isinstance(sigs, list) or len(sigs) < self.combo_min_size:
+                    continue
+                signals_t = tuple(sorted({str(s).strip() for s in sigs if str(s).strip()}))
+                if len(signals_t) < self.combo_min_size or len(signals_t) > self.combo_max_size:
+                    continue
+                user_id = str(combo_data.get("user_id") or "default").strip() or "default"
+                occ = int(combo_data.get("occurrences", 1) or 1)
+                conf = float(combo_data.get("confidence", 0.0) or 0.0)
+                durable = bool(combo_data.get("durable", False))
+                # Only reload durable / significant combos from disk
+                if not durable and conf < self.combo_significant_confidence and occ < self.combo_durable_occurrences:
+                    continue
+                key = (user_id, signals_t)
+                self.discovered_signal_patterns[key] = DiscoveredSignalPattern(
+                    signals=signals_t,
+                    occurrences=max(1, occ),
+                    confidence=conf,
+                    durable=True if durable or occ >= self.combo_durable_occurrences else durable,
+                    last_seen=float(combo_data.get("last_seen", time.time()) or time.time()),
+                    user_id=user_id,
+                    last_observe_id=-1,
+                )
             self._knowledge_dirty = False
         except Exception:
             # Corrupt / unreadable store — start empty rather than crash startup
@@ -569,6 +658,28 @@ class AdvancedPatternRecognition:
                 merged["last_seen"] = float(behavior.last_seen)
                 learned_beh[name] = merged
 
+            combo_out = []
+            durable_combos = []
+            for pattern in self.discovered_signal_patterns.values():
+                if pattern.durable or (
+                    pattern.occurrences >= self.combo_durable_occurrences
+                    and pattern.confidence >= self.combo_significant_confidence
+                ):
+                    durable_combos.append(pattern)
+            durable_combos.sort(
+                key=lambda p: (1 if p.durable else 0, p.confidence, p.occurrences, len(p.signals)),
+                reverse=True,
+            )
+            for pattern in durable_combos[: self.combo_max_candidates]:
+                combo_out.append({
+                    "signals": list(pattern.signals),
+                    "occurrences": int(pattern.occurrences),
+                    "confidence": float(pattern.confidence),
+                    "durable": True,
+                    "last_seen": float(pattern.last_seen),
+                    "user_id": str(pattern.user_id or "default"),
+                })
+
             payload = {
                 "version": 1,
                 "owner": "pattern",
@@ -579,6 +690,7 @@ class AdvancedPatternRecognition:
                 "learned_behavioral_patterns": learned_beh,
                 "sequences": sequences_out,
                 "co_occurrences": co_out,
+                "discovered_signal_patterns": combo_out,
                 "saved_at": time.time(),
             }
             tmp = Path(f"{path}.tmp")
@@ -1113,6 +1225,202 @@ class AdvancedPatternRecognition:
 
 
     # ========================================================================
+    # AUTONOMOUS SIGNAL-COMBINATION DISCOVERY (unlabeled)
+    # ========================================================================
+
+    @staticmethod
+    def _normalize_user_id(user_id: Any) -> str:
+        if not isinstance(user_id, str) or not user_id.strip():
+            return "default"
+        return user_id.strip()
+
+    def _combo_key(self, user_id: str, signals: Tuple[str, ...]) -> Tuple[str, Tuple[str, ...]]:
+        return (self._normalize_user_id(user_id), tuple(signals))
+
+    def _combo_candidates_from_observation(self, signals: List[str]) -> List[Tuple[str, ...]]:
+        """Build bounded candidate combinations from one observation's signals.
+
+        Anti-spam (spirit of compose cleanup):
+        - Prefer the exact full observation set when size is in [min, max] (one new combo).
+        - If the observation is oversized, emit at most max_size-subsets when C(n,k)
+          fits the per-observe subset budget; otherwise create nothing new (still
+          reinforce existing subset matches separately).
+        - Never emit trivial one-signal patterns; never emit huge supersets.
+        - Deduplicate equivalent combinations (sorted tuples).
+        """
+        from itertools import combinations
+        from math import comb
+
+        signals = sorted({str(s).strip() for s in signals if s is not None and str(s).strip()})
+        n = len(signals)
+        min_s = self.combo_min_size
+        max_s = self.combo_max_size
+        if n < min_s:
+            return []
+
+        # Primary path: exact observation combo (most informative, no subset spam)
+        if min_s <= n <= max_s:
+            return [tuple(signals)]
+
+        # Oversized: only consider max_size subsets if combinatorially cheap
+        budget = self.combo_max_subsets_per_observe
+        try:
+            count = comb(n, max_s)
+        except ValueError:
+            return []
+        if count > budget:
+            return []
+        out: List[Tuple[str, ...]] = []
+        seen: Set[Tuple[str, ...]] = set()
+        for combo in combinations(signals, max_s):
+            key = tuple(sorted(combo))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+        # Cap how many oversized-subset intros we even consider
+        return out[: self.combo_max_new_per_observe]
+
+    def _reinforce_existing_combo_subsets(
+        self, user_id: str, signal_set: Set[str], observe_id: int, now: float
+    ) -> None:
+        """Reinforce already-known candidates that are subsets of this observation."""
+        uid = self._normalize_user_id(user_id)
+        for key, pattern in list(self.discovered_signal_patterns.items()):
+            if key[0] != uid:
+                continue
+            if pattern.last_observe_id == observe_id:
+                continue
+            if set(pattern.signals).issubset(signal_set) and len(pattern.signals) >= self.combo_min_size:
+                pattern.occurrences += 1
+                pattern.last_seen = now
+                pattern.last_observe_id = observe_id
+                pattern.confidence = min(
+                    1.0, pattern.occurrences / float(self.combo_durable_occurrences)
+                )
+                self._knowledge_dirty = True
+
+    def _create_or_reinforce_combos(
+        self, user_id: str, candidates: List[Tuple[str, ...]], observe_id: int, now: float
+    ) -> None:
+        """Create provisional combos / reinforce matches; bound new intros per observe."""
+        uid = self._normalize_user_id(user_id)
+        new_budget = self.combo_max_new_per_observe
+        # Prefer informative mid-size: longer first within bounds (not trivial pairs if larger exists)
+        ranked = sorted(candidates, key=lambda c: (len(c), c), reverse=True)
+        for sigs in ranked:
+            key = self._combo_key(uid, sigs)
+            existing = self.discovered_signal_patterns.get(key)
+            if existing is not None:
+                if existing.last_observe_id == observe_id:
+                    continue
+                existing.occurrences += 1
+                existing.last_seen = now
+                existing.last_observe_id = observe_id
+                existing.confidence = min(
+                    1.0, existing.occurrences / float(self.combo_durable_occurrences)
+                )
+                self._knowledge_dirty = True
+                continue
+            if new_budget <= 0:
+                continue
+            # New provisional / ephemeral combo
+            self.discovered_signal_patterns[key] = DiscoveredSignalPattern(
+                signals=sigs,
+                occurrences=1,
+                confidence=min(1.0, 1.0 / float(self.combo_durable_occurrences)),
+                durable=False,
+                last_seen=now,
+                user_id=uid,
+                last_observe_id=observe_id,
+            )
+            new_budget -= 1
+            self._knowledge_dirty = True
+
+    def _promote_significant_combos(self) -> None:
+        """Raise sufficiently repeated combos to durable; leave weak ones provisional."""
+        for pattern in self.discovered_signal_patterns.values():
+            if pattern.durable:
+                continue
+            if (
+                pattern.occurrences >= self.combo_durable_occurrences
+                and pattern.confidence >= self.combo_significant_confidence
+            ):
+                pattern.durable = True
+                self._knowledge_dirty = True
+
+    def _enforce_combo_candidate_bound(self) -> None:
+        """Hard cap on candidate storage — drop weakest non-durable first."""
+        total = len(self.discovered_signal_patterns)
+        if total <= self.combo_max_candidates:
+            return
+        items = list(self.discovered_signal_patterns.items())
+        # Keep durable + high-evidence; drop weakest provisional
+        items.sort(
+            key=lambda kv: (
+                1 if kv[1].durable else 0,
+                kv[1].confidence,
+                kv[1].occurrences,
+                len(kv[1].signals),
+            )
+        )
+        overflow = total - self.combo_max_candidates
+        removed = 0
+        for key, pattern in items:
+            if removed >= overflow:
+                break
+            if pattern.durable:
+                continue
+            self.discovered_signal_patterns.pop(key, None)
+            removed += 1
+            self._knowledge_dirty = True
+        # If still over (all durable), drop lowest-confidence durables
+        while len(self.discovered_signal_patterns) > self.combo_max_candidates:
+            weakest_key = min(
+                self.discovered_signal_patterns.keys(),
+                key=lambda k: (
+                    self.discovered_signal_patterns[k].confidence,
+                    self.discovered_signal_patterns[k].occurrences,
+                ),
+            )
+            self.discovered_signal_patterns.pop(weakest_key, None)
+            self._knowledge_dirty = True
+
+    def discover_signal_combinations(
+        self, signals_present: List[str], user_id: str = "default", observe_id: Optional[int] = None
+    ) -> None:
+        """Autonomously discover recurring unlabeled signal combinations.
+
+        Does NOT require a BehavioralPattern template. Does NOT invent labels.
+        One occurrence stays provisional; separate observations reinforce.
+        """
+        if observe_id is None:
+            observe_id = self._observe_id
+        signals = [str(s).strip() for s in (signals_present or []) if s is not None and str(s).strip()]
+        if len(set(signals)) < self.combo_min_size:
+            return
+        signal_set = set(signals)
+        now = time.time()
+        # Reinforce known subsets first (no combinatorial create)
+        self._reinforce_existing_combo_subsets(user_id, signal_set, observe_id, now)
+        # Bounded new / exact candidates from this observation
+        candidates = self._combo_candidates_from_observation(list(signal_set))
+        if candidates:
+            self._create_or_reinforce_combos(user_id, candidates, observe_id, now)
+        self._promote_significant_combos()
+        self._enforce_combo_candidate_bound()
+
+    def _serialize_discovered_signal_pattern(self, pattern: DiscoveredSignalPattern) -> Dict[str, Any]:
+        """Structural output only — no invented name/meaning."""
+        return {
+            "signals": list(pattern.signals),
+            "occurrences": int(pattern.occurrences),
+            "confidence": float(pattern.confidence),
+            "durable": bool(pattern.durable),
+            "user_id": str(pattern.user_id or "default"),
+        }
+
+    # ========================================================================
     # BEHAVIORAL PATTERN DETECTION
     # ========================================================================
     
@@ -1139,6 +1447,13 @@ class AdvancedPatternRecognition:
         
         # Extract current signals
         signals_present = self._extract_behavioral_signals(current_data)
+
+        # Autonomous unlabeled combo discovery (no template required)
+        user_id = self._normalize_user_id(current_data.get("user_id", "default"))
+        if signals_present:
+            self.discover_signal_combinations(
+                signals_present, user_id=user_id, observe_id=self._observe_id
+            )
         
         if not signals_present:
             return
@@ -1171,8 +1486,24 @@ class AdvancedPatternRecognition:
                 self.last_pattern_time = current_time
     
     def _extract_behavioral_signals(self, data: Dict[str, Any]) -> List[str]:
-        """Extract behavioral signals from current data"""
+        """Extract behavioral signals from current data.
+
+        Also accepts explicit ``behavioral_signals`` / ``signals`` lists from the
+        observe payload (live extractors or focused synthetic proofs). Only
+        string signal names actually present in the observation are kept —
+        nothing is fabricated.
+        """
         signals = []
+
+        # Explicit signals supplied with this observation (real observe API path)
+        for key in ("behavioral_signals", "signals"):
+            raw = data.get(key)
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, str) and item.strip():
+                        signals.append(item.strip())
+            elif isinstance(raw, str) and raw.strip():
+                signals.append(raw.strip())
         
         statement = data.get('statement', '')
         emotion = data.get('emotions', data.get('emotion', {}))  # Handle both keys
@@ -1215,8 +1546,16 @@ class AdvancedPatternRecognition:
         defensive_words = ['actually', 'honestly', 'trust me', 'believe me', 'i swear']
         if any(d in ' '.join(words).lower() for d in defensive_words):
             signals.append('defensive_language')
-        
-        return signals
+
+        # Deduplicate while preserving order (honesty: only observed signals)
+        seen: Set[str] = set()
+        ordered: List[str] = []
+        for sig in signals:
+            if sig in seen:
+                continue
+            seen.add(sig)
+            ordered.append(sig)
+        return ordered
     
     def _has_recent_contradiction(self, statement: str) -> bool:
         """Check if statement contradicts recent statements"""
@@ -1410,6 +1749,7 @@ class AdvancedPatternRecognition:
 
     def _observe_body(self, data: Dict[str, Any]) -> Dict[str, Any]:
         current_time = time.time()
+        self._observe_id = int(getattr(self, "_observe_id", 0) or 0) + 1
         
         items = data.get('items', [])
         emotions = data.get('emotions', {})
@@ -1421,6 +1761,7 @@ class AdvancedPatternRecognition:
             'co_occurrences': [],
             'sequences': [],
             'behavioral': [],
+            'discovered_signal_patterns': [],
             'contradictions': [],
             'meta_patterns': [],
             'pareidolia': [],
@@ -1491,6 +1832,16 @@ class AdvancedPatternRecognition:
                     'confidence': behavior.confidence,
                     'occurrences': behavior.occurrences
                 })
+
+        # Unlabeled discovered signal combinations (provisional + durable)
+        uid = self._normalize_user_id(data.get("user_id", "default"))
+        for key, combo in self.discovered_signal_patterns.items():
+            if key[0] != uid:
+                continue
+            # Surface all in-scope combos for this user; significance filter is separate
+            patterns_found['discovered_signal_patterns'].append(
+                self._serialize_discovered_signal_pattern(combo)
+            )
         
         # Recent contradictions
         patterns_found['contradictions'] = [
@@ -1525,6 +1876,7 @@ class AdvancedPatternRecognition:
         if any([
             patterns_found['behavioral'],
             patterns_found['meta_patterns'],
+            any(c.get('durable') for c in patterns_found['discovered_signal_patterns']),
             len(patterns_found['sequences']) > len(self.sequences) * 0.8
         ]):
             patterns_found['new_patterns'] = True
@@ -1564,12 +1916,18 @@ class AdvancedPatternRecognition:
     # SIGNIFICANT PATTERNS (FILTERED)
     # ========================================================================
     
-    def get_significant_patterns_only(self) -> Dict[str, Any]:
-        """Return only significant patterns for reasoning"""
+    def get_significant_patterns_only(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Return only significant patterns for reasoning.
+
+        When user_id is provided, discovered signal combinations are scoped to
+        that user so multi-user live traffic does not mix learned combos.
+        """
+        scope_uid = self._normalize_user_id(user_id) if user_id is not None else None
         significant = {
             'strong_co_occurrences': [],
             'reliable_sequences': [],
             'behavioral_patterns': [],
+            'discovered_signal_patterns': [],
             'contradictions': [],
             'meta_patterns': []
         }
@@ -1603,6 +1961,18 @@ class AdvancedPatternRecognition:
                     'confidence': behavior.confidence,
                     'occurrences': behavior.occurrences
                 })
+
+        # Significant unlabeled discovered signal combinations (no invented labels)
+        for combo in self.discovered_signal_patterns.values():
+            if scope_uid is not None and self._normalize_user_id(combo.user_id) != scope_uid:
+                continue
+            if combo.durable or (
+                combo.occurrences >= self.combo_durable_occurrences
+                and combo.confidence >= self.combo_significant_confidence
+            ):
+                significant['discovered_signal_patterns'].append(
+                    self._serialize_discovered_signal_pattern(combo)
+                )
         
         # High severity contradictions
         significant['contradictions'] = [
@@ -1670,6 +2040,26 @@ class AdvancedPatternRecognition:
             time_since = current_time - behavior.last_seen
             if time_since > 300:
                 behavior.confidence *= (1.0 - self.decay_rate * 0.5)
+
+        # Decay weak / noisy discovered signal combinations; durable resists eviction
+        combo_remove = []
+        for key, combo in self.discovered_signal_patterns.items():
+            time_since = current_time - combo.last_seen
+            if combo.durable:
+                if time_since > 3600:
+                    combo.confidence = max(
+                        self.combo_significant_confidence,
+                        combo.confidence * (1.0 - self.decay_rate * 0.25),
+                    )
+                continue
+            if time_since > 300:
+                combo.occurrences = max(0, combo.occurrences - 1)
+                combo.confidence *= (1.0 - self.decay_rate)
+                if combo.occurrences <= 0 or combo.confidence < 0.05:
+                    combo_remove.append(key)
+        for key in combo_remove:
+            self.discovered_signal_patterns.pop(key, None)
+            self._knowledge_dirty = True
     
     # ========================================================================
     # STATISTICS
@@ -1759,7 +2149,10 @@ class AdvancedPatternRecognition:
             return {'status': 'success', 'patterns': patterns, 'content': {'patterns': patterns}}
             
         elif msg_type in ('get_significant', 'get_significant_patterns'):
-            significant = self.get_significant_patterns_only()
+            uid = payload.get('user_id')
+            if uid is None and isinstance(nested, dict):
+                uid = nested.get('user_id')
+            significant = self.get_significant_patterns_only(user_id=uid)
             return {
                 'status': 'success',
                 'significant_patterns': significant,

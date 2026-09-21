@@ -1236,6 +1236,7 @@ class Thalamus:
         attention_payload: Optional[Dict[str, Any]] = None,
         understanding: Optional[Dict[str, Any]] = None,
         emotional_state: Optional[Dict[str, Any]] = None,
+        user_id: str = "default",
     ) -> Dict[str, Any]:
         """Assemble Pattern.observe data from live Perception/Attention/Conversation/Emotion."""
         perception_payload = perception_payload if isinstance(perception_payload, dict) else {}
@@ -1322,12 +1323,14 @@ class Thalamus:
                 out.append(value)
             return out
 
+        uid = user_id if isinstance(user_id, str) and user_id.strip() else "default"
         return {
             "items": _dedupe(items),
             "words": _dedupe(words),
             "statement": user_input if isinstance(user_input, str) else "",
             "emotions": emotions,
             "topics": _dedupe(topics),
+            "user_id": uid.strip(),
         }
 
     def _run_pattern_live(
@@ -1355,6 +1358,7 @@ class Thalamus:
             attention_payload=attention_payload,
             understanding=understanding,
             emotional_state=emotional_state,
+            user_id=user_id,
         )
         try:
             observed = self.send_and_wait(
@@ -1372,7 +1376,7 @@ class Thalamus:
             significant_resp = self.send_and_wait(
                 "pattern",
                 "get_significant",
-                {},
+                {"user_id": user_id},
                 source="thalamus",
             )
         except Exception:
@@ -1402,6 +1406,7 @@ class Thalamus:
                 "strong_co_occurrences",
                 "reliable_sequences",
                 "behavioral_patterns",
+                "discovered_signal_patterns",
                 "contradictions",
                 "meta_patterns",
             )

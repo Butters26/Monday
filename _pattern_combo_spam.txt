@@ -1,0 +1,21 @@
+=== PATTERN COMBO SPAM / BOUNDS PROOF ===
+time: 2026-09-21 08:37:57 MDT
+combo_max_candidates: 200
+combo_max_new_per_observe: 4
+combo_max_subsets_per_observe: 6
+combo_min/max_size: 2/4
+
+--- 500 varying 3-signal combos + periodic 8-signal observations ---
+peak_candidate_count: 200
+final_candidate_count: 200
+stayed_within_max_candidates: True
+
+--- oversized 10-signal observation (C(10,4)=210 without bounds) ---
+new_candidates_created: 0
+no_combinatorial_explosion: True
+
+=== CHECKS ===
+storage_bounded: True
+oversized_no_explode: True
+RESULT=PASS
+PHASE=SPAM
