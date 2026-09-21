@@ -237,6 +237,60 @@ class AttentionLobe:
             self.signal_meta[sid] = norm
         return self.rank_signals()
 
+    def remove_signals(
+        self,
+        ids: Any = None,
+        prefix: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Drop signals by exact id and/or id prefix. Clears focus if removed."""
+        targets: List[str] = []
+        if ids is None:
+            id_list: List[Any] = []
+        elif isinstance(ids, (list, tuple, set)):
+            id_list = list(ids)
+        else:
+            id_list = [ids]
+        for raw in id_list:
+            if isinstance(raw, str) and raw.strip():
+                targets.append(raw.strip())
+        if isinstance(prefix, str) and prefix:
+            for sid in list(self.salience_map.keys()):
+                if sid.startswith(prefix):
+                    targets.append(sid)
+        # Preserve order, unique.
+        seen = set()
+        ordered: List[str] = []
+        for sid in targets:
+            if sid not in seen:
+                seen.add(sid)
+                ordered.append(sid)
+        removed: List[str] = []
+        for sid in ordered:
+            if sid in self.salience_map or sid in self.signal_meta:
+                self.salience_map.pop(sid, None)
+                self.signal_meta.pop(sid, None)
+                if self.current_focus == sid:
+                    self.current_focus = None
+                removed.append(sid)
+        return {"removed": removed, "remaining": len(self.salience_map)}
+
+    def replace_signals(self, input_signals: Any) -> List[Dict[str, Any]]:
+        """Overwrite salience/meta for each signal id (no prior blend)."""
+        if input_signals is None:
+            signals: List[Any] = []
+        elif isinstance(input_signals, (list, tuple)):
+            signals = list(input_signals)
+        else:
+            signals = [input_signals]
+
+        for index, raw in enumerate(signals):
+            norm = self._normalize_signal(raw, index)
+            sid = norm["id"]
+            fresh = self._compute_salience(norm)
+            self.salience_map[sid] = fresh
+            self.signal_meta[sid] = norm
+        return self.rank_signals()
+
     def rank_signals(self) -> List[Dict[str, Any]]:
         """Return salience entries sorted high → low."""
         ranked: List[Dict[str, Any]] = []
@@ -353,6 +407,25 @@ class AttentionLobe:
                 "status": "success",
                 "content": {"ranked": ranked, "salience_map": dict(self.salience_map)},
                 "ranked": ranked,
+            }
+
+        if msg_type in ("replace_signals", "replace_salience", "replace"):
+            ranked = self.replace_signals(content.get("signals", []))
+            return {
+                "status": "success",
+                "content": {"ranked": ranked, "salience_map": dict(self.salience_map)},
+                "ranked": ranked,
+            }
+
+        if msg_type in ("remove_signals", "remove_signal", "drop_signals"):
+            info = self.remove_signals(
+                ids=content.get("ids", content.get("id")),
+                prefix=content.get("prefix"),
+            )
+            return {
+                "status": "success",
+                "content": {**info, "salience_map": dict(self.salience_map)},
+                **info,
             }
 
         if msg_type in ("select_focus", "focus"):

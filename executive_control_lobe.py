@@ -17,6 +17,11 @@ import time
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 
+# One replaceable Attention competitor for the held Executive goal.
+# Never mint a new id per historical goal (avoids stale fact_answer outranking).
+CURRENT_GOAL_SIGNAL_ID = "executive:current_goal"
+_LEGACY_GOAL_SIGNAL_PREFIX = "executive:goal:"
+
 # Goals that demand a tight answer path — block curiosity / aside spam.
 _FACT_ANSWER_GOALS = frozenset(
     {
@@ -237,7 +242,7 @@ class ExecutiveControlLobe:
         pri = float(self.goal_priority or 0.0)
         signals: List[Dict[str, Any]] = [
             {
-                "id": f"executive:goal:{goal}",
+                "id": CURRENT_GOAL_SIGNAL_ID,
                 "text": f"executive goal: {goal} {self.goal_detail}".strip(),
                 "source": "executive_control",
                 "modality": "control",
@@ -297,10 +302,20 @@ class ExecutiveControlLobe:
             result["reason"] = "attention_offline"
             self.last_steer = result
             return result
+        # Drop legacy per-goal ids (executive:goal:*) so only one competitor remains.
+        try:
+            self.thalamus.send_and_wait(
+                "attention",
+                "remove_signals",
+                {"prefix": _LEGACY_GOAL_SIGNAL_PREFIX},
+                source="executive_control",
+            )
+        except Exception:
+            pass
         try:
             resp = self.thalamus.send_and_wait(
                 "attention",
-                "update_salience",
+                "replace_signals",
                 {"signals": signals},
                 source="executive_control",
             )
@@ -338,20 +353,40 @@ class ExecutiveControlLobe:
                 if isinstance(salience, dict)
                 else {},
                 "focus": focus,
-                "goal_signal_present": any(
-                    isinstance(k, str) and k.startswith("executive:goal:")
-                    for k in (salience or {})
-                )
-                if isinstance(salience, dict)
-                else False,
+                "goal_signal_present": bool(
+                    isinstance(salience, dict) and CURRENT_GOAL_SIGNAL_ID in salience
+                ),
             }
         )
         # Prefer reporting the goal key explicitly when present.
         if isinstance(salience, dict):
-            goal_keys = [k for k in salience if isinstance(k, str) and k.startswith("executive:goal:")]
+            goal_keys = [
+                k
+                for k in salience
+                if isinstance(k, str)
+                and (
+                    k == CURRENT_GOAL_SIGNAL_ID
+                    or k.startswith(_LEGACY_GOAL_SIGNAL_PREFIX)
+                )
+            ]
             if goal_keys:
                 result["goal_signal_keys"] = goal_keys
-                result["goal_signal_present"] = True
+                result["goal_signal_present"] = CURRENT_GOAL_SIGNAL_ID in salience
+                meta = {}
+                try:
+                    # Surface text/concepts of the stable current-goal signal when available.
+                    att = None
+                    with getattr(self.thalamus, "lobe_handlers_lock", _NullCM()):
+                        handlers = getattr(self.thalamus, "lobe_handlers", None) or {}
+                        att = handlers.get("attention")
+                    signal_meta = getattr(att, "signal_meta", None) or {}
+                    meta = signal_meta.get(CURRENT_GOAL_SIGNAL_ID) or {}
+                except Exception:
+                    meta = {}
+                if meta:
+                    result["goal_signal_text"] = meta.get("text")
+                    result["goal_signal_concepts"] = list(meta.get("concepts") or [])
+                    result["goal_signal_priority"] = meta.get("priority")
         self.last_steer = result
         return result
 

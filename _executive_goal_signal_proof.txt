@@ -1,0 +1,81 @@
+=== EXECUTIVE GOAL SIGNAL PROOF ===
+time: 2026-09-21 06:26:32 MT
+runtime: /tmp/exec-goal-sig-sodbuddz
+stable_signal_id: executive:current_goal
+
+DONE_MEANS: Executive injects exactly one replaceable Attention goal
+signal (executive:current_goal). Goal changes update text/concepts/
+priority on that id; no leftover executive:goal:fact_answer /
+teach_ack competitors. fact_answer still inhibits curiosity/aside;
+open_explore still allows. salience_map executive current-goal
+competitor count == 1.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+executive_control_registered: True
+attention_registered: True
+
+--- SEED LEGACY ---
+seeded_legacy_keys: ['executive:goal:fact_answer', 'executive:goal:teach_ack']
+
+--- 1) SET fact_answer ---
+goal: fact_answer priority=0.95
+steer.steered: True reason=salience_updated
+steer.goal_signal_keys: ['executive:current_goal']
+attention_exec_keys: ['executive:current_goal']
+current_goal_text: executive goal: fact_answer What is my favorite color?
+current_goal_concepts: ['executive', 'goal', 'fact_answer']
+current_goal_priority: 0.93
+current_goal_salience: 0.8535
+ASSERT: only executive:current_goal reflecting fact_answer — PASS
+
+--- inhibition under fact_answer ---
+curiosity inhibited: True reason=off_goal:fact_answer
+aside inhibited: True reason=off_goal:fact_answer
+ASSERT: fact_answer inhibits curiosity/aside — PASS
+
+--- 2) SET social then open_explore ---
+goal(social): social priority=0.55
+steer.goal_signal_keys: ['executive:current_goal']
+attention_exec_keys: ['executive:current_goal']
+current_goal_text: executive goal: social hello
+current_goal_concepts: ['executive', 'goal', 'social']
+current_goal_priority: 0.77
+ASSERT: after social, only one exec goal signal; text=social — PASS
+
+goal(open_explore): open_explore priority=0.5
+steer.goal_signal_keys: ['executive:current_goal']
+attention_exec_keys: ['executive:current_goal']
+current_goal_text: executive goal: open_explore that sounds interesting
+current_goal_concepts: ['executive', 'goal', 'open_explore']
+current_goal_priority: 0.75
+leftover_legacy_executive:goal:*: []
+ASSERT: after open_explore, only one signal; no leftover fact_answer — PASS
+
+--- inhibition under open_explore ---
+curiosity inhibited: False reason=allowed
+aside inhibited: False reason=allowed
+ASSERT: open_explore allows curiosity/aside — PASS
+
+--- 4) salience_map executive keys ---
+executive_related_keys: ['executive:current_goal']
+executive_related_count: 1
+salience[executive:current_goal]=0.6175
+ASSERT: executive current-goal competitor count == 1 — PASS
+
+--- LIVE PATH (greeting → social) ---
+reply[:80]: 'Hello! How can I help?'
+last_executive.goal: social
+last_executive.steer: {'steered': True, 'reason': 'salience_updated', 'goal_signal_present': True, 'focus': 'user_input', 'goal_signal_keys': ['executive:current_goal']}
+live_attention_exec_keys: ['executive:current_goal']
+live_current_goal_text: executive goal: social Hello there!
+live_current_goal_concepts: ['executive', 'goal', 'social']
+ASSERT: live path still single executive:current_goal — PASS
+
+--- SUMMARY ---
+stable_id: executive:current_goal
+fact_answer_inhibits: True
+open_explore_allows: True
+single_competitor_after_goal_changes: True
+legacy_prefix_cleaned: True
+
+PASS
