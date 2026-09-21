@@ -75,6 +75,7 @@ _LOBE_LEARNING_RULES = {
     "social_context": {"feedback", "correction"},
     "sensory_integration": {"skill"},
     "motor_action": {"skill"},
+    "voice": {"feedback", "correction"},
     "speech": {"feedback", "correction"},
     "autonomous": {"skill", "feedback", "correction"},
     "representation": {"skill"},
@@ -115,6 +116,8 @@ class Thalamus:
         self.last_social_context: Optional[Dict[str, Any]] = None
         # Last Motor action envelope (planned/queued/blocked/no_actuator).
         self.last_motor_action: Optional[Dict[str, Any]] = None
+        # Last Voice speech envelope (synthesized/play_unavailable/played).
+        self.last_voice_envelope: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1350,6 +1353,60 @@ class Thalamus:
             return dict(action)
         return None
 
+
+    def _voice_speak_for_output(
+        self,
+        text: str,
+        *,
+        user_id: str = "default",
+        emotion: str = "neutral",
+        intensity: float = 0.5,
+        voice_prosody: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Tiny glue: ask Voice to synthesize Output reply text; stash envelope."""
+        with self.lobe_handlers_lock:
+            has_voice = "voice" in self.lobe_handlers
+        if not has_voice:
+            self.last_voice_envelope = None
+            return None
+        text = (text or "").strip()
+        if not text:
+            self.last_voice_envelope = None
+            return None
+        try:
+            resp = self.send_and_wait(
+                "voice",
+                "speak_for_output",
+                {
+                    "text": text,
+                    "user_id": user_id,
+                    "emotion": emotion,
+                    "intensity": intensity,
+                    "voice_prosody": voice_prosody or {},
+                },
+                source="thalamus",
+            )
+        except Exception:
+            self.last_voice_envelope = None
+            return None
+        if resp.get("status") != "success":
+            self.last_voice_envelope = None
+            return None
+        body = self._content(resp)
+        voice = None
+        if isinstance(body, dict):
+            voice = body.get("voice")
+        if not isinstance(voice, dict):
+            voice = resp.get("voice") if isinstance(resp.get("voice"), dict) else None
+        if isinstance(voice, dict):
+            self.last_voice_envelope = dict(voice)
+            if isinstance(self.last_output_envelope, dict):
+                env = dict(self.last_output_envelope)
+                env["voice"] = dict(voice)
+                self.last_output_envelope = env
+            return dict(voice)
+        return None
+
     def _build_pattern_observation(
         self,
         user_input: str,
@@ -2220,7 +2277,34 @@ class Thalamus:
         self.last_output_envelope = envelope
         # Motor: deliver queued action envelope to Output (honest no_actuator).
         self._motor_deliver_to_output(user_id=user_id)
-        # Refresh local envelope view if Motor attached motor_action.
+        # Voice: synthesize speech envelope from Output reply text (honest status).
+        try:
+            _intensity = float(
+                (envelope.get("intensity") if isinstance(envelope, dict) else None)
+                or emotional_state.get("intensity", 0.5)
+                or 0.5
+            )
+        except (TypeError, ValueError):
+            _intensity = 0.5
+        self._voice_speak_for_output(
+            (envelope.get("text") if isinstance(envelope, dict) else None)
+            or output_body.get("text", final_text)
+            or "",
+            user_id=user_id,
+            emotion=str(
+                (envelope.get("emotion") if isinstance(envelope, dict) else None)
+                or emotional_state.get("current_emotion")
+                or emotional_state.get("emotion")
+                or "neutral"
+            ),
+            intensity=_intensity,
+            voice_prosody=(
+                (envelope.get("voice_prosody") if isinstance(envelope, dict) else None)
+                or emotional_state.get("voice_prosody")
+                or {}
+            ),
+        )
+        # Refresh local envelope view if Motor/Voice attached fields.
         if isinstance(self.last_output_envelope, dict):
             envelope = self.last_output_envelope
         reply = envelope.get("text") or output_body.get("text", final_text)

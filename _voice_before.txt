@@ -1,0 +1,14 @@
+=== VoiceLobe BEFORE proof ===
+HEAD expected ~770a0f8
+handlers=['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context']
+reply='Hello'
+envelope_keys=['arousal', 'buffer_path', 'buffered', 'channel', 'delivery', 'dominance', 'emotion', 'emotional_tone', 'emphasis', 'expression', 'formatted', 'intensity', 'pleasure', 'spoke', 'text', 'voice_prosody']
+PASS: voice_absent_from_registry — handlers=['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context']
+PASS: output_enable_tts_false_path — tts_available=False voice_enabled=False
+PASS: live_reply_text_present — reply[:80]='Hello'
+PASS: no_voice_on_thalamus_envelope — keys=['arousal', 'buffer_path', 'buffered', 'channel', 'delivery', 'dominance', 'emotion', 'emotional_tone', 'emphasis', 'expression', 'formatted', 'intensity', 'pleasure', 'spoke', 'text', 'voice_prosody']
+PASS: no_voice_on_output_envelope — keys=['arousal', 'buffer_path', 'buffered', 'channel', 'delivery', 'dominance', 'emotion', 'emotional_tone', 'emphasis', 'expression', 'formatted', 'intensity', 'pleasure', 'spoke', 'text', 'voice_prosody']
+PASS: no_last_voice_attr_or_empty — th=None out=None
+PASS: voice_route_fails_before — resp={'status': 'error', 'message': 'Unknown destination: voice'}
+PASS: output_speak_returns_false — spoke=False
+OVERALL: PASS

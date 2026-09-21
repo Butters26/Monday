@@ -186,6 +186,7 @@ class OutputLobe:
         self.last_output = None
         self.last_envelope: Optional[Dict[str, Any]] = None
         self.last_motor_action: Optional[Dict[str, Any]] = None
+        self.last_voice: Optional[Dict[str, Any]] = None
         # Honest TTS stub: write spoken lines to a runtime buffer when no speaker.
         try:
             self._speech_buffer_path = Path(runtime_dir()) / "output_speech_buffer.txt"
@@ -263,49 +264,86 @@ class OutputLobe:
             self.tts_available = False
     
     def speak(self, text: str, voice_prosody: Dict[str, float] = None) -> bool:
-        """Speak text using TTS - with emotional prosody support"""
-        if not self.tts_available or not self.voice_config['enabled']:
-            # Voice disabled - just return text
-            return False
-        
-        # Query emotional state if prosody not provided
-        if not voice_prosody:
+        """Hand text to Voice for synthesis when registered; else local TTS.
+
+        Honest: returns True when Voice reports a successful synthesis attempt
+        (synthesized / play_unavailable / played). Does NOT claim audio played
+        unless Voice envelope.played is True — callers should read last_voice.
+        Local pyttsx3 is optional fallback only.
+        """
+        # Prefer Voice lobe (owns speech synthesis) when registered.
+        th = self.thalamus
+        voice_registered = False
+        if th is not None:
             try:
-                emotion_result = self.thalamus.send_message(
-                    destination='emotion',
-                    msg_type='get_emotional_state',
-                    content={},
-                    source='output'
-                )
-                if emotion_result and emotion_result.get('status') == 'success':
-                    voice_prosody = emotion_result.get('content', {}).get('voice_prosody', {})
-            except Exception as e:
-                print(f"⚠️  Could not get emotional prosody: {e}")
-                voice_prosody = {}
-        
-        # Send text to Voice lobe with prosody
-        try:
-            result = self.thalamus.send_message(
-                destination='voice',
-                msg_type='play',
-                content={
-                    'text': text,
-                    'emotion': 'neutral',
-                    'intensity': 0.5,
-                    'voice_prosody': voice_prosody or {}
-                },
-                source='output'
-            )
-            return result.get('status') == 'success'
-        except Exception as e:
-            print(f"❌ TTS error: {e}")
-            # Fallback: try local TTS
-            try:
-                self.tts_engine.say(text)
-                self.tts_engine.runAndWait()
-                return True
+                lock = getattr(th, "lobe_handlers_lock", None)
+                handlers = getattr(th, "lobe_handlers", {})
+                if lock is not None:
+                    with lock:
+                        voice_registered = "voice" in handlers
+                else:
+                    voice_registered = "voice" in handlers
             except Exception:
-                return False
+                voice_registered = False
+
+        if voice_registered:
+            if not voice_prosody:
+                try:
+                    emotion_result = th.send_message(
+                        "emotion",
+                        "get_emotional_state",
+                        {},
+                        source="output",
+                    )
+                    if emotion_result and emotion_result.get("status") == "success":
+                        voice_prosody = (
+                            emotion_result.get("content", {}) or {}
+                        ).get("voice_prosody", {})
+                except Exception as e:
+                    print(f"⚠️  Could not get emotional prosody: {e}")
+                    voice_prosody = {}
+            try:
+                result = th.send_message(
+                    "voice",
+                    "speak_for_output",
+                    {
+                        "text": text,
+                        "emotion": "neutral",
+                        "intensity": 0.5,
+                        "voice_prosody": voice_prosody or {},
+                        "try_play": False,
+                    },
+                    source="output",
+                )
+                voice = None
+                if isinstance(result, dict):
+                    content = result.get("content") if isinstance(result.get("content"), dict) else {}
+                    voice = content.get("voice") or result.get("voice")
+                if isinstance(voice, dict):
+                    self.last_voice = dict(voice)
+                    if isinstance(self.last_envelope, dict):
+                        env = dict(self.last_envelope)
+                        env["voice"] = dict(voice)
+                        self.last_envelope = env
+                    return voice.get("status") in (
+                        "synthesized",
+                        "play_unavailable",
+                        "played",
+                    )
+                return result.get("status") == "success"
+            except Exception as e:
+                print(f"❌ Voice handoff error: {e}")
+
+        if not self.tts_available or not self.voice_config["enabled"]:
+            return False
+
+        # Fallback: local pyttsx3 only when Voice absent and TTS enabled.
+        try:
+            self.tts_engine.say(text)
+            self.tts_engine.runAndWait()
+            return True
+        except Exception:
+            return False
     
     def generate_text_output(self, content: Dict[str, Any]) -> str:
         """Generate formatted text output"""
@@ -907,6 +945,7 @@ class OutputLobe:
                 'last_expression': (env.get('expression') if env else None),
                 'last_delivery_markers': list(delivery.get('markers') or []),
                 'last_motor_action': dict(self.last_motor_action) if self.last_motor_action else None,
+                'last_voice': dict(self.last_voice) if self.last_voice else None,
                 'content': {
                     'tts_available': self.tts_available,
                     'voice_enabled': self.voice_config['enabled'],
@@ -941,6 +980,32 @@ class OutputLobe:
                     ),
                 },
                 'action': action,
+            }
+
+
+        elif msg_type == 'voice_output':
+            # VoiceLobe surfaces a speech envelope (synth file / honest play status).
+            voice = payload.get('voice') if isinstance(payload, dict) else None
+            if voice is None and isinstance(message.get('voice'), dict):
+                voice = message.get('voice')
+            if not isinstance(voice, dict):
+                return {'status': 'error', 'message': 'voice_output requires voice dict'}
+            voice = dict(voice)
+            self.last_voice = voice
+            if isinstance(self.last_envelope, dict):
+                env = dict(self.last_envelope)
+                env['voice'] = voice
+                self.last_envelope = env
+            return {
+                'status': 'success',
+                'content': {
+                    'voice': voice,
+                    'envelope_attached': bool(
+                        isinstance(self.last_envelope, dict)
+                        and self.last_envelope.get('voice')
+                    ),
+                },
+                'voice': voice,
             }
 
         elif msg_type == 'get_last_envelope':

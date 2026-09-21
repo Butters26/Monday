@@ -1,0 +1,75 @@
+=== VoiceLobe DESIGN JOB ===
+time: 2026-09-21 (MT)
+HEAD: 770a0f8 (pre-implement)
+
+DONE_MEANS
+  VoiceLobe is registered on the live prompted path. When Output has reply
+  text to speak (or an explicit speak/synthesize message), Voice synthesizes
+  or prepares a structured voice envelope with the Monday voice profile and
+  surfaces it to Output. Status is honest:
+    synthesized | play_unavailable | played | no_tts_backend | empty_text
+  No fake "she spoke / audio played" claims without evidence. Ownership held:
+  Voice = speech synthesis / voice profile / audio envelope from text that
+  Output (or Thalamus) asks to speak — not a second Language, not inventing
+  replies, not Motor actuators.
+
+OWNERSHIP BOUNDARIES
+  Voice owns:
+    - Speech synthesis / voice profile / audio generation from text
+    - Honest voice envelope (profile, audio_file path, played flag, status)
+    - Per-user last envelope state when kept
+  Output owns: final delivery stage (text envelope); may hand off audio /
+    accept voice_output and attach onto last_envelope
+  Language owns: wording / sentence construction (Voice does not rewrite)
+  Motor owns: actions beyond talk (Voice is speech path, not actuators)
+  Thalamus: tiny glue after generate_output → Voice.speak_for_output
+  Social / Pattern / Attention / Executive / other closed work: untouched
+    except tiny glue if Voice handoff genuinely requires it (none expected
+    beyond Output + Thalamus + run_abin registration)
+
+SMALLEST ARCHITECTURAL CORRECTION
+  1. voice_lobe.py: keep VoiceSynthesizer + Monday profiles; add thalamus-
+     aware VoiceLobe with process_message (synthesize / play / speak_for_output /
+     get_status). Do NOT drag the Unix-socket server onto the hot path —
+     socket start() remains legacy-only (__main__).
+  2. Register "voice" in run_abin.create_core_systems (+ shutdown list).
+     Keep Output(enable_tts=False) — Voice owns synthesis, not pyttsx3.
+  3. Tiny Thalamus glue after Output generate_output (parallel to Motor):
+       _voice_speak_for_output(text, prosody/emotion, user_id)
+       → Voice.speak_for_output → stash last_voice_envelope on envelope
+  4. Tiny Output glue:
+       - handle voice_output; keep last_voice; attach voice onto last_envelope
+       - speak(): prefer registered Voice handoff without requiring local
+         pyttsx3 (honest; do not claim played unless Voice says so)
+  No rewrite theater; no Social/Pattern/Motor redesign.
+
+LIVE SCENARIO (honest, from code)
+  User: "Hello Monday, say hi."
+  BEFORE: voice absent from registry; Output enable_tts=False; speak gated
+          on local TTS; no voice envelope on last_output_envelope; no WAV.
+  AFTER:  voice registered; speak_for_output runs on reply text; voice
+          envelope on Output last_envelope / thalamus.last_voice_envelope
+          with Monday profile + status synthesized (or no_tts_backend if
+          synth fails) + audio_file path when a WAV was written; played=true
+          only if a real play backend succeeded. Language reply text still
+          present; Motor/Social/fact path not broken.
+
+VOICE ENVELOPE (structured, not prose)
+  {
+    id, text, user_id,
+    voice_profile: "monday",
+    status: synthesized|play_unavailable|played|no_tts_backend|empty_text,
+    audio_file: path|null,
+    played: bool,
+    emotion, intensity,
+    timestamp
+  }
+
+HONEST LIMITS (expected)
+  Formant synth via numpy/wave can write a real WAV under monday_audio/.
+  Speaker playback (paplay/afplay) may be unavailable on this box —
+  status play_unavailable, played=false. pyttsx3 is NOT required and
+  remains off (enable_tts=False). Socket server not started on live path.
+  Synthesis quality is crude formant — still real file generation, not a
+  fake "spoken" claim.
+

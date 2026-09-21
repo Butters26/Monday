@@ -52,3 +52,6 @@ env/
 Non-Essential Files/ABIN backups/
 Non-Essential Files/ABIN_backups/
 Non-Essential Files/EXAMINE_THIS/
+
+# Voice synthesis output (generated WAVs)
+monday_audio/

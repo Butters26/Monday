@@ -10,6 +10,8 @@ plus AdvancedPatternRecognition discovering patterns for Reasoning via pattern_r
 plus SocialContextLobe tracking social cues/stance across turns for Language —
 plus MotorActionLobe planning/queuing action envelopes when Monday should do
 something beyond talk (honest no_actuator status; no fake limbs) —
+plus VoiceLobe synthesizing speech / voice envelopes from Output text
+(honest synthesized/play_unavailable; no fake "she spoke") —
 not the full legacy socket stack.
 """
 
@@ -34,6 +36,7 @@ from meta_cognition_lobe import MetaCognitionLobe
 from executive_control_lobe import ExecutiveControlLobe
 from social_context_lobe import SocialContextLobe
 from motor_action_lobe import MotorActionLobe
+from voice_lobe import VoiceLobe
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -83,6 +86,7 @@ def create_core_systems(
         "executive_control": ExecutiveControlLobe(thalamus=thalamus),
         "social_context": SocialContextLobe(thalamus=thalamus),
         "motor_action": MotorActionLobe(thalamus=thalamus),
+        "voice": VoiceLobe(thalamus=thalamus),
     }
     for name in (
         "perception",
@@ -100,6 +104,7 @@ def create_core_systems(
         "executive_control",
         "social_context",
         "motor_action",
+        "voice",
     ):
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
@@ -118,6 +123,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
     for name in (
         "autonomous",
         "output",
+        "voice",
         "language",
         "motor_action",
         "social_context",

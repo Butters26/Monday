@@ -1,0 +1,24 @@
+=== VoiceLobe AFTER proof ===
+handlers=['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'voice']
+reply='Hi there'
+voice_envelope={'id': 'bef8f578-2267-4123-b018-195c88ef5840', 'text': 'Hi there', 'user_id': 'default', 'voice_profile': 'monday', 'synth_backend': 'formant_numpy', 'status': 'synthesized', 'audio_file': 'monday_audio/monday_6853.wav', 'played': False, 'play_backend': None, 'emotion': 'melancholic', 'intensity': 0.8459999721116035, 'voice_prosody': {'pitch': 0.9426111645991434, 'speed': 0.7248618940165052, 'warmth': 0.425, 'clarity': 0.8127996682058932, 'confidence': 0.4838533752977137, 'pitch_jitter': 0.20459999721116034, 'volume': 0.55}, 'timestamp': 1790008999.3454275}
+out_envelope_voice={'id': 'bef8f578-2267-4123-b018-195c88ef5840', 'text': 'Hi there', 'user_id': 'default', 'voice_profile': 'monday', 'synth_backend': 'formant_numpy', 'status': 'synthesized', 'audio_file': 'monday_audio/monday_6853.wav', 'played': False, 'play_backend': None, 'emotion': 'melancholic', 'intensity': 0.8459999721116035, 'voice_prosody': {'pitch': 0.9426111645991434, 'speed': 0.7248618940165052, 'warmth': 0.425, 'clarity': 0.8127996682058932, 'confidence': 0.4838533752977137, 'pitch_jitter': 0.20459999721116034, 'volume': 0.55}, 'timestamp': 1790008999.3454275}
+PASS: voice_registered — handlers has voice=True
+PASS: output_still_tts_off — tts_available=False enabled=False
+PASS: voice_backend_present — backend=formant_numpy
+PASS: live_reply_text_present — reply[:100]='Hi there'
+PASS: thalamus_last_voice_present — keys=['audio_file', 'emotion', 'id', 'intensity', 'play_backend', 'played', 'status', 'synth_backend', 'text', 'timestamp', 'user_id', 'voice_profile', 'voice_prosody']
+PASS: voice_on_output_envelope — voice_keys=['audio_file', 'emotion', 'id', 'intensity', 'play_backend', 'played', 'status', 'synth_backend', 'text', 'timestamp', 'user_id', 'voice_profile', 'voice_prosody']
+PASS: voice_on_thalamus_envelope — has_voice=True
+PASS: voice_status_honest_synth — status='synthesized' played=False profile='monday'
+PASS: voice_profile_monday — profile='monday'
+PASS: audio_file_exists — audio='monday_audio/monday_6853.wav' size=30910
+PASS: played_not_faked — played=False status=synthesized
+PASS: explicit_speak_route — status=success voice_status=synthesized file=monday_audio/monday_7437.wav
+PASS: fact_path_still_replies — fact[:120]='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+PASS: motor_still_registered — 
+PASS: social_still_registered — 
+PASS: language_still_registered — 
+PASS: motor_still_participates — motor=no_actuator kind=reminder
+PASS: voice_also_on_motor_turn — vstatus=synthesized
+OVERALL: PASS
