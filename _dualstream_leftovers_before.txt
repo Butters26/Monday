@@ -1,0 +1,45 @@
+=== Dual-stream leftovers BEFORE proof ===
+time: 2026-09-21 11:38:29 MT
+runtime: /tmp/dualstream-before-ykabqvn_
+EXPECT: continuous/controlled NOT feeding MetaAwareness streams; dual_stream_thinking unwired.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'voice']
+meta_awareness in handlers: True
+dual_stream_thinking in handlers: False
+continuous_thought_generator in handlers: False
+controlled_thinking in handlers: False
+has_spontaneous_system: False
+has_controlled_system: False
+spontaneous_system is: None
+controlled_system is: None
+ContinuousThoughtGenerator.generate_thought keys: ['concepts', 'text', 'timestamp', 'trigger']
+ControlledThinking.start_reasoning goal: test goal
+dual_stream_thinking importable: False (ModuleNotFoundError: No module named 'anthropic')
+
+--- LIVE TURN ---
+reply[:80]: 'Hi there'
+last_meta_awareness keys sample: source=observe_turn mode=focused active_stream=controlled user_id=before_user
+controlled_fed: None
+spontaneous_fed: None
+controlled_goal: None
+spontaneous_trigger: None
+
+--- CHECKS (BEFORE: leftover wiring should FAIL) ---
+PASS: ctg_importable = True
+PASS: ct_importable = True
+INFO: dst_importable = False
+PASS: ma_registered = True
+PASS: mc_registered = True
+PASS: dst_not_registered = True
+PASS: ctg_not_lobe = True
+PASS: ct_not_lobe = True
+FAIL_EXPECTED: has_spontaneous = False
+FAIL_EXPECTED: has_controlled = False
+FAIL_EXPECTED: controlled_fed = False
+FAIL_EXPECTED: spontaneous_fed = False
+PASS: mode_focused = True
+PASS: stream_controlled = True
+PASS: source_observe = True
+PASS: user_id_ok = True
+
+WIRE_LEFTOVERS_GOAL: FAIL (before expect FAIL)

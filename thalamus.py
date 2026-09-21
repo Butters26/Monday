@@ -1288,6 +1288,15 @@ class Thalamus:
                 merged["released"] = True
                 merged["release_mode"] = snap.get("mode")
                 merged["release_reason"] = reason
+                # Preserve spontaneous generator participation on primary proof.
+                if "spontaneous_fed" in snap:
+                    merged["spontaneous_fed"] = snap.get("spontaneous_fed")
+                if snap.get("spontaneous_trigger") is not None:
+                    merged["spontaneous_trigger"] = snap.get("spontaneous_trigger")
+                if snap.get("spontaneous_text") is not None:
+                    merged["spontaneous_text"] = snap.get("spontaneous_text")
+                if snap.get("spontaneous_error"):
+                    merged["spontaneous_error"] = True
                 self.last_meta_awareness = merged
             else:
                 self.last_meta_awareness = dict(snap)

@@ -13,7 +13,8 @@ something beyond talk (honest no_actuator status; no fake limbs) —
 plus VoiceLobe synthesizing speech / voice envelopes from Output text
 (honest synthesized/play_unavailable; no fake "she spoke") —
 plus MetaAwareness tracking process / dual-stream mode (wandering vs focused;
-distinct from MetaCognition epistemic watching) —
+distinct from MetaCognition epistemic watching), with ContinuousThoughtGenerator
+and ControlledThinking attached as spontaneous/controlled stream generators —
 not the full legacy socket stack.
 """
 
@@ -40,6 +41,8 @@ from social_context_lobe import SocialContextLobe
 from motor_action_lobe import MotorActionLobe
 from voice_lobe import VoiceLobe
 from meta_awareness import MetaAwareness
+from continuous_thought_generator import ContinuousThoughtGenerator
+from controlled_thinking import ControlledThinking
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -114,6 +117,15 @@ def create_core_systems(
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
+
+    # Dual-stream leftovers: generators under MetaAwareness (not separate lobes).
+    # dual_stream_thinking.py stays unwired (Anthropic-only demo).
+    spontaneous = ContinuousThoughtGenerator()
+    controlled = ControlledThinking(max_reasoning_depth=5)
+    systems["meta_awareness"].set_spontaneous_system(spontaneous)
+    systems["meta_awareness"].set_controlled_system(controlled)
+    systems["continuous_thought_generator"] = spontaneous
+    systems["controlled_thinking"] = controlled
 
     autonomous = AutonomousThinkingLoop(thalamus=thalamus)
     result = thalamus.register_lobe("autonomous", autonomous)

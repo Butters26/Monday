@@ -1,0 +1,82 @@
+=== Dual-stream leftovers DESIGN JOB ===
+time: 2026-09-21 11:38 MDT
+HEAD: c1bfcf3 (pre-implement)
+
+DESIGN JOB (one-liner)
+  Attach ContinuousThoughtGenerator + ControlledThinking as MetaAwareness
+  stream generators (spontaneous/controlled) on the live path; leave
+  dual_stream_thinking.py unwired as Anthropic-only demo.
+
+INVENTORY
+  continuous_thought_generator.py
+    - Local prototype; stdlib only; ContinuousThoughtGenerator.generate_thought()
+      returns {text, trigger, concepts, timestamp}.
+    - Role: GENERATOR for spontaneous/wandering stream.
+    - Not used by AutonomousThinkingLoop (which has its own _generate_thought).
+    - Can participate live without Anthropic. No process_message; not a lobe.
+  controlled_thinking.py
+    - Local prototype; stdlib only; ControlledThinking.start_reasoning(goal)
+      marks deliberate focused reasoning (reason_step prints — avoid on live).
+    - Role: GENERATOR for controlled/focused stream.
+    - Not used by AutonomousThinkingLoop. Can participate live. Not a lobe.
+  dual_stream_thinking.py
+    - Anthropic extended-thinking demo (import anthropic; ANTHROPIC_API_KEY).
+    - No process_message; no local backend. anthropic NOT installed.
+    - Leave UNWIRED. Document why. Do NOT claim PASS for wiring it.
+
+RELATION TO MetaAwareness
+  MetaAwareness = awareness of process/streams (notice/engage/dismiss, envelope).
+  continuous/controlled = stream CONTENT generators under that awareness.
+  MetaAwareness already has set_spontaneous_system / set_controlled_system hooks
+  (unused). Wire those — do not redesign MetaAwareness ownership or envelopes.
+  AutonomousThinkingLoop remains separate inner-life generator; do not replace it.
+
+OWNERSHIP BOUNDARIES (Matthew locked)
+  MetaAwareness owns: wandering vs focused awareness, notice/engage/dismiss,
+    structured meta_awareness envelope.
+  MetaCognition stays: epistemic checking / uncertainty / grounding /
+    contradiction / refusal-control. DO NOT TOUCH ownership.
+  Learning stack: DO NOT TOUCH.
+  Voice/Motor/Social/Language/Output/Pattern/Emotion/Reasoning/Executive/
+  Attention: smallest glue only (thalamus release merge fields).
+  Preserve aside fixes: real user_id; primary observe_turn snapshot preserved.
+
+SMALLEST HONEST GLUE
+  1. run_abin.create_core_systems: instantiate ContinuousThoughtGenerator +
+     ControlledThinking; ma.set_spontaneous_system / set_controlled_system.
+     Do NOT register them as lobes.
+  2. meta_awareness.observe_turn: if controlled_system → start_reasoning(user
+     goal); envelope controlled_fed / controlled_goal / controlled_focused.
+  3. meta_awareness.release_to_wandering: if spontaneous_system →
+     generate_thought(); envelope spontaneous_fed / spontaneous_trigger /
+     spontaneous_text. Observational sample only — do NOT re-engage/focus
+     during release (would fight wandering).
+  4. thalamus._meta_awareness_release merge: copy spontaneous_fed* onto
+     preserved observe_turn primary (same pattern as released/release_mode).
+  5. get_status already reports has_spontaneous_system / has_controlled_system.
+
+WHAT NOT TO WIRE
+  - dual_stream_thinking.py (Anthropic-only; no local backend)
+  - Registering continuous/controlled as Thalamus lobes
+  - Replacing AutonomousThinkingLoop with ContinuousThoughtGenerator
+  - Calling ControlledThinking.reason_step on live path (prints; mock steps)
+  - Giant new dual-stream system / MetaAwareness redesign / MetaCognition touch
+  - Learning stack / CloudAgent
+
+SUCCESS CRITERIA
+  PASS wire leftovers only if:
+    - has_spontaneous_system and has_controlled_system True after create
+    - live turn envelope shows controlled_fed + spontaneous_fed (via release merge)
+    - dual_stream_thinking still NOT registered / not imported on live path
+    - MetaAwareness focused/controlled observe + aside user_id/preservation OK
+    - MetaCognition / Voice isolation / Motor / Social / Language / Output / fact OK
+  FAIL if only dual_stream_thinking is "wired", or generators attached but never
+  called on observe/release (attachment theater).
+
+HONEST LIMITS / REMAINING GAPS (expected even after PASS)
+  - Generators are still mock/prototype content (not deep knowledge-grounded).
+  - ContinuousThoughtGenerator does not replace AutonomousThought asides.
+  - ControlledThinking does not replace Reasoning lobe.
+  - dual_stream_thinking remains dead without Anthropic + redesign as lobe.
+  - No continuous background thread from ContinuousThoughtGenerator on live path
+    (single generate on release — smallest participation).
