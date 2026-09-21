@@ -1,0 +1,46 @@
+=== EXECUTIVE BEFORE BASELINE ===
+time: 2026-09-21 06:20:04 MT
+runtime: /tmp/exec-before-0lyqqz_e
+
+DESIGN_JOB:
+Modules found:
+- executive_control_lobe.ExecutiveControlLobe: designed as decision-making,
+  inhibition, task queue, candidate select_action. Inputs via process_message
+  (add_task/execute_next/set_inhibition/select_action); outputs status dicts.
+  LIVE STATUS: ORPHANED — not in create_core_systems. Task execute is mostly
+  print theater (print + optional send_message). select_action is FAKE scoring
+  (meta_score*0.6 + value_alignment*0.3 + confidence*0.1 − risks). Global
+  inhibition_state bool does not gate curiosity/aside/Attention on live path.
+- thalamus _LOBE_LEARNING_RULES lists executive_control but never registers/calls it.
+- value_goal_management_lobe mentioned in FIXES_APPLIED.txt — FILE ABSENT.
+- No prefrontal* modules found.
+
+DISTINCT FROM META-COGNITION:
+  Meta-cognition = watcher (observes reasoning/language quality, emits epistemic
+  signals). Executive = control lobe (sets/holds current goal/priority, inhibits
+  off-goal moves, steers Attention/path toward that goal).
+
+DONE_MEANS: Executive is registered on the live prompted path; sets/holds a
+current goal from Conversation intent; inhibits off-goal actions (curiosity
+follow-up / speak-worthy aside when goal is fact-answer); steers Attention
+salience toward the goal — real signals the live path uses, without rebuilding
+Meta-cognition or finished lobes beyond tiny glue.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+executive_control_registered: False
+send get_status: {'status': 'error', 'message': 'Unknown destination: executive_control'}
+thalamus.last_executive exists: False
+
+--- FACT-ASK with force_curiosity (no Executive) ---
+teach reply: 'Got it — your favorite color is teal.\n\nI do not want to invent details - can you tell me more about what you meant by "My favorite color is teal."?'
+query: What is the capital of France?
+reply: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+reply_has_appended_second_beat: False
+pre_output_final_has_second_beat: False
+force_curiosity_was_set: True
+
+OBSERVATION: Executive is not registered, so no current goal is held, nothing
+inhibits curiosity/aside when the user asks a fact question, and Attention is
+not steered by an Executive priority — only Meta (watcher) may run.
+
+REMAINING (expected before fix): register + real goal/inhibit/steer + live-path glue.

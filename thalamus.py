@@ -109,6 +109,8 @@ class Thalamus:
         self._last_pre_output_final_text: Optional[str] = None
         # Last Meta-cognition verdict (epistemic watch on reasoning/language).
         self.last_meta_cognition: Optional[Dict[str, Any]] = None
+        # Last Executive control snapshot (goal / inhibition / steer).
+        self.last_executive: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1062,6 +1064,91 @@ class Thalamus:
                 return corrected.strip()
         return sentence
 
+    def _executive_set_goal_from_turn(
+        self,
+        user_input: str,
+        understanding: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Tiny glue: Executive holds current goal from Conversation intent."""
+        with self.lobe_handlers_lock:
+            has_exec = "executive_control" in self.lobe_handlers
+        if not has_exec:
+            return None
+        try:
+            resp = self.send_and_wait(
+                "executive_control",
+                "set_goal_from_turn",
+                {"user_input": user_input, "understanding": understanding},
+            )
+        except Exception:
+            return None
+        if resp.get("status") != "success":
+            return None
+        body = self._content(resp)
+        goal_info = {
+            "goal": body.get("goal") or resp.get("goal"),
+            "priority": body.get("priority", resp.get("priority")),
+            "detail": body.get("detail") or resp.get("detail"),
+            "source": body.get("source") or resp.get("source"),
+            "inhibited_actions": list(
+                body.get("inhibited_actions") or resp.get("inhibited_actions") or []
+            ),
+        }
+        # Steer Attention toward the held goal (real salience update).
+        try:
+            steer = self.send_and_wait(
+                "executive_control", "steer_attention", {}, source="thalamus"
+            )
+            if steer.get("status") == "success":
+                steer_body = self._content(steer)
+                goal_info["steer"] = {
+                    "steered": bool(steer_body.get("steered", steer.get("steered"))),
+                    "reason": steer_body.get("reason") or steer.get("reason"),
+                    "goal_signal_present": bool(
+                        steer_body.get("goal_signal_present", steer.get("goal_signal_present"))
+                    ),
+                    "focus": steer_body.get("focus", steer.get("focus")),
+                    "goal_signal_keys": list(
+                        steer_body.get("goal_signal_keys")
+                        or steer.get("goal_signal_keys")
+                        or []
+                    ),
+                }
+        except Exception:
+            pass
+        self.last_executive = goal_info
+        return goal_info
+
+    def _executive_should_inhibit(self, action: str) -> bool:
+        """Tiny glue: ask Executive whether an off-goal action must be blocked."""
+        with self.lobe_handlers_lock:
+            has_exec = "executive_control" in self.lobe_handlers
+        if not has_exec:
+            return False
+        try:
+            resp = self.send_and_wait(
+                "executive_control",
+                "should_inhibit",
+                {"action": action},
+                source="thalamus",
+            )
+        except Exception:
+            return False
+        if resp.get("status") != "success":
+            return False
+        body = self._content(resp)
+        inhibited = bool(body.get("inhibited", resp.get("inhibited")))
+        if inhibited:
+            snap = dict(self.last_executive) if isinstance(self.last_executive, dict) else {}
+            snap["last_inhibition"] = {
+                "action": body.get("action") or action,
+                "inhibited": True,
+                "reason": body.get("reason") or resp.get("reason"),
+                "goal": body.get("goal") or resp.get("goal") or snap.get("goal"),
+            }
+            self.last_executive = snap
+        return inhibited
+
     def process_user_input(
         self,
         user_input: str,
@@ -1285,6 +1372,9 @@ class Thalamus:
         if conversation["status"] != "success":
             return "I'm having trouble understanding right now."
         understanding = self._content(conversation).get("understanding", {})
+
+        # Executive: set/hold current goal from intent; steer Attention toward it.
+        self._executive_set_goal_from_turn(user_input, understanding)
 
         memory = self.send_and_wait(
             "notus", "store", {"role": "user", "content": user_input, "user_id": user_id}
@@ -1818,6 +1908,11 @@ class Thalamus:
             autonomous = self.lobe_handlers.get("autonomous")
         if autonomous is None and preloaded_aside is None:
             return reply
+        # Executive inhibition: block speak-worthy aside when off-goal (e.g. fact_answer).
+        if self._executive_should_inhibit("speak_worthy_aside"):
+            if isinstance(preloaded_aside, dict) and autonomous is not None:
+                self._requeue_speak_worthy(autonomous, preloaded_aside, time.time())
+            return reply
         now = time.time()
         if (now - float(getattr(self, "_last_spoken_aside_time", 0.0) or 0.0)) < float(
             getattr(self, "_spoken_aside_cooldown_sec", 45.0)
@@ -1928,6 +2023,12 @@ class Thalamus:
             return reply
         emotional_state = emotional_state if isinstance(emotional_state, dict) else {}
         understanding = understanding if isinstance(understanding, dict) else {}
+        # Executive inhibition: block curiosity spam when goal is fact-answer.
+        # Even _force_curiosity_follow_up cannot bypass a held fact_answer goal.
+        if self._executive_should_inhibit("curiosity_follow_up"):
+            if bool(getattr(self, "_force_curiosity_follow_up", False)):
+                self._force_curiosity_follow_up = False
+            return reply
         force = bool(getattr(self, "_force_curiosity_follow_up", False))
         # Teaching ack already grounded — do not invent a follow-up about the fact itself.
         if not force and reply.lstrip().lower().startswith("got it"):

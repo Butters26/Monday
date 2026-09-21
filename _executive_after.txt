@@ -1,0 +1,74 @@
+=== EXECUTIVE AFTER PROOF ===
+time: 2026-09-21 06:21:40 MT
+runtime: /tmp/exec-after-o2b40deh
+
+DONE_MEANS: Executive is registered on the live prompted path; sets/holds a
+current goal from Conversation intent; inhibits off-goal actions (curiosity
+follow-up / speak-worthy aside when goal is fact-answer); steers Attention
+salience toward the goal — real signals the live path uses, without rebuilding
+Meta-cognition or finished lobes beyond tiny glue.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+executive_control_registered: True
+
+--- LIVE FACT-ASK (goal set + curiosity force attempted) ---
+teach reply[:80]: 'Got it — your favorite color is teal.'
+query: What is my favorite color?
+reply: 'I remember your favorite color is teal.'
+executive.goal: fact_answer
+executive.priority: 0.95
+executive.source: conversation:question
+executive.inhibited_actions: ['aside', 'curiosity', 'curiosity_follow_up', 'speak_worthy_aside']
+executive.steer: {'steered': True, 'reason': 'salience_updated', 'goal_signal_present': True, 'focus': 'user_input', 'goal_signal_keys': ['executive:goal:teach_ack', 'executive:goal:fact_answer']}
+live_pre_output_second_beat: False
+should_inhibit curiosity: inhibited=True reason=off_goal:fact_answer
+should_inhibit aside: inhibited=True reason=off_goal:fact_answer
+attention_goal_signal_keys: ['executive:goal:teach_ack', 'executive:goal:fact_answer']
+attention_user_input_salience: 0.9947
+
+--- OFF-GOAL vs ON-GOAL (forced curiosity attach) ---
+open_explore inhibits curiosity?: False (expect False)
+open_explore force_attach_got_second_beat: True
+open attached[:120]: 'That sounds interesting.\n\nWhat would help with this feeling - or is there more I should understand before I guess?'
+fact_answer force_attach_blocked: True
+fact attached[:120]: 'Paris is the capital of France.'
+fact last_inhibition: {'action': 'curiosity_follow_up', 'inhibited': True, 'reason': 'off_goal:fact_answer', 'goal': 'fact_answer'}
+aside_inhibited_under_fact_answer: True
+
+--- ATTENTION STEER ---
+steer.steered: True
+steer.goal_signal_present: True
+steer.goal_signal_keys: ['executive:goal:teach_ack', 'executive:goal:fact_answer']
+salience_has_executive_goal: ['executive:goal:teach_ack', 'executive:goal:fact_answer']
+
+--- LIVE SOCIAL TURN ---
+hello reply[:80]: "Alright... I'm here... ..."
+executive.goal: social
+executive.source: conversation:greeting
+
+--- PATH DIFFERENTIATION ---
+fact_goal_is_fact_answer: True
+fact_inhibits_curiosity: True
+open_allows_curiosity_attach: True
+fact_blocks_curiosity_attach: True
+paths_differ: True
+aside_blocked_on_fact: True
+attention_steered: True
+
+--- BEFORE vs AFTER ---
+BEFORE: executive_control not registered; task-queue/select_action theater;
+        no goal held; curiosity/aside not gated by Executive; Attention unsteered.
+AFTER:  executive_control registered; live path sets goal from Conversation intent;
+        fact_answer inhibits curiosity+aside (even under force); open_explore allows;
+        Attention salience gets executive:goal:* + boosted user_input.
+
+HONEST_LIMITS: goal derived from Conversation intent heuristics only; does not
+plan multi-step strategies or arbitrate every lobe message; curiosity text still
+owned by conversation/direct_response — Executive only gates attach.
+
+REMAINING_GAPS:
+- No long-horizon goal stack / deferred intentions.
+- Does not re-rank Reasoning strategies mid-turn beyond Attention salience.
+- value_goal_management_lobe still absent (out of scope).
+- Legacy task_list/execute_next unused on live prompted path.
+executive status: {'goal': 'social', 'priority': 0.55, 'inhibited_actions': [], 'turn_count': 3, 'last_inhibition': {'action': 'curiosity_follow_up', 'inhibited': False, 'allowed': True, 'reason': 'allowed', 'goal': 'social', 'priority': 0.55}}
