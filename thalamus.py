@@ -843,13 +843,16 @@ class Thalamus:
                     "message": "sensory bundle empty — provide modality inputs",
                 }
 
+            # Attention-once: when continue_conversation, Thalamus.process_user_input
+            # owns the single Attention evaluate/route via _attend_live_signals.
+            # SI only routes Attention when returning the stream alone (no live path).
             si_resp = self.send_and_wait(
                 "sensory_integration",
                 "ingest",
                 {
                     "inputs": bundle,
                     "user_id": user_id,
-                    "route_attention": True,
+                    "route_attention": not continue_conversation,
                     "primary_modality": modality_l,
                 },
                 source="thalamus",

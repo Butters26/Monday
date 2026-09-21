@@ -1,0 +1,67 @@
+=== SENSORY INTEGRATION ISOLATION PROOF ===
+time: 2026-09-20 20:08:47 MDT
+runtime: /tmp/si-isolation-duhkecn0
+
+APPROACH_ATTENTION_ONCE:
+  SI routes Attention only when NOT continuing into process_user_input
+  (route_attention=not continue_conversation in Thalamus.process_sensory_input).
+  When continue_conversation=True, Thalamus._attend_live_signals owns the
+  single Attention evaluate/route pass.
+
+fixture_wav exists=True fixture_png exists=True
+
+--- CROSS-USER ISOLATION (A vision, B text) ---
+user_A vision stream modalities=['vision']
+user_A shared by_modality keys=['vision']
+user_A vision text[:60]='the flag of the democratic democratic democratic democratic '
+user_A vision concepts[:6]=['the', 'flag', 'of', 'the', 'democratic', 'democratic']
+user_B absorb stream modalities=['text'] active=['text']
+user_B shared by_modality keys=['text']
+user_B stream concepts[:10]=['hello', 'from', 'user', 'b', 'isolation']
+user_B process_user_input reply[:80]="I'm here to ...help...\n\nI do not want to invent details - can you tell me more a"
+Conversation perception for B modalities=['text'] by_modality=['text']
+leak_mod=False leak_text=False leak_concepts=False
+CROSS_USER_ISOLATION_PASS=True
+user_A still has vision=True
+
+--- PER-MODALITY EXPIRY (vision aged >120s, fresh text) ---
+planted vision age≈130.0s
+shared before text: modalities=['vision'] shared.updated_at=fresh
+after fresh text stream modalities=['text'] active=['text']
+shared after text by_modality keys=['text']
+shared updated_at refreshed=True
+vision_gone_from_shared=True barn_concept_gone=True
+PER_MODALITY_EXPIRY_PASS=True
+control (vision age~10s) modalities=['text', 'vision'] has_vision=True
+CONTROL_WITHIN_WINDOW_PASS=True
+
+--- ATTENTION ONCE (continue_conversation sensory turn) ---
+continue_conversation=True audio reply[:80]="I'm here to ...help..."
+attention evaluate count=1
+attention route_focus count=1
+ATTENTION_ONCE_PASS=True
+continue_conversation=False evaluate count=1 (expect 1 via SI)
+ATTENTION_STREAM_ONLY_PASS=True
+
+--- REGRESSION: multimodal fuse ---
+stream.modality=multimodal
+stream.modalities=['text', 'audio', 'vision']
+stream.modalities_active=['text', 'audio', 'vision']
+stream.confidence=1.0
+  honesty[text] available=True error=None intake=None
+  honesty[audio] available=True error=None intake=file
+  honesty[vision] available=True error=None intake=file
+MULTIMODAL_FUSE_PASS=True
+
+--- REGRESSION: honest mic/cam fail ---
+audio mic: status=error message=live mic perception disabled — device unavailable
+vision cam: status=error message=live camera perception disabled — device unavailable
+fake_success_phrases_present=False
+HONEST_DEGRADE_PASS=True
+
+REMAINING_GAPS:
+- Live mic/webcam still hardware-gated (honest); no capture on this box.
+- Shared cross-modal context window is time-bounded (~120s), not a long episodic store.
+- sensory_buffer / normalized_signals remain process-global (not per-user); only
+  shared_context / by_modality / unified_stream / attention_payload are per user_id.
+
