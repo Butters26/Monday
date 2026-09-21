@@ -121,6 +121,9 @@ class Thalamus:
         self.last_voice_envelope: Optional[Dict[str, Any]] = None
         # Last MetaAwareness process/dual-stream envelope (not epistemic).
         self.last_meta_awareness: Optional[Dict[str, Any]] = None
+        # Aside/notice snapshot kept separate so it cannot replace the primary
+        # observe_turn envelope for the active turn.
+        self.last_meta_awareness_aside: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1178,6 +1181,7 @@ class Thalamus:
             has_ma = "meta_awareness" in self.lobe_handlers
         if not has_ma:
             self.last_meta_awareness = None
+            self.last_meta_awareness_aside = None
             return None
         try:
             resp = self.send_and_wait(
@@ -1203,6 +1207,7 @@ class Thalamus:
         if not isinstance(snap, dict) or not snap:
             return None
         self.last_meta_awareness = dict(snap)
+        self.last_meta_awareness_aside = None
         return self.last_meta_awareness
 
     def _meta_awareness_notice_thought(
@@ -1233,7 +1238,19 @@ class Thalamus:
         if not snap and isinstance(resp.get("meta_awareness"), dict):
             snap = resp["meta_awareness"]
         if isinstance(snap, dict) and snap:
-            self.last_meta_awareness = dict(snap)
+            # Preserve primary observe_turn envelope; stash aside separately and
+            # optionally annotate primary with aside_* fields. Never let notice
+            # replace the turn's focused/controlled proof surface.
+            prior = self.last_meta_awareness
+            self.last_meta_awareness_aside = dict(snap)
+            if isinstance(prior, dict) and prior.get("source") == "observe_turn":
+                merged = dict(prior)
+                merged["aside_noticed"] = True
+                merged["aside_engagement_action"] = snap.get("engagement_action")
+                merged["aside_engagement_score"] = snap.get("engagement_score")
+                self.last_meta_awareness = merged
+            else:
+                self.last_meta_awareness = dict(snap)
             return self.last_meta_awareness
         return None
 
@@ -2341,6 +2358,7 @@ class Thalamus:
             turn_intensity=turn_intensity,
             preloaded_aside=preloaded_aside,
             user_input=user_input,
+            user_id=user_id,
         )
         final_text = self._maybe_attach_curiosity_follow_up(
             final_text,
@@ -2566,6 +2584,7 @@ class Thalamus:
         self, reply: str, turn_intensity: float = 0.5,
         preloaded_aside: Optional[Dict[str, Any]] = None,
         user_input: str = "",
+        user_id: str = "default",
     ) -> str:
         """Optionally append one speak-worthy autonomous thought as a second beat.
 
@@ -2675,8 +2694,9 @@ class Thalamus:
                 pass
 
         # MetaAwareness: notice spontaneous aside (observe only; do not veto).
+        # Thread the active turn's user_id — never hardcode "default".
         try:
-            self._meta_awareness_notice_thought(aside, user_id="default")
+            self._meta_awareness_notice_thought(aside, user_id=user_id)
         except Exception:
             pass
         self._last_spoken_aside_time = now

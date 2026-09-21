@@ -1,0 +1,25 @@
+=== MetaAwareness ASIDE BEFORE (bug demo) ===
+time: 2026-09-21 11:25:04 MT
+runtime: /tmp/ma-aside-before-9f5zejo0
+DONE_MEANS: prove wrong user_id=default on aside path;
+  prove notice_thought overwrites observe_turn primary snapshot.
+
+hardcoded_default_in_aside_path: True
+_maybe_attach_speak_worthy_aside_has_user_id_param: False
+after_observe: source=observe_turn mode=focused stream=controlled user_id=Alice
+after_notice(default): source=notice_thought mode=focused stream=controlled user_id=default
+after_release: source=release_to_wandering mode=wandering stream=spontaneous user_id=Alice released=None release_mode=None
+
+--- CHECKS (True = bug present / expected BEFORE failure mode) ---
+BUG: bug1_hardcoded_default = True
+BUG: bug1_no_user_id_param = True
+BUG: bug1_notice_user_id_default = True
+BUG: bug2_notice_overwrote_source = True
+BUG: bug2_release_replaced_primary = True
+
+OVERALL_BEFORE: bugs present as expected
+BUG1: _maybe_attach_speak_worthy_aside calls notice with user_id="default"
+  so aside observations land on default MetaAwareness identity, not Alice.
+BUG2: notice_thought replaces last_meta_awareness (source=notice_thought);
+  release_to_wandering then sees source≠observe_turn and swaps in wandering
+  envelope — destroys primary focused/controlled observe_turn proof.

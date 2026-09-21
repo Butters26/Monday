@@ -1,0 +1,96 @@
+=== MetaAwareness ASIDE AFTER proof ===
+time: 2026-09-21 11:25:55 MT
+runtime: /tmp/ma-aside-after-n8gswv46
+DONE_MEANS: aside uses actual user_id; primary observe_turn preserved
+  across notice+release; MetaCognition boundary intact; regressions OK.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'voice']
+no_hardcoded_default_aside: True
+aside_fn_has_user_id: True
+
+--- 1) NORMAL TURN (user=after_user) ---
+reply[:80]: 'Hello! Nice to meet you'
+last_meta_awareness: {"source": "observe_turn", "mode": "focused", "active_stream": "controlled", "user_id": "after_user", "released": true, "release_mode": "wandering", "release_reason": "turn_complete", "engagement_action": "engaged", "job": "process_dual_stream", "not_epistemic": true}
+
+--- 2) ASIDE TURN (user=Alice, forced speak-worthy) ---
+after_observe: {"source": "observe_turn", "mode": "focused", "active_stream": "controlled", "user_id": "Alice", "engagement_action": "engaged", "job": "process_dual_stream", "not_epistemic": true}
+attached_text: 'Main reply for Alice.\n\nI keep thinking about the quiet garden path.'
+after_aside_primary: {"source": "observe_turn", "mode": "focused", "active_stream": "controlled", "user_id": "Alice", "engagement_action": "engaged", "aside_noticed": true, "aside_engagement_action": "dismissed", "aside_engagement_score": 0.365, "job": "process_dual_stream", "not_epistemic": true}
+aside_snap user_id/source: user_id=Alice source=notice_thought
+after_release: {"source": "observe_turn", "mode": "focused", "active_stream": "controlled", "user_id": "Alice", "released": true, "release_mode": "wandering", "release_reason": "turn_complete", "engagement_action": "engaged", "aside_noticed": true, "aside_engagement_action": "dismissed", "aside_engagement_score": 0.365, "job": "process_dual_stream", "not_epistemic": true}
+live_reply has aside beat: False (exec/gate; glue path proved attach)
+live last_meta_awareness: {"source": "observe_turn", "mode": "focused", "active_stream": "controlled", "user_id": "Alice", "released": true, "release_mode": "wandering", "release_reason": "turn_complete", "engagement_action": "engaged", "job": "process_dual_stream", "not_epistemic": true}
+
+--- 3) SECOND USER B (no Alice leak) ---
+Bob last_meta_awareness: {"source": "observe_turn", "mode": "focused", "active_stream": "controlled", "user_id": "Bob", "released": true, "release_mode": "wandering", "release_reason": "turn_complete", "engagement_action": "engaged", "job": "process_dual_stream", "not_epistemic": true}
+
+--- 4) MetaCognition boundary ---
+last_meta_cognition keys: ['corrected_sentence', 'findings', 'has_structures', 'is_refusal', 'limits', 'meta_from_semantic', 'observed_at', 'path', 'prior_path', 'sentence_preview', 'signals']
+
+--- 5) REGRESSIONS ---
+voice get_status(voice_never_spoke_B).last_voice: None
+motor_action kind/status: reminder/no_actuator
+social_context present: True
+output envelope has meta_awareness: True
+fact_reply[:100]: 'I do not have enough grounded information to answer that. Please provide more context or a fact I ca'
+fact ma source/user: observe_turn/fact_user
+dual_stream_thinking not in lobe_handlers: True (module exists; Anthropic demo unwired)
+continuous_thought_generator / controlled_thinking not registered: True
+
+--- CHECKS ---
+PASS: meta_awareness_registered = True
+PASS: meta_cognition_registered = True
+PASS: voice_registered = True
+PASS: motor_registered = True
+PASS: social_registered = True
+PASS: language_registered = True
+PASS: output_registered = True
+PASS: dual_stream_thinking_not_registered = True
+PASS: no_hardcoded_default_aside = True
+PASS: aside_fn_has_user_id = True
+PASS: normal_user_id = True
+PASS: normal_source_observe = True
+PASS: normal_mode_focused = True
+PASS: normal_stream_controlled = True
+PASS: normal_released = True
+PASS: normal_mc_present = True
+PASS: aside_attached = True
+PASS: aside_primary_source = True
+PASS: aside_primary_mode = True
+PASS: aside_primary_stream = True
+PASS: aside_primary_user_id = True
+PASS: aside_noticed_flag = True
+PASS: aside_snap_user_id = True
+PASS: aside_snap_not_default = True
+PASS: aside_release_meta = True
+PASS: live_aside_user_id = True
+PASS: live_aside_source = True
+PASS: live_aside_mode = True
+PASS: live_aside_stream = True
+PASS: bob_user_id = True
+PASS: bob_no_alice = True
+PASS: bob_source = True
+PASS: bob_aside_cleared = True
+PASS: mc_still_registered = True
+PASS: mc_envelope_present = True
+PASS: ma_not_epistemic = True
+PASS: mc_owns_epistemic = True
+PASS: voice_isolation_fresh_none = True
+PASS: motor_still_participates = True
+PASS: motor_turn_meta_awareness = True
+PASS: social_still_present = True
+PASS: output_attach = True
+PASS: fact_path_replies = True
+PASS: fact_meta_awareness = True
+PASS: fact_meta_cognition = True
+PASS: ctg_untouched = True
+PASS: controlled_thinking_untouched = True
+
+OVERALL: PASS
+BEFORE: aside path hardcoded user_id=default; notice overwrote observe_turn;
+  release replaced primary with wandering.
+AFTER:  user_id threaded; aside snap separate; primary stays observe_turn/
+  focused/controlled; release only adds released/release_mode/reason + aside_*.
+REMAINING: engagement heuristics still surface-only; dual_stream_thinking.py
+  unused Anthropic demo; continuous_thought_generator/controlled_thinking orphaned;
+  live aside attach still gated by Executive/relevance (glue path is authoritative).
