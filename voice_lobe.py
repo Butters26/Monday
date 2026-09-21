@@ -527,7 +527,8 @@ class VoiceLobe:
 
     def get_status(self, user_id: str = "default") -> Dict[str, Any]:
         uid = self._uid(user_id)
-        last = self._last_by_user.get(uid) or self.last_voice
+        # Per-user only — never fall back to global last_voice (isolates users).
+        last = self._last_by_user.get(uid)
         return {
             "voice_enabled": bool(self.voice_config.get("enabled")),
             "current_voice": self.voice_config.get("voice_name"),

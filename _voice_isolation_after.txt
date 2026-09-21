@@ -1,0 +1,63 @@
+=== VoiceLobe ISOLATION AFTER proof ===
+time: 2026-09-21 11:02:55 MT
+runtime: /tmp/voice-isolation-u2j3qlts
+FIX: get_status uses only self._last_by_user.get(uid) — no last_voice fallback
+
+direct VoiceLobe synth_backend=formant_numpy
+
+--- 1. USER A SYNTHESIS ---
+A_speak: user_id='A' text='Alpha hello from A' status='synthesized' played=False profile='monday' audio='monday_audio/monday_4531.wav'
+get_status(A).last_voice: user_id='A' text='Alpha hello from A' status='synthesized' played=False profile='monday' audio='monday_audio/monday_4531.wav'
+PASS: 1_user_a_synthesis — user_id='A' text='Alpha hello from A'
+
+--- 2. FRESH USER B (never spoke) ---
+get_status(B).last_voice: None
+self.last_voice (global diagnostic): user_id='A' text='Alpha hello from A' status='synthesized' played=False profile='monday' audio='monday_audio/monday_4531.wav'
+PASS: 2_fresh_user_b_none — last_voice=None
+PASS: 2b_global_last_still_A_but_unused — global_user='A' B_status=None
+
+--- 3. BOTH USERS (different text, no cross-contamination) ---
+get_status(A): user_id='A' text='Alpha hello from A' status='synthesized' played=False profile='monday' audio='monday_audio/monday_4531.wav'
+get_status(B): user_id='B' text='Bravo greeting from B' status='synthesized' played=False profile='monday' audio='monday_audio/monday_1481.wav'
+PASS: 3_both_users_isolated — A_ok=True B_ok=True
+
+--- 4. PER-USER RESET (reset only B) ---
+reset(B) resp={'status': 'success', 'message': 'VoiceLobe reset'}
+_last_by_user keys after reset(B)=['A']
+self.last_voice (may still be B diagnostic): user_id='B' text='Bravo greeting from B' status='synthesized' played=False profile='monday' audio='monday_audio/monday_1481.wav'
+get_status(B): None
+get_status(A): user_id='A' text='Alpha hello from A' status='synthesized' played=False profile='monday' audio='monday_audio/monday_4531.wav'
+PASS: 4_reset_b_clears_b — B_last=None
+PASS: 4_reset_b_keeps_a — A_last=user_id='A' text='Alpha hello from A' status='synthesized' played=False profile='monday' audio='monday_audio/monday_4531.wav'
+
+--- 5. GLOBAL LAST NOT USED FOR PER-USER LOOKUPS ---
+after A speaks again: self.last_voice=user_id='A' text='Alpha again' status='synthesized' played=False profile='monday' audio='monday_audio/monday_9446.wav'
+get_status(B) still None? True -> None
+PASS: 5_global_last_not_substituted — global='A' B=None
+
+--- 6. REGRESSIONS (live create_core_systems) ---
+handlers=['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'voice']
+PASS: 6_voice_registered — has_voice=True
+PASS: 6_output_enable_tts_false — tts_available=False enabled=False enable_tts=n/a
+live_reply[:120]='Hi! How are you?'
+PASS: 6_live_reply_present — reply[:80]='Hi! How are you?'
+thalamus.last_voice_envelope: user_id='live_A' text='Hi! How are you?' status='synthesized' played=False profile='monday' audio='monday_audio/monday_1113.wav'
+output_envelope.voice: user_id='live_A' text='Hi! How are you?' status='synthesized' played=False profile='monday' audio='monday_audio/monday_1113.wav'
+PASS: 6_output_voice_handoff — th_keys=['audio_file', 'emotion', 'id', 'intensity', 'play_backend', 'played', 'status', 'synth_backend', 'text', 'timestamp', 'user_id', 'voice_profile', 'voice_prosody']
+PASS: 6_voice_profile_monday — profile='monday'
+PASS: 6_real_wav_when_backend — backend=formant_numpy audio='monday_audio/monday_1113.wav' size=50754
+PASS: 6_status_synthesized — status='synthesized'
+PASS: 6_played_false_unless_real_playback — played=False
+PASS: 6_no_tts_backend_honest — status='no_tts_backend' played=False
+PASS: 6_language_registered
+PASS: 6_motor_registered
+PASS: 6_social_registered
+fact_reply[:160]='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+PASS: 6_fact_path_still_replies — fact[:120]='I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+motor_turn motor=None kind=None
+motor_turn voice_status=synthesized
+PASS: 6_motor_still_participates — motor=None
+PASS: 6_voice_also_on_motor_turn — vstatus=synthesized
+PASS: 6_live_fresh_user_still_isolated — last=None
+
+OVERALL: PASS

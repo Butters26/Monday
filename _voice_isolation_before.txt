@@ -1,0 +1,31 @@
+=== VoiceLobe ISOLATION BEFORE proof ===
+time: 2026-09-21 11:02:27 MT
+HEAD expected ~4f54fd8
+
+BUG_SITE: get_status() does
+  last = self._last_by_user.get(uid) or self.last_voice
+so a fresh user can inherit another user's envelope via last_voice fallback.
+
+synth_backend=formant_numpy
+A_speak status=synthesized text='Alpha speech from A' user_id='A'
+A_speak audio_file='monday_audio/monday_1620.wav'
+get_status(A).last_voice.user_id='A' text='Alpha speech from A'
+self.last_voice.user_id='A'
+
+--- FRESH USER B (never spoke) ---
+get_status(B).last_voice is None? False
+get_status(B).last_voice.user_id='A'
+get_status(B).last_voice.text='Alpha speech from A'
+PASS: bug_reproduced — get_status(B) wrongly returns A's envelope via last_voice fallback
+
+--- RESET LEAK DEMO (B speaks, reset B, last_voice may still be B) ---
+B_speak text='Bravo speech from B' user_id='B'
+after reset(B): _last_by_user keys=['A']
+after reset(B): self.last_voice.user_id='B'
+get_status(B).last_voice is None? False
+get_status(B).last_voice.user_id='B' text='Bravo speech from B'
+get_status(A).last_voice.user_id='A' text='Alpha speech from A'
+PASS: reset_leak_reproduced — after reset(B), get_status(B) still returns B via last_voice fallback
+PASS: A_state_kept_after_reset_B — get_status(A) still has A's envelope
+
+OVERALL: PASS (before baseline documents the bug)
