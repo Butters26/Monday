@@ -1,13 +1,11 @@
 {
   "pattern_recognition": {
     "socket_path": "/tmp/pattern.sock",
-    
     "thresholds": {
       "co_occurrence_threshold": 3,
       "sequence_threshold": 2,
       "cluster_threshold": 4
     },
-    
     "decay": {
       "decay_rate": 0.1,
       "decay_interval_seconds": 60,
@@ -15,17 +13,21 @@
       "max_age_sequence_seconds": 300,
       "max_age_cluster_seconds": 600
     },
-    
     "limits": {
       "max_recent_items": 10,
       "max_recent_concepts": 20,
-      "max_stored_patterns": 10000
+      "max_stored_patterns": 10000,
+      "sequence_detect_slice": 20,
+      "max_composed_sequence_length": 32,
+      "local_seq_lengths": [
+        3,
+        4,
+        5
+      ]
     },
-    
     "sequence_detection": {
       "max_time_gap_seconds": 30,
       "min_confidence": 0.2
     }
   }
 }
-

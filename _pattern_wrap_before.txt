@@ -1,0 +1,15 @@
+=== PATTERN WRAP BEFORE PROOF ===
+time: 2026-09-21 07:45:33 MT
+HEAD: 77a5aef — wrap sequences from cycling batches still durable-promote
+
+cycle_observations: 24 items of ['2', '4', '6', '8']
+durable_count: 12
+durable_wraps: [['6', '8', '2'], ['4', '6', '8', '2'], ['2', '4', '6', '8', '2'], ['8', '2', '4'], ['6', '8', '2', '4'], ['4', '6', '8', '2', '4'], ['8', '2', '4', '6'], ['6', '8', '2', '4', '6'], ['8', '2', '4', '6', '8']]
+has_durable_2468: True
+wrap_promoted: True
+
+=== CHECKS ===
+wrap_noise_promoted_durable: True
+genuine_2468_present: True
+RESULT=PASS (BEFORE expects wrap_noise_promoted_durable=True)
+PHASE=BEFORE

@@ -1,0 +1,21 @@
+=== PATTERN WRAP AFTER PROOF ===
+time: 2026-09-21 07:51:45 MT
+runtime: /tmp/pattern-wrap-after-g7_rruos
+FIX: wrap seam/extension guard vs linear reference periods; keep 2,4,6,8
+
+cycle_observations: 24 items of ['2', '4', '6', '8']
+durable_seqs: [['2', '4', '6'], ['4', '6', '8'], ['2', '4', '6', '8']]
+durable_wraps: []
+has_durable_2468: True
+persisted_wraps: []
+reliable_sample: [{'steps': ['2', '4', '6'], 'confidence': 1.0, 'durable': True}, {'steps': ['4', '6', '8'], 'confidence': 1.0, 'durable': True}, {'steps': ['2', '4', '6', '8'], 'confidence': 1.0, 'durable': True}]
+live_next_answer: 'The pattern is 2, 4, 6, 8, so the next item is 10.'
+reply_has_10: True
+
+=== CHECKS ===
+wrap_noise_promoted_durable: False
+wrap_noise_persisted: False
+genuine_2468_durable: True
+live_2468_to_10: True
+RESULT=PASS
+PHASE=AFTER

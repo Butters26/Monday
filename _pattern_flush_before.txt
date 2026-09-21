@@ -1,0 +1,14 @@
+=== PATTERN FLUSH BEFORE PROOF ===
+time: 2026-09-21 07:45:33 MT
+runtime: /tmp/pattern-flush-before-f43o920i
+GAP: durable dirty state without teach/shutdown path is not flushed
+
+knowledge_file_exists_after_dirty_no_shutdown: False
+after_recreate_opposites: {}
+after_recreate_has_crash_key: False
+after_recreate_has_seq_9_12: False
+
+=== CHECKS ===
+dirty_durable_survived_recreate_without_shutdown: False
+RESULT=PASS (BEFORE expects dirty_durable_survived=False)
+PHASE=BEFORE

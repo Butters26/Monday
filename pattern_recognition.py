@@ -5,11 +5,13 @@ Detects human-like patterns including behavioral, pareidolia, meta-patterns
 Like how humans see patterns everywhere - including patterns that aren't there
 """
 
+import atexit
 import json
 import os
 import time
 import random
 import sys
+import weakref
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Set, Optional
 from collections import defaultdict, deque
@@ -100,6 +102,7 @@ class AdvancedPatternRecognition:
         
         # Working window (bounded) — ephemeral observation buffer only.
         # Discovered/significant patterns promote to durable & Pattern-local store.
+        # Defaults below; pattern_config.json overrides via _apply_pattern_config().
         self.working_window_size = 50
         self.sequence_detect_slice = 20  # local discovery looks at recent slice
         self.local_seq_lengths = (3, 4, 5)  # window-local discovery lengths
@@ -107,37 +110,255 @@ class AdvancedPatternRecognition:
         self.max_durable_sequences = 500  # soft cap on persisted sequences
         self.persist_sequence_confidence = 0.6
         self.persist_co_occurrence_strength = 0.5
+        self.max_recent_concepts = 20
+        self.max_sequence_time_gap = 60.0
+        self._saving_knowledge = False
 
-        self.recent_items = deque(maxlen=self.working_window_size)
-        self.recent_emotions = deque(maxlen=30)
-        self.recent_topics = deque(maxlen=20)
-        self.recent_word_choices = deque(maxlen=100)
-        self.statement_history = deque(maxlen=100)
-        
-        # State tracking
-        self.boredom_level = 0.0
-        self.last_pattern_time = time.time()
-        
-        # Thresholds (dynamic based on boredom)
+        # Thresholds (dynamic based on boredom) — config may override
         self.base_co_occurrence_threshold = 3
         self.base_sequence_threshold = 2
         self.base_behavioral_threshold = 3
-        
-        # Decay
+
+        # Decay — config may override
         self.decay_rate = 0.1
         self.last_decay = time.time()
-        
+
+        # Wire pattern_config.json before constructing bounded buffers
+        self._apply_pattern_config()
+
+        self.recent_items = deque(maxlen=self.working_window_size)
+        self.recent_emotions = deque(maxlen=30)
+        self.recent_topics = deque(maxlen=self.max_recent_concepts)
+        self.recent_word_choices = deque(maxlen=100)
+        self.statement_history = deque(maxlen=100)
+
+        # State tracking
+        self.boredom_level = 0.0
+        self.last_pattern_time = time.time()
+
         # Pattern-owned learned knowledge (NOT Notus)
         self.learned_opposites: Dict[str, List[str]] = {}
         self.learned_behavioral_patterns: Dict[str, Dict] = {}
         self._knowledge_dirty = False
         # Prefer Pattern-local file under runtime_dir(); tests set MONDAY_RUNTIME_DIR.
         self.knowledge_path = Path(runtime_dir()) / "pattern_knowledge.json"
-        
+
         # Initialize default templates, then overlay Pattern-owned learned state
         self._initialize_default_templates()
         self._load_learned_knowledge()
+
+        # Crash-safe: flush dirty durable knowledge on interpreter exit
+        atexit.register(AdvancedPatternRecognition._atexit_flush, weakref.ref(self))
         
+
+    def _apply_pattern_config(self) -> None:
+        """Read pattern_config.json and apply limits / thresholds / decay already defined there."""
+        config_path = Path(__file__).resolve().parent / "pattern_config.json"
+        try:
+            raw = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(raw, dict):
+            return
+        pr = raw.get("pattern_recognition")
+        if not isinstance(pr, dict):
+            return
+
+        limits = pr.get("limits") if isinstance(pr.get("limits"), dict) else {}
+        if "max_recent_items" in limits:
+            try:
+                self.working_window_size = max(3, int(limits["max_recent_items"]))
+            except (TypeError, ValueError):
+                pass
+        if "max_recent_concepts" in limits:
+            try:
+                self.max_recent_concepts = max(1, int(limits["max_recent_concepts"]))
+            except (TypeError, ValueError):
+                pass
+        if "max_stored_patterns" in limits:
+            try:
+                self.max_durable_sequences = max(1, int(limits["max_stored_patterns"]))
+            except (TypeError, ValueError):
+                pass
+        if "sequence_detect_slice" in limits:
+            try:
+                self.sequence_detect_slice = max(3, int(limits["sequence_detect_slice"]))
+            except (TypeError, ValueError):
+                pass
+        if "max_composed_sequence_length" in limits:
+            try:
+                self.max_composed_sequence_length = max(5, int(limits["max_composed_sequence_length"]))
+            except (TypeError, ValueError):
+                pass
+        if "local_seq_lengths" in limits and isinstance(limits["local_seq_lengths"], list):
+            try:
+                lengths = tuple(sorted({int(x) for x in limits["local_seq_lengths"] if int(x) >= 2}))
+                if lengths:
+                    self.local_seq_lengths = lengths
+            except (TypeError, ValueError):
+                pass
+
+        thresholds = pr.get("thresholds") if isinstance(pr.get("thresholds"), dict) else {}
+        if "co_occurrence_threshold" in thresholds:
+            try:
+                self.base_co_occurrence_threshold = max(1, int(thresholds["co_occurrence_threshold"]))
+            except (TypeError, ValueError):
+                pass
+        if "sequence_threshold" in thresholds:
+            try:
+                self.base_sequence_threshold = max(1, int(thresholds["sequence_threshold"]))
+            except (TypeError, ValueError):
+                pass
+        if "cluster_threshold" in thresholds:
+            try:
+                self.base_behavioral_threshold = max(1, int(thresholds["cluster_threshold"]))
+            except (TypeError, ValueError):
+                pass
+
+        decay = pr.get("decay") if isinstance(pr.get("decay"), dict) else {}
+        if "decay_rate" in decay:
+            try:
+                self.decay_rate = float(decay["decay_rate"])
+            except (TypeError, ValueError):
+                pass
+
+        seq_det = pr.get("sequence_detection") if isinstance(pr.get("sequence_detection"), dict) else {}
+        if "max_time_gap_seconds" in seq_det:
+            try:
+                self.max_sequence_time_gap = float(seq_det["max_time_gap_seconds"])
+            except (TypeError, ValueError):
+                pass
+        if "min_confidence" in seq_det:
+            # Keep persist bar at least the detection floor; do not lower persist below 0.6 default
+            # unless config explicitly raises a higher bar via this key when > current.
+            try:
+                min_conf = float(seq_det["min_confidence"])
+                if min_conf > self.persist_sequence_confidence:
+                    self.persist_sequence_confidence = min_conf
+            except (TypeError, ValueError):
+                pass
+
+    @staticmethod
+    def _atexit_flush(self_ref) -> None:
+        """Flush Pattern-owned store if this instance still has dirty durable state."""
+        try:
+            obj = self_ref() if callable(self_ref) else None
+            if obj is None:
+                return
+            if getattr(obj, "_knowledge_dirty", False):
+                obj._save_learned_knowledge()
+        except Exception:
+            pass
+
+    def _persist_durable_knowledge(self) -> None:
+        """Mark dirty and flush so crash without shutdown keeps durable state.
+
+        During observe(), persist is deferred to the end of the call to avoid
+        writing the store once per sliding-window update; atexit still covers
+        dirty state if the process exits afterward without shutdown().
+        """
+        self._knowledge_dirty = True
+        if getattr(self, "_defer_knowledge_persist", False):
+            return
+        if not self._saving_knowledge:
+            self._save_learned_knowledge()
+
+    @staticmethod
+    def _is_cyclic_wrap_of_period(period: List[str], steps: List[str]) -> bool:
+        """True when steps rides period's cycle across a wrap boundary (or extends it).
+
+        Genuine contiguous substrings of period (no wrap) return False.
+        Exact equality with period returns False (that is the real pattern).
+        """
+        if not period or not steps or len(period) < 2:
+            return False
+        period = [str(x) for x in period]
+        steps = [str(x) for x in steps]
+        if steps == period:
+            return False
+        n, m = len(steps), len(period)
+        for start in range(m):
+            if all(steps[i] == period[(start + i) % m] for i in range(n)):
+                if n > m:
+                    return True  # cyclic extension past one period
+                # Same length or shorter: wrap only if the window crosses the seam
+                return (start + n) > m
+        return False
+
+    @staticmethod
+    def _is_rotation(a: List[str], b: List[str]) -> bool:
+        if len(a) != len(b) or not a or a == b:
+            return False
+        n = len(a)
+        return any(a[i:] + a[:i] == b for i in range(1, n))
+
+    @staticmethod
+    def _looks_like_linear_period(steps: List[str]) -> bool:
+        """True for constant-delta / constant-ratio numeric runs (genuine progressions)."""
+        if len(steps) < 3:
+            return False
+        try:
+            values = [float(str(s).strip()) for s in steps]
+        except (TypeError, ValueError):
+            return False
+        deltas = [values[i + 1] - values[i] for i in range(len(values) - 1)]
+        if deltas and all(abs(d - deltas[0]) < 1e-9 for d in deltas):
+            return True
+        if all(abs(v) > 1e-12 for v in values[:-1]):
+            ratios = [values[i + 1] / values[i] for i in range(len(values) - 1)]
+            if all(abs(r - ratios[0]) < 1e-9 for r in ratios):
+                return True
+        return False
+
+    def _iter_wrap_reference_periods(self):
+        """Periods trusted for wrap detection: linear progressions, then other durables.
+
+        Rotations of a linear period are not references (they are wrap noise themselves).
+        """
+        linear: List[List[str]] = []
+        for seq in self.sequences.values():
+            period = [str(x) for x in seq.steps]
+            if len(period) < 2:
+                continue
+            if self._looks_like_linear_period(period):
+                linear.append(period)
+                yield period
+        for seq in self.sequences.values():
+            period = [str(x) for x in seq.steps]
+            if len(period) < 2 or not seq.durable:
+                continue
+            if self._looks_like_linear_period(period):
+                continue
+            if any(self._is_rotation(period, L) for L in linear):
+                continue
+            yield period
+
+    def _is_wrap_noise(self, steps: List[str]) -> bool:
+        """Reject cyclic/wrap batch noise (e.g. 2,4,6,8,2) from durable promotion.
+
+        Keeps genuine linear periods (2,4,6,8) and their contiguous substrings
+        (2,4,6 / 4,6,8). Rejects seam-crossing windows and cyclic extensions.
+        """
+        steps = [str(s) for s in steps]
+        if len(steps) < 3:
+            return False
+        # Self: proper prefix that cyclically generates this sequence
+        for p in range(2, len(steps)):
+            period = steps[:p]
+            if all(steps[i] == period[i % p] for i in range(len(steps))):
+                return True
+        for period in self._iter_wrap_reference_periods():
+            if period == steps:
+                continue
+            if len(period) != len(steps):
+                if self._is_cyclic_wrap_of_period(period, steps):
+                    return True
+                continue
+            # Same length: nontrivial rotation of a preferred linear/durable period
+            if self._is_rotation(period, steps) and not self._looks_like_linear_period(steps):
+                return True
+        return False
+
     def _load_learned_knowledge(self):
         """Load Pattern-owned learned knowledge from the local store.
 
@@ -203,6 +424,11 @@ class AdvancedPatternRecognition:
                     durable=True,
                 )
 
+            # Drop legacy wrap-noise sequences that should never have been durable
+            for key, seq in list(self.sequences.items()):
+                if self._is_wrap_noise(list(seq.steps)):
+                    seq.durable = False
+                    # Keep ephemeral for local stats; do not treat as durable knowledge
             for co_data in raw.get("co_occurrences") or []:
                 if not isinstance(co_data, dict):
                     continue
@@ -228,6 +454,9 @@ class AdvancedPatternRecognition:
         path = getattr(self, "knowledge_path", None)
         if path is None:
             return
+        if self._saving_knowledge:
+            return
+        self._saving_knowledge = True
         try:
             path = Path(path)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,10 +465,15 @@ class AdvancedPatternRecognition:
             self._promote_significant_to_durable()
 
             sequences_out = []
-            durable_seqs = [
-                s for s in self.sequences.values()
-                if s.durable or s.confidence >= self.persist_sequence_confidence
-            ]
+            durable_seqs = []
+            for s in self.sequences.values():
+                if self._is_wrap_noise(list(s.steps)):
+                    # Never persist cyclic/wrap batch noise
+                    if s.durable:
+                        s.durable = False
+                    continue
+                if s.durable or s.confidence >= self.persist_sequence_confidence:
+                    durable_seqs.append(s)
             # Prefer longer / higher-confidence when soft-capping
             durable_seqs.sort(
                 key=lambda s: (1 if s.durable else 0, s.confidence, len(s.steps), s.count),
@@ -301,25 +535,63 @@ class AdvancedPatternRecognition:
             self._knowledge_dirty = False
         except Exception:
             pass
+        finally:
+            self._saving_knowledge = False
 
     def _promote_significant_to_durable(self) -> None:
-        """Mark reliable local discoveries durable so they outlive the working window."""
+        """Mark reliable local discoveries durable so they outlive the working window.
+
+        Cyclic/wrap noise from batch cycling (e.g. 2,4,6,8,2) is never promoted.
+        Shorter genuine sequences are promoted first so wrap checks see them.
+        """
+        changed = False
+        # Demote anything already durable that is wrap noise (e.g. loaded legacy)
+        for seq in self.sequences.values():
+            if seq.durable and self._is_wrap_noise(list(seq.steps)):
+                seq.durable = False
+                changed = True
+
+        long_candidates = []
+        local_candidates = []
         for seq in self.sequences.values():
             if seq.durable:
                 continue
-            if len(seq.steps) > max(self.local_seq_lengths):
-                seq.durable = True
-                self._knowledge_dirty = True
+            steps = list(seq.steps)
+            if self._is_wrap_noise(steps):
+                continue
+            if len(steps) > max(self.local_seq_lengths):
+                long_candidates.append(seq)
                 continue
             if seq.confidence < self.persist_sequence_confidence:
                 continue
             if seq.count < max(3, self.base_sequence_threshold):
                 continue
             # Skip exact tilings of a shorter period
-            period = self._minimal_period(list(seq.steps))
-            if len(period) < len(seq.steps):
+            period = self._minimal_period(steps)
+            if len(period) < len(steps):
+                continue
+            local_candidates.append(seq)
+
+        # Prefer linear periods, then shorter, so wrap checks see the real period first
+        local_candidates.sort(
+            key=lambda s: (
+                0 if self._looks_like_linear_period(list(s.steps)) else 1,
+                len(s.steps),
+                -s.confidence,
+                -s.count,
+            )
+        )
+        for seq in local_candidates:
+            if self._is_wrap_noise(list(seq.steps)):
                 continue
             seq.durable = True
+            changed = True
+        for seq in long_candidates:
+            if self._is_wrap_noise(list(seq.steps)):
+                continue
+            seq.durable = True
+            changed = True
+        if changed:
             self._knowledge_dirty = True
 
 
@@ -335,6 +607,9 @@ class AdvancedPatternRecognition:
         if not steps or len(steps) < 2:
             return
         steps = [str(s) for s in steps][: self.max_composed_sequence_length]
+        # Never durable-promote cyclic/wrap noise
+        if durable and self._is_wrap_noise(steps):
+            durable = False
         key = tuple(steps)
         now = time.time()
         became_durable = False
@@ -345,14 +620,19 @@ class AdvancedPatternRecognition:
             seq.confidence = min(1.0, seq.count / 5.0)
             if avg_time:
                 seq.average_time_between_steps = avg_time
-            if (durable or len(steps) > max(self.local_seq_lengths)) and not seq.durable:
+            want_durable = durable or (
+                len(steps) > max(self.local_seq_lengths) and not self._is_wrap_noise(steps)
+            )
+            if want_durable and not seq.durable:
                 seq.durable = True
                 became_durable = True
             elif durable:
                 seq.durable = True
         else:
             count = max(1, boost_count)
-            is_durable = durable or len(steps) > max(self.local_seq_lengths)
+            is_durable = (
+                durable or len(steps) > max(self.local_seq_lengths)
+            ) and not self._is_wrap_noise(steps)
             self.sequences[key] = Sequence(
                 steps=steps,
                 count=count,
@@ -362,10 +642,9 @@ class AdvancedPatternRecognition:
                 durable=is_durable,
             )
             became_durable = is_durable
-        if became_durable or (key in self.sequences and self.sequences[key].durable):
-            # Only durable knowledge needs Pattern-store persistence
-            if became_durable or durable:
-                self._knowledge_dirty = True
+        if became_durable:
+            # Crash-safe: durable change flushes immediately (not only on shutdown)
+            self._persist_durable_knowledge()
     
     def _initialize_default_templates(self):
         """Initialize templates for detecting behavioral patterns"""
@@ -504,7 +783,7 @@ class AdvancedPatternRecognition:
                 time_diffs = [times[j + 1] - times[j] for j in range(len(times) - 1)]
                 avg_time = sum(time_diffs) / len(time_diffs) if time_diffs else 0
 
-                if avg_time > 60:  # Too far apart
+                if avg_time > self.max_sequence_time_gap:  # Too far apart
                     continue
 
                 self._record_or_update_sequence(steps, avg_time)
@@ -512,6 +791,8 @@ class AdvancedPatternRecognition:
         # Grow durable patterns past the immediate observation window
         self._compose_sequences_beyond_window()
         self._promote_significant_to_durable()
+        if self._knowledge_dirty:
+            self._persist_durable_knowledge()
 
     @staticmethod
     def _is_periodic_repeat(base: List[str], extended: List[str]) -> bool:
@@ -534,6 +815,8 @@ class AdvancedPatternRecognition:
         """Reject composed results that are just cycling an already-known durable period."""
         if len(new_steps) < 2:
             return False
+        if self._is_wrap_noise(list(new_steps)):
+            return True
         own = self._minimal_period(new_steps)
         if len(own) < len(new_steps) and self._is_periodic_repeat(own, new_steps):
             return True
@@ -543,6 +826,8 @@ class AdvancedPatternRecognition:
             period = self._minimal_period(list(seq.steps))
             if len(period) < 2:
                 continue
+            if self._is_cyclic_wrap_of_period(period, list(new_steps)):
+                return True
             for i in range(len(period)):
                 rot = period[i:] + period[:i]
                 if len(new_steps) > len(rot) and self._is_periodic_repeat(rot, new_steps):
@@ -915,6 +1200,15 @@ class AdvancedPatternRecognition:
         Observe data and detect all types of patterns
         data should include: items, emotions, words, statement, topics
         """
+        self._defer_knowledge_persist = True
+        try:
+            return self._observe_body(data)
+        finally:
+            self._defer_knowledge_persist = False
+            if self._knowledge_dirty and not self._saving_knowledge:
+                self._save_learned_knowledge()
+
+    def _observe_body(self, data: Dict[str, Any]) -> Dict[str, Any]:
         current_time = time.time()
         
         items = data.get('items', [])
@@ -1040,7 +1334,7 @@ class AdvancedPatternRecognition:
         self._promote_significant_to_durable()
         self._prune_ephemeral_sequences()
         if self._knowledge_dirty:
-            self._save_learned_knowledge()
+            self._persist_durable_knowledge()
         
         return patterns_found
     
@@ -1089,8 +1383,10 @@ class AdvancedPatternRecognition:
                     'count': pattern.count
                 })
         
-        # Reliable sequences (include durable composed patterns)
+        # Reliable sequences (include durable composed patterns; exclude wrap noise)
         for seq_key, seq in self.sequences.items():
+            if self._is_wrap_noise(list(seq.steps)):
+                continue
             if seq.confidence >= 0.6 or (seq.durable and seq.confidence >= 0.4):
                 significant['reliable_sequences'].append({
                     'steps': seq.steps,

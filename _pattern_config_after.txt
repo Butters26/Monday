@@ -1,0 +1,23 @@
+=== PATTERN CONFIG AFTER PROOF ===
+time: 2026-09-21 07:51:45 MT
+FIX: _apply_pattern_config() wires pattern_config.json limits/thresholds/decay/seq gaps
+
+config max_recent_items: 10
+config max_stored_patterns: 10000
+default recent_items.maxlen: 10
+default max_durable_sequences: 10000
+default max_sequence_time_gap: 30.0
+default base_co_occurrence_threshold: 3
+
+--- mutate max_recent_items=3, max_stored_patterns=7 ---
+observed_maxlen: 3
+observed_max_durable_sequences: 7
+window_len_after_10_items: 3
+restored_maxlen: 10
+
+=== CHECKS ===
+config_max_recent_items_controls_maxlen: True
+mutated_config_observed: True
+config_restored: True
+RESULT=PASS
+PHASE=AFTER

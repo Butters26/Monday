@@ -1,0 +1,16 @@
+=== PATTERN CONFIG BEFORE PROOF ===
+time: 2026-09-21 07:45:33 MT
+pattern_config.json limits are NOT applied in AdvancedPatternRecognition.__init__
+
+config limits.max_recent_items: 10
+config limits.max_stored_patterns: 10000
+config thresholds.co_occurrence_threshold: 3
+code working_window_size: 50
+code recent_items.maxlen: 50
+code max_durable_sequences: 500
+code base_co_occurrence_threshold: 3
+
+=== CHECKS ===
+config_max_recent_items_controls_maxlen: False
+RESULT=PASS (BEFORE expects config_max_recent_items_controls_maxlen=False)
+PHASE=BEFORE

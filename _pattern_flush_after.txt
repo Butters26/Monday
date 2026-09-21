@@ -1,0 +1,16 @@
+=== PATTERN FLUSH AFTER PROOF ===
+time: 2026-09-21 07:51:45 MT
+runtime: /tmp/pattern-flush-after-2aop_fgu
+FIX: durable change flushes (deferred to end of observe) + atexit; Pattern-owned store
+
+knowledge_exists_after_observe_without_shutdown: True
+knowledge_bytes: 966
+after_recreate_has_flush_word: True
+after_recreate_has_durable_2468: True
+manual_durable_persist_survived: True
+store_path_owner: pattern_knowledge.json under runtime_dir (not Notus)
+
+=== CHECKS ===
+dirty_durable_survived_recreate_without_shutdown: True
+RESULT=PASS
+PHASE=AFTER
