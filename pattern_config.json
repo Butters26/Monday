@@ -28,6 +28,12 @@
     "sequence_detection": {
       "max_time_gap_seconds": 30,
       "min_confidence": 0.2
+    },
+    "compose": {
+      "min_token_diversity": 0.35,
+      "max_dominant_token_fraction": 0.6,
+      "min_unique_tokens": 2,
+      "max_compose_per_observe": 4
     }
   }
 }

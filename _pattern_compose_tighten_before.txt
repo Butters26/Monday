@@ -1,0 +1,27 @@
+=== PATTERN COMPOSE TIGHTEN BEFORE PROOF ===
+time: 2026-09-21 08:04:03 MT
+runtime: /tmp/pattern-compose-tighten-before-ykwuhx56
+BASELINE: pre-existing compose breadth — repeated/low-info feeds grow many composed sequences
+
+--- Case A: 25 shared-suffix durables + repeated-token feed (t,t,t,t,t) x8 ---
+seed_durables: 25
+total=228 ephemeral=3 durable=225
+composed_ephem=0 composed_dur=150 composed_total=150
+low_div_long=150
+composed_dur_sample=[['p0', 't', 't', 't', 't', 't'], ['p1', 't', 't', 't', 't', 't'], ['p2', 't', 't', 't', 't', 't'], ['p3', 't', 't', 't', 't', 't'], ['p4', 't', 't', 't', 't', 't'], ['p5', 't', 't', 't', 't', 't'], ['p6', 't', 't', 't', 't', 't'], ['p7', 't', 't', 't', 't', 't']]
+
+--- Case B: durable a1..a5 + repeated glue feed (a4,a5,x,x,x) x20 ---
+total=22 ephemeral=10 durable=12
+composed_ephem=0 composed_dur=6 composed_total=6
+low_div_long=0
+composed_sample=[['a1', 'a2', 'a3', 'a4', 'a5', 'x', 'x', 'x'], ['a1', 'a2', 'a3', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x'], ['a1', 'a2', 'a3', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x'], ['a1', 'a2', 'a3', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x'], ['a1', 'a2', 'a3', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x'], ['a1', 'a2', 'a3', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x', 'x', 'a4', 'a5', 'x', 'x']]
+
+--- Case C: pure same-token spam x60 ---
+total=3 ephemeral=3 durable=0 composed_total=0
+sequences=[['spam', 'spam', 'spam'], ['spam', 'spam', 'spam', 'spam'], ['spam', 'spam', 'spam', 'spam', 'spam']]
+
+=== CHECKS ===
+case_A_composed_flood: True (composed_total=150)
+case_B_spam_glue_grows: True (composed_total=6)
+RESULT=BASELINE_FLOOD_DEMONSTRATED
+PHASE=BEFORE

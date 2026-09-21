@@ -107,6 +107,11 @@ class AdvancedPatternRecognition:
         self.sequence_detect_slice = 20  # local discovery looks at recent slice
         self.local_seq_lengths = (3, 4, 5)  # window-local discovery lengths
         self.max_composed_sequence_length = 32  # growth ceiling via composition
+        # Compose tightening: bound low-info / same-token fan-out (pattern_config may override)
+        self.min_compose_token_diversity = 0.35  # unique/len floor for longer composed seqs
+        self.max_dominant_token_fraction = 0.6  # refuse when one token dominates
+        self.compose_min_unique_tokens = 2  # refuse constant / single-token sequences
+        self.max_compose_per_observe = 4  # cap new composed records per observe
         self.max_durable_sequences = 500  # soft cap on persisted sequences
         self.persist_sequence_confidence = 0.6
         self.persist_co_occurrence_strength = 0.5
@@ -235,6 +240,28 @@ class AdvancedPatternRecognition:
                 min_conf = float(seq_det["min_confidence"])
                 if min_conf > self.persist_sequence_confidence:
                     self.persist_sequence_confidence = min_conf
+            except (TypeError, ValueError):
+                pass
+
+        compose = pr.get("compose") if isinstance(pr.get("compose"), dict) else {}
+        if "min_token_diversity" in compose:
+            try:
+                self.min_compose_token_diversity = min(1.0, max(0.0, float(compose["min_token_diversity"])))
+            except (TypeError, ValueError):
+                pass
+        if "max_dominant_token_fraction" in compose:
+            try:
+                self.max_dominant_token_fraction = min(1.0, max(0.0, float(compose["max_dominant_token_fraction"])))
+            except (TypeError, ValueError):
+                pass
+        if "min_unique_tokens" in compose:
+            try:
+                self.compose_min_unique_tokens = max(1, int(compose["min_unique_tokens"]))
+            except (TypeError, ValueError):
+                pass
+        if "max_compose_per_observe" in compose:
+            try:
+                self.max_compose_per_observe = max(1, int(compose["max_compose_per_observe"]))
             except (TypeError, ValueError):
                 pass
 
@@ -424,9 +451,14 @@ class AdvancedPatternRecognition:
                     durable=True,
                 )
 
-            # Drop legacy wrap-noise sequences that should never have been durable
+            # Drop legacy wrap-noise / low-info sequences that should never have been durable
             for key, seq in list(self.sequences.items()):
-                if self._is_wrap_noise(list(seq.steps)):
+                steps = list(seq.steps)
+                if self._is_low_information_sequence(steps):
+                    # Constant / spam sequences: drop entirely from persisted set
+                    self.sequences.pop(key, None)
+                    continue
+                if self._is_wrap_noise(steps):
                     seq.durable = False
                     # Keep ephemeral for local stats; do not treat as durable knowledge
             for co_data in raw.get("co_occurrences") or []:
@@ -545,9 +577,12 @@ class AdvancedPatternRecognition:
         Shorter genuine sequences are promoted first so wrap checks see them.
         """
         changed = False
-        # Demote anything already durable that is wrap noise (e.g. loaded legacy)
+        # Demote wrap noise / low-info spam that should never stay durable
         for seq in self.sequences.values():
-            if seq.durable and self._is_wrap_noise(list(seq.steps)):
+            if seq.durable and (
+                self._is_wrap_noise(list(seq.steps))
+                or self._is_low_information_sequence(list(seq.steps))
+            ):
                 seq.durable = False
                 changed = True
 
@@ -557,7 +592,7 @@ class AdvancedPatternRecognition:
             if seq.durable:
                 continue
             steps = list(seq.steps)
-            if self._is_wrap_noise(steps):
+            if self._is_wrap_noise(steps) or self._is_low_information_sequence(steps):
                 continue
             if len(steps) > max(self.local_seq_lengths):
                 long_candidates.append(seq)
@@ -607,6 +642,9 @@ class AdvancedPatternRecognition:
         if not steps or len(steps) < 2:
             return
         steps = [str(s) for s in steps][: self.max_composed_sequence_length]
+        # Refuse constant / low-information spam entirely (no ephemeral flood either)
+        if self._is_low_information_sequence(steps):
+            return
         # Never durable-promote cyclic/wrap noise
         if durable and self._is_wrap_noise(steps):
             durable = False
@@ -811,6 +849,47 @@ class AdvancedPatternRecognition:
                 return steps[:p]
         return list(steps)
 
+    @staticmethod
+    def _token_diversity(steps: List[str]) -> float:
+        """Fraction of unique tokens in steps (0..1)."""
+        if not steps:
+            return 0.0
+        normalized = [str(s) for s in steps]
+        return len(set(normalized)) / float(len(normalized))
+
+    @staticmethod
+    def _dominant_token_fraction(steps: List[str]) -> float:
+        """Share of the most common token (1.0 = constant sequence)."""
+        if not steps:
+            return 0.0
+        counts: Dict[str, int] = {}
+        for s in steps:
+            key = str(s)
+            counts[key] = counts.get(key, 0) + 1
+        return max(counts.values()) / float(len(steps))
+
+    def _is_low_information_sequence(self, steps: List[str]) -> bool:
+        """True for constant / same-token-dominated / low-diversity spam sequences.
+
+        Used to refuse compose growth and durable promotion so repeated-token
+        feeds cannot flood composed patterns. Genuine progressions (a1..a8,
+        2,4,6,8) stay accepted.
+        """
+        steps = [str(s) for s in steps]
+        if len(steps) < 2:
+            return False
+        uniq = len(set(steps))
+        min_unique = getattr(self, "compose_min_unique_tokens", 2)
+        if uniq < min_unique:
+            return True
+        dominant_cap = getattr(self, "max_dominant_token_fraction", 0.6)
+        if len(steps) >= 4 and self._dominant_token_fraction(steps) >= dominant_cap:
+            return True
+        diversity_floor = getattr(self, "min_compose_token_diversity", 0.35)
+        if len(steps) >= 5 and self._token_diversity(steps) < diversity_floor:
+            return True
+        return False
+
     def _would_be_cyclic_wrap(self, new_steps: List[str]) -> bool:
         """Reject composed results that are just cycling an already-known durable period."""
         if len(new_steps) < 2:
@@ -841,6 +920,12 @@ class AdvancedPatternRecognition:
         Example: durable [a1..a5] scrolled out; fresh ends with [a4,a5,a6,a7,a8]
         → compose [a1..a8]. Requires overlap>=2 and that the full durable sequence
         is no longer contiguous in the working window (so trailing junk is not glued).
+
+        Tightening vs low-info / same-token spam:
+        - Refuse constant or token-dominated extensions and results.
+        - Prefer one best parent per (overlap suffix, extension) so shared-suffix
+          near-duplicates do not fan out into many composed patterns.
+        - Cap new composed records per observe via max_compose_per_observe.
         """
         if not self.recent_items:
             return
@@ -855,10 +940,14 @@ class AdvancedPatternRecognition:
             for seq in list(self.sequences.values())
             if seq.durable and len(seq.steps) >= min_overlap
         ]
+        # (score, anchor_key, new_steps, seq) — one winner per anchor later
+        candidates = []
         for steps, seq in existing:
             if len(steps) >= self.max_composed_sequence_length:
                 continue
             if len(self._minimal_period(steps)) < len(steps):
+                continue
+            if self._is_low_information_sequence(steps):
                 continue
             # Still fully visible in the window → reinforce only
             fully_visible = any(
@@ -869,7 +958,7 @@ class AdvancedPatternRecognition:
                 seq.last_seen = time.time()
                 continue
 
-            composed = False
+            matched = False
             for overlap in range(min(len(steps), len(fresh) - 1), min_overlap - 1, -1):
                 for ext_len in range(1, min(max_grow, len(fresh) - overlap) + 1):
                     segment = fresh[-(overlap + ext_len) :]
@@ -878,21 +967,68 @@ class AdvancedPatternRecognition:
                     extension = segment[overlap:]
                     if not extension:
                         continue
+                    # Repeated-token / low-info extensions must not grow chains
+                    if self._is_low_information_sequence(extension):
+                        continue
+                    # Do not extend a trailing run of the same token (…,x + x/x,x,…)
+                    if steps and all(str(t) == str(steps[-1]) for t in extension):
+                        continue
+                    # Do not re-append a segment already inside the parent (window re-tile)
+                    ext_list = [str(t) for t in extension]
+                    parent_s = [str(t) for t in steps]
+                    if len(ext_list) >= 2 and any(
+                        parent_s[i : i + len(ext_list)] == ext_list
+                        for i in range(0, len(parent_s) - len(ext_list) + 1)
+                    ):
+                        continue
                     new_steps = steps + extension
                     if len(new_steps) > self.max_composed_sequence_length:
                         new_steps = new_steps[: self.max_composed_sequence_length]
                     if new_steps == steps or self._would_be_cyclic_wrap(new_steps):
                         continue
-                    self._record_or_update_sequence(
-                        new_steps,
-                        seq.average_time_between_steps,
-                        durable=True,
-                        boost_count=max(1, min(seq.count, 3)),
+                    if self._is_low_information_sequence(new_steps):
+                        continue
+                    score = (
+                        len(steps),
+                        float(seq.confidence),
+                        self._token_diversity(steps),
+                        int(seq.count),
                     )
-                    composed = True
+                    anchor = (tuple(steps[-overlap:]), tuple(extension))
+                    candidates.append((score, anchor, new_steps, seq))
+                    matched = True
                     break
-                if composed:
+                if matched:
                     break
+
+        if not candidates:
+            return
+
+        # Prefer extending one durable chain per fresh anchor (drop near-dup parents)
+        best_by_anchor = {}
+        for score, anchor, new_steps, seq in candidates:
+            prev = best_by_anchor.get(anchor)
+            if prev is None or score > prev[0]:
+                best_by_anchor[anchor] = (score, new_steps, seq)
+
+        winners = sorted(best_by_anchor.values(), key=lambda t: t[0], reverse=True)
+        cap = getattr(self, "max_compose_per_observe", 4)
+        seen_results = set()
+        composed_n = 0
+        for _score, new_steps, seq in winners:
+            key = tuple(new_steps)
+            if key in seen_results:
+                continue
+            seen_results.add(key)
+            self._record_or_update_sequence(
+                new_steps,
+                seq.average_time_between_steps,
+                durable=True,
+                boost_count=max(1, min(seq.count, 3)),
+            )
+            composed_n += 1
+            if composed_n >= cap:
+                break
 
 
     def _prune_ephemeral_sequences(self) -> None:

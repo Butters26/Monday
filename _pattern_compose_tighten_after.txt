@@ -1,0 +1,54 @@
+=== PATTERN COMPOSE TIGHTEN AFTER PROOF ===
+time: 2026-09-21 08:06:33 MT
+runtime: /tmp/pattern-compose-tighten-after-dj4fus88
+FIX: low-info/diversity guards + prefer one chain per anchor + max_compose_per_observe + no re-tile
+
+--- config wiring ---
+min_compose_token_diversity=0.35
+max_dominant_token_fraction=0.6
+compose_min_unique_tokens=2
+max_compose_per_observe=4
+pattern_config.compose={'min_token_diversity': 0.35, 'max_dominant_token_fraction': 0.6, 'min_unique_tokens': 2, 'max_compose_per_observe': 4}
+
+--- Case A: 25 shared-suffix durables + repeated-token feed x8 ---
+after_demote_seed_durables=25
+total=25 ephemeral=0 durable=25
+composed_ephem=0 composed_dur=0 composed_total=0
+low_div_long=0
+BEFORE composed_total=150 → AFTER composed_total=0
+
+--- Case B: durable a1..a5 + glue feed (a4,a5,x,x,x) x20 ---
+total=8 ephemeral=4 durable=4
+composed_ephem=0 composed_dur=0 composed_total=0
+spam_glued_a1a5_with_x=[] count=0
+BEFORE composed_total=6 → AFTER composed_total=0
+
+--- Case C: pure same-token spam x60 ---
+total=0 ephemeral=0 durable=0 composed_total=0
+sequences=[]
+
+--- Legit end-anchored compose a1..a5 + a4..a8 → a1..a8 ---
+composed_a1_a8=True durable=True persisted_restart=True
+
+--- Wrap / 2,4,6,8 regression ---
+durable_seqs=[['2', '4', '6'], ['4', '6', '8'], ['2', '4', '6', '8']]
+durable_wraps=[]
+has_durable_2468=True
+live_next_answer='The pattern is 2, 4, 6, 8, so the next item is 10.'
+reply_has_10=True
+
+--- Fan-out cap: 30 shared-suffix + diverse extension ---
+composed_total=1
+composed_sample=[['u0', 'x', 'y', 'z1', 'z2', 'z3']]
+
+=== CHECKS ===
+spam_case_A_bounded: True (composed_total=0 low_div_long=0)
+spam_case_B_bounded: True (composed_total=0 spam_glued=0)
+same_token_case_C_bounded: True (total=0)
+legit_a1_a8_compose: True
+wrap_2468_ok: True
+live_2468_to_10: True
+fanout_capped: True (composed_total=1 no_retile=True)
+config_wired: True
+RESULT=PASS
+PHASE=AFTER
