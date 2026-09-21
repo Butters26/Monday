@@ -1,0 +1,29 @@
+=== PATTERN CEILINGS AFTER PROOF (#6) ===
+time: 2026-09-21 07:39:41 MT
+runtime: /tmp/pattern-ceilings-after-flr5xkbn
+FIX: bounded working window kept; significant sequences durable;
+     end-anchored compose grows patterns beyond local_seq_lengths / window
+
+working_window_size: 50
+recent_items.maxlen: 50
+local_seq_lengths: (3, 4, 5)
+max_composed_sequence_length: 32
+sequence_detect_slice: 20
+
+--- previously failing case ---
+had durable a1..a5: True
+window cleared (bounded working memory): True
+durable a1..a5 survived scroll: True
+composed a1..a8: True [['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8']]
+window still bounded after: maxlen=50 len=5
+composed a1..a8 persisted across restart: True
+repeat 2,4,6,8 max seq len (no wrap inflate): 5
+repeat 2,4,6,8 len>5 sequences: []
+
+=== CHECKS ===
+working_window_bounded: True
+growth_beyond_window: True
+growth_persisted: True
+no_wrap_inflation: True
+RESULT=PASS
+PHASE=AFTER

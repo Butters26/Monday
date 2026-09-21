@@ -1,0 +1,29 @@
+=== PATTERN CEILINGS BEFORE PROOF (#6) ===
+time: 2026-09-21 07:39:08 MT
+Source: git HEAD pattern_recognition.py (pre soft-ceiling/compose fix)
+
+HARD CEILINGS THAT BLOCK GROWTH:
+  1. recent_items = deque(maxlen=50) — working window; older observations drop forever
+  2. detect_multi_step_sequences only scans recent_items[-20:]
+  3. local seq_length hard-coded to [3, 4, 5] — never discovers length >= 6
+  4. No durable/composed store — once window scrolls, long patterns cannot grow
+  5. meta_patterns truncated to 20; pareidolia to 10 (ephemeral OK)
+  6. Decay deletes non-reinforced sequences after ~600s
+  7. pattern_config.json max_stored_patterns=10000 / max_recent_items=10 not wired in code
+
+--- concrete failing case: feed a1..a8 repeatedly ---
+maxlen(recent_items): 50
+max discovered sequence length: 5
+has full a1..a8 sequence: False
+sample longest: ['a1', 'a2', 'a3', 'a4', 'a5']
+
+--- concrete failing case: a1..a5 then scroll window then a4..a8 ---
+had a1..a5 before scroll: True
+composed a1..a8 after continuation: False
+max len after continuation: 5
+
+=== CHECKS ===
+length_ceiling_blocks_6plus: True
+no_compose_beyond_window: True
+RESULT=PASS (BEFORE expects PASS = ceilings block growth)
+PHASE=BEFORE

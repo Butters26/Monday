@@ -10,10 +10,12 @@ import os
 import time
 import random
 import sys
+from pathlib import Path
 from typing import Dict, Any, List, Tuple, Set, Optional
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from thalamus import get_thalamus
+from runtime_paths import runtime_dir
 
 # ============================================================================
 # PATTERN DATA STRUCTURES
@@ -37,6 +39,7 @@ class Sequence:
     confidence: float = 0.0
     last_seen: float = 0.0
     average_time_between_steps: float = 0.0
+    durable: bool = False  # promoted beyond working-window / persisted
 
 @dataclass
 class BehavioralPattern:
@@ -95,8 +98,17 @@ class AdvancedPatternRecognition:
         self.meta_patterns: List[MetaPattern] = []
         self.pareidolia_patterns: List[PareidoliaPattern] = []
         
-        # Recent history
-        self.recent_items = deque(maxlen=50)
+        # Working window (bounded) — ephemeral observation buffer only.
+        # Discovered/significant patterns promote to durable & Pattern-local store.
+        self.working_window_size = 50
+        self.sequence_detect_slice = 20  # local discovery looks at recent slice
+        self.local_seq_lengths = (3, 4, 5)  # window-local discovery lengths
+        self.max_composed_sequence_length = 32  # growth ceiling via composition
+        self.max_durable_sequences = 500  # soft cap on persisted sequences
+        self.persist_sequence_confidence = 0.6
+        self.persist_co_occurrence_strength = 0.5
+
+        self.recent_items = deque(maxlen=self.working_window_size)
         self.recent_emotions = deque(maxlen=30)
         self.recent_topics = deque(maxlen=20)
         self.recent_word_choices = deque(maxlen=100)
@@ -115,27 +127,245 @@ class AdvancedPatternRecognition:
         self.decay_rate = 0.1
         self.last_decay = time.time()
         
-        # Learned knowledge from Notus
+        # Pattern-owned learned knowledge (NOT Notus)
         self.learned_opposites: Dict[str, List[str]] = {}
         self.learned_behavioral_patterns: Dict[str, Dict] = {}
+        self._knowledge_dirty = False
+        # Prefer Pattern-local file under runtime_dir(); tests set MONDAY_RUNTIME_DIR.
+        self.knowledge_path = Path(runtime_dir()) / "pattern_knowledge.json"
         
-        # Load learned knowledge from memory
+        # Initialize default templates, then overlay Pattern-owned learned state
+        self._initialize_default_templates()
         self._load_learned_knowledge()
         
-        # Initialize default templates (can be overridden by learning)
-        self._initialize_default_templates()
-        
     def _load_learned_knowledge(self):
-        """Load learned pattern definitions from Notus memory"""
-        # Try to connect to Notus and load learned knowledge
+        """Load Pattern-owned learned knowledge from the local store.
+
+        This is Pattern's store — not Notus. Genuine learnings (taught opposites /
+        behavioral defs, significant sequences, strong co-occurrences) survive restart.
+        """
+        path = getattr(self, "knowledge_path", None)
+        if path is None:
+            return
         try:
-            # Query Notus for learned opposites
-            # Query Notus for learned behavioral patterns
-            # For now, starts empty - will be populated when taught
-            pass
+            path = Path(path)
+            if not path.exists():
+                return
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                return
+
+            opposites = raw.get("learned_opposites") or {}
+            if isinstance(opposites, dict):
+                cleaned: Dict[str, List[str]] = {}
+                for word, opp_list in opposites.items():
+                    if not isinstance(word, str) or not isinstance(opp_list, list):
+                        continue
+                    cleaned[word] = [str(o) for o in opp_list if isinstance(o, (str, int, float))]
+                self.learned_opposites = cleaned
+
+            learned_beh = raw.get("learned_behavioral_patterns") or {}
+            if isinstance(learned_beh, dict):
+                for name, definition in learned_beh.items():
+                    if not isinstance(name, str) or not isinstance(definition, dict):
+                        continue
+                    self.learned_behavioral_patterns[name] = definition
+                    signals = definition.get("signals", {})
+                    if name not in self.behavioral_patterns:
+                        self.behavioral_patterns[name] = BehavioralPattern(
+                            name=name,
+                            signals=signals if isinstance(signals, dict) else {},
+                            occurrences=int(definition.get("occurrences", 0) or 0),
+                            confidence=float(definition.get("confidence", 0.0) or 0.0),
+                            last_seen=float(definition.get("last_seen", 0.0) or 0.0),
+                        )
+                    else:
+                        self.behavioral_patterns[name].signals = (
+                            signals if isinstance(signals, dict) else self.behavioral_patterns[name].signals
+                        )
+
+            for seq_data in raw.get("sequences") or []:
+                if not isinstance(seq_data, dict):
+                    continue
+                steps = seq_data.get("steps")
+                if not isinstance(steps, list) or len(steps) < 2:
+                    continue
+                steps_s = [str(s) for s in steps][: self.max_composed_sequence_length]
+                key = tuple(steps_s)
+                self.sequences[key] = Sequence(
+                    steps=steps_s,
+                    count=int(seq_data.get("count", 1) or 1),
+                    confidence=float(seq_data.get("confidence", 0.6) or 0.6),
+                    last_seen=float(seq_data.get("last_seen", time.time()) or time.time()),
+                    average_time_between_steps=float(
+                        seq_data.get("average_time_between_steps", 0.0) or 0.0
+                    ),
+                    durable=True,
+                )
+
+            for co_data in raw.get("co_occurrences") or []:
+                if not isinstance(co_data, dict):
+                    continue
+                items = co_data.get("items")
+                if not isinstance(items, list) or len(items) != 2:
+                    continue
+                pair = tuple(sorted([str(items[0]), str(items[1])]))
+                self.co_occurrences[pair] = CoOccurrence(
+                    item_a=pair[0],
+                    item_b=pair[1],
+                    count=int(co_data.get("count", 1) or 1),
+                    strength=float(co_data.get("strength", 0.5) or 0.5),
+                    last_seen=float(co_data.get("last_seen", time.time()) or time.time()),
+                    contexts=list(co_data.get("contexts") or [])[:5],
+                )
+            self._knowledge_dirty = False
         except Exception:
-            # Notus not available yet, that's okay
+            # Corrupt / unreadable store — start empty rather than crash startup
             pass
+
+    def _save_learned_knowledge(self) -> None:
+        """Persist Pattern-owned learned knowledge to the local store."""
+        path = getattr(self, "knowledge_path", None)
+        if path is None:
+            return
+        try:
+            path = Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Promote significant in-memory discoveries before serialize
+            self._promote_significant_to_durable()
+
+            sequences_out = []
+            durable_seqs = [
+                s for s in self.sequences.values()
+                if s.durable or s.confidence >= self.persist_sequence_confidence
+            ]
+            # Prefer longer / higher-confidence when soft-capping
+            durable_seqs.sort(
+                key=lambda s: (1 if s.durable else 0, s.confidence, len(s.steps), s.count),
+                reverse=True,
+            )
+            for seq in durable_seqs[: self.max_durable_sequences]:
+                sequences_out.append({
+                    "steps": list(seq.steps),
+                    "count": int(seq.count),
+                    "confidence": float(seq.confidence),
+                    "last_seen": float(seq.last_seen),
+                    "average_time_between_steps": float(seq.average_time_between_steps),
+                    "durable": True,
+                })
+
+            co_out = []
+            for pair, pattern in self.co_occurrences.items():
+                if (
+                    pattern.count >= self.base_co_occurrence_threshold
+                    and pattern.strength >= self.persist_co_occurrence_strength
+                ):
+                    co_out.append({
+                        "items": list(pair),
+                        "count": int(pattern.count),
+                        "strength": float(pattern.strength),
+                        "last_seen": float(pattern.last_seen),
+                        "contexts": list(pattern.contexts)[:5],
+                    })
+
+            # Merge occurrence/confidence into learned behavioral defs we own
+            learned_beh = dict(self.learned_behavioral_patterns)
+            for name, definition in list(learned_beh.items()):
+                if not isinstance(definition, dict):
+                    continue
+                behavior = self.behavioral_patterns.get(name)
+                if behavior is None:
+                    continue
+                merged = dict(definition)
+                merged["occurrences"] = int(behavior.occurrences)
+                merged["confidence"] = float(behavior.confidence)
+                merged["last_seen"] = float(behavior.last_seen)
+                learned_beh[name] = merged
+
+            payload = {
+                "version": 1,
+                "owner": "pattern",
+                "learned_opposites": {
+                    str(k): [str(x) for x in (v or [])]
+                    for k, v in self.learned_opposites.items()
+                },
+                "learned_behavioral_patterns": learned_beh,
+                "sequences": sequences_out,
+                "co_occurrences": co_out,
+                "saved_at": time.time(),
+            }
+            tmp = Path(f"{path}.tmp")
+            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            tmp.replace(path)
+            self._knowledge_dirty = False
+        except Exception:
+            pass
+
+    def _promote_significant_to_durable(self) -> None:
+        """Mark reliable local discoveries durable so they outlive the working window."""
+        for seq in self.sequences.values():
+            if seq.durable:
+                continue
+            if len(seq.steps) > max(self.local_seq_lengths):
+                seq.durable = True
+                self._knowledge_dirty = True
+                continue
+            if seq.confidence < self.persist_sequence_confidence:
+                continue
+            if seq.count < max(3, self.base_sequence_threshold):
+                continue
+            # Skip exact tilings of a shorter period
+            period = self._minimal_period(list(seq.steps))
+            if len(period) < len(seq.steps):
+                continue
+            seq.durable = True
+            self._knowledge_dirty = True
+
+
+    def _record_or_update_sequence(
+        self,
+        steps: List[str],
+        avg_time: float = 0.0,
+        *,
+        durable: bool = False,
+        boost_count: int = 1,
+    ) -> None:
+        """Insert/update a sequence; composed/long sequences are marked durable."""
+        if not steps or len(steps) < 2:
+            return
+        steps = [str(s) for s in steps][: self.max_composed_sequence_length]
+        key = tuple(steps)
+        now = time.time()
+        became_durable = False
+        if key in self.sequences:
+            seq = self.sequences[key]
+            seq.count += boost_count
+            seq.last_seen = now
+            seq.confidence = min(1.0, seq.count / 5.0)
+            if avg_time:
+                seq.average_time_between_steps = avg_time
+            if (durable or len(steps) > max(self.local_seq_lengths)) and not seq.durable:
+                seq.durable = True
+                became_durable = True
+            elif durable:
+                seq.durable = True
+        else:
+            count = max(1, boost_count)
+            is_durable = durable or len(steps) > max(self.local_seq_lengths)
+            self.sequences[key] = Sequence(
+                steps=steps,
+                count=count,
+                confidence=min(1.0, count / 5.0) if count > 1 else 0.2,
+                last_seen=now,
+                average_time_between_steps=avg_time,
+                durable=is_durable,
+            )
+            became_durable = is_durable
+        if became_durable or (key in self.sequences and self.sequences[key].durable):
+            # Only durable knowledge needs Pattern-store persistence
+            if became_durable or durable:
+                self._knowledge_dirty = True
     
     def _initialize_default_templates(self):
         """Initialize templates for detecting behavioral patterns"""
@@ -178,6 +408,8 @@ class AdvancedPatternRecognition:
         for opp in opposites:
             if opp not in self.learned_opposites[word]:
                 self.learned_opposites[word].append(opp)
+        self._knowledge_dirty = True
+        self._save_learned_knowledge()
     
     def teach_behavioral_pattern(self, pattern_name: str, definition: Dict[str, Any]):
         """Learn a new behavioral pattern definition"""
@@ -192,6 +424,8 @@ class AdvancedPatternRecognition:
         else:
             # Update existing pattern
             self.behavioral_patterns[pattern_name].signals = definition.get('signals', {})
+        self._knowledge_dirty = True
+        self._save_learned_knowledge()
     
     def update_pattern_understanding(self, pattern_name: str, additional_signals: List[str]):
         """Add new signals to understanding of a pattern"""
@@ -247,46 +481,152 @@ class AdvancedPatternRecognition:
     # ========================================================================
     
     def detect_multi_step_sequences(self):
-        """Detect A→B→C→D sequences"""
+        """Detect A→B→C→D sequences inside the working window, then compose beyond it.
+
+        Working window stays bounded. Significant / composed sequences become durable
+        so growth is not lost when observations scroll out of the window.
+        """
         if len(self.recent_items) < 3:
+            self._compose_sequences_beyond_window()
             return
         
-        # Look for sequences of 3-5 steps
-        for seq_length in [3, 4, 5]:
-            if len(self.recent_items) < seq_length:
+        recent_list = list(self.recent_items)[-self.sequence_detect_slice:]
+
+        # Local discovery: manageable lengths inside the observation slice
+        for seq_length in self.local_seq_lengths:
+            if len(recent_list) < seq_length:
                 continue
-            
-            # Check recent items for sequences
-            recent_list = list(self.recent_items)[-20:]
-            
+
             for i in range(len(recent_list) - seq_length + 1):
-                steps = [recent_list[i+j][0] for j in range(seq_length)]
-                times = [recent_list[i+j][1] for j in range(seq_length)]
-                
-                # Check timing - steps should be reasonably close
-                time_diffs = [times[j+1] - times[j] for j in range(len(times)-1)]
+                steps = [recent_list[i + j][0] for j in range(seq_length)]
+                times = [recent_list[i + j][1] for j in range(seq_length)]
+
+                time_diffs = [times[j + 1] - times[j] for j in range(len(times) - 1)]
                 avg_time = sum(time_diffs) / len(time_diffs) if time_diffs else 0
-                
+
                 if avg_time > 60:  # Too far apart
                     continue
-                
-                # Record or update sequence
-                seq_key = tuple(steps)
-                if seq_key in self.sequences:
-                    seq = self.sequences[seq_key]
-                    seq.count += 1
-                    seq.last_seen = time.time()
-                    seq.confidence = min(1.0, seq.count / 5.0)
-                    seq.average_time_between_steps = avg_time
-                else:
-                    self.sequences[seq_key] = Sequence(
-                        steps=steps,
-                        count=1,
-                        confidence=0.2,
-                        last_seen=time.time(),
-                        average_time_between_steps=avg_time
+
+                self._record_or_update_sequence(steps, avg_time)
+
+        # Grow durable patterns past the immediate observation window
+        self._compose_sequences_beyond_window()
+        self._promote_significant_to_durable()
+
+    @staticmethod
+    def _is_periodic_repeat(base: List[str], extended: List[str]) -> bool:
+        """True when extended is just base tiled (wrap growth, not real lengthening)."""
+        if not base or len(extended) <= len(base):
+            return False
+        period = len(base)
+        return all(extended[i] == base[i % period] for i in range(len(extended)))
+
+    @staticmethod
+    def _minimal_period(steps: List[str]) -> List[str]:
+        """Smallest period that tiles `steps`, or steps itself."""
+        n = len(steps)
+        for p in range(1, n // 2 + 1):
+            if n % p == 0 and steps[:p] * (n // p) == steps:
+                return steps[:p]
+        return list(steps)
+
+    def _would_be_cyclic_wrap(self, new_steps: List[str]) -> bool:
+        """Reject composed results that are just cycling an already-known durable period."""
+        if len(new_steps) < 2:
+            return False
+        own = self._minimal_period(new_steps)
+        if len(own) < len(new_steps) and self._is_periodic_repeat(own, new_steps):
+            return True
+        for seq in self.sequences.values():
+            if not seq.durable:
+                continue
+            period = self._minimal_period(list(seq.steps))
+            if len(period) < 2:
+                continue
+            for i in range(len(period)):
+                rot = period[i:] + period[:i]
+                if len(new_steps) > len(rot) and self._is_periodic_repeat(rot, new_steps):
+                    return True
+        return False
+
+
+    def _compose_sequences_beyond_window(self):
+        """Extend durable sequences when the window ends with a true continuation.
+
+        Example: durable [a1..a5] scrolled out; fresh ends with [a4,a5,a6,a7,a8]
+        → compose [a1..a8]. Requires overlap>=2 and that the full durable sequence
+        is no longer contiguous in the working window (so trailing junk is not glued).
+        """
+        if not self.recent_items:
+            return
+        fresh = [item for item, _ts in list(self.recent_items)[-self.sequence_detect_slice:]]
+        if len(fresh) < 3:
+            return
+        max_grow = max(self.local_seq_lengths)
+        min_overlap = 2
+
+        existing = [
+            (list(seq.steps), seq)
+            for seq in list(self.sequences.values())
+            if seq.durable and len(seq.steps) >= min_overlap
+        ]
+        for steps, seq in existing:
+            if len(steps) >= self.max_composed_sequence_length:
+                continue
+            if len(self._minimal_period(steps)) < len(steps):
+                continue
+            # Still fully visible in the window → reinforce only
+            fully_visible = any(
+                fresh[i : i + len(steps)] == steps
+                for i in range(0, len(fresh) - len(steps) + 1)
+            )
+            if fully_visible:
+                seq.last_seen = time.time()
+                continue
+
+            composed = False
+            for overlap in range(min(len(steps), len(fresh) - 1), min_overlap - 1, -1):
+                for ext_len in range(1, min(max_grow, len(fresh) - overlap) + 1):
+                    segment = fresh[-(overlap + ext_len) :]
+                    if segment[:overlap] != steps[-overlap:]:
+                        continue
+                    extension = segment[overlap:]
+                    if not extension:
+                        continue
+                    new_steps = steps + extension
+                    if len(new_steps) > self.max_composed_sequence_length:
+                        new_steps = new_steps[: self.max_composed_sequence_length]
+                    if new_steps == steps or self._would_be_cyclic_wrap(new_steps):
+                        continue
+                    self._record_or_update_sequence(
+                        new_steps,
+                        seq.average_time_between_steps,
+                        durable=True,
+                        boost_count=max(1, min(seq.count, 3)),
                     )
-    
+                    composed = True
+                    break
+                if composed:
+                    break
+
+
+    def _prune_ephemeral_sequences(self) -> None:
+        """Keep working-memory sequences bounded; never drop durable learnings."""
+        durable_items = [(k, v) for k, v in self.sequences.items() if v.durable]
+        ephemeral = [(k, v) for k, v in self.sequences.items() if not v.durable]
+        max_ephemeral = 100
+        if len(ephemeral) > max_ephemeral:
+            ephemeral.sort(key=lambda kv: (kv[1].confidence, kv[1].count, kv[1].last_seen))
+            ephemeral = ephemeral[-max_ephemeral:]
+        if len(durable_items) > self.max_durable_sequences:
+            durable_items.sort(
+                key=lambda kv: (kv[1].confidence, len(kv[1].steps), kv[1].count),
+                reverse=True,
+            )
+            durable_items = durable_items[: self.max_durable_sequences]
+        self.sequences = {**dict(durable_items), **dict(ephemeral)}
+
+
     # ========================================================================
     # BEHAVIORAL PATTERN DETECTION
     # ========================================================================
@@ -695,6 +1035,12 @@ class AdvancedPatternRecognition:
         ]):
             patterns_found['new_patterns'] = True
             self.last_pattern_time = current_time
+
+        # Promote + prune; flush Pattern store when durable knowledge changed
+        self._promote_significant_to_durable()
+        self._prune_ephemeral_sequences()
+        if self._knowledge_dirty:
+            self._save_learned_knowledge()
         
         return patterns_found
     
@@ -743,12 +1089,13 @@ class AdvancedPatternRecognition:
                     'count': pattern.count
                 })
         
-        # Reliable sequences
+        # Reliable sequences (include durable composed patterns)
         for seq_key, seq in self.sequences.items():
-            if seq.confidence >= 0.6:
+            if seq.confidence >= 0.6 or (seq.durable and seq.confidence >= 0.4):
                 significant['reliable_sequences'].append({
                     'steps': seq.steps,
-                    'confidence': seq.confidence
+                    'confidence': seq.confidence,
+                    'durable': bool(seq.durable),
                 })
         
         # Confirmed behavioral patterns
@@ -802,9 +1149,15 @@ class AdvancedPatternRecognition:
         for key in to_remove:
             del self.co_occurrences[key]
         
-        # Decay sequences
+        # Decay sequences — durable/significant learnings resist eviction
         to_remove = []
         for key, seq in self.sequences.items():
+            if seq.durable or seq.confidence >= self.persist_sequence_confidence:
+                # Light touch only; never delete durable from working memory here
+                time_since = current_time - seq.last_seen
+                if time_since > 3600:
+                    seq.confidence = max(self.persist_sequence_confidence, seq.confidence * (1.0 - self.decay_rate * 0.25))
+                continue
             time_since = current_time - seq.last_seen
             if time_since > 600:
                 seq.count = max(0, seq.count - 1)
@@ -924,7 +1277,11 @@ class AdvancedPatternRecognition:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
     
     def shutdown(self):
-        """Graceful shutdown"""
+        """Graceful shutdown — flush Pattern-owned learned knowledge."""
+        try:
+            self._save_learned_knowledge()
+        except Exception:
+            pass
         self.running = False
         # No sockets to close
 

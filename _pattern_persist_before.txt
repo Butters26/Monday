@@ -1,0 +1,43 @@
+=== PATTERN PERSIST BEFORE PROOF (#5) ===
+time: 2026-09-21 07:31:12 MT
+runtime: /tmp/pattern-persist-before-j6x5i02n
+EXPECT (before fix): teach/discover → recreate Pattern → learned knowledge GONE.
+
+--- instance A after teach/observe ---
+learned_opposites: {'brilliant': ['dull', 'dim']}
+learned_behavioral_patterns keys: ['curiosity_spike']
+sequences_count: 12
+reliable_sequences_sample: [{'steps': ['2', '4', '6'], 'confidence': 1.0}, {'steps': ['4', '6', '8'], 'confidence': 1.0}, {'steps': ['2', '4', '6', '8'], 'confidence': 1.0}, {'steps': ['6', '8', '2'], 'confidence': 1.0}, {'steps': ['8', '2', '4'], 'confidence': 1.0}]
+has_brilliant_opposites: True
+has_curiosity_spike: True
+has_2468_seq: True
+
+--- instance B after 'restart' (new AdvancedPatternRecognition) ---
+learned_opposites: {}
+learned_behavioral_patterns keys: []
+sequences_count: 0
+reliable_sequences: []
+has_brilliant_opposites: False
+has_curiosity_spike: False
+_load_learned_knowledge body is stub: True (pass only; Notus comments)
+pattern knowledge files under runtime: []
+
+--- live path recreate ---
+live_before_shutdown reliable_seqs: [{'steps': ['2', '4', '6'], 'confidence': 1.0}, {'steps': ['4', '6', '8'], 'confidence': 1.0}, {'steps': ['2', '4', '6', '8'], 'confidence': 1.0}, {'steps': ['6', '8', '2'], 'confidence': 1.0}]
+live_before_shutdown alpha opposites: ['omega']
+live_after_recreate reliable_seqs: []
+live_after_recreate alpha opposites: None
+live_after_recreate learned_opposites empty: True
+live_after_recreate sequences empty: True
+live_reply_after_recreate: "I'm having trouble remembering that right now."
+reasoning_pattern_status: None
+reasoning_reliable_seqs: None
+reply_has_10: False
+
+=== CHECKS ===
+instance_A_had_learning: True
+instance_B_lost_learning: True
+live_recreate_lost_learning: True
+RESULT=PASS (BEFORE expects PASS = knowledge gone)
+PHASE=BEFORE
+GAP: _load_learned_knowledge is unfinished stub; shutdown does not save; no Pattern-local store
