@@ -12,6 +12,8 @@ plus MotorActionLobe planning/queuing action envelopes when Monday should do
 something beyond talk (honest no_actuator status; no fake limbs) —
 plus VoiceLobe synthesizing speech / voice envelopes from Output text
 (honest synthesized/play_unavailable; no fake "she spoke") —
+plus MetaAwareness tracking process / dual-stream mode (wandering vs focused;
+distinct from MetaCognition epistemic watching) —
 not the full legacy socket stack.
 """
 
@@ -37,6 +39,7 @@ from executive_control_lobe import ExecutiveControlLobe
 from social_context_lobe import SocialContextLobe
 from motor_action_lobe import MotorActionLobe
 from voice_lobe import VoiceLobe
+from meta_awareness import MetaAwareness
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -87,6 +90,7 @@ def create_core_systems(
         "social_context": SocialContextLobe(thalamus=thalamus),
         "motor_action": MotorActionLobe(thalamus=thalamus),
         "voice": VoiceLobe(thalamus=thalamus),
+        "meta_awareness": MetaAwareness(thalamus=thalamus),
     }
     for name in (
         "perception",
@@ -105,6 +109,7 @@ def create_core_systems(
         "social_context",
         "motor_action",
         "voice",
+        "meta_awareness",
     ):
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
@@ -124,6 +129,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
         "autonomous",
         "output",
         "voice",
+        "meta_awareness",
         "language",
         "motor_action",
         "social_context",

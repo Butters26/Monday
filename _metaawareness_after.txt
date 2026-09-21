@@ -1,0 +1,66 @@
+=== MetaAwareness / Dual-stream AFTER proof ===
+time: 2026-09-21 11:17:31 MT
+runtime: /tmp/ma-after-q87n5jyi
+DONE_MEANS: MetaAwareness registered + observe_turn on live cycle;
+  last_meta_awareness shows focused/controlled; MetaCognition untouched.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_awareness', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'voice']
+meta_awareness_registered: True
+meta_cognition_registered: True
+voice_registered: True
+direct observe_turn mode=focused stream=controlled action=engaged
+
+--- LIVE greeting ---
+query: Hello Monday.
+reply[:120]: 'Hello'
+last_meta_awareness: {"mode": "focused", "prior_mode": "focused", "active_stream": "controlled", "dual_stream": {"spontaneous": true, "controlled": true}, "awareness_level": 0.6, "engagement_action": "engaged", "engagement_score": 0.74725, "meta_comment": "Focusing on user-driven turn", "thoughts_noticed": 2, "thoughts_engaged": 2, "thoughts_dismissed": 0, "mode_shifts": 1, "user_id": "after_user", "timestamp": 1790011058.109876, "source": "observe_turn", "job": "process_dual_stream", "not_epistemic": true, "intent_
+last_meta_cognition keys: ['corrected_sentence', 'findings', 'has_structures', 'is_refusal', 'limits', 'meta_from_semantic', 'observed_at', 'path', 'prior_path', 'sentence_preview', 'signals']
+voice status: synthesized
+output has meta_awareness: True
+
+--- FACT path ---
+fact_reply[:160]: 'I do not have enough grounded information to answer that. Please provide more context or a fact I can reason from.'
+
+--- MOTOR request ---
+motor_reply[:80]: 'That brings back such bittersweet memories...\n\nI do not want to invent details -'
+motor_action: {'id': 'ac5bb5ac-8685-4b15-a042-9f639475335a', 'kind': 'reminder', 'type': 'motor', 'intent_text': 'Please set a reminder to call mom.', 'user_id': 'after_motor', 'source_intent': 'request', 'goal_honored': 'fulfill_request', 'status': 'no_actuator', 'actuator': 'none', 'timestamp': 1790011080.167047, 'delivered_at': 1790011082.890965}
+
+--- Voice isolation ---
+get_status(never_spoke_B).last_voice: None
+
+--- CHECKS ---
+PASS: meta_awareness_registered = True
+PASS: meta_cognition_registered = True
+PASS: voice_registered = True
+PASS: motor_registered = True
+PASS: social_registered = True
+PASS: language_registered = True
+PASS: output_registered = True
+PASS: direct_observe_api = True
+PASS: live_reply_present = True
+PASS: last_meta_awareness_populated = True
+PASS: mode_focused = True
+PASS: active_stream_controlled = True
+PASS: dual_stream_labels = True
+PASS: job_process_not_epistemic = True
+PASS: engagement_engaged = True
+PASS: source_observe_turn = True
+PASS: released_flag = True
+PASS: meta_cognition_still_present = True
+PASS: voice_envelope_present = True
+PASS: social_still_present = True
+PASS: output_attach = True
+PASS: fact_path_replies = True
+PASS: fact_meta_awareness = True
+PASS: fact_meta_cognition = True
+PASS: motor_still_participates = True
+PASS: motor_turn_meta_awareness = True
+PASS: voice_isolation_fresh_none = True
+PASS: dual_stream_thinking_not_registered = True
+
+OVERALL: PASS
+BEFORE: meta_awareness absent; no last_meta_awareness; dual_stream_thinking unusable.
+AFTER:  meta_awareness registered; observe_turn on cycle; focused/controlled envelope;
+        MetaCognition still epistemic watcher; Voice/Motor/Social/fact unchanged.
+REMAINING_GAPS: continuous_thought_generator / controlled_thinking still orphaned;
+  dual_stream_thinking.py unused Anthropic demo; engagement heuristics surface-only.

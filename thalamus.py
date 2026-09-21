@@ -76,6 +76,7 @@ _LOBE_LEARNING_RULES = {
     "sensory_integration": {"skill"},
     "motor_action": {"skill"},
     "voice": {"feedback", "correction"},
+    "meta_awareness": {"feedback", "correction"},
     "speech": {"feedback", "correction"},
     "autonomous": {"skill", "feedback", "correction"},
     "representation": {"skill"},
@@ -118,6 +119,8 @@ class Thalamus:
         self.last_motor_action: Optional[Dict[str, Any]] = None
         # Last Voice speech envelope (synthesized/play_unavailable/played).
         self.last_voice_envelope: Optional[Dict[str, Any]] = None
+        # Last MetaAwareness process/dual-stream envelope (not epistemic).
+        self.last_meta_awareness: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1162,6 +1165,118 @@ class Thalamus:
         self.last_social_context = dict(snap)
         return self.last_social_context
 
+    def _meta_awareness_observe_turn(
+        self,
+        user_input: str,
+        understanding: Dict[str, Any],
+        user_id: str = "default",
+        novelty_score: float = 0.0,
+        intensity: float = 0.5,
+    ) -> Optional[Dict[str, Any]]:
+        """Tiny glue: MetaAwareness tracks process/dual-stream mode on the turn."""
+        with self.lobe_handlers_lock:
+            has_ma = "meta_awareness" in self.lobe_handlers
+        if not has_ma:
+            self.last_meta_awareness = None
+            return None
+        try:
+            resp = self.send_and_wait(
+                "meta_awareness",
+                "observe_turn",
+                {
+                    "user_input": user_input,
+                    "understanding": understanding,
+                    "user_id": user_id,
+                    "novelty_score": novelty_score,
+                    "intensity": intensity,
+                },
+                source="thalamus",
+            )
+        except Exception:
+            return None
+        if resp.get("status") != "success":
+            return None
+        body = self._content(resp)
+        snap = body if isinstance(body, dict) else {}
+        if not snap and isinstance(resp.get("meta_awareness"), dict):
+            snap = resp["meta_awareness"]
+        if not isinstance(snap, dict) or not snap:
+            return None
+        self.last_meta_awareness = dict(snap)
+        return self.last_meta_awareness
+
+    def _meta_awareness_notice_thought(
+        self,
+        thought: Optional[Dict[str, Any]],
+        user_id: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Observational notice of spontaneous content (e.g. speak-worthy aside)."""
+        if not isinstance(thought, dict):
+            return None
+        with self.lobe_handlers_lock:
+            has_ma = "meta_awareness" in self.lobe_handlers
+        if not has_ma:
+            return None
+        try:
+            resp = self.send_and_wait(
+                "meta_awareness",
+                "notice_thought",
+                {"thought": thought, "user_id": user_id},
+                source="thalamus",
+            )
+        except Exception:
+            return None
+        if resp.get("status") != "success":
+            return None
+        body = self._content(resp)
+        snap = body if isinstance(body, dict) else {}
+        if not snap and isinstance(resp.get("meta_awareness"), dict):
+            snap = resp["meta_awareness"]
+        if isinstance(snap, dict) and snap:
+            self.last_meta_awareness = dict(snap)
+            return self.last_meta_awareness
+        return None
+
+    def _meta_awareness_release(
+        self, user_id: str = "default", reason: str = "turn_complete"
+    ) -> Optional[Dict[str, Any]]:
+        """After prompted turn, release toward wandering/spontaneous stream."""
+        with self.lobe_handlers_lock:
+            has_ma = "meta_awareness" in self.lobe_handlers
+        if not has_ma:
+            return None
+        try:
+            resp = self.send_and_wait(
+                "meta_awareness",
+                "release_to_wandering",
+                {"reason": reason, "user_id": user_id},
+                source="thalamus",
+            )
+        except Exception:
+            return None
+        if resp.get("status") != "success":
+            return None
+        body = self._content(resp)
+        snap = body if isinstance(body, dict) else {}
+        if not snap and isinstance(resp.get("meta_awareness"), dict):
+            snap = resp["meta_awareness"]
+        if isinstance(snap, dict) and snap:
+            # Keep the focused observe_turn envelope as the turn's primary proof
+            # surface; stash release as last_meta_awareness_release only if we
+            # want both. Design: last_meta_awareness = last observe (focused).
+            # Store release separately without overwriting focused observe proof.
+            prior = self.last_meta_awareness
+            if isinstance(prior, dict) and prior.get("source") == "observe_turn":
+                merged = dict(prior)
+                merged["released"] = True
+                merged["release_mode"] = snap.get("mode")
+                merged["release_reason"] = reason
+                self.last_meta_awareness = merged
+            else:
+                self.last_meta_awareness = dict(snap)
+            return self.last_meta_awareness
+        return None
+
     def _refresh_attention_payload_post_executive(
         self, prior: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
@@ -1855,6 +1970,17 @@ class Thalamus:
         )
         # Motor: plan/queue structured action when request / fulfill_request.
         self._motor_plan_from_turn(user_input, understanding, user_id=user_id)
+        # MetaAwareness: process/dual-stream observe (focused on user turn).
+        # Distinct from MetaCognition epistemic watch later in the cycle.
+        try:
+            _nov = 0.0
+            if isinstance(perception_payload, dict):
+                _nov = float(perception_payload.get("novelty_score") or 0.0)
+        except (TypeError, ValueError):
+            _nov = 0.0
+        self._meta_awareness_observe_turn(
+            user_input, understanding, user_id=user_id, novelty_score=_nov
+        )
         # Same-turn handoff: Executive may have re-selected focus — refresh
         # attention_payload + re-route so Reasoning.think sees post-Executive focus.
         attention_payload = self._refresh_attention_payload_post_executive(
@@ -2304,6 +2430,13 @@ class Thalamus:
                 or {}
             ),
         )
+        # MetaAwareness: release toward wandering after prompted delivery.
+        self._meta_awareness_release(user_id=user_id, reason="turn_complete")
+        # Attach process envelope onto Output last_envelope when present.
+        if isinstance(self.last_meta_awareness, dict) and isinstance(
+            self.last_output_envelope, dict
+        ):
+            self.last_output_envelope["meta_awareness"] = dict(self.last_meta_awareness)
         # Refresh local envelope view if Motor/Voice attached fields.
         if isinstance(self.last_output_envelope, dict):
             envelope = self.last_output_envelope
@@ -2541,6 +2674,11 @@ class Thalamus:
             except Exception:
                 pass
 
+        # MetaAwareness: notice spontaneous aside (observe only; do not veto).
+        try:
+            self._meta_awareness_notice_thought(aside, user_id="default")
+        except Exception:
+            pass
         self._last_spoken_aside_time = now
         return f"{reply.rstrip()}\n\n{content.strip()}"
 

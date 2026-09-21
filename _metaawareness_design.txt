@@ -1,0 +1,100 @@
+=== MetaAwareness / Dual-stream DESIGN JOB ===
+time: 2026-09-21 11:15 MDT
+HEAD: 1e74c40 (pre-implement)
+
+MODULE CHOICE
+  Wire meta_awareness.py (MetaAwareness) as lobe name "meta_awareness".
+  Dual-stream IS MetaAwareness's job (wandering/spontaneous vs focused/controlled).
+  Do NOT wire dual_stream_thinking.py — standalone Anthropic extended-thinking
+  demo (needs anthropic, no process_message, not a Monday lobe). Claiming PASS
+  for Dual-stream via that file would be dishonest.
+
+DONE_MEANS
+  MetaAwareness is registered on the live prompted path. On each user turn it
+  observes thinking-process state (mode / dual streams), shifts to focused when
+  user-driven controlled thinking is active, notices optional spontaneous
+  content (e.g. speak-worthy asides) for engage/dismiss without owning speech,
+  and surfaces a structured meta_awareness envelope on
+  thalamus.last_meta_awareness. Distinct from MetaCognition epistemic watching.
+
+OWNERSHIP BOUNDARIES
+  MetaAwareness owns:
+    - Awareness of thinking PROCESS (mode: wandering | focused | transition)
+    - Dual-stream tracking: spontaneous (wandering) vs controlled (focused)
+    - Notice / engage / dismiss decisions for spontaneous thoughts
+    - Process-awareness envelope (mode, streams, engagement, meta_comment)
+  MetaCognition owns (DO NOT STEAL / DO NOT BREAK):
+    - Epistemic watching of reasoning/language outputs
+    - Empty grounding, uncertainty, overconfidence, surface contradiction
+    - Control signals: force_grounded_refusal / flag_uncertainty / nudge_attention
+  Boundary one-liner:
+    MetaCognition = "Is this thought epistemically OK?"
+    MetaAwareness = "Which stream am I in, and is this spontaneous thought
+                     worth engaging?"
+  Conversation=intent; Reasoning=grounded meaning; Language=wording;
+  Output=delivery; Executive=goals; Pattern=relationships; Social=continuity;
+  Motor=plan/queue; Voice=speech; Autonomous=inner thought generation.
+  MetaAwareness does not classify intent, invent facts, compose replies,
+  plan actions, synthesize speech, or replace MetaCognition.
+
+SMALLEST ARCHITECTURAL CORRECTION
+  1. meta_awareness.py: keep ThinkingMode / notice_spontaneous_thought;
+     add thalamus-aware API: observe_turn, notice_thought, release_to_wandering,
+     get_status, process_message (required for Thalamus.register_lobe).
+     Prefer deterministic engagement scoring on live path (no flaky random).
+  2. Register "meta_awareness" in run_abin.create_core_systems (+ shutdown).
+  3. Tiny Thalamus glue:
+       last_meta_awareness stash
+       after Executive/Social (post-understand): _meta_awareness_observe_turn
+       on speak-worthy aside candidate: notice_thought (observe only; do not
+         veto Autonomous/Language ownership of whether aside text attaches)
+       optional release_to_wandering after Output (honest return to wandering)
+  4. Learning-rules entry for meta_awareness (feedback/correction only).
+  No Learning stack touch; no Voice/Language/Motor/Social/Output/Pattern/
+  Emotion/Reasoning redesign; no MetaCognition rewrite.
+
+LIVE SCENARIO (honest, from code)
+  User: "Hello Monday."
+  BEFORE: meta_awareness absent from registry; no process_message; no
+          last_meta_awareness; dual_stream_thinking not importable without
+          anthropic; MetaCognition alone on core as epistemic watcher.
+  AFTER:  meta_awareness registered; observe_turn runs on live cycle;
+          last_meta_awareness present with mode=focused, dual_stream labels,
+          active_stream=controlled; MetaCognition still watches reasoning;
+          Voice isolation / Motor / Social / Language / Output / fact path
+          unchanged.
+
+ENVELOPE (structured, not prose)
+  {
+    mode, prior_mode, active_stream (controlled|spontaneous),
+    dual_stream: {spontaneous: bool, controlled: bool},
+    awareness_level, engagement_action (engaged|dismissed|none|unnoticed),
+    engagement_score, meta_comment, thoughts_noticed, thoughts_engaged,
+    thoughts_dismissed, mode_shifts, user_id, timestamp, source
+  }
+
+SUCCESS CRITERIA (pass/fail)
+  PASS only if:
+    - meta_awareness in create_core_systems registry
+    - live process_user_input populates thalamus.last_meta_awareness
+    - envelope shows focused/controlled on a user turn
+    - MetaCognition still registered and still emits last_meta_cognition
+    - Voice still registered; Motor/Social/Language/Output/fact path reply
+  FAIL if only dual_stream_thinking demo is "wired", or MetaAwareness
+  registered but never called on the cycle (registration theater).
+
+WHAT NOT TO DO
+  - Do not touch learning/
+  - Do not redesign Voice/Language/Motor/Social/Output/Pattern/Emotion/Reasoning
+  - Do not break or reassign MetaCognition epistemic watching
+  - Do not park-touch issue #11 / PR #15
+  - Do not use Cursor CloudAgent
+  - Do not claim Dual-stream PASS via dual_stream_thinking.py
+
+HONEST LIMITS / REMAINING GAPS (expected even after PASS)
+  - continuous_thought_generator.py / controlled_thinking.py still orphaned
+    prototypes (no process_message); MetaAwareness tracks dual-stream labels
+    without owning those generators.
+  - dual_stream_thinking.py remains unused Anthropic demo.
+  - Engagement heuristics are surface (intensity/trigger), not deep introspection.
+  - Aside notice is observational; MetaAwareness does not gate aside attach.

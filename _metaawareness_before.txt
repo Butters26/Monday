@@ -1,0 +1,35 @@
+=== MetaAwareness / Dual-stream BEFORE baseline ===
+time: 2026-09-21 11:15:43 MT
+runtime: /tmp/ma-before-y0apv2it
+DONE_MEANS: MetaAwareness registered + observe_turn on live cycle with
+  last_meta_awareness envelope (mode/dual-stream); distinct from MetaCognition.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'motor_action', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context', 'voice']
+meta_awareness_registered: False
+dual_stream_registered: False
+meta_cognition_registered: True
+hasattr last_meta_awareness: False
+last_meta_awareness value: MISSING
+meta_awareness.MetaAwareness process_message: False
+meta_awareness.MetaAwareness observe_turn: False
+dual_stream_thinking import: FAIL (ModuleNotFoundError: No module named 'anthropic')
+
+--- LIVE turn ---
+query: Hello Monday.
+reply[:120]: 'Hi! How are you?'
+last_meta_awareness after turn: MISSING
+last_meta_cognition present: True
+last_voice_envelope present: True
+last_social_context present: True
+last_motor_action: None
+
+--- CHECKS (expect FAIL: absent from live path) ---
+FAIL: meta_awareness_registered = False
+FAIL: dual_stream_registered = False
+FAIL: last_meta_awareness_populated = False
+FAIL: observe_turn_api = False
+FAIL: process_message_api = False
+
+OVERALL (wired?): FAIL — expect FAIL before implement
+BEFORE: meta_awareness not registered; no process_message; no last_meta_awareness;
+        dual_stream_thinking not a Monday lobe; MetaCognition alone watches epistemics.
