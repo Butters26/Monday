@@ -171,11 +171,19 @@ class GrammarEngine:
             if composed:
                 return composed
 
-        # Social continuity for greetings: Language composes (do not echo
-        # provider first-meet boilerplate when Social tracked this turn).
+        # Social continuity: Social supplies cue/continuity; Language owns wording.
+        # Prefer social composition for greeting/check-in/goodbye/emotional_share
+        # so Reasoning boilerplate or refusals do not erase continuity.
         social = semantic_input.get('social_context')
-        if intent == 'greeting' and isinstance(social, dict) and social:
-            return self._compose_greeting(emotion, social_context=social)
+        if isinstance(social, dict) and social:
+            social_line = self._compose_social_turn(
+                emotion,
+                social_context=social,
+                intent=intent,
+                existing_answer=answer if isinstance(answer, str) else None,
+            )
+            if social_line:
+                return social_line
 
         # Prefer multi-proposition composition when Reasoning/Notus supplied
         # distinct grounded facts — do not invent, only arrange.
@@ -223,6 +231,16 @@ class GrammarEngine:
                 emotion,
                 social_context=social if isinstance(social, dict) else None,
             )
+        elif intent in {'goodbye'} or (
+            isinstance(semantic_input.get('social_context'), dict)
+            and semantic_input['social_context'].get('last_cue') == 'goodbye'
+        ):
+            return self._compose_goodbye(
+                emotion,
+                social_context=semantic_input.get('social_context')
+                if isinstance(semantic_input.get('social_context'), dict)
+                else None,
+            )
         elif intent == 'introduce':
             return self._compose_introduction()
         elif intent == 'identify':
@@ -268,6 +286,118 @@ class GrammarEngine:
                 "Hey there",
             ]
         return random.choice(greetings)
+
+    def _is_usable_empathic_prose(self, answer: Optional[str]) -> bool:
+        """True when Emotion/Reasoning already produced grounded empathic wording."""
+        if not isinstance(answer, str):
+            return False
+        text = answer.strip()
+        if not text or self._is_grounding_refusal(text):
+            return False
+        low = text.lower()
+        if "sequence pattern" in low or "cannot confidently infer" in low:
+            return False
+        return low.startswith((
+            "that sounds", "i hear", "i can feel", "i'm here", "i am here",
+            "i am sitting", "i'm sitting", "i'm listening", "i am listening",
+            "i'm still with you", "i am still with you",
+        ))
+
+    def _compose_check_in(
+        self, emotion: str, social_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Compose a check-in reply. Continuity changes wording; not a canned tree."""
+        social = social_context if isinstance(social_context, dict) else {}
+        continuity = str(social.get("continuity") or "")
+        repeated = continuity in {"repeated_check_in", "continuing_check_in"}
+        if repeated:
+            lines = [
+                "Still here — yeah, I'm with you.",
+                "Yep, still here.",
+                "I'm still here with you.",
+                "Still with you — what's up?",
+            ]
+        else:
+            lines = [
+                "I'm here — thanks for checking in. How are you?",
+                "Doing alright — thanks for asking. How about you?",
+                "I'm here. How are you doing?",
+            ]
+        return random.choice(lines)
+
+    def _compose_goodbye(
+        self, emotion: str, social_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Compose a closing. Social marks closing; relationship is not ended."""
+        social = social_context if isinstance(social_context, dict) else {}
+        continuity = str(social.get("continuity") or "")
+        # Closing vs casual — keep short; resume will be normal later.
+        if continuity == "closing" or str(social.get("stance") or "") == "closing":
+            lines = [
+                "Take care — talk soon.",
+                "Okay, see you later.",
+                "Goodnight — I'll be here when you're back.",
+                "Bye for now — catching you later.",
+            ]
+        else:
+            lines = [
+                "Take care.",
+                "See you later.",
+                "Bye for now.",
+            ]
+        return random.choice(lines)
+
+    def _compose_emotional_share_continuity(
+        self, emotion: str, social_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Continuity-only ack. No invented relationship lore or felt-facts."""
+        social = social_context if isinstance(social_context, dict) else {}
+        continuity = str(social.get("continuity") or "")
+        if continuity == "continuing_emotional_share":
+            lines = [
+                "I'm still with you on this.",
+                "I'm listening — go on.",
+                "Still here with you in it.",
+            ]
+        elif continuity == "repeated_emotional_share":
+            lines = [
+                "I'm here with you in it.",
+                "Still listening.",
+            ]
+        else:
+            lines = [
+                "I'm listening.",
+                "I hear you.",
+                "I'm here with you.",
+            ]
+        return random.choice(lines)
+
+    def _compose_social_turn(
+        self,
+        emotion: str,
+        social_context: Optional[Dict[str, Any]] = None,
+        intent: Optional[str] = None,
+        existing_answer: Optional[str] = None,
+    ) -> Optional[str]:
+        """If Social tracked a social cue this turn, Language composes from continuity."""
+        social = social_context if isinstance(social_context, dict) else {}
+        if not social or not social.get("is_social_turn"):
+            return None
+        cue = str(social.get("last_cue") or "").strip().lower()
+        if cue == "greeting" or intent == "greeting":
+            return self._compose_greeting(emotion, social_context=social)
+        if cue == "check_in":
+            return self._compose_check_in(emotion, social_context=social)
+        if cue == "goodbye" or intent == "goodbye":
+            return self._compose_goodbye(emotion, social_context=social)
+        if cue == "emotional_share" or intent == "emotional_share":
+            # Emotion owns affect interpretation — keep usable empathic prose.
+            if self._is_usable_empathic_prose(existing_answer):
+                return existing_answer.strip()
+            return self._compose_emotional_share_continuity(
+                emotion, social_context=social
+            )
+        return None
     
     def _compose_introduction(self) -> str:
         patterns = [

@@ -1,0 +1,21 @@
+=== SOCIAL CONTINUITY BEFORE (greeting-only baseline @ d9b514e) ===
+time: 2026-09-21 ~09:34 MT (from _social_context_after.txt)
+
+DONE_MEANS (for this upgrade): social_context influences check-in, goodbye,
+emotional_share continuity — not greetings only — while ownership holds.
+
+BASELINE BEHAVIOR (live @ d9b514e):
+  - Social tracks greeting continuity (first_contact / re_greeting) and Language
+    uses it for returning vs first-meet pools.
+  - check_in cue may be recorded (e.g. how are you? → last_cue=check_in,
+    continuity=ongoing_social) but Language does not distinguish first vs
+    repeated check-ins; second "you still there?" often falls to grounding
+    refusal on the live path.
+  - goodbye cue may be recorded (continuity=ongoing_social) but Language does
+    not compose a closing; live reply can be pattern/reasoning junk.
+  - emotional_share not continuity-labeled (first vs continuing); Language
+    has no social_context emotional-share path.
+  - Envelope lacks previous_cue / cue_count / continuing_social_thread;
+    closing is not a temporary stance that resumes.
+
+BEFORE_STATUS: PASS (documents greeting-only gap this job closes)

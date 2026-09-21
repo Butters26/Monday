@@ -120,7 +120,10 @@ class ConversationSystem:
     _EMOTIONAL_SHARE_RE = re.compile(
         r"(?i)\b(?:i\s+feel(?:ing)?\b|i(?:['\u2019]m|\s+am)\s+feeling\b|"
         r"i(?:['\u2019]m|\s+am)\s+(?:sad|scared|afraid|worried|anxious|heartbroken|"
-        r"alone|devastated|terrified|grieving|hurt|angry|upset)\b)"
+        r"alone|devastated|terrified|grieving|hurt|angry|upset)\b|"
+        # Light day/work distress shares (Conversation owns intent; Social tracks continuity).
+        r"today\s+sucked\b|(?:my\s+)?(?:day|today)\s+(?:was|is)\s+(?:awful|terrible|rough|horrible)\b|"
+        r"(?:work|it|things)\s+(?:just\s+)?(?:kept\s+)?getting\s+worse\b)"
     )
     _REMEMBER_FACT_RE = re.compile(
         r"(?i)\bremember\s+(?:that\s+)?(?:(?:the|my)\s+)?([a-z][a-z0-9_\s-]{0,40}?)\s+is\s+(\S.+)$"

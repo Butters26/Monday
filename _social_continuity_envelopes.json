@@ -1,0 +1,232 @@
+{
+  "A1": {
+    "user_id": "userA",
+    "stance": "new",
+    "last_cue": "check_in",
+    "recent_cues": [
+      "check_in"
+    ],
+    "continuity": "first_check_in",
+    "greeting_count": 0,
+    "social_turn_count": 1,
+    "turn_count": 1,
+    "already_greeted": false,
+    "is_social_turn": true,
+    "previous_cue": null,
+    "cue_count": 1,
+    "continuing_social_thread": false
+  },
+  "A2": {
+    "user_id": "userA",
+    "stance": "ongoing",
+    "last_cue": "check_in",
+    "recent_cues": [
+      "check_in",
+      "check_in"
+    ],
+    "continuity": "repeated_check_in",
+    "greeting_count": 0,
+    "social_turn_count": 2,
+    "turn_count": 2,
+    "already_greeted": false,
+    "is_social_turn": true,
+    "previous_cue": "check_in",
+    "cue_count": 2,
+    "continuing_social_thread": true
+  },
+  "B2": {
+    "user_id": "userB",
+    "stance": "closing",
+    "last_cue": "goodbye",
+    "recent_cues": [
+      "greeting",
+      "goodbye"
+    ],
+    "continuity": "closing",
+    "greeting_count": 1,
+    "social_turn_count": 2,
+    "turn_count": 3,
+    "already_greeted": true,
+    "is_social_turn": true,
+    "previous_cue": "greeting",
+    "cue_count": 1,
+    "continuing_social_thread": false
+  },
+  "B3": {
+    "user_id": "userB",
+    "stance": "returning",
+    "last_cue": "greeting",
+    "recent_cues": [
+      "greeting",
+      "goodbye",
+      "greeting"
+    ],
+    "continuity": "re_greeting",
+    "greeting_count": 2,
+    "social_turn_count": 3,
+    "turn_count": 5,
+    "already_greeted": true,
+    "is_social_turn": true,
+    "previous_cue": "goodbye",
+    "cue_count": 2,
+    "continuing_social_thread": true
+  },
+  "C1": {
+    "user_id": "userC",
+    "stance": "new",
+    "last_cue": "emotional_share",
+    "recent_cues": [
+      "emotional_share"
+    ],
+    "continuity": "first_emotional_share",
+    "greeting_count": 0,
+    "social_turn_count": 1,
+    "turn_count": 1,
+    "already_greeted": false,
+    "is_social_turn": true,
+    "previous_cue": null,
+    "cue_count": 1,
+    "continuing_social_thread": false
+  },
+  "C2": {
+    "user_id": "userC",
+    "stance": "ongoing",
+    "last_cue": "emotional_share",
+    "recent_cues": [
+      "emotional_share",
+      "emotional_share"
+    ],
+    "continuity": "continuing_emotional_share",
+    "greeting_count": 0,
+    "social_turn_count": 2,
+    "turn_count": 2,
+    "already_greeted": false,
+    "is_social_turn": true,
+    "previous_cue": "emotional_share",
+    "cue_count": 2,
+    "continuing_social_thread": true
+  },
+  "D_isoA": {
+    "user_id": "isoA",
+    "stance": "closing",
+    "last_cue": "goodbye",
+    "recent_cues": [
+      "greeting",
+      "check_in",
+      "check_in",
+      "goodbye"
+    ],
+    "continuity": "closing",
+    "greeting_count": 1,
+    "social_turn_count": 4,
+    "turn_count": 4,
+    "already_greeted": true,
+    "is_social_turn": true,
+    "previous_cue": "check_in",
+    "cue_count": 1,
+    "continuing_social_thread": false
+  },
+  "D_isoB": {
+    "user_id": "isoB",
+    "stance": "new",
+    "last_cue": "greeting",
+    "recent_cues": [
+      "greeting"
+    ],
+    "continuity": "first_contact",
+    "greeting_count": 1,
+    "social_turn_count": 1,
+    "turn_count": 1,
+    "already_greeted": true,
+    "is_social_turn": true,
+    "previous_cue": null,
+    "cue_count": 1,
+    "continuing_social_thread": false
+  },
+  "E_ask": {
+    "user_id": "factUser",
+    "stance": "ongoing",
+    "last_cue": null,
+    "recent_cues": [],
+    "continuity": "ongoing",
+    "greeting_count": 0,
+    "social_turn_count": 0,
+    "turn_count": 2,
+    "already_greeted": false,
+    "is_social_turn": false,
+    "previous_cue": null,
+    "cue_count": 0,
+    "continuing_social_thread": false
+  },
+  "F1": {
+    "user_id": "userF",
+    "stance": "new",
+    "last_cue": "greeting",
+    "recent_cues": [
+      "greeting"
+    ],
+    "continuity": "first_contact",
+    "greeting_count": 1,
+    "social_turn_count": 1,
+    "turn_count": 1,
+    "already_greeted": true,
+    "is_social_turn": true,
+    "previous_cue": null,
+    "cue_count": 1,
+    "continuing_social_thread": false
+  },
+  "F2": {
+    "user_id": "userF",
+    "stance": "returning",
+    "last_cue": "greeting",
+    "recent_cues": [
+      "greeting",
+      "greeting"
+    ],
+    "continuity": "re_greeting",
+    "greeting_count": 2,
+    "social_turn_count": 2,
+    "turn_count": 2,
+    "already_greeted": true,
+    "is_social_turn": true,
+    "previous_cue": "greeting",
+    "cue_count": 2,
+    "continuing_social_thread": true
+  },
+  "checks": {
+    "A_cue_check_in": true,
+    "A_first_continuity": true,
+    "A_repeated_continuity": true,
+    "A_lang_uses_continuity": true,
+    "A_not_grounding_refusal": true,
+    "B_cue_goodbye": true,
+    "B_closing_continuity": true,
+    "B_closing_stance": true,
+    "B_lang_closing": true,
+    "B_resume_not_closing": true,
+    "B_resume_still_greeted": true,
+    "B_resume_relationship_alive": true,
+    "C_cue_emotional": true,
+    "C_first": true,
+    "C_continuing": true,
+    "C_no_invented_lore": true,
+    "C_lang_uses_continuity": true,
+    "D_B_greeting_count_fresh": true,
+    "D_B_not_inherit_A_count": true,
+    "D_B_recent_not_A": true,
+    "D_B_not_closing": true,
+    "D_B_no_emo_continuity": true,
+    "D_A_had_closing": true,
+    "E_fact_grounded": true,
+    "E_social_not_hijack": true,
+    "E_not_greeting_pool": true,
+    "F_first_contact": true,
+    "F_re_greeting": true,
+    "F_returning_stance": true,
+    "F_lang_returning": true,
+    "F_conv_owns_greeting_intent": true,
+    "F_conv_owns_emotional_intent": true,
+    "F_exec_present": true
+  },
+  "pass": true
+}

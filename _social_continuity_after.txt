@@ -1,0 +1,87 @@
+=== SOCIAL CONTINUITY LIVE PROOFS (A–F) ===
+time: 2026-09-21 09:46:55 MT
+runtime: /tmp/social-cont-htbxonwe
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context']
+social_registered: True
+
+--- A) CHECK-IN ---
+A1 input: 'how are you?'
+A1 reply: "I'm here. How are you doing?"
+A1 social_context: {"already_greeted": false, "continuing_social_thread": false, "continuity": "first_check_in", "cue_count": 1, "greeting_count": 0, "is_social_turn": true, "last_cue": "check_in", "previous_cue": null, "recent_cues": ["check_in"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "userA"}
+A2 input: 'you still there?'
+A2 reply: "I'm still here with you."
+A2 social_context: {"already_greeted": false, "continuing_social_thread": true, "continuity": "repeated_check_in", "cue_count": 2, "greeting_count": 0, "is_social_turn": true, "last_cue": "check_in", "previous_cue": "check_in", "recent_cues": ["check_in", "check_in"], "social_turn_count": 2, "stance": "ongoing", "turn_count": 2, "user_id": "userA"}
+A checks: ['A_cue_check_in', 'A_first_continuity', 'A_repeated_continuity', 'A_lang_uses_continuity', 'A_not_grounding_refusal']
+
+--- B) GOODBYE / CLOSING ---
+B0 reply: 'Hi there' sc={"already_greeted": true, "continuing_social_thread": false, "continuity": "first_contact", "cue_count": 1, "greeting_count": 1, "is_social_turn": true, "last_cue": "greeting", "previous_cue": null, "recent_cues": ["greeting"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "userB"}
+B2 input: 'I gotta go, bye'
+B2 reply: 'Okay, see you later.\n\nI do not want to invent details - can you tell me more about what you meant by "I gotta go, bye"?'
+B2 social_context: {"already_greeted": true, "continuing_social_thread": false, "continuity": "closing", "cue_count": 1, "greeting_count": 1, "is_social_turn": true, "last_cue": "goodbye", "previous_cue": "greeting", "recent_cues": ["greeting", "goodbye"], "social_turn_count": 2, "stance": "closing", "turn_count": 3, "user_id": "userB"}
+B3 resume input: 'hello'
+B3 reply: 'Hello again'
+B3 social_context: {"already_greeted": true, "continuing_social_thread": true, "continuity": "re_greeting", "cue_count": 2, "greeting_count": 2, "is_social_turn": true, "last_cue": "greeting", "previous_cue": "goodbye", "recent_cues": ["greeting", "goodbye", "greeting"], "social_turn_count": 3, "stance": "returning", "turn_count": 5, "user_id": "userB"}
+
+--- C) EMOTIONAL SHARE CONTINUITY ---
+C1 input: 'Today sucked.'
+C1 reply: "I'm here with you."
+C1 social_context: {"already_greeted": false, "continuing_social_thread": false, "continuity": "first_emotional_share", "cue_count": 1, "greeting_count": 0, "is_social_turn": true, "last_cue": "emotional_share", "previous_cue": null, "recent_cues": ["emotional_share"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "userC"}
+C2 input: 'Yeah, work just kept getting worse.'
+C2 reply: 'Still here with you in it.'
+C2 social_context: {"already_greeted": false, "continuing_social_thread": true, "continuity": "continuing_emotional_share", "cue_count": 2, "greeting_count": 0, "is_social_turn": true, "last_cue": "emotional_share", "previous_cue": "emotional_share", "recent_cues": ["emotional_share", "emotional_share"], "social_turn_count": 2, "stance": "ongoing", "turn_count": 2, "user_id": "userC"}
+
+--- D) USER ISOLATION ---
+isoA after social turns: {"already_greeted": true, "continuing_social_thread": false, "continuity": "closing", "cue_count": 1, "greeting_count": 1, "is_social_turn": true, "last_cue": "goodbye", "previous_cue": "check_in", "recent_cues": ["greeting", "check_in", "check_in", "goodbye"], "social_turn_count": 4, "stance": "closing", "turn_count": 4, "user_id": "isoA"}
+isoB fresh hello reply: 'Hello'
+isoB social_context: {"already_greeted": true, "continuing_social_thread": false, "continuity": "first_contact", "cue_count": 1, "greeting_count": 1, "is_social_turn": true, "last_cue": "greeting", "previous_cue": null, "recent_cues": ["greeting"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "isoB"}
+
+--- E) FACT REGRESSION ---
+E teach reply: 'Got it — your favorite color is teal.'
+E teach social: {"already_greeted": false, "continuing_social_thread": false, "continuity": "non_social", "cue_count": 0, "greeting_count": 0, "is_social_turn": false, "last_cue": null, "previous_cue": null, "recent_cues": [], "social_turn_count": 0, "stance": "new", "turn_count": 1, "user_id": "factUser"}
+E ask reply: 'I remember your favorite color is teal.'
+E ask social: {"already_greeted": false, "continuing_social_thread": false, "continuity": "ongoing", "cue_count": 0, "greeting_count": 0, "is_social_turn": false, "last_cue": null, "previous_cue": null, "recent_cues": [], "social_turn_count": 0, "stance": "ongoing", "turn_count": 2, "user_id": "factUser"}
+
+--- F) EXISTING GREETING / OWNERSHIP ---
+F1 reply: 'Hello' sc={"already_greeted": true, "continuing_social_thread": false, "continuity": "first_contact", "cue_count": 1, "greeting_count": 1, "is_social_turn": true, "last_cue": "greeting", "previous_cue": null, "recent_cues": ["greeting"], "social_turn_count": 1, "stance": "new", "turn_count": 1, "user_id": "userF"}
+F2 reply: 'Hi again — still here' sc={"already_greeted": true, "continuing_social_thread": true, "continuity": "re_greeting", "cue_count": 2, "greeting_count": 2, "is_social_turn": true, "last_cue": "greeting", "previous_cue": "greeting", "recent_cues": ["greeting", "greeting"], "social_turn_count": 2, "stance": "returning", "turn_count": 2, "user_id": "userF"}
+
+--- CHECKS SUMMARY ---
+  A_cue_check_in: True
+  A_first_continuity: True
+  A_repeated_continuity: True
+  A_lang_uses_continuity: True
+  A_not_grounding_refusal: True
+  B_cue_goodbye: True
+  B_closing_continuity: True
+  B_closing_stance: True
+  B_lang_closing: True
+  B_resume_not_closing: True
+  B_resume_still_greeted: True
+  B_resume_relationship_alive: True
+  C_cue_emotional: True
+  C_first: True
+  C_continuing: True
+  C_no_invented_lore: True
+  C_lang_uses_continuity: True
+  D_B_greeting_count_fresh: True
+  D_B_not_inherit_A_count: True
+  D_B_recent_not_A: True
+  D_B_not_closing: True
+  D_B_no_emo_continuity: True
+  D_A_had_closing: True
+  E_fact_grounded: True
+  E_social_not_hijack: True
+  E_not_greeting_pool: True
+  F_first_contact: True
+  F_re_greeting: True
+  F_returning_stance: True
+  F_lang_returning: True
+  F_conv_owns_greeting_intent: True
+  F_conv_owns_emotional_intent: True
+  F_exec_present: True
+
+AFTER_STATUS: PASS
+
+BEFORE→AFTER: greeting-only social continuity → check-in / goodbye /
+emotional_share continuity tracked per-user; Language composes from
+social_context; fact path ungated; no cross-user contamination.

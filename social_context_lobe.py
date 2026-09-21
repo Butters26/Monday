@@ -1,12 +1,13 @@
 """
 SocialContextLobe — track social context across turns on the live path.
 
-Owns per-user social state: cues, relationship stance, greeting continuity.
-Consumes Conversation-owned intent (+ mild social text markers); emits a
-compact social_context envelope for Thalamus to feed Reasoning/Language.
+Owns per-user social state: cues, relationship stance, greeting/check-in/
+goodbye/emotional-share continuity. Consumes Conversation-owned intent
+(+ mild social text markers); emits a compact social_context envelope for
+Thalamus to feed Reasoning/Language.
 
 Does not classify intent (Conversation), compose sentences (Language),
-answer facts (Reasoning), or set goals (Executive).
+interpret affect (Emotion), answer facts (Reasoning), or set goals (Executive).
 """
 
 from __future__ import annotations
@@ -31,13 +32,20 @@ _INTENT_TO_CUE = {
 
 _CHECK_IN_RE = re.compile(
     r"(?i)\b(?:"
-    r"how are you|how's it going|how is it going|what's up|whats up|"
-    r"you there|still with me|are you there"
+    r"how are you|how's it going|how is it going|how's it goin|"
+    r"what's up|whats up|what up|"
+    r"you still there|you there|still with me|are you there|still there"
     r")\b"
 )
 
 _GOODBYE_RE = re.compile(
-    r"(?i)^\s*(?:bye|goodbye|good\s*bye|see you|later|farewell)\b"
+    r"(?i)(?:"
+    r"^\s*(?:bye|goodbye|good\s*bye|farewell|good\s*night|goodnight|"
+    r"see\s+you(?:\s+later)?|later)\b|"
+    r"\b(?:i\s+)?(?:gotta|have\s+to|need\s+to)\s+go\b|"
+    r"\btalk\s+(?:to\s+you\s+)?later\b|"
+    r"\bsee\s+you\s+later\b"
+    r")"
 )
 
 
@@ -67,10 +75,13 @@ class SocialContextLobe:
                 "social_turn_count": 0,
                 "turn_count": 0,
                 "last_cue": None,
+                "previous_cue": None,
                 "recent_cues": [],
+                "cue_counts": {},
                 "last_seen": 0.0,
                 "last_continuity": "non_social",
                 "last_was_social": False,
+                "closing_active": False,
             }
             self._users[uid] = state
         return state
@@ -86,7 +97,7 @@ class SocialContextLobe:
         if intent in _INTENT_TO_CUE:
             return _INTENT_TO_CUE[intent]
         text = user_input if isinstance(user_input, str) else ""
-        if _GOODBYE_RE.match(text):
+        if _GOODBYE_RE.search(text) and len(text.split()) <= 14:
             return "goodbye"
         if _CHECK_IN_RE.search(text) and len(text.split()) <= 12:
             return "check_in"
@@ -96,6 +107,17 @@ class SocialContextLobe:
                 return "greeting"
             return "check_in"
         return None
+
+    def _cue_nearby_count(self, state: Dict[str, Any], cue: str, window: int = 4) -> int:
+        recent = list(state.get("recent_cues") or [])
+        return sum(1 for c in recent[-window:] if c == cue)
+
+    def _total_cue_count(self, state: Dict[str, Any], cue: str) -> int:
+        counts = state.get("cue_counts") or {}
+        try:
+            return int(counts.get(cue) or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _continuity_label(
         self,
@@ -108,8 +130,31 @@ class SocialContextLobe:
             if greeted_before:
                 return "re_greeting"
             return "first_contact"
-        if cue in {"goodbye", "check_in", "emotional_share"}:
-            return "ongoing_social"
+
+        if cue == "check_in":
+            prior = self._total_cue_count(state, "check_in")
+            nearby = self._cue_nearby_count(state, "check_in")
+            if prior == 0:
+                return "first_check_in"
+            if nearby >= 1 or state.get("last_cue") == "check_in":
+                return "repeated_check_in"
+            return "continuing_check_in"
+
+        if cue == "goodbye":
+            return "closing"
+
+        if cue == "emotional_share":
+            prior = self._total_cue_count(state, "emotional_share")
+            nearby = self._cue_nearby_count(state, "emotional_share")
+            if prior == 0:
+                return "first_emotional_share"
+            if nearby >= 1 or state.get("last_cue") == "emotional_share":
+                return "continuing_emotional_share"
+            return "repeated_emotional_share"
+
+        # Non-cue turn after a closing — resume normally (do not stay closed).
+        if state.get("closing_active"):
+            return "resuming"
         if state.get("turn_count", 0) > 0:
             return "ongoing"
         return "non_social"
@@ -121,7 +166,25 @@ class SocialContextLobe:
         *,
         greeted_before: bool,
         prior_turns: int = 0,
+        continuity: str = "",
     ) -> str:
+        if cue == "goodbye" or continuity == "closing":
+            return "closing"
+        # Resume after closing — relationship not ended.
+        if state.get("closing_active") and cue != "goodbye":
+            if greeted_before or prior_turns > 0:
+                return "returning" if continuity == "re_greeting" else "ongoing"
+            return "new"
+        if cue == "emotional_share" and continuity in {
+            "continuing_emotional_share",
+            "repeated_emotional_share",
+        }:
+            return "ongoing"
+        if cue == "check_in" and continuity in {
+            "continuing_check_in",
+            "repeated_check_in",
+        }:
+            return "ongoing"
         if cue == "greeting" and greeted_before:
             return "returning"
         if greeted_before or prior_turns > 0:
@@ -138,6 +201,19 @@ class SocialContextLobe:
         continuity: str,
         is_social_turn: bool,
     ) -> Dict[str, Any]:
+        last_cue = cue if cue is not None else state.get("last_cue")
+        cue_counts = state.get("cue_counts") or {}
+        cue_count = 0
+        if isinstance(last_cue, str):
+            try:
+                cue_count = int(cue_counts.get(last_cue) or 0)
+            except (TypeError, ValueError):
+                cue_count = 0
+        continuing = continuity.startswith(("continuing_", "repeated_", "re_")) or continuity in {
+            "ongoing_social",
+            "ongoing",
+            "resuming",
+        }
         return {
             "user_id": state["user_id"],
             "stance": state.get("stance") or "new",
@@ -145,10 +221,13 @@ class SocialContextLobe:
             "greeting_count": int(state.get("greeting_count") or 0),
             "social_turn_count": int(state.get("social_turn_count") or 0),
             "turn_count": int(state.get("turn_count") or 0),
-            "last_cue": cue if cue is not None else state.get("last_cue"),
+            "last_cue": last_cue,
+            "previous_cue": state.get("previous_cue"),
             "recent_cues": list(state.get("recent_cues") or [])[-8:],
             "continuity": continuity,
             "is_social_turn": bool(is_social_turn),
+            "cue_count": cue_count,
+            "continuing_social_thread": bool(continuing and is_social_turn),
             "last_seen": float(state.get("last_seen") or 0.0),
         }
 
@@ -168,20 +247,38 @@ class SocialContextLobe:
         is_social = cue is not None
         continuity = self._continuity_label(state, cue, greeted_before=greeted_before)
 
+        prior_last = state.get("last_cue")
         # Stance/continuity from pre-update flags, then mutate.
         state["stance"] = self._stance_after(
-            state, cue, greeted_before=greeted_before, prior_turns=int(state.get("turn_count") or 0)
+            state,
+            cue,
+            greeted_before=greeted_before,
+            prior_turns=int(state.get("turn_count") or 0),
+            continuity=continuity,
         )
         state["turn_count"] = int(state.get("turn_count") or 0) + 1
         state["last_seen"] = time.time()
         state["last_continuity"] = continuity
         state["last_was_social"] = is_social
+
+        if cue == "goodbye":
+            state["closing_active"] = True
+        elif state.get("closing_active") and cue != "goodbye":
+            # Later turn resumes — do not permanently end relationship.
+            state["closing_active"] = False
+
         if cue:
+            state["previous_cue"] = prior_last
             state["last_cue"] = cue
             recent = list(state.get("recent_cues") or [])
             recent.append(cue)
             state["recent_cues"] = recent[-16:]
-            self.social_cues.append({"user_id": state["user_id"], "cue": cue, "at": state["last_seen"]})
+            counts = dict(state.get("cue_counts") or {})
+            counts[cue] = int(counts.get(cue) or 0) + 1
+            state["cue_counts"] = counts
+            self.social_cues.append(
+                {"user_id": state["user_id"], "cue": cue, "at": state["last_seen"]}
+            )
             if len(self.social_cues) > 64:
                 self.social_cues = self.social_cues[-64:]
             state["social_turn_count"] = int(state.get("social_turn_count") or 0) + 1
@@ -223,6 +320,8 @@ class SocialContextLobe:
             "greeting_count",
             "social_turn_count",
             "last_cue",
+            "previous_cue",
+            "closing_active",
         ):
             if key in context:
                 state[key] = context[key]
