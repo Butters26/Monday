@@ -171,6 +171,12 @@ class GrammarEngine:
             if composed:
                 return composed
 
+        # Social continuity for greetings: Language composes (do not echo
+        # provider first-meet boilerplate when Social tracked this turn).
+        social = semantic_input.get('social_context')
+        if intent == 'greeting' and isinstance(social, dict) and social:
+            return self._compose_greeting(emotion, social_context=social)
+
         # Prefer multi-proposition composition when Reasoning/Notus supplied
         # distinct grounded facts — do not invent, only arrange.
         composed_props = self._compose_propositions(propositions)
@@ -212,7 +218,11 @@ class GrammarEngine:
             pass
         
         if intent == 'greeting':
-            return self._compose_greeting(emotion)
+            social = semantic_input.get('social_context')
+            return self._compose_greeting(
+                emotion,
+                social_context=social if isinstance(social, dict) else None,
+            )
         elif intent == 'introduce':
             return self._compose_introduction()
         elif intent == 'identify':
@@ -234,14 +244,29 @@ class GrammarEngine:
         else:
             return self._compose_statement(concepts, relations, certainty, perspective, tense)
     
-    def _compose_greeting(self, emotion: str) -> str:
-        greetings = [
-            "Hello",
-            "Hi there",
-            "Hello! Nice to meet you",
-            "Hi! How are you?",
-            "Hey there"
-        ]
+    def _compose_greeting(
+        self, emotion: str, social_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Compose a greeting. Social supplies continuity; Language owns wording."""
+        social = social_context if isinstance(social_context, dict) else {}
+        continuity = str(social.get("continuity") or "")
+        returning = continuity == "re_greeting" or str(social.get("stance") or "") == "returning"
+        if returning:
+            greetings = [
+                "Hello again",
+                "Hi again — still here",
+                "Hey — good to hear from you again",
+                "Hello again. What's on your mind?",
+                "Hi — I'm still here with you",
+            ]
+        else:
+            greetings = [
+                "Hello",
+                "Hi there",
+                "Hello! Nice to meet you",
+                "Hi! How are you?",
+                "Hey there",
+            ]
         return random.choice(greetings)
     
     def _compose_introduction(self) -> str:

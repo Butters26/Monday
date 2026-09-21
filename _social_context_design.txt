@@ -1,0 +1,46 @@
+=== SocialContextLobe DESIGN JOB ===
+time: 2026-09-21 (MT)
+HEAD: 4c6085d (pre-implement)
+
+DONE_MEANS
+  SocialContextLobe is registered on the live prompted path. It tracks
+  per-user social context across turns (cues, relationship stance,
+  greeting continuity) from Conversation-owned intent + surface social
+  markers, and distributes a compact social_context envelope into the
+  shared cycle so another lobe (Language) honestly uses it. It does not
+  steal Conversation intent classification, Language sentence construction,
+  Reasoning fact answers, or Executive goal control.
+
+OWNERSHIP BOUNDARIES
+  Social owns:
+    - Per-user social state across turns (stance, last/recent cues,
+      already_greeted, greeting_count, continuity label).
+    - Cue extraction from Conversation understanding + mild social text
+      markers (greeting / goodbye / check_in / emotional_share / other).
+    - Emitting a compact social_context dict for Thalamus to feed forward.
+  Conversation owns: intent / slots / ask_kind (Social consumes, does not re-classify).
+  Language owns: sentence construction (Social supplies stance/continuity only).
+  Reasoning owns: facts / conclusions (may see social_context; does not own it).
+  Executive owns: goal/inhibition (already maps greeting→social goal; untouched).
+
+SMALLEST ARCHITECTURAL CORRECTION
+  1. Flesh social_context_lobe.py: observe_turn / get_context / process_message.
+  2. Register in run_abin.create_core_systems (+ shutdown list).
+  3. Tiny Thalamus glue after Conversation.understand:
+       observe_turn → attach social_context onto reasoning.think input
+       and onto semantic_input before Language.
+  4. Tiny Language glue: _compose_greeting consumes social_context
+       continuity/already_greeted (returning vs first-meet pools).
+  No from-scratch rewrite; no Pattern/Attention/closed-lobe redesign.
+
+LIVE SCENARIO (honest, from code)
+  Multi-turn greeting continuity: first "hello" then second "hello".
+  BEFORE: Social absent; Language may emit first-meet lines ("Nice to meet you")
+          with no social_context on the think/language path.
+  AFTER:  Social registered; second hello shows stance/continuity tracked
+          and Language avoids first-meet phrasing when already_greeted.
+
+HONEST LIMITS (expected)
+  Surface heuristics only (intent + mild social markers). No deep theory-of-mind,
+  no invented relationship lore, no Notus-backed social graph. Per-process
+  in-memory state (not durable across restarts).

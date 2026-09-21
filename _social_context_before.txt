@@ -1,0 +1,37 @@
+=== SOCIALCONTEXT BEFORE PROOF ===
+time: 2026-09-21 09:28:09 MT
+runtime: /tmp/social-before-g9o980ol
+
+DONE_MEANS (for AFTER): Social registered; tracks stance/cues across turns;
+feeds social_context into reasoning/language; Language uses continuity.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration']
+social_context_registered: False
+thalamus.last_social_context: False
+
+--- LIVE multi-turn greeting ---
+turn1 hello reply: 'Hello! How can I help?'
+turn1 think_keys: ['attention', 'emotion_result', 'memory_context', 'pattern_result', 'perception', 'understanding', 'user_id', 'user_input']
+turn1 think_has_social_context: False
+turn1 language_semantic_has_social: False
+turn1 language_keys_sample: ['answer', 'attention_focus', 'attention_focus_text', 'attention_ranked', 'certainty', 'discovered_patterns', 'emotion', 'emotional_intensity', 'emotional_tone', 'intent', 'memory_context', 'meta_cognition', 'pattern_result', 'propositions', 'user_input']
+turn2 hello reply: 'Hello! How can I help?'
+turn2 think_keys: ['attention', 'emotion_result', 'memory_context', 'pattern_result', 'perception', 'understanding', 'user_id', 'user_input']
+turn2 think_has_social_context: False
+turn2 language_semantic_has_social: False
+
+--- Language greeting pool without social_context ---
+sample_greetings: ['Hello', 'Hello! Nice to meet you', 'Hey there', 'Hi there', 'Hi! How are you?']
+first_meet_phrases_present: True -> ['Hello! Nice to meet you']
+
+--- FAIL CONDITIONS (expected BEFORE) ---
+absent_from_registry: True
+absent_from_think_path: True
+absent_from_language_path: True
+first_meet_pool_active_no_continuity: True
+
+BEFORE_STATUS: PASS (Social absent as expected)
+
+HONEST: Conversation still detects greeting; Executive may set goal=social;
+no SocialContextLobe tracks/distributes continuity into Reasoning/Language.
+Second hello has no continuity signal — Language still draws first-meet pool.

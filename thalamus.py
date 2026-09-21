@@ -111,6 +111,7 @@ class Thalamus:
         self.last_meta_cognition: Optional[Dict[str, Any]] = None
         # Last Executive control snapshot (goal / inhibition / steer).
         self.last_executive: Optional[Dict[str, Any]] = None
+        self.last_social_context: Optional[Dict[str, Any]] = None
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -1119,6 +1120,42 @@ class Thalamus:
         self.last_executive = goal_info
         return goal_info
 
+
+    def _social_observe_turn(
+        self,
+        user_input: str,
+        understanding: Dict[str, Any],
+        user_id: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Tiny glue: SocialContext tracks cues/stance; returns envelope for feed-forward."""
+        with self.lobe_handlers_lock:
+            has_social = "social_context" in self.lobe_handlers
+        if not has_social:
+            return None
+        try:
+            resp = self.send_and_wait(
+                "social_context",
+                "observe_turn",
+                {
+                    "user_input": user_input,
+                    "understanding": understanding,
+                    "user_id": user_id,
+                },
+                source="thalamus",
+            )
+        except Exception:
+            return None
+        if resp.get("status") != "success":
+            return None
+        body = self._content(resp)
+        snap = body if isinstance(body, dict) else {}
+        if not snap and isinstance(resp.get("social_context"), dict):
+            snap = resp["social_context"]
+        if not isinstance(snap, dict) or not snap:
+            return None
+        self.last_social_context = dict(snap)
+        return self.last_social_context
+
     def _refresh_attention_payload_post_executive(
         self, prior: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
@@ -1671,6 +1708,10 @@ class Thalamus:
 
         # Executive: set/hold current goal from intent; steer Attention toward it.
         self._executive_set_goal_from_turn(user_input, understanding)
+        # Social: track cues/stance/greeting continuity (does not own intent).
+        social_context = self._social_observe_turn(
+            user_input, understanding, user_id=user_id
+        )
         # Same-turn handoff: Executive may have re-selected focus — refresh
         # attention_payload + re-route so Reasoning.think sees post-Executive focus.
         attention_payload = self._refresh_attention_payload_post_executive(
@@ -1832,6 +1873,9 @@ class Thalamus:
                     "perception": perception_payload,
                     "attention": attention_payload,
                     "pattern_result": pattern_result,
+                    "social_context": social_context
+                    if isinstance(social_context, dict)
+                    else self.last_social_context,
                 },
             },
         )
@@ -1933,6 +1977,14 @@ class Thalamus:
                 semantic_input.setdefault("propositions", [reasoning_answer])
         # Tiny glue: Language owns composition from user text + emotion tone cues.
         semantic_input["user_input"] = user_input
+        # Social envelope for Language (continuity/stance — Language still composes).
+        social_for_lang = (
+            social_context
+            if isinstance(social_context, dict)
+            else self.last_social_context
+        )
+        if isinstance(social_for_lang, dict) and social_for_lang:
+            semantic_input["social_context"] = dict(social_for_lang)
         if emotional_state.get("emotional_tone") is not None:
             semantic_input.setdefault(
                 "emotional_tone", emotional_state.get("emotional_tone")

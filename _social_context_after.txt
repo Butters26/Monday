@@ -1,0 +1,39 @@
+=== SOCIALCONTEXT AFTER PROOF (strict live use) ===
+time: 2026-09-21 09:34:12 MT
+runtime: /tmp/social-after2-fknjoxgh
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'executive_control', 'language', 'meta_cognition', 'notus', 'novelty', 'output', 'pattern', 'perception', 'reasoning', 'sensory_integration', 'social_context']
+social_registered: True
+
+turn1 reply: 'Hey there'
+turn1 think.continuity/stance/cue: first_contact/new/greeting
+turn1 lang.continuity: first_contact
+
+turn2 reply: "Hi — I'm still here with you"
+turn2 think.continuity/stance/count: re_greeting/returning/2
+turn2 lang.continuity: re_greeting
+turn2 lang_intent/answer_was: 'question' / ''
+
+get_context: {'continuity': 'ongoing', 'stance': 'ongoing', 'greeting_count': 2, 'already_greeted': True, 'last_cue': 'greeting'}
+
+teach: 'Got it — your favorite color is teal.'
+ask: 'I remember your favorite color is teal.'
+
+--- CHECKS ---
+  registered: True
+  t1_continuity_first: True
+  t1_lang_social: True
+  t2_continuity_re: True
+  t2_stance_returning: True
+  t2_lang_re: True
+  live_r2_has_returning_marker: True
+  live_r2_not_first_meet: True
+  live_r2_not_provider_boilerplate: True
+  fact_teach: True
+  fact_ask: True
+
+AFTER_STATUS: PASS
+
+BEFORE→AFTER: Social absent / no social on think|language / first-meet pool
+unconditional → Social registered; continuity tracked; live re-greeting
+reply uses Language returning pool (not provider boilerplate).
