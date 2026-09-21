@@ -684,6 +684,10 @@ class Thalamus:
                     ),
                 }
             )
+            # SensoryIntegration multi-modal competitors (already fused on stream).
+            for sig in perception_payload.get("attention_signals") or []:
+                if isinstance(sig, dict) and sig.get("id"):
+                    signals.append(dict(sig))
             for idx, ent in enumerate(perception_payload.get("entities") or []):
                 if not isinstance(ent, str) or not ent.strip():
                     continue
@@ -780,21 +784,129 @@ class Thalamus:
         image_bytes: Optional[bytes] = None,
         user_id: str = "default",
         continue_conversation: bool = True,
+        extra_inputs: Optional[List[Any]] = None,
     ) -> Any:
-        """Route sensory intake through Perception before conversation.
+        """Route sensory intake via SensoryIntegration (when registered) then conversation.
 
-        Modalities: text | audio/hearing | vision/visual/image.
-        File/buffer paths are first-class. Returns reply string when
-        continue_conversation, else the perception envelope dict.
+        Modalities: text | audio/hearing | vision/visual/image | multimodal.
+        File/buffer paths are first-class. ``extra_inputs`` lets callers attach
+        sibling modality dicts so SI fuses one multi-modal stream. Returns reply
+        string when continue_conversation, else the unified stream envelope.
+        Falls back to direct Perception when SensoryIntegration is absent.
         """
         modality_l = (modality or "text").strip().lower()
         with self.lobe_handlers_lock:
             has_perception = "perception" in self.lobe_handlers
+            has_si = "sensory_integration" in self.lobe_handlers
         if not has_perception:
             if modality_l == "text" and isinstance(text, str) and text.strip():
                 return self.process_user_input(text, user_id=user_id)
             return {"status": "error", "message": "perception lobe not registered"}
 
+        # Preferred live path: SensoryIntegration unifies → Attention → Conversation.
+        if has_si:
+            bundle: List[Any] = []
+            if modality_l in ("text", "chat", "language"):
+                if not isinstance(text, str) or not text.strip():
+                    return {"status": "error", "message": "text modality requires text="}
+                bundle.append({"modality": "text", "text": text.strip()})
+            elif modality_l in ("audio", "hearing", "sound"):
+                item: Dict[str, Any] = {"modality": "audio"}
+                if path:
+                    item["path"] = path
+                if audio_bytes is not None:
+                    item["audio_bytes"] = audio_bytes
+                # No path/bytes → Perception will attempt mic and fail honestly.
+                bundle.append(item)
+            elif modality_l in ("vision", "visual", "image", "sight"):
+                item = {"modality": "vision"}
+                if path:
+                    item["path"] = path
+                if image_bytes is not None:
+                    item["image_bytes"] = image_bytes
+                bundle.append(item)
+            elif modality_l in ("multimodal", "bundle", "fused"):
+                # Caller supplies the full input list via extra_inputs (and optional text).
+                if isinstance(text, str) and text.strip():
+                    bundle.append({"modality": "text", "text": text.strip()})
+            else:
+                return {"status": "error", "message": f"unknown modality: {modality}"}
+
+            if extra_inputs:
+                for extra in extra_inputs:
+                    if extra is not None:
+                        bundle.append(extra)
+
+            if not bundle:
+                return {
+                    "status": "error",
+                    "message": "sensory bundle empty — provide modality inputs",
+                }
+
+            si_resp = self.send_and_wait(
+                "sensory_integration",
+                "ingest",
+                {
+                    "inputs": bundle,
+                    "user_id": user_id,
+                    "route_attention": True,
+                    "primary_modality": modality_l,
+                },
+                source="thalamus",
+            )
+            if si_resp.get("status") != "success":
+                msg = si_resp.get("message") or "sensory integration failed"
+                if not continue_conversation:
+                    return si_resp
+                return f"I couldn't integrate that sensory input ({msg})."
+
+            stream = self._content(si_resp)
+            if not isinstance(stream, dict):
+                stream = si_resp.get("stream") if isinstance(si_resp.get("stream"), dict) else {}
+
+            # Honest hard-fail when the only requested modality is unavailable.
+            honesty = (stream.get("raw_meta") or {}).get("honesty") or {}
+            active = list(stream.get("modalities_active") or [])
+            if modality_l in ("audio", "hearing", "sound") and "audio" not in active and "hearing" not in active:
+                err = (honesty.get("audio") or {}).get("error") or "audio perception failed"
+                if not continue_conversation:
+                    return {
+                        "status": "error",
+                        "message": err,
+                        "content": stream,
+                    }
+                return f"I couldn't hear that ({err})."
+            if modality_l in ("vision", "visual", "image", "sight") and not any(
+                m in active for m in ("vision", "visual", "image", "sight")
+            ):
+                err = (honesty.get("vision") or {}).get("error") or "vision perception failed"
+                if not continue_conversation:
+                    return {
+                        "status": "error",
+                        "message": err,
+                        "content": stream,
+                    }
+                return f"I couldn't see that ({err})."
+
+            if not continue_conversation:
+                return stream
+
+            spoken = stream.get("text") or stream.get("normalized_text")
+            if isinstance(spoken, str) and spoken.strip():
+                return self.process_user_input(
+                    spoken.strip(), user_id=user_id, perception_payload=stream
+                )
+            # Multi-modal / acoustic-only: enter live path with an honest note.
+            mods = ",".join(stream.get("modalities") or [modality_l])
+            note = (
+                f"[{mods}] "
+                + ", ".join(str(c) for c in (stream.get("concepts") or [])[:6])
+            )
+            return self.process_user_input(
+                note, user_id=user_id, perception_payload=stream
+            )
+
+        # Fallback when SensoryIntegration is not registered: direct Perception.
         if modality_l in ("text", "chat", "language"):
             if not isinstance(text, str) or not text.strip():
                 return {"status": "error", "message": "text modality requires text="}
@@ -806,7 +918,7 @@ class Thalamus:
             return self._content(resp) if resp.get("status") == "success" else resp
 
         if modality_l in ("audio", "hearing", "sound"):
-            content: Dict[str, Any] = {"user_id": user_id}
+            content = {"user_id": user_id}
             if path:
                 content["path"] = path
             if audio_bytes is not None:
@@ -826,7 +938,6 @@ class Thalamus:
                 return self.process_user_input(
                     spoken.strip(), user_id=user_id, perception_payload=envelope
                 )
-            # Acoustic-only: still enter live path with an honest sensory note.
             note = (
                 "[hearing] "
                 + ", ".join(str(c) for c in (envelope.get("concepts") or [])[:6])
@@ -896,6 +1007,43 @@ class Thalamus:
         else:
             # Precomputed envelope from audio/vision — do not re-run text perceive.
             perception_payload = dict(perception_payload)
+
+        # SensoryIntegration: fold this turn's envelope into the shared multi-modal
+        # stream (and pull recent cross-modal context) without rebuilding Perception.
+        with self.lobe_handlers_lock:
+            has_si = "sensory_integration" in self.lobe_handlers
+        if has_si and isinstance(perception_payload, dict) and perception_payload:
+            # Skip re-absorb when the payload is already an SI unified stream.
+            already_si = (perception_payload.get("raw_meta") or {}).get("source") == "sensory_integration"
+            if not already_si:
+                try:
+                    si_abs = self.send_and_wait(
+                        "sensory_integration",
+                        "absorb",
+                        {
+                            "envelope": perception_payload,
+                            "user_id": user_id,
+                            "route_attention": False,
+                        },
+                        source="thalamus",
+                    )
+                    if si_abs.get("status") == "success":
+                        merged = self._content(si_abs)
+                        if isinstance(merged, dict) and merged:
+                            perception_payload = merged
+                            normalized = (
+                                perception_payload.get("text")
+                                or perception_payload.get("normalized_text")
+                                or user_input
+                            )
+                            if isinstance(normalized, str) and normalized.strip():
+                                # Keep user_input as the conversational text; stream
+                                # may prefer an older audio transcript — only adopt
+                                # when this turn had no usable text yet.
+                                if not user_input.strip():
+                                    user_input = normalized.strip()
+                except Exception:
+                    pass
 
         # Novelty: consolidate real novelty_score against familiar patterns.
         # Perception flags remain evidence; Novelty owns the live-path score.

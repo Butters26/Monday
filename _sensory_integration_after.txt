@@ -1,0 +1,76 @@
+=== SENSORY INTEGRATION AFTER PROOF ===
+time: 2026-09-20 19:03:05 MDT
+runtime: /tmp/si-after-txw7blkp
+
+DONE_MEANS: SensoryIntegration unifies text/audio/vision Perception envelopes into one
+multi-modal stream the live path uses (Attention salience + shared context for Conversation),
+without rebuilding Perception, with honest degradation when mic/webcam/hardware unavailable.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+perception: audio_file=True audio_mic=False vision_file=True vision_camera=False
+audio_reason: microphone unavailable: Could not find PyAudio; check installation
+vision_reason: camera index 0 not openable
+process_sensory_input→SI: True
+process_user_input→absorb: True
+
+fixture_wav exists=True fixture_png exists=True
+
+--- BEFORE vs AFTER wiring ---
+BEFORE: process_sensory_input bypassed SI; integrate_inputs fire-and-forget normalize only;
+        no unified_stream / shared_context / Attention route from SI.
+AFTER:  process_sensory_input → SI.ingest → Perception envelopes → fuse → Attention;
+        process_user_input absorbs text envelope into shared multi-modal context.
+
+--- MULTI-MODAL integrate (text + audio file + vision file) ---
+stream.modality=multimodal
+stream.modalities=['text', 'audio', 'vision']
+stream.modalities_active=['text', 'audio', 'vision']
+stream.confidence=1.0
+stream.text[:100]='Matthew is testing SensoryIntegration multi-modal.'
+concepts[:10]=['matthew', 'is', 'testing', 'sensoryintegration', 'multi-modal', 'perception', 'in', 'denver', 'today', 'loudness:moderate']
+entities[:8]=['SensoryIntegration', 'Denver']
+attention_signals ids=['si:text', 'si:audio', 'si:vision']
+attention_focus=si:audio
+attention_priority=['si:audio', 'si:text', 'si:vision', 'ambient_noise']
+  honesty[text] available=True error=None intake=None
+  honesty[audio] available=True error=None intake=file
+  honesty[vision] available=True error=None intake=file
+  by_modality[text] conf=1.0 concepts=['matthew', 'is', 'testing', 'sensoryintegration', 'multi-modal'] text='Matthew is testing SensoryIntegration multi-modal.'
+  by_modality[audio] conf=0.95 concepts=['matthew', 'is', 'testing', 'perception', 'in'] text='Matthew is testing perception in Denver today.'
+  by_modality[vision] conf=0.83033187687397 concepts=['the', 'flag', 'of', 'the', 'democratic'] text='the flag of the democratic democratic democratic democratic '
+si status: {'buffer_size': 3, 'last_normalized': 3, 'envelope_count': 3, 'modalities': ['text', 'audio', 'vision'], 'has_unified_stream': True, 'shared_modalities': ['text', 'audio', 'vision'], 'attention_focus': 'si:audio'}
+shared_context modalities_seen=['text', 'audio', 'vision'] concepts_n=23
+
+--- LIVE process_sensory_input via SI ---
+text continue=False modality=text active=['text']
+  source=sensory_integration attention_focus=si:text
+audio file continue=False modality=audio active=['audio']
+  text='Matthew is testing perception in Denver today.' concepts=['matthew', 'is', 'testing', 'perception', 'in', 'denver']
+  source=sensory_integration honesty={'audio': {'available': True, 'confidence': 0.95, 'error': None, 'intake': 'file'}}
+vision file continue=False modality=vision active=['vision']
+  text='the flag of the democratic democratic democratic democratic democratic democrati' concepts=['the', 'flag', 'of', 'democratic', 'faces:0', 'brightness:normal']
+multimodal continue=False modality=multimodal active=['text', 'audio', 'vision']
+  modalities=['text', 'audio', 'vision'] attention_signals=['si:text', 'si:audio', 'si:vision']
+  focus=si:audio source=sensory_integration
+
+--- honesty: mic/webcam (no fake success) ---
+audio mic: status=error message=live mic perception disabled — device unavailable
+  honesty={'audio': {'available': False, 'confidence': 0.0, 'error': 'live mic perception disabled — device unavailable', 'intake': 'mic'}}
+  fake_success_phrases_present=False
+vision cam: status=error message=live camera perception disabled — device unavailable
+
+--- TEXT path still works (process_user_input) ---
+pre-text shared modalities=['vision']
+process_user_input reply: 'I\'m still with ...you...\n\nI do not want to invent details - can you tell me more about what you meant by "Hello Monday, SensoryIntegration after proof text path."?'
+si status after text path: {'buffer_size': 1, 'last_normalized': 0, 'envelope_count': 2, 'modalities': ['text', 'vision'], 'has_unified_stream': True, 'shared_modalities': ['vision', 'text'], 'attention_focus': 'si:audio'}
+shared after text: modalities_seen=['vision', 'text'] last_modality=multimodal
+unified after text absorb: modality=multimodal active=['text', 'vision'] text[:80]='Hello Monday, SensoryIntegration after proof text path.'
+text_primary_preserved: True
+
+--- LIVE audio→conversation still works ---
+audio continue=True reply: "I'm here to ...help..."
+
+REMAINING_GAPS:
+- Live mic/webcam still hardware-gated (honest); no capture on this box.
+- Shared cross-modal context window is time-bounded (~120s), not a long episodic store.
+- Perception.sensory_data still skips pathless mic/camera; SI fills via per-signal fallback.

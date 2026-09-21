@@ -1,0 +1,75 @@
+=== SENSORY INTEGRATION BEFORE BASELINE ===
+time: 2026-09-20 19:00:49 MDT
+runtime: /tmp/si-before-enk0dv89
+
+DESIGN_FROM_CODE:
+SensoryIntegrationLobe docstring: thin fuse of normalized signals into perception.
+Inputs: text strings + modality-tagged dicts (audio/vision file paths).
+integrate_inputs: normalize → fire-and-forget thalamus.send_message(perception, sensory_data).
+process_message: ingest | reset | get_status only.
+Perception.sensory_data: per-signal perceive_text/audio/vision → {fused: [...], count}.
+Thalamus.process_sensory_input: routes modality→Perception DIRECTLY; does NOT call SI.
+Thalamus.process_user_input: likewise bypasses SI.
+Live: SI registered in create_core_systems next to Perception.
+Live vs stub: SI itself is real code but orphaned from live path (normalize-only + async ping).
+
+DONE_MEANS: SensoryIntegration unifies text/audio/vision Perception envelopes into one
+multi-modal stream the live path uses (Attention salience + shared context for Conversation),
+without rebuilding Perception, with honest degradation when mic/webcam/hardware unavailable.
+
+registered_lobes: ['attention', 'autonomous', 'conversation', 'emotion', 'language', 'notus', 'novelty', 'output', 'perception', 'reasoning', 'sensory_integration']
+sensory_integration_class: SensoryIntegrationLobe
+perception_class: PerceptionLobe
+perception_senses: text=True audio_file=True audio_mic=False vision_file=True vision_camera=False
+audio_reason: microphone unavailable: Could not find PyAudio; check installation
+vision_reason: camera index 0 not openable
+
+process_sensory_input calls sensory_integration: False
+process_user_input calls sensory_integration: False
+integrate_inputs uses send_and_wait: False
+integrate_inputs uses send_message: True
+
+fixture_wav: _perception_semantic_fixtures/speech_clear.wav exists=True bytes=112974
+fixture_png: _perception_semantic_fixtures/scene_sun_grass.png exists=True bytes=1137
+
+--- DIRECT SI.integrate_inputs (orphan path) ---
+normalize returned count=3 types=['str', 'dict', 'dict']
+  [0] str: 'Matthew is testing SensoryIntegration text.'
+  [1] dict modality=audio path=_perception_semantic_fixtures/speech_clear.wav text=None
+  [2] dict modality=vision path=_perception_semantic_fixtures/scene_sun_grass.png text=None
+si get_status after integrate: {'status': 'success', 'content': {'buffer_size': 3, 'last_normalized': 3}}
+  hasattr last_stream: False
+  hasattr unified_stream: False
+  hasattr fused_envelope: False
+  hasattr shared_context: False
+  hasattr last_context: False
+
+--- Perception sensory_data via send_and_wait (what SI never awaits) ---
+sensory_data status=success count=3
+  fused[0] modality=text conf=1.0 concepts=['text', 'only', 'probe'] text='text only probe'
+           available=None error=None intake=None
+  fused[1] modality=audio conf=0.95 concepts=['matthew', 'is', 'testing', 'perception', 'in'] text='Matthew is testing perception in Denver today.'
+           available=True error=None intake=file
+  fused[2] modality=vision conf=0.83033187687397 concepts=['the', 'flag', 'of', 'the', 'democratic'] text='the flag of the democratic democratic democratic democratic democratic'
+           available=True error=None intake=file
+
+--- LIVE process_sensory_input (bypasses SI today) ---
+text continue=False → modality=text concepts=['hello', 'sensoryintegration', 'baseline']
+si status after process_sensory_input(text): {'status': 'success', 'content': {'buffer_size': 3, 'last_normalized': 3}}  # buffer should still be from integrate only
+audio file continue=False → modality=audio conf=0.95 concepts=['matthew', 'is', 'testing', 'perception', 'in', 'denver']
+  error=None text='Matthew is testing perception in Denver today.'
+vision file continue=False → modality=vision conf=0.83033187687397 concepts=['the', 'flag', 'of', 'the', 'democratic', 'democratic']
+  text='the flag of the democratic democratic democratic democratic democratic democrati'
+
+--- honesty: mic/webcam (expect unavailable, no fake success) ---
+audio no-path (mic): status=error message=live mic perception disabled — device unavailable
+  content modality=audio error=live mic perception disabled — device unavailable
+vision no-path (cam): status=error message=live camera perception disabled — device unavailable
+
+--- LIVE text conversation path still works ---
+process_user_input reply: 'I\'m here to help.\n\nI do not want to invent details - can you tell me more about what you meant by "Hello Monday, SensoryIntegration baseline check."?'
+si status after process_user_input: {'status': 'success', 'content': {'buffer_size': 3, 'last_normalized': 3}}  # expected: SI still unused by live path
+
+GAP: SI registered but live process_sensory_input/process_user_input never call it.
+GAP: integrate_inputs does not await Perception fuse or build one Attention stream.
+GAP: no shared multi-modal context retained for Conversation.
