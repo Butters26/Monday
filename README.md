@@ -27,11 +27,17 @@ message payload.
 
 ### Notus memory
 
-- **Primary path:** PostgreSQL `ActiveNotusMemorySystem` when
-  `create_core_systems()` is called without a custom `notus_factory`.
-- **Outage fallback:** if a Notus store/query returns an error or raises
-  (caught by `Thalamus.send_message`), the prompted path continues using a
-  bounded per-user in-memory queue (`notus_outage_fallback.py`, max 64
+- **One talk identity:** when `create_core_systems()` is called without a custom
+  `notus_factory`, `open_primary_notus()` picks one backend for both
+  `run_abin` REPL and `_monday_chat_daemon.py`:
+  1. PostgreSQL `ActiveNotusMemorySystem` when reachable (`NOTUS_POSTGRES_*`)
+  2. else shared SQLite `DirectNotusProcess` at `shared_direct_notus_path()`
+     (default `~/.local/state/monday/notus_memory.sqlite3`; override
+     `MONDAY_NOTUS_SQLITE`). Chat sock/pid may live under
+     `~/.local/state/monday-chat`; memory is **not** a separate chat DB.
+- **Outage fallback (Issue #11):** if a Notus store/query returns an error or
+  raises (caught by `Thalamus.send_message`), the prompted path continues using
+  a bounded per-user in-memory queue (`notus_outage_fallback.py`, max 64
   records/user, FIFO eviction). Queued records carry stable per-event
   `event_id`s. Recovery is strict FIFO (stop on first sync failure).
   `Thalamus.retry_unsaved_notus_records()` uses event_ids so a double retry

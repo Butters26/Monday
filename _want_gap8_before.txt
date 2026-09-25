@@ -1,0 +1,21 @@
+WANT-GAP 8 Notus identity — BEFORE proof (tip cfb0170, pre-fix)
+==============================================================
+Date: 2026-09-25 ~17:40 MDT (America/Denver)
+
+Mechanism at tip:
+  create_core_systems default → ActiveNotusMemorySystem (PostgreSQL)
+  _monday_chat_daemon._factory → DirectNotusProcess at
+    <MONDAY_RUNTIME_DIR|~/.local/state/monday-chat>/chat_notus.sqlite3
+
+Observed on this box (Postgres refused):
+  CHAT_STORE success id=1
+  CHAT_BACKEND .../chat_notus.sqlite3 DirectNotusProcess
+  REPL_BOOT FAIL OperationalError connection refused (localhost:5432)
+  REPL_SEES_CHAT_MEMORY False
+  DEFAULT_SQLITE_PATH /home/box/.local/state/monday/notus_memory.sqlite3
+  CHAT_SQLITE_PATH (temp monday-chat)/chat_notus.sqlite3
+  PATHS_EQUAL False
+  CHAT_SEES_DEFAULT_SQLITE_MEMORY False  (wrote marker via default DirectNotus)
+  BEFORE_SPLIT_CONFIRMED True
+
+Split-brain: chat talk memory ≠ create_core_systems / REPL Notus.

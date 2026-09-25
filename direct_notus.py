@@ -1464,16 +1464,22 @@ class DirectNotusProcess:
         payload = self._payload(message)
 
         if msg_type == "health":
+            identity = getattr(self, "notus_identity", None)
             return {
                 "status": "success",
                 "content": {
                     "healthy": self.running,
                     "backend": "sqlite",
+                    "storage_path": self.storage_path,
                     "fts5": self._fts_available,
                     "embedding_model_type": "none",
                     "retrieval_kind": "sqlite_fts_or_like",
                     "semantic_understanding": False,
-                    "note": "DirectNotus is injectable SQLite/FTS test adapter — not MiniLM semantic NLU",
+                    "notus_identity": identity if isinstance(identity, dict) else None,
+                    "note": (
+                        "DirectNotus SQLite/FTS — shared talk identity when used via "
+                        "open_primary_notus, or injectable test adapter; not MiniLM NLU"
+                    ),
                 },
             }
 

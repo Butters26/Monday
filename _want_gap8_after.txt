@@ -1,0 +1,14 @@
+WANT-GAP 8 Notus identity — AFTER proof
+shared_direct_notus_path = /home/box/.local/state/monday/notus_memory.sqlite3
+
+CHAT_IDENTITY {"backend": "sqlite", "role": "shared_direct_fallback", "sqlite_path": "/home/box/.local/state/monday/notus_memory.sqlite3", "postgres_error": "OperationalError: connection to server at \"localhost\" (::1), port 5432 failed: Connection refused", "note": "Postgres unavailable; DirectNotus at shared_direct_notus_path() \u2014 same file for create_core_systems / run_abin REPL and chat daemon"}
+CHAT_STORE status=success id=2
+REPL_IDENTITY {"backend": "sqlite", "role": "shared_direct_fallback", "sqlite_path": "/home/box/.local/state/monday/notus_memory.sqlite3", "postgres_error": "OperationalError: connection to server at \"localhost\" (::1), port 5432 failed: Connection refused", "note": "Postgres unavailable; DirectNotus at shared_direct_notus_path() \u2014 same file for create_core_systems / run_abin REPL and chat daemon"}
+REPL_SEES_CHAT_WRITE hit=True count=1 query_status=success
+REPL_STORE status=success id=3
+CHAT_SEES_REPL_WRITE hit=True count=1 query_status=success
+SQLITE_PATHS_MATCH True (/home/box/.local/state/monday/notus_memory.sqlite3)
+HEALTH {"healthy": true, "backend": "sqlite", "storage_path": "/home/box/.local/state/monday/notus_memory.sqlite3", "fts5": true, "embedding_model_type": "none", "retrieval_kind": "sqlite_fts_or_like", "semantic_understanding": false, "notus_identity": {"backend": "sqlite", "role": "shared_direct_fallback", "sqlite_path": "/home/box/.local/state/monday/notus_memory.sqlite3", "postgres_error": "Operationa
+
+AFTER_SHARED_IDENTITY_CONFIRMED True
+PASS

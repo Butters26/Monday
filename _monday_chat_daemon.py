@@ -18,8 +18,13 @@ Background thread (~8–15s) calls Thalamus.deliver_unprompted_speech for active
 users so Monday can speak without a user turn. Speech stays decision-only;
 delivery is Thalamus→Output (+ this pending/poll push).
 
-Uses DirectNotus SQLite under MONDAY_RUNTIME_DIR (default ~/.local/state/monday-chat)
-so talk works without Postgres. Not Learning; not cloud.
+Notus identity (WANT-GAP 8): same path as create_core_systems / run_abin —
+PostgreSQL ActiveNotus when reachable; otherwise one shared DirectNotus file
+at shared_direct_notus_path() (default ~/.local/state/monday/notus_memory.sqlite3,
+override MONDAY_NOTUS_SQLITE). Sock/pid stay under MONDAY_RUNTIME_DIR
+(default ~/.local/state/monday-chat); memory is NOT a separate chat DB.
+Issue #11 Thalamus.notus_fallback still covers mid-turn store/query outages.
+Not Learning; not cloud.
 """
 from __future__ import annotations
 
@@ -34,8 +39,11 @@ import time
 import traceback
 from pathlib import Path
 
-from direct_notus import DirectNotusProcess
-from run_abin import create_core_systems, shutdown_core_systems
+from run_abin import (
+    create_core_systems,
+    describe_notus_identity,
+    shutdown_core_systems,
+)
 
 RUNTIME = Path(os.environ.get("MONDAY_RUNTIME_DIR", os.path.expanduser("~/.local/state/monday-chat")))
 SOCK_PATH = RUNTIME / "chat.sock"
@@ -44,25 +52,27 @@ PID_PATH = RUNTIME / "chat.pid"
 ACTIVE_USERS = ("matthew",)
 
 
-def _factory(*, thalamus, runtime_directory):
-    return DirectNotusProcess(
-        storage_path=str(Path(runtime_directory) / "chat_notus.sqlite3"),
-        thalamus=thalamus,
-    )
-
-
 def main() -> int:
     RUNTIME.mkdir(parents=True, exist_ok=True)
     if SOCK_PATH.exists():
         SOCK_PATH.unlink()
 
     print(f"Booting Monday core (runtime={RUNTIME})...", flush=True)
+    # No notus_factory: open_primary_notus — same mind as run_abin REPL.
     systems = create_core_systems(
         runtime_directory=str(RUNTIME),
-        notus_factory=_factory,
         enable_autonomous=True,
     )
     thalamus = systems["thalamus"]
+    identity = systems.get("notus_identity") or describe_notus_identity(systems["notus"])
+    print(
+        "Notus live store: "
+        f"backend={identity.get('backend')} role={identity.get('role')} "
+        f"sqlite_path={identity.get('sqlite_path')}",
+        flush=True,
+    )
+    if identity.get("postgres_error"):
+        print(f"Notus Postgres probe: {identity['postgres_error']}", flush=True)
     PID_PATH.write_text(str(os.getpid()))
 
     pending_lock = threading.Lock()

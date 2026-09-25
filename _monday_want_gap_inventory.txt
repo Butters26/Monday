@@ -3,6 +3,8 @@ MONDAY WANT-GAP INVENTORY (research only)
 Tip SHA: d41523a8f76f5121dbcab7edeaf200a92ed799ba
          (d41523a Fix full-bar progress tip SHA after amend.)
 Date: 2026-09-25 ~15:20 MDT (America/Denver)
+Updated: 2026-09-25 ~17:45 MDT — GAP1 CLOSED; GAP8 talk-identity PARTIAL CLOSE
+         (tip moves with commits; see git log).
 Scope: Honest gaps vs a continuous, talkable Monday mind.
         NOT an inflated scoreboard. Do NOT read this as Learning done
         or whole-Monday 100%. Unprompted speech delivery just shipped
@@ -184,27 +186,33 @@ PRIORITY: P2
 ---------------------------------------------------------------------------
 GAP 8 — Notus: SQLite chat daemon vs Postgres ActiveNotus; #11; CI scope
 ---------------------------------------------------------------------------
-WHAT'S WRONG
+STATUS: PARTIAL CLOSE 2026-09-25 (WANT-GAP8) — split-brain talk identity FIXED.
+        chat daemon no longer injects chat_notus.sqlite3; both create_core_systems
+        (REPL) and _monday_chat_daemon use open_primary_notus(): Postgres
+        ActiveNotus when reachable, else ONE shared DirectNotus at
+        shared_direct_notus_path() (~/.local/state/monday/notus_memory.sqlite3,
+        override MONDAY_NOTUS_SQLITE). Proof: _want_gap8_before.txt /
+        _want_gap8_after.txt (write via chat-style boot ↔ read via REPL-style
+        boot and reverse). Issue #11 notus_fallback tests still 20/20 pass.
+        CI workflow YAML NOT landed (OAuth still lacks workflow scope) —
+        _issue11_direct-core.yml.proposed remains proposed only; do NOT claim
+        CI fixed. NOT whole-Monday 100%. Remaining: no migration of legacy
+        ~/.local/state/monday-chat/chat_notus.sqlite3 contents; emotion JSON
+        still per-runtime-dir (not Notus).
+
+WHAT WAS WRONG
   Production create_core_systems default: ActiveNotusMemorySystem (PostgreSQL)
-    (run_abin.py:~L62–84; notus_memory_core.py).
-  Live talk daemon injects DirectNotusProcess SQLite:
-    _monday_chat_daemon.py:~L21–22, L47–51, L60–63
-    → chat memory is NOT the same DB as Postgres ActiveNotus.
-  #11 outage fallback IS on main (thalamus.notus_fallback = NotusOutageFallback;
-    notus_outage_fallback.py present; tests present). Full-bar notes prove it.
-  CI workflow scope still blocked for pushing workflow edits:
-    .github/workflows/direct-core.yml on origin still Postgres + live_notus_memory_check
-    only — does NOT run pytest test_direct_core_pipeline.py / test_notus_integration.py.
-    Proposed dual-job/Postgres-free file remains
-    _issue11_direct-core.yml.proposed (OAuth workflow scope blocker per
-    _monday_full_bar_progress.txt CI NOTE).
+    (run_abin.py).
+  Live talk daemon injected DirectNotusProcess SQLite under monday-chat
+    (chat_notus.sqlite3) → chat memory ≠ Postgres / REPL Notus.
+  #11 outage fallback was already on main (kept).
+  CI workflow scope still blocked for pushing workflow edits.
 
-WHAT BETTER LOOKS LIKE
-  One memory identity for talk: either daemon uses ActiveNotus/Postgres, or
-  explicit sync/migration story. Land CI workflow that runs fallback pytest
-  without requiring workflow-scope workarounds (Matthew grant / PAT).
+WHAT BETTER LOOKS LIKE (remaining)
+  Land CI workflow that runs fallback pytest without workflow-scope workarounds
+  (Matthew grant / PAT). Optional: one-shot migrate old chat_notus.sqlite3.
 
-PRIORITY: P0 (split-brain memory for the person he talks to) / P1 (CI)
+PRIORITY: P0 split-brain — CLOSED for talk identity / P1 CI still open
 
 ---------------------------------------------------------------------------
 GAP 9 — SharedRepresentation / Pattern / Social / Perception hearing-vision
@@ -270,7 +278,7 @@ SUMMARY — top P0 guesses (want gaps, not lobe scoreboard)
 ---------------------------------------------------------------------------
   1. Talk quality: Mad-Libs Language + refusal stamp as common mouth
   2. Learning hollow: stores write, no live consumer / not on process_user_input
-  3. Split-brain Notus: SQLite chat daemon vs Postgres ActiveNotus
+  3. Split-brain Notus talk identity: CLOSED (shared open_primary_notus); CI workflow still proposed-only
   4. Belief/self process-local (honest no-op persist)
   5. Speak-on-own gates + in-memory pending → rare / fragile presence
 
