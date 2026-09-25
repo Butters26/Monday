@@ -1,0 +1,19 @@
+WANT-GAP 5 Belief persist — AFTER proof
+========================================
+Date: 2026-09-25 ~17:45 MDT (America/Denver)
+Mechanism: Notus abin_persistent_state + get/save_abin_persistent_state
+           (DirectNotus SQLite / ActiveNotus Postgres); Reasoning load on
+           construct (Notus registered first in create_core_systems) and
+           save on shutdown / belief-form / periodic.
+
+MONDAY_NOTUS_SQLITE=/tmp/wantgap5-prove-7njgigh5/notus_memory.sqlite3
+session_a_identity {"backend": "sqlite", "role": "shared_direct_fallback", "sqlite_path": "/tmp/wantgap5-prove-7njgigh5/notus_memory.sqlite3", "postgres_error": "OperationalError: connection to server at \"localhost\" (::1), port 5432 failed: Connection refused", "note": "Postgres unavailable; DirectNotus at shared_direct_notus_path() \u2014 same file for create_core_systems / run_abin REPL and chat daemon"}
+session_a_save {"status": "success", "content": {"saved": true, "scope": "reasoning", "user_id": "default", "belief_count": 6, "updated_at": "2026-09-25T23:42:47.906487+00:00", "backend": "sqlite"}}
+❤️  Emotional state saved
+session_b_identity {"backend": "sqlite", "role": "shared_direct_fallback", "sqlite_path": "/tmp/wantgap5-prove-7njgigh5/notus_memory.sqlite3", "postgres_error": "OperationalError: connection to server at \"localhost\" (::1), port 5432 failed: Connection refused", "note": "Postgres unavailable; DirectNotus at shared_direct_notus_path() \u2014 same file for create_core_systems / run_abin REPL and chat daemon"}
+session_b_belief_key_present=True
+session_b_belief_content_ok=True
+session_b_belief_usable_on_reasoning=True
+session_b_belief {"about": "TOPIC_WANTGAP5_1790379767", "what_i_believe": "BELIEF_WANTGAP5_1790379767", "confidence": 0.73, "times_reinforced": 2}
+❤️  Emotional state saved
+PASS

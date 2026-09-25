@@ -1,0 +1,27 @@
+WANT-GAP 5 Belief persist — BEFORE proof (tip a2a78b4, pre-fix)
+================================================================
+Date: 2026-09-25 ~17:45 MDT (America/Denver)
+MONDAY_NOTUS_SQLITE=/tmp/wantgap5-before-r_cwo9zb/notus_memory.sqlite3
+
+Belief.__doc__ = 'Personal belief that persists'
+load_body_snip = 'def _load_persistent_state_from_memory(self):\n        """Beliefs are process-local — Notus has no persistent-state handlers.\n\n        Kept as a named hook so callers do not invent '...
+save_body_snip = 'def _save_persistent_state_to_memory(self):\n        """No-op: Notus has no save_abin_persistent_state handler.\n\n        Beliefs remain in-process only. Do not send pretend persist '...
+load_is_honest_noop = True
+load_queries_notus = False
+save_queries_notus = False
+
+session_a_identity = {"backend": "sqlite", "role": "shared_direct_fallback", "sqlite_path": "/tmp/wantgap5-before-r_cwo9zb/notus_memory.sqlite3", "postgres_error": "OperationalError: connection to server at \"localhost\" (::1), port 5432 failed: Connection refused", "note": "Postgres unavailable; DirectNotus at shared_direct_notus_path() \u2014 same file for create_core_systems / run_abin REPL and chat daemon"}
+session_a_save_return = None
+notus_get_abin_probe_status = error
+notus_get_abin_probe_message = Unknown message type: get_abin_persistent_state
+notus_save_abin_probe_status = error
+notus_save_abin_probe_message = Unknown message type: save_abin_persistent_state
+session_b_belief_key_present = False
+session_b_belief_content_present = False
+session_b_belief_keys_sample = ['my_nature', 'my_purpose', 'consciousness_question', 'manners', 'when_to_speak']
+session_b_belief_usable_on_reasoning = False
+
+BEFORE_GAP_CONFIRMED = True
+Belief formed in session A does NOT survive new create_core_systems session B.
+Handlers get_abin_persistent_state / save_abin_persistent_state → Unknown message type.
+Belief dataclass still claims 'persists' while mechanism does not.

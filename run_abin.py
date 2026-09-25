@@ -187,6 +187,11 @@ def create_core_systems(
         notus = notus_factory(thalamus=thalamus, runtime_directory=str(directory))
         if not getattr(notus, "notus_identity", None):
             notus.notus_identity = describe_notus_identity(notus)
+    # Register Notus before Reasoning constructs so Belief load
+    # (get_abin_persistent_state) can reach the same open_primary_notus store.
+    reg = thalamus.register_lobe("notus", notus)
+    if reg.get("status") != "success":
+        raise RuntimeError(f"Could not register notus: {reg.get('message')}")
     systems: Dict[str, Any] = {
         "thalamus": thalamus,
         # Honest live-store stamp (chat daemon / proofs read this).
@@ -226,7 +231,6 @@ def create_core_systems(
         "novelty",
         "pattern",
         "conversation",
-        "notus",
         "emotion",
         "reasoning",
         "language",

@@ -132,6 +132,17 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                 "CREATE INDEX IF NOT EXISTS idx_fact_contradicted "
                 "ON brain_facts(user_id, is_contradicted)"
             )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS abin_persistent_state (
+                    scope TEXT NOT NULL DEFAULT 'reasoning',
+                    user_id TEXT NOT NULL DEFAULT 'default',
+                    state_json TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (scope, user_id)
+                )
+                """
+            )
         self._db_connection.commit()
 
     # ------------------------------------------------------------------
@@ -1590,6 +1601,102 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             ),
         }
 
+
+    def _save_abin_persistent_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Upsert Reasoning durable-self JSON (beliefs / narrative / changes)."""
+        scope = str(payload.get("scope") or "reasoning").strip() or "reasoning"
+        user_id = str(payload.get("user_id") or "default").strip() or "default"
+        state = payload.get("state")
+        if not isinstance(state, dict):
+            return {"status": "error", "message": "state must be a dict"}
+        beliefs = state.get("beliefs")
+        if beliefs is not None and not isinstance(beliefs, list):
+            return {"status": "error", "message": "state.beliefs must be a list"}
+        if isinstance(beliefs, list) and len(beliefs) > 200:
+            state = dict(state)
+            state["beliefs"] = beliefs[:200]
+        narrative = state.get("narrative")
+        if isinstance(narrative, list) and len(narrative) > 50:
+            state = dict(state)
+            state["narrative"] = narrative[-50:]
+        try:
+            state_json = json.dumps(state, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            return {"status": "error", "message": f"state not JSON-serializable: {exc}"}
+        if len(state_json) > 512_000:
+            return {"status": "error", "message": "state exceeds 512KB bound"}
+        now = datetime.now(timezone.utc)
+        with self._db_connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO abin_persistent_state(scope, user_id, state_json, updated_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (scope, user_id) DO UPDATE SET
+                    state_json = EXCLUDED.state_json,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (scope, user_id, state_json, now),
+            )
+        self._db_connection.commit()
+        belief_count = len(state.get("beliefs") or []) if isinstance(state.get("beliefs"), list) else 0
+        return {
+            "status": "success",
+            "content": {
+                "saved": True,
+                "scope": scope,
+                "user_id": user_id,
+                "belief_count": belief_count,
+                "updated_at": now.isoformat(),
+                "backend": "postgresql",
+            },
+        }
+
+    def _get_abin_persistent_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Return durable-self JSON previously saved for scope/user."""
+        scope = str(payload.get("scope") or "reasoning").strip() or "reasoning"
+        user_id = str(payload.get("user_id") or "default").strip() or "default"
+        with self._db_connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT state_json, updated_at FROM abin_persistent_state "
+                "WHERE scope = %s AND user_id = %s",
+                (scope, user_id),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return {
+                "status": "success",
+                "content": {
+                    "state": None,
+                    "found": False,
+                    "scope": scope,
+                    "user_id": user_id,
+                    "backend": "postgresql",
+                },
+            }
+        raw, updated_at = row[0], row[1]
+        try:
+            state = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"status": "error", "message": "stored state_json is corrupt"}
+        if not isinstance(state, dict):
+            return {"status": "error", "message": "stored state is not a dict"}
+        updated = (
+            updated_at.isoformat()
+            if hasattr(updated_at, "isoformat")
+            else str(updated_at)
+        )
+        return {
+            "status": "success",
+            "content": {
+                "state": state,
+                "found": True,
+                "scope": scope,
+                "user_id": user_id,
+                "updated_at": updated,
+                "backend": "postgresql",
+            },
+        }
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         payload = self._payload(message)
@@ -1936,6 +2043,13 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                 if str(item.get("memory_type", "")).lower() == "emotional_response"
             ]
             return {"status": "success", "content": {"responses": responses}}
+
+
+        if msg_type == "save_abin_persistent_state":
+            return self._save_abin_persistent_state(payload)
+
+        if msg_type == "get_abin_persistent_state":
+            return self._get_abin_persistent_state(payload)
 
         if msg_type == "query_patterns":
             return {"status": "success", "content": {"patterns": []}}

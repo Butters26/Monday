@@ -114,7 +114,11 @@ class Fact:
 
 @dataclass
 class Belief:
-    """Personal belief that persists"""
+    """Personal belief; durable via Notus save/get_abin_persistent_state.
+
+    ReasoningLobe serializes these into Notus ``abin_persistent_state``
+    (same store as talk: open_primary_notus). Reloaded on next construct.
+    """
     about: str
     what_i_believe: str
     why_i_believe_it: List[str]
@@ -155,11 +159,12 @@ class Experience:
 # ============================================================================
 
 class ReasoningLobe:
-    """Symbolic reasoning over facts, patterns, and in-process beliefs.
+    """Symbolic reasoning over facts, patterns, and durable beliefs.
 
-    Beliefs are process-local: seeded by _initialize_self_awareness each
-    construct. They are NOT durably persisted to Notus (no
-    get_abin_persistent_state / save_abin_persistent_state handlers exist).
+    Beliefs seed from _initialize_self_awareness, then overlay from Notus
+    via get_abin_persistent_state (table abin_persistent_state on the same
+    open_primary_notus store as talk). Saves go through
+    save_abin_persistent_state on shutdown and after belief updates.
     """
     
     def __init__(self, thalamus=None):
@@ -427,21 +432,134 @@ class ReasoningLobe:
         else:
             return {'intent': 'statement', 'confidence': 0.5, 'method': 'default'}
     
+    _BELIEF_PERSIST_FIELDS = (
+        "about",
+        "what_i_believe",
+        "why_i_believe_it",
+        "confidence",
+        "formed_when",
+        "last_questioned",
+        "times_reinforced",
+        "times_challenged",
+        "contradiction_detected",
+        "contradicting_evidence",
+        "last_contradiction_when",
+        "contradiction_strength",
+    )
+
+    def _belief_to_dict(self, key: str, belief: "Belief") -> Dict[str, Any]:
+        data: Dict[str, Any] = {"key": key}
+        for field_name in self._BELIEF_PERSIST_FIELDS:
+            data[field_name] = getattr(belief, field_name)
+        return data
+
+    def _belief_from_dict(self, data: Dict[str, Any]) -> "Belief":
+        kwargs: Dict[str, Any] = {}
+        for field_name in self._BELIEF_PERSIST_FIELDS:
+            if field_name in data:
+                kwargs[field_name] = data[field_name]
+        kwargs.setdefault("about", str(data.get("about") or ""))
+        kwargs.setdefault("what_i_believe", str(data.get("what_i_believe") or ""))
+        why = kwargs.get("why_i_believe_it", data.get("why_i_believe_it", []))
+        if not isinstance(why, list):
+            why = [str(why)] if why else []
+        kwargs["why_i_believe_it"] = why
+        evidence = kwargs.get("contradicting_evidence", [])
+        if not isinstance(evidence, list):
+            evidence = [str(evidence)] if evidence else []
+        kwargs["contradicting_evidence"] = evidence
+        return Belief(**kwargs)
+
     def _load_persistent_state_from_memory(self):
-        """Beliefs are process-local — Notus has no persistent-state handlers.
+        """Overlay durable beliefs/self from Notus get_abin_persistent_state.
 
-        Kept as a named hook so callers do not invent get_abin_persistent_state
-        traffic. Always a no-op; beliefs come from _initialize_self_awareness.
+        Seeds from _initialize_self_awareness run first; saved entries overlay
+        by key. Returns None when Notus has no row or is unavailable — seeds stay.
         """
-        return None
-    
+        try:
+            state_data = self._query_memory("get_abin_persistent_state", {})
+            if not state_data or state_data.get("status") != "success":
+                return None
+            content = state_data.get("content") if isinstance(state_data.get("content"), dict) else {}
+            saved_state = None
+            if content.get("found") is False:
+                return None
+            if isinstance(content.get("state"), dict):
+                saved_state = content["state"]
+            elif isinstance(state_data.get("state"), dict):
+                saved_state = state_data["state"]
+            if not isinstance(saved_state, dict):
+                return None
+            loaded = 0
+            for belief_data in saved_state.get("beliefs") or []:
+                if not isinstance(belief_data, dict):
+                    continue
+                key = belief_data.get("key") or belief_data.get("about")
+                about = belief_data.get("about")
+                if not key or not about:
+                    continue
+                try:
+                    self.beliefs[str(key)] = self._belief_from_dict(belief_data)
+                    loaded += 1
+                except (TypeError, ValueError, KeyError):
+                    continue
+            for exp_data in (saved_state.get("narrative") or [])[-50:]:
+                if not isinstance(exp_data, dict) or not exp_data.get("what_happened"):
+                    continue
+                try:
+                    tone = exp_data.get("emotional_tone") or {}
+                    if not isinstance(tone, dict):
+                        tone = {}
+                    self.life_narrative.append(
+                        Experience(
+                            what_happened=str(exp_data.get("what_happened") or ""),
+                            when=float(exp_data.get("when") or 0.0),
+                            how_it_felt=str(exp_data.get("how_it_felt") or ""),
+                            what_it_meant_to_me=str(exp_data.get("what_it_meant_to_me") or ""),
+                            emotional_tone=tone,
+                            changed_me_how=exp_data.get("changed_me_how"),
+                        )
+                    )
+                except (TypeError, ValueError, KeyError):
+                    continue
+            changes = saved_state.get("changes")
+            if isinstance(changes, list):
+                self.how_i_have_changed = list(changes)[-100:]
+            self.self_model.experiences_count = len(self.life_narrative)
+            return {"loaded_beliefs": loaded}
+        except Exception:
+            return None
+
     def _save_persistent_state_to_memory(self):
-        """No-op: Notus has no save_abin_persistent_state handler.
+        """Persist beliefs/self to Notus via save_abin_persistent_state.
 
-        Beliefs remain in-process only. Do not send pretend persist messages.
+        Same open_primary_notus store as talk (Postgres ActiveNotus or shared
+        DirectNotus SQLite). Failures are silent — in-process beliefs stay.
         """
-        return None
-    
+        try:
+            changes = self.how_i_have_changed if isinstance(self.how_i_have_changed, list) else []
+            state = {
+                "beliefs": [
+                    self._belief_to_dict(key, belief)
+                    for key, belief in list(self.beliefs.items())[:200]
+                ],
+                "narrative": [
+                    {
+                        "what_happened": e.what_happened,
+                        "when": e.when,
+                        "how_it_felt": e.how_it_felt,
+                        "what_it_meant_to_me": e.what_it_meant_to_me,
+                        "emotional_tone": e.emotional_tone,
+                        "changed_me_how": e.changed_me_how,
+                    }
+                    for e in list(self.life_narrative)[-50:]
+                ],
+                "changes": list(changes)[-100:],
+            }
+            return self._query_memory("save_abin_persistent_state", {"state": state})
+        except Exception:
+            return None
+
     def _query_memory(self, query_type: str, data: Dict) -> Optional[Dict]:
         """Query Notus memory system through Thalamus - DIRECT FUNCTION CALL"""
         try:
@@ -1749,15 +1867,20 @@ class ReasoningLobe:
         
         # Update beliefs from Thalamus if provided
         if beliefs_from_thalamus:
+            formed = False
             for belief_data in beliefs_from_thalamus:
                 if isinstance(belief_data, dict) and 'about' in belief_data:
-                    self.beliefs[belief_data['about']] = Belief(
+                    key = str(belief_data.get('key') or belief_data.get('about'))
+                    self.beliefs[key] = Belief(
                         about=belief_data.get('about', ''),
                         what_i_believe=belief_data.get('what_i_believe', ''),
                         why_i_believe_it=belief_data.get('why_i_believe_it', []),
                         confidence=belief_data.get('confidence', 0.5),
                         formed_when=belief_data.get('formed_when', time.time())
                     )
+                    formed = True
+            if formed:
+                self._save_persistent_state_to_memory()
         
         # Build concept list from what we received
         key_concepts = []
@@ -3010,8 +3133,8 @@ class ReasoningLobe:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
     
     def shutdown(self):
-        """Stop lobe. Beliefs are process-local — no Notus persist."""
-        self._save_persistent_state_to_memory()  # honest no-op
+        """Stop lobe; flush beliefs to Notus save_abin_persistent_state."""
+        self._save_persistent_state_to_memory()
         self.running = False
         # No sockets to close
 

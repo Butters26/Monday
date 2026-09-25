@@ -3,8 +3,8 @@ MONDAY WANT-GAP INVENTORY (research only)
 Tip SHA: d41523a8f76f5121dbcab7edeaf200a92ed799ba
          (d41523a Fix full-bar progress tip SHA after amend.)
 Date: 2026-09-25 ~15:20 MDT (America/Denver)
-Updated: 2026-09-25 ~17:45 MDT — GAP1 CLOSED; GAP8 talk-identity PARTIAL CLOSE
-         (tip moves with commits; see git log).
+Updated: 2026-09-25 ~17:50 MDT — GAP1 CLOSED; GAP5 Belief PARTIAL CLOSE;
+         GAP8 talk-identity PARTIAL CLOSE (tip moves with commits; see git log).
 Scope: Honest gaps vs a continuous, talkable Monday mind.
         NOT an inflated scoreboard. Do NOT read this as Learning done
         or whole-Monday 100%. Unprompted speech delivery just shipped
@@ -123,30 +123,31 @@ PRIORITY: P1 (P0 if Matthew's bar is "feels like someone"; v1 is intentional flo
 ---------------------------------------------------------------------------
 GAP 5 — Belief persist honest no-op / experience / initiation
 ---------------------------------------------------------------------------
-WHAT'S WRONG
-  reasoning.py:ReasoningLobe docstring (~L157–163): beliefs are process-local;
-  no get_abin_persistent_state / save_abin_persistent_state handlers.
-  _load_persistent_state_from_memory / _save_persistent_state_to_memory
-  (~L430–441, ~L3013–3014) are named honest no-ops.
-  Belief class still says "Personal belief that persists" (dataclass docstring
-  theater leftover at L116–117) while the lobe docstring contradicts it.
+STATUS: PARTIAL CLOSE 2026-09-25 (WANT-GAP5 Belief) — Belief durable self CLOSED.
+        ExperienceProcessor / BehavioralReinforcement still ORPHAN (unwired;
+        Belief does not require them). Initiation lobe still OUT OF SCOPE /
+        open. Proof: _want_gap5_belief_before.txt / _want_gap5_belief_after.txt
+        + _prove_want_gap5_belief_persist.py (session A form → session B present
+        and usable on Reasoning belief walk). NOT whole-Monday 100%.
 
-  Orphan "life continuity" modules NOT on create_core_systems:
-    experience_processor.py:ExperienceProcessor (self-registers as 'experience'
-      if constructed — never constructed by run_abin)
-    behavioral_reinforcement.py:BehavioralReinforcement (same for 'reinforcement')
-  Unprompted initiation older note (_autonomous_speech_design.txt):
-    generate_natural_speech / unprompted initiation were unwired; delivery is
-    now Thalamus.deliver_unprompted_speech — but there is still no separate
-    "initiation lobe" that owns starting a topic from durable goals/beliefs.
+WHAT CLOSED (Belief)
+  Notus handlers + schema: save_abin_persistent_state / get_abin_persistent_state
+  on DirectNotus (SQLite table abin_persistent_state) and ActiveNotusMemorySystem
+  (Postgres same table). ReasoningLobe._load/_save wire through those handlers;
+  Belief docstring matches mechanism. create_core_systems registers Notus before
+  Reasoning so construct-time load reaches open_primary_notus (same talk store).
+  Save on shutdown, after Thalamus-fed belief form, and periodic autonomous tick.
 
-WHAT BETTER LOOKS LIKE
-  Durable Belief/self-model store in Notus (real handlers + schema), or delete
-  the Belief "persists" claim entirely. Decide whether ExperienceProcessor /
-  BehavioralReinforcement become live lobes or stay archived. Initiation =
-  speak-worthy thoughts rooted in durable goals/beliefs, not only mood/unresolved.
+WHAT REMAINS OPEN
+  Orphan "life continuity" modules NOT on create_core_systems (left archived;
+  Belief persists without them):
+    experience_processor.py:ExperienceProcessor
+    behavioral_reinforcement.py:BehavioralReinforcement
+  Initiation lobe: still no separate lobe that starts topics from durable
+  goals/beliefs (delivery remains Thalamus.deliver_unprompted_speech). OUT OF
+  SCOPE for this Belief task — do not invent.
 
-PRIORITY: P0 (durable self) / P1 (experience+reinforcement ownership)
+PRIORITY: Belief P0 CLOSED; P1 experience+reinforcement ownership + initiation still open
 
 ---------------------------------------------------------------------------
 GAP 6 — CTG / ControlledThinking detached mocks
@@ -279,7 +280,7 @@ SUMMARY — top P0 guesses (want gaps, not lobe scoreboard)
   1. Talk quality: Mad-Libs Language + refusal stamp as common mouth
   2. Learning hollow: stores write, no live consumer / not on process_user_input
   3. Split-brain Notus talk identity: CLOSED (shared open_primary_notus); CI workflow still proposed-only
-  4. Belief/self process-local (honest no-op persist)
+  4. Belief/self DURABLE in Notus (GAP5 Belief closed; experience/initiation open)
   5. Speak-on-own gates + in-memory pending → rare / fragile presence
 
 Do not mark Learning done. Do not claim whole-Monday 100%.

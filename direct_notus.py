@@ -135,6 +135,16 @@ class DirectNotusProcess:
                 )"""
             )
 
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS abin_persistent_state (
+                    scope TEXT NOT NULL DEFAULT 'reasoning',
+                    user_id TEXT NOT NULL DEFAULT 'default',
+                    state_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (scope, user_id)
+                )"""
+            )
+
             self._ensure_memory_schema()
             self._ensure_fact_schema()
             self._ensure_episode_schema()
@@ -1454,6 +1464,98 @@ class DirectNotusProcess:
             for name, queue in self.working_set.items()
         }
 
+
+    def _save_abin_persistent_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Upsert Reasoning durable-self JSON (beliefs / narrative / changes)."""
+        scope = self._clean_text(payload.get("scope")) or "reasoning"
+        user_id = self._clean_text(payload.get("user_id")) or "default"
+        state = payload.get("state")
+        if not isinstance(state, dict):
+            return {"status": "error", "message": "state must be a dict"}
+        # Bound payload — beliefs are the contract; narrative/changes optional.
+        beliefs = state.get("beliefs")
+        if beliefs is not None and not isinstance(beliefs, list):
+            return {"status": "error", "message": "state.beliefs must be a list"}
+        if isinstance(beliefs, list) and len(beliefs) > 200:
+            state = dict(state)
+            state["beliefs"] = beliefs[:200]
+        narrative = state.get("narrative")
+        if isinstance(narrative, list) and len(narrative) > 50:
+            state = dict(state)
+            state["narrative"] = narrative[-50:]
+        try:
+            state_json = json.dumps(state, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            return {"status": "error", "message": f"state not JSON-serializable: {exc}"}
+        if len(state_json) > 512_000:
+            return {"status": "error", "message": "state exceeds 512KB bound"}
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute(
+                """
+                INSERT INTO abin_persistent_state(scope, user_id, state_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(scope, user_id) DO UPDATE SET
+                    state_json = excluded.state_json,
+                    updated_at = excluded.updated_at
+                """,
+                (scope, user_id, state_json, now),
+            )
+            connection.commit()
+        belief_count = len(state.get("beliefs") or []) if isinstance(state.get("beliefs"), list) else 0
+        return {
+            "status": "success",
+            "content": {
+                "saved": True,
+                "scope": scope,
+                "user_id": user_id,
+                "belief_count": belief_count,
+                "updated_at": now,
+                "backend": "sqlite",
+            },
+        }
+
+    def _get_abin_persistent_state(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Return durable-self JSON previously saved for scope/user."""
+        scope = self._clean_text(payload.get("scope")) or "reasoning"
+        user_id = self._clean_text(payload.get("user_id")) or "default"
+        with self._lock:
+            connection = self._require_connection()
+            row = connection.execute(
+                "SELECT state_json, updated_at FROM abin_persistent_state "
+                "WHERE scope = ? AND user_id = ?",
+                (scope, user_id),
+            ).fetchone()
+        if row is None:
+            return {
+                "status": "success",
+                "content": {
+                    "state": None,
+                    "found": False,
+                    "scope": scope,
+                    "user_id": user_id,
+                    "backend": "sqlite",
+                },
+            }
+        try:
+            state = json.loads(row["state_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"status": "error", "message": "stored state_json is corrupt"}
+        if not isinstance(state, dict):
+            return {"status": "error", "message": "stored state is not a dict"}
+        return {
+            "status": "success",
+            "content": {
+                "state": state,
+                "found": True,
+                "scope": scope,
+                "user_id": user_id,
+                "updated_at": row["updated_at"],
+                "backend": "sqlite",
+            },
+        }
+
     @staticmethod
     def _payload(message: Dict[str, Any]) -> Dict[str, Any]:
         payload = message.get("content", message)
@@ -1636,6 +1738,13 @@ class DirectNotusProcess:
                     ),
                 },
             }
+
+
+        if msg_type == "save_abin_persistent_state":
+            return self._save_abin_persistent_state(payload)
+
+        if msg_type == "get_abin_persistent_state":
+            return self._get_abin_persistent_state(payload)
 
         if msg_type == "query_patterns":
             return {
