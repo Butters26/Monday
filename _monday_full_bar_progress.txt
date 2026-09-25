@@ -1,7 +1,7 @@
 MONDAY FULL-BAR PROGRESS (rolling)
 ==================================
 Updated: 2026-09-25 14:23 MDT (America/Denver)
-Tip SHA: 2548d35 (2548d35b3d10218686c8474c4d1154fb09cb5091)
+Tip SHA: 14b6f82 (14b6f828698a604e7f2b13594bf7970bdd6dcdb9)
 Learning: IGNORED
 Emotion: PASS @ efe3f8b — re-proved 7/7 after shared-path edits (this tip)
 
@@ -50,3 +50,10 @@ COMMITS THIS SWEEP (after Emotion pin efe3f8b):
 WHOLE-MONDAY: all previously failing live systems PASS under full bar at tip 2548d35.
 Do not claim Learning done. ContinuousThoughtGenerator/ControlledThinking are
 PASS only as detached toys (not live lobes).
+
+
+CI NOTE
+-------
+Push of .github/workflows/direct-core.yml blocked by OAuth (no workflow scope).
+Workflow file on origin left unchanged; proposed dual-job CI is
+_issue11_direct-core.yml.proposed. Fallback implementation + tests ARE on main.
