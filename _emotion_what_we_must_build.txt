@@ -1,0 +1,77 @@
+Monday emotion — what we must actually build
+=============================================
+Date: 2026-09-25 | HEAD baseline: a2925d9 | Research + diagnosis, no code.
+
+Goal Matthew stated: emotion like his (human-shaped), working for real, not lied to.
+Honest limit: this gets a believable continuous affect model. It does not make her biologically human.
+
+Science we are using (not cargo-cult):
+- Russell core affect: continuous valence + arousal is the substrate; emotion names are readout.
+- OCC/appraisal: emotions come from evaluating events vs the agent's goals/standards — NOT phrase lists.
+- Affective systems separate user-emotion recognition from the agent's own emotion generation.
+
+----------------------------------------------------------------------------
+WHAT WE MUST BUILD (bill of materials)
+----------------------------------------------------------------------------
+
+1) MondayCoreAffect (new small core inside emotion lobe)
+   - State: valence, arousal (keep dominance only if something real uses it; else drop)
+   - Dynamics: decay toward setpoint each turn/time; additive deltas; clamp [-1,1]
+   - NO intensity hardcode to 0.8; NO RNG among top labels as identity
+   - Persist in emotional_state.json (already exists) — load/save this only first
+
+2) SelfImpact (replaces phrase→interpersonal-event as the DRIVER of HER mood)
+   - Inputs that may move HER core affect:
+     a) Things about her / aimed at her (praise, insult, abandonment of her, gift to her)
+     b) Her goals/needs status when Executive/Notus provide them later
+     c) Gentle internal thought deltas (capped) — not full user-utterance classifiers
+   - Explicit feeling words ABOUT THE USER ("I'm sad") do NOT write her core affect
+   - Output: delta(v,a) + reason string for debug — not a fake "rejection" ontology for sadness
+
+3) Label readout (thin)
+   - Map (v,a) → one of a SMALL honest set: e.g. calm, happy, sad, angry, worried, scared, excited
+   - Blends later only if proven needed; delete unused fancy enum members from live path
+   - Label follows state; state does not follow a keyword table
+
+4) Kill / rip from live path (not optional polish)
+   - AppraisalEngine first-match _CLASSIFIERS as primary driver
+   - "I'm sad" → rejection (and soft-event / semantic prototype copies of that map)
+   - _switch_to_emotion intensity lottery / hardcoded 0.8
+   - Thalamus/emotion treating user utterance event as her mood
+   - appraise_internal_event re-running user substring tables at full strength
+
+5) User-feeling channel (OUTSIDE emotion engine)
+   - Keep/fix in Conversation + Social (emotional_share / last_cue) OR one thin UserAffect reader
+   - Emotion lobe MUST NOT own or require this to generate her mood
+   - Empathy in Language reads user channel + her core affect separately
+
+6) Thalamus contract
+   - emotion envelope: monday_emotion, valence, arousal, intensity, tone (from HER state only)
+   - user_affect: from Conversation/Social only; never merged into monday_emotion by default
+
+7) Proof harness (required before any PASS)
+   Scripted multi-turn:
+   - "I'm sad" → her core affect does not jump to rejection/sad-as-her; user channel shows sad
+   - Insult aimed at her → her valence drops and stays drifted next turn
+   - Quiet turns → decay toward calm, no random flip
+   - Internal thought → small nudge at most, no full phrase slam
+
+----------------------------------------------------------------------------
+WHAT WE DO NOT NEED TO BUILD (now)
+----------------------------------------------------------------------------
+- Full OCC 22-emotion formal logic with complete goal graphs
+- Neuromodulator / dopamine cube architectures
+- MiniLM/semantic theater (optional later only if SelfImpact is already honest)
+- 24-label blend poster (nostalgic/mischievous/etc.) on live path
+- Attachment/personality theater until core affect + SelfImpact pass
+- Emotion engine that "knows what Matthew feels" as a requirement for her mood
+
+----------------------------------------------------------------------------
+BUILD ORDER
+----------------------------------------------------------------------------
+A. Design lock on the 7 items above (this doc)
+B. Implement CoreAffect + SelfImpact + label readout; rip classifiers from driver path
+C. Thalamus + consumer contract (her vs user)
+D. Proof harness — only then pass/fail emotion under full bar
+E. Later: richer SelfImpact from real goals; optional semantic assist; blends if proven
+

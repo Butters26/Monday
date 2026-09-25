@@ -25,6 +25,7 @@ from collections import deque
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from threading import Lock
 from thalamus import get_thalamus
+from monday_core_affect import MondayCoreAffect, SelfImpact, label_from_va, THIN_LABELS
 
 # ------------------------------
 # Core Enums & Dataclasses
@@ -246,8 +247,9 @@ class EmotionalUnderstanding:
 
 class AppraisalEngine:
     """
-    Classifies the *meaning* of a message rather than counting keywords.
-    Produces an AppraisalResult that feeds the PAD pipeline.
+    LEGACY / GATED (2026-09-25): substring classifiers remain for archaeology/compat.
+    Live Monday mood is driven by MondayCoreAffect + SelfImpact — NOT this engine.
+    Produces AppraisalResult only if explicitly called; get_emotional_response bypasses it.
     Keywords are used only as weak evidence inside the classifiers.
     """
 
@@ -935,6 +937,10 @@ class AdvancedEmotionalEngine:
         self.engine_lock = threading.Lock()
         # PAD dynamics - start neutral
         self.pad: PAD = PAD(0.0, 0.0, 0.0)
+        # LIVE mood substrate (design lock 2026-09-25). Classifiers no longer drive her mood.
+        self.core_affect = MondayCoreAffect()
+        self._self_impact = SelfImpact()
+        self._last_self_impact_reason: str = "init"
         self._last_primary: EmotionalState = EmotionalState.CALM
         self._last_switch_time: float = 0.0
         # PAD prototypes (better distributed for variety)
@@ -1028,6 +1034,17 @@ class AdvancedEmotionalEngine:
         if len(self.mood_history) > 200:
             self.mood_history = self.mood_history[-200:]
         self._log(f"{self.name} feels {emotion.value} (int {self.emotional_intensity:.2f}) due to: {trigger}")
+        # Keep CoreAffect coherent with explicit feel_emotion (compat API).
+        try:
+            proto = self._PAD_PROTOS.get(emotion, (0.0, 0.0, 0.0))
+            self.core_affect.valence = float(proto[0]) * float(max(0.0, min(1.0, intensity)))
+            self.core_affect.arousal = float(proto[1]) * float(max(0.0, min(1.0, intensity)))
+            self.core_affect.clamp()
+            self.core_affect.last_reason = f"feel_emotion:{emotion.value}"
+            self.pad.v = self.core_affect.valence
+            self.pad.a = self.core_affect.arousal
+        except Exception:
+            pass
         # Persist to Notus so queries across sessions have data
         try:
             self._query_lobe('notus', {
@@ -1041,56 +1058,57 @@ class AdvancedEmotionalEngine:
             pass
 
     def get_emotional_response(self, user_input: str) -> str:
-        # Query Notus for emotional memories
+        """Live mood path: CoreAffect + SelfImpact only (not AppraisalEngine classifiers)."""
+        # Query Notus for emotional memories (side channel; does not set her mood)
         try:
             notus_emotions = self._query_lobe('notus', {'type': 'get_emotional_memories', 'trigger': user_input})
             if notus_emotions and notus_emotions.get('status') == 'success':
                 emotional_mems = notus_emotions.get('memories', [])
-                # Add to local memories if not already present
         except Exception:
             pass
 
-        # Rare residual color from unresolved appraisals (very low rate; no spam loop)
-        if self._unresolved_appraisals and self._rng.random() < 0.06:
-            et, sev, _ts = max(self._unresolved_appraisals, key=lambda x: x[1])
-            bias = self._appraisal_engine._EVENT_PAD.get(et, (0.0, 0.0, 0.0))
-            scale = min(0.15, 0.08 * sev)
-            self.pad = PAD(
-                v=max(-1.0, min(1.0, self.pad.v + bias[0] * scale)),
-                a=max(-1.0, min(1.0, self.pad.a + bias[1] * scale)),
-                d=max(-1.0, min(1.0, self.pad.d + bias[2] * scale)),
-            )
+        # Quiet baseline first: decay toward setpoint (no RNG flip)
+        self.core_affect.decay_toward_setpoint(1.0)
 
-        # --- Text-understanding pipeline: AppraisalEngine primary, semantic support, keyword supplement ---
-        understanding = self._understand_emotional_text(
-            user_input,
-            relationship_history=self._event_history[-20:],
-            sensitivity_map=self._event_sensitivity,
-        )
-        self._last_understanding = understanding
-        appraisal = understanding.final_appraisal or understanding.appraisal
-        self._apply_appraisal(appraisal)
+        # SelfImpact: ONLY things aimed at / about her move core affect.
+        # Explicit user self-reports ("I'm sad") return zero delta.
+        delta = self._self_impact.evaluate(user_input or "")
+        self._last_self_impact_reason = delta.reason
+        if delta.kind != "none" and (abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9):
+            self.core_affect.apply_delta(delta.dv, delta.da, delta.reason)
 
-        # Keyword cues remain supplement-only (resonance nudge); appraisal already applied.
-        cues = understanding.keyword_cues
-        self._calculate_emotional_resonance(cues)
-        context = self.assess_emotional_context(user_input)
-        if self.emotional_memories:
-            self.process_trauma_memory(self.emotional_memories[-1])
-        memory_influence = self._get_memory_influence(user_input)
-        base = self._generate_advanced_emotional_response(user_input, memory_influence)
-        # Prefer combined understanding emotion for response enhancement
-        predicted = {understanding.inferred_emotion: understanding.confidence}
-        enhanced = self._enhance_response_with_advanced_features(base, user_input, predicted, context)
-        self.calculate_emotional_intelligence()
-        # Persist the response so future queries can return learned responses
+        self._sync_from_core_affect(trigger=(user_input or "")[:80])
+
+        # Compat: keep last_understanding/appraisal slots filled but gated —
+        # classifiers must not write her mood. User feeling stays outside this engine.
+        self._last_appraisal = None
+        self._last_understanding = None
+        # Clear legacy unresolved reinjection so sticky wrong events cannot respike her.
+        self._unresolved_appraisals = []
+        self._attention_bias = None
+
+        # Response text helpers (do not call _apply_appraisal / PAD lottery)
+        try:
+            cues = {}
+            self._calculate_emotional_resonance(cues)
+            context = self.assess_emotional_context(user_input)
+            if self.emotional_memories:
+                self.process_trauma_memory(self.emotional_memories[-1])
+            memory_influence = self._get_memory_influence(user_input)
+            base = self._generate_advanced_emotional_response(user_input, memory_influence)
+            predicted = {self.current_emotion.value: self.emotional_intensity}
+            enhanced = self._enhance_response_with_advanced_features(base, user_input, predicted, context)
+            self.calculate_emotional_intelligence()
+        except Exception:
+            enhanced = f"I'm feeling {self.current_emotion.value}."
+
         try:
             self._query_lobe('notus', {
                 'type': 'store_emotional_memory',
                 'emotion': self.current_emotion.value,
                 'intensity': self.emotional_intensity,
                 'trigger': user_input,
-                'context': '',
+                'context': self._last_self_impact_reason,
                 'response': enhanced,
             })
         except Exception:
@@ -1099,73 +1117,42 @@ class AdvancedEmotionalEngine:
 
     def appraise_internal_event(self, event: InternalEventAppraisal) -> None:
         """
-        Appraise an autonomously recalled memory or thought through the existing PAD pipeline.
-
-        Safety guarantees:
-        - Cooldown: the same content fingerprint cannot be appraised more than once per
-          INTERNAL_COOLDOWN_SEC (default 120 s).
-        - Loop guard: if the same fingerprint appears more than once in the last-20 history,
-          the call is silently dropped to break any self-reinforcing chain.
-        - Intensity cap: internal events are dampened to at most 60 % of the PAD delta a
-          live message of the same type would produce. Resolved memories are further halved.
-        - All actual PAD / emotion-switch logic runs through the unchanged _apply_appraisal.
+        Internal thought/memory influence — capped gentle nudge only.
+        Does NOT re-run AppraisalEngine user-phrase classifiers at full strength.
+        (Old classifier+dampen+_apply_appraisal path ripped from live mood driver.)
         """
-        fingerprint = event.content[:80].lower().strip()
+        fingerprint = (event.content or "")[:80].lower().strip()
 
-        # --- Loop guard ---
         history_list = list(self._internal_event_history)
         if history_list.count(fingerprint) >= 2:
             self._log(f"[internal_appraisal] loop-guard suppressed: {fingerprint[:40]!r}")
             return
 
-        # --- Cooldown ---
         last_appraised = self._internal_event_cooldowns.get(fingerprint, 0.0)
         if time.time() - last_appraised < self.INTERNAL_COOLDOWN_SEC:
             return
 
-        # --- Run appraisal through the existing engine ---
-        appraisal = self._appraisal_engine.appraise(
-            event.content,
-            relationship_history=self._event_history[-20:],
-            sensitivity_map=self._event_sensitivity,
+        # Gentle capped nudge — never full phrase-table slam
+        delta = self._self_impact.evaluate_internal(
+            event.content or "", relevance=float(getattr(event, "relevance", 0.5) or 0.5)
         )
+        if event.resolved:
+            delta = type(delta)(delta.dv * 0.5, delta.da * 0.5, delta.reason + "|resolved", delta.kind)
 
-        # --- Dampening factor ---
-        # Age: decays toward 0.2 over 1 hour; floors at 0.2 so old memories still colour mood.
-        age_factor = max(0.2, 1.0 - (event.memory_age_seconds / 3600.0) * 0.8)
-        # Relevance: caller's 0-1 estimate.
-        relevance_factor = max(0.1, min(1.0, event.relevance))
-        # Resolved memories are much less impactful.
-        resolved_factor = 0.5 if event.resolved else 1.0
-        # If prior appraisal matches and it was resolved, reduce further to near-neutral.
-        if (event.resolved
-                and event.prior_appraisal_event_type is not None
-                and event.prior_appraisal_event_type == appraisal.event_type):
-            resolved_factor = 0.25
+        if abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9:
+            self.core_affect.apply_delta(delta.dv, delta.da, delta.reason)
+            self._sync_from_core_affect(trigger=f"internal:{fingerprint[:40]}")
+        self._last_self_impact_reason = delta.reason
 
-        dampening = age_factor * relevance_factor * resolved_factor
-        # Hard cap: internal events ≤ 60 % of a live message's PAD delta.
-        dampening = min(dampening, 0.60)
-
-        # Apply dampening to the PAD delta and severity on the appraisal result.
-        dv, da, dd = appraisal.monday_pad_delta
-        appraisal.monday_pad_delta = (dv * dampening, da * dampening, dd * dampening)
-        appraisal.severity = round(appraisal.severity * dampening, 3)
-
-        # --- Push through the unchanged appraisal pipeline ---
-        self._apply_appraisal(appraisal)
-
-        # --- Record cooldown and history ---
         self._internal_event_cooldowns[fingerprint] = time.time()
         self._internal_event_history.append(fingerprint)
-        # Prune stale cooldown entries (older than 2× the cooldown window) to avoid unbounded growth.
         cutoff = time.time() - self.INTERNAL_COOLDOWN_SEC * 2
         self._internal_event_cooldowns = {
             fp: ts for fp, ts in self._internal_event_cooldowns.items() if ts > cutoff
         }
         self._log(
-            f"[internal_appraisal] source={event.source} event={appraisal.event_type} "
-            f"sev={appraisal.severity:.3f} damp={dampening:.2f} → {self.current_emotion.value}"
+            f"[internal_nudge] source={event.source} reason={delta.reason} "
+            f"dv={delta.dv:.3f} da={delta.da:.3f} → {self.current_emotion.value}"
         )
 
     def get_emotional_summary(self) -> str:
@@ -1228,6 +1215,8 @@ class AdvancedEmotionalEngine:
                 'third_party_emotion': self._user_affect.third_party_emotion,
             },
             'pad': {'v': self.pad.v, 'a': self.pad.a, 'd': self.pad.d},
+            'core_affect': self.core_affect.to_dict(),
+            'last_self_impact_reason': getattr(self, '_last_self_impact_reason', ''),
             'attachment': asdict(self.attachment),
             'needs': asdict(self.needs),
             'internal': asdict(self.internal),
@@ -1299,6 +1288,17 @@ class AdvancedEmotionalEngine:
                 a=float(pad_obj.get('a', self.pad.a)),
                 d=float(pad_obj.get('d', self.pad.d)),
             )
+        # Prefer persisted CoreAffect; else seed from pad (compat with older state files).
+        ca_obj = obj.get('core_affect')
+        if isinstance(ca_obj, dict):
+            self.core_affect = MondayCoreAffect.from_dict(ca_obj)
+        elif isinstance(pad_obj, dict):
+            self.core_affect = MondayCoreAffect(
+                valence=float(pad_obj.get('v', 0.15)),
+                arousal=float(pad_obj.get('a', -0.10)),
+            )
+        self._last_self_impact_reason = str(obj.get('last_self_impact_reason', 'loaded'))
+        self._sync_from_core_affect(trigger="load")
         att = obj.get('attachment')
         if isinstance(att, dict):
             self.attachment = AttachmentModel(**{
@@ -1379,13 +1379,68 @@ class AdvancedEmotionalEngine:
             if len(self.emotional_patterns[word]) > 10:
                 self.emotional_patterns[word] = self.emotional_patterns[word][-10:]
 
-    # --------------- Appraisal-driven core ---------------
+    # --------------- CoreAffect sync (live mood) ---------------
+
+    def _sync_from_core_affect(self, trigger: str = "") -> None:
+        """Publish CoreAffect into legacy fields consumers already read."""
+        label = self.core_affect.label()
+        intensity = self.core_affect.intensity()
+        try:
+            emo = EmotionalState(label)
+        except ValueError:
+            emo = EmotionalState.CALM
+        prev = self.current_emotion
+        self.current_emotion = emo
+        self.emotional_intensity = intensity
+        self.pad.v = self.core_affect.valence
+        self.pad.a = self.core_affect.arousal
+        self.pad.d = max(-1.0, min(1.0, 0.15 - 0.25 * abs(self.core_affect.valence)
+                                   + (0.2 if self.core_affect.valence > 0 else -0.15)))
+        if emo != prev:
+            mem = EmotionalMemory(
+                emotion=emo,
+                intensity=intensity,
+                trigger=(trigger or self.core_affect.last_reason)[:80],
+                timestamp=time.time(),
+                context=f"core_affect:{self.core_affect.last_reason}",
+                influence_strength=1.0,
+            )
+            self.emotional_memories.append(mem)
+            self.mood_history.append((mem.timestamp, emo, intensity))
+            self._update_emotional_patterns(emo, trigger or label)
+            self._last_primary = emo
+            self._last_switch_time = time.time()
+        self._update_expression_flags()
+
+    # --------------- Appraisal-driven core (GATED — not live mood driver) ---------------
 
     def _apply_appraisal(self, appraisal: AppraisalResult) -> None:
         """
-        Central method: takes an AppraisalResult and drives Monday's emotion through the
-        PAD pipeline. Also updates user affect model, event history, learning, and persistence.
+        GATED (2026-09-25 emotion rebuild): live mood is MondayCoreAffect + SelfImpact.
+        This method must NOT write her valence/arousal/named emotion from classifier PAD.
+        Retained only so dead/compat call sites do not crash; user_affect bookkeeping
+        is optional and does not feed Thalamus monday emotion fields.
+        Honest: AppraisalEngine._CLASSIFIERS remain in-file but are not the live driver.
         """
+        self._last_appraisal = appraisal
+        # Do not update Monday PAD / current_emotion / intensity from appraisal.monday_pad_delta.
+        # Optional: keep a thin user_affect estimate for debug/compat — Conversation/Social own live user feeling.
+        try:
+            if appraisal is not None and getattr(appraisal, "user_inferred_emotion", None):
+                self._user_affect = UserAffectModel(
+                    inferred_emotion=str(appraisal.user_inferred_emotion or "neutral"),
+                    confidence=float(getattr(appraisal, "user_confidence", 0.0) or 0.0),
+                    inferred_need="neutral",
+                    last_updated=time.time(),
+                    previous_emotion=self._user_affect.inferred_emotion,
+                    temporal=getattr(appraisal, "temporal", "current") or "current",
+                    last_event_type=getattr(appraisal, "event_type", "neutral") or "neutral",
+                    third_party_emotion=getattr(appraisal, "third_party_emotion", None),
+                )
+        except Exception:
+            pass
+        return
+        # --- dead code below retained for archaeology; unreachable ---
         self._last_appraisal = appraisal
         self._update_internal_from_time(dt=1.0)
         self._update_attachment_from_input(appraisal.raw_text)
@@ -2495,49 +2550,25 @@ class AdvancedEmotionalEngine:
         return PAD(clamp(v), clamp(a), clamp(d))
 
     def _update_pad_state(self, new_pad: PAD) -> None:
-        # Much more dramatic PAD updates for better emotion switching
-        decay = 0.8  # Very fast response to new emotional input
-        # Add some micro-noise for natural variation
-        noise_v = self._rng.uniform(-0.05, 0.05)
-        noise_a = self._rng.uniform(-0.05, 0.05)
-        noise_d = self._rng.uniform(-0.05, 0.05)
-        
-        self.pad.v = (1-decay) * self.pad.v + decay * (new_pad.v + noise_v)
-        self.pad.a = (1-decay) * self.pad.a + decay * (new_pad.a + noise_a)
-        self.pad.d = (1-decay) * self.pad.d + decay * (new_pad.d + noise_d)
-        
-        # Clamp to valid range
-        self.pad.v = max(-1.0, min(1.0, self.pad.v))
-        self.pad.a = max(-1.0, min(1.0, self.pad.a))
-        self.pad.d = max(-1.0, min(1.0, self.pad.d))
+        """GATED: live mood uses CoreAffect.apply_delta / decay — not 80% PAD overwrite + noise."""
+        # Mirror into pad fields for any legacy reader without mutating CoreAffect.
+        # Intentionally does NOT apply decay=0.8 overwrite or RNG noise.
+        self.pad.v = max(-1.0, min(1.0, float(new_pad.v)))
+        self.pad.a = max(-1.0, min(1.0, float(new_pad.a)))
+        self.pad.d = max(-1.0, min(1.0, float(new_pad.d)))
 
     def _pad_to_emotion_choice(self, pad: PAD) -> Optional[Tuple[EmotionalState, float]]:
-        # More dynamic emotion selection with better variety
-        candidates = []
-        for emo, (pv, pa, pd) in self._PAD_PROTOS.items():
-            dist = ((pad.v - pv)**2 + (pad.a - pa)**2 + (pad.d - pd)**2) ** 0.5
-            intensity = max(0.0, 1.5 - dist)  # Higher intensity range
-            score = (1.5 - dist)
-            candidates.append((emo, intensity, score))
-        
-        # Sort by score and pick from top candidates for variety
-        candidates.sort(key=lambda x: x[2], reverse=True)
-        if not candidates:
-            return None
-            
-        # Pick from top 3 candidates with weighted probability for variety
-        top_candidates = candidates[:3]
-        weights = [c[2] for c in top_candidates]
-        total_weight = sum(weights)
-        if total_weight > 0:
-            weights = [w/total_weight for w in weights]
-            chosen_idx = self._rng.choices(range(len(top_candidates)), weights=weights)[0]
-            emo, intensity, _ = top_candidates[chosen_idx]
-            return (emo, max(0.1, min(1.0, intensity)))
-        
-        # Fallback to best match
-        emo, intensity, _ = candidates[0]
-        return (emo, max(0.1, min(1.0, intensity)))
+        """GATED: thin deterministic label from CoreAffect; no top-3 RNG lottery."""
+        # Prefer live CoreAffect; fall back to pad.v/a if somehow called standalone.
+        v = getattr(self, "core_affect", None).valence if getattr(self, "core_affect", None) else pad.v
+        a = getattr(self, "core_affect", None).arousal if getattr(self, "core_affect", None) else pad.a
+        label = label_from_va(v, a)
+        try:
+            emo = EmotionalState(label)
+        except ValueError:
+            emo = EmotionalState.CALM
+        intensity = self.core_affect.intensity() if getattr(self, "core_affect", None) else max(0.1, min(1.0, (abs(v) + abs(a)) / 2))
+        return (emo, intensity)
 
     def _pad_margin_ok(self, candidate: EmotionalState) -> bool:
         # Refractory: block unwanted flips too soon after the last emotion switch.
@@ -2562,18 +2593,18 @@ class AdvancedEmotionalEngine:
         return None
 
     def _switch_to_emotion(self, emotion: EmotionalState, trigger: str) -> None:
-        # Immediate emotion switch with intensity based on trigger strength
-        intensity = 0.8 + self._rng.uniform(0.0, 0.2)  # High intensity for direct triggers
-        
+        """Compat hook — intensity from CoreAffect, never hardcoded 0.8 + RNG."""
+        # Prefer syncing through CoreAffect label when emotion matches thin set;
+        # otherwise adopt named emotion but intensity still from core distance.
+        intensity = float(self.core_affect.intensity())
         self.current_emotion = emotion
         self.emotional_intensity = intensity
-        
         mem = EmotionalMemory(
             emotion=emotion,
             intensity=intensity,
-            trigger=f"Direct trigger: {trigger[:50]}...",
+            trigger=f"switch:{trigger[:50]}",
             timestamp=time.time(),
-            context=f"Threshold-based switch",
+            context="compat_switch_via_core_intensity",
             influence_strength=1.0,
         )
         self.emotional_memories.append(mem)
@@ -2919,19 +2950,31 @@ class EmotionalProcess:
             k: [e.value for e in v[-3:]]
             for k, v in list(self.engine.emotional_patterns.items())[-20:]
         }
+        # Ensure envelope mirrors CoreAffect (her mood only).
+        try:
+            self.engine._sync_from_core_affect(trigger="snapshot")
+        except Exception:
+            pass
+        ca = getattr(self.engine, "core_affect", None)
+        valence = float(ca.valence) if ca is not None else float(self.engine.pad.v)
+        arousal = float(ca.arousal) if ca is not None else float(self.engine.pad.a)
         return {
             'current_emotion': self.engine.current_emotion.value,
             'emotion': self.engine.current_emotion.value,
+            'monday_emotion': self.engine.current_emotion.value,
             'intensity': self.engine.emotional_intensity,
             'resonance': self.engine.emotional_resonance,
-            'pleasure': self.engine.pad.v,
-            'arousal': self.engine.pad.a,
+            'valence': valence,
+            'pleasure': valence,
+            'arousal': arousal,
             'dominance': self.engine.pad.d,
+            'self_impact_reason': getattr(self.engine, '_last_self_impact_reason', ''),
             'pad': {
-                'v': self.engine.pad.v,
-                'a': self.engine.pad.a,
+                'v': valence,
+                'a': arousal,
                 'd': self.engine.pad.d,
             },
+            'core_affect': ca.to_dict() if ca is not None else {},
             'attachment': asdict(self.engine.attachment),
             'needs': asdict(self.engine.needs),
             'internal': asdict(self.engine.internal),
@@ -3001,9 +3044,12 @@ class EmotionalProcess:
                     'tension': self.engine.internal.tension,
                     'autonomy_level': snap['autonomy_level'],
                     'unresolved_appraisals': unresolved,
+                    'valence': snap.get('valence', snap['pleasure']),
                     'pleasure': snap['pleasure'],
                     'arousal': snap['arousal'],
                     'dominance': snap['dominance'],
+                    'monday_emotion': snap.get('monday_emotion', snap['current_emotion']),
+                    'self_impact_reason': snap.get('self_impact_reason', ''),
                     'pad': snap['pad'],
                     'attachment': snap['attachment'],
                     'needs': snap['needs'],
@@ -3096,9 +3142,12 @@ class EmotionalProcess:
                     'last_event_type': last_event,
                     'unresolved_appraisals': unresolved,
                     'event_history': history,
+                    'valence': snap.get('valence', snap['pleasure']),
                     'pleasure': snap['pleasure'],
                     'arousal': snap['arousal'],
                     'dominance': snap['dominance'],
+                    'monday_emotion': snap.get('monday_emotion', snap['current_emotion']),
+                    'self_impact_reason': snap.get('self_impact_reason', ''),
                     'pad': snap['pad'],
                     'attachment': snap['attachment'],
                     'needs': snap['needs'],

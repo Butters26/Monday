@@ -1,0 +1,287 @@
+EMOTION ENGINE DESIGN DIAGNOSIS
+===============================
+Repo: /workspace/Monday
+HEAD: a2925d958f9f2459306701c1b6a3a755dc46e3ea
+      (a2925d9 Fix Pattern INTEGRATION: stop sequence replies as mouth; user-scope sequences.)
+Live wire: advanced_emotional_engine.py
+  → class EmotionalProcess (MondayAffect / AdvancedEmotionalEngine)
+  → create_core_systems() registers lobe "emotion" in run_abin.py:98–100,127
+  → Thalamus.process_user_input → send_and_wait("emotion","process_input",…)
+     thalamus.py:2271–2273
+Scope: DESIGN DIAGNOSIS ONLY. No code changes. Emotion lobe focus; other lobes
+only as consumers of emotion signals.
+Read date: 2026-09-25 (America/Denver).
+
+---------------------------------------------------------------------------
+1. WHAT THE ENGINE CLAIMS TO BE
+---------------------------------------------------------------------------
+Claims from advanced_emotional_engine.py:
+
+- AppraisalEngine docstring (~L247–252): classifies the *meaning* of a message
+  rather than counting keywords; keywords are only weak evidence inside
+  classifiers.
+
+- Architecture (module header L3–9; _apply_appraisal L1384–1512;
+  _pad_to_emotion_choice / _pad_margin_ok L2514–2555):
+    text → event_type appraisal → monday_pad_delta (PAD) → named EmotionalState
+    via PAD prototypes, with hysteresis/refractory to prevent flip-flopping.
+
+- Persistence: save/load emotional state; unresolved appraisals; mood history;
+  intensity decay slowed by unresolved (_update_emotion_persistence L2585–2609;
+  EmotionalProcess load ~L2790–2796).
+
+- Semantic path (_semantic_emotion_support L1822–1873;
+  _understand_emotional_text L1875–1889): optional Notus AdvancedEmbeddingEngine /
+  MiniLM sentence_transformer, with hash/"basic" fallback; "meaning support"
+  that must not casually override a confident appraisal.
+
+- User ≠ Monday: UserAffectModel updated separately from Monday's INTERNAL PAD
+  (_apply_appraisal ~L1395; user_affect in _affect_snapshot L2946–2954).
+
+- Live process: EmotionalProcess.process_message_safe('process_input')
+  → engine.get_emotional_response → _understand_emotional_text → _apply_appraisal
+  (L2974–2979, L1043–1072).
+
+---------------------------------------------------------------------------
+2. WHAT IT ACTUALLY IS (live data flow)
+---------------------------------------------------------------------------
+user text
+  → Thalamus.process_user_input
+      send_and_wait("emotion", "process_input", {"user_input": …})
+      [thalamus.py:2271–2273]
+  → EmotionalProcess.process_message_safe          [L2957+]
+      type == 'process_input' → engine.get_emotional_response [L2974–2979]
+  → AdvancedEmotionalEngine.get_emotional_response [L1043+]
+      → _understand_emotional_text                 [L1875+]
+          → AppraisalEngine.appraise(text)
+              1. first-match substring walk of _CLASSIFIERS
+                 [_classify_event L840–845]
+              2. optional soft event from explicit self-report via
+                 _EXPLICIT_SOFT_EVENT (sad → rejection) [L466–470, L703–715]
+              3. _EVENT_PAD[event_type] * severity (+ direction multipliers)
+                 → monday_pad_delta [_compute_monday_pad L872–896]
+              4. user_inferred_emotion from _USER_EMOTION_BY_EVENT[event_type]
+                 or explicit self-report [L504–519, L276–292]
+          → optional _semantic_emotion_support (prototype cosine)
+          → optional keyword rebuild (sadness → rejection again) [L2051–2054]
+      → _apply_appraisal(final)                    [L1384+]
+          → write UserAffectModel (user channel)
+          → blend monday_pad_delta (~70%) + internal PAD (~30%)
+          → _update_pad_state with decay=0.8 (80% new vector) [L2497–2507]
+          → _pad_to_emotion_choice: nearest PAD prototypes,
+            weighted random among top-3 [L2514–2536]
+          → _switch_to_emotion: sets current_emotion and HARDCODES
+            intensity = 0.8 + U(0,0.2); discards PAD-derived intensity
+            [L2564–2566]
+  → snapshot (_affect_snapshot L2915–2954): current_emotion, emotion,
+    intensity, pleasure/arousal/dominance, pad, emotional_tone,
+    voice_prosody, emphasis, expression, user_affect, …
+
+Live probe at this HEAD:
+  "I'm sad" / "I feel sad" → event=rejection sev≈0.65 user=sad
+    pad≈(−0.35,+0.22,−0.26) → Monday named emotion often "nostalgic"
+  "feeling down today" / "my heart is heavy" / "blue mood" → neutral
+    (no listed fragment → no affect; paraphrase without keywords dies)
+  "I'm heartbroken" → rejection (phrase/soft path) user=sad
+
+Mechanism in one line: substring event label → PAD lookup table → noisy
+nearest-prototype name. Not meaning appraisal. Not continuous mood dynamics.
+
+---------------------------------------------------------------------------
+3. DESIGN FAILURES (mechanism — not docstring honesty)
+---------------------------------------------------------------------------
+Matthew already knows keyword theater. Deeper: the DESIGN is wrong even if
+every docstring said "substring lists."
+
+(A) Appraisal ontology collapses affect self-report into interpersonal events
+    Evidence:
+    - _CLASSIFIERS puts "i'm sad"/"feel sad"/… under event_type 'rejection'
+      [L303–307]. First match wins [_classify_event L840–845].
+    - _EXPLICIT_SOFT_EVENT maps sad→('rejection', 0.55) [L707].
+    - Keyword fallback rebuild maps 'sadness'→'rejection' [L2051–2054].
+    - Semantic prototypes put "I feel sad downhearted or unhappy" under
+      rejection [L1788–1791].
+    Design error: "I am sad" is not a rejection event. Treating feeling-labels
+    as situation-types forces the wrong causal story into PAD, unresolved
+    lists, attention bias, and every consumer's "emotion."
+    Live consequence: sadness→rejection→low-valence PAD→random nearby name
+    (probe: nostalgic), not coherent sadness/empathy.
+
+(B) PAD does not do real affective work — lookup + respike + lottery
+    Evidence:
+    - monday_pad_delta = _EVENT_PAD[event_type] * severity
+      [_compute_monday_pad L872–896; table L257–273]. No dimensional
+      computation from goals/coping/certainty — table lookup.
+    - _update_pad_state decay=0.8 → each appraisal overwrites ~80% of prior
+      PAD [L2497–2507]. Turn-spike, not mood integration.
+    - Named emotion = Euclidean nearest among _PAD_PROTOS, then weighted
+      random top-3 [L2514–2536]. Non-deterministic label for same PAD.
+    - _switch_to_emotion discards PAD-choice intensity; sets 0.8+noise
+      [L2564–2566].
+    Design error: PAD is decorative scaffolding between an event enum and a
+    name enum. Honest docs would not make this a mood engine.
+
+(C) State does not behave like a mood; it respikes and wrongly sticks
+    Evidence:
+    - Strong turn: 80% PAD overwrite (B) → high-intensity switch.
+    - Weak/neutral turns: _update_emotion_persistence slowly decays intensity
+      [L2585–2609]; named emotion can linger (probe: nostalgic persists across
+      "what time is it" / "okay" while PAD drifts).
+    - Unresolved negatives slow decay and set attention bias that reinjects
+      the (possibly wrong) event's PAD on later neutrals
+      [~L1485–1489, L1532–1544; residual bias in get_emotional_response
+      L1053–1062].
+    - appraise_internal_event re-runs the SAME substring classifiers on
+      thought text and pushes dampened PAD through _apply_appraisal again
+      [L1100–1156] → second spike source.
+    Design error: hybrid of respike-on-hit and sticky wrong labels, plus
+    internal re-entry — not clean mood persistence.
+
+(D) User feelings vs Monday feelings confused for live consumers
+    Evidence:
+    - Engine keeps UserAffectModel separately [~L1465–1474] and exposes
+      user_affect in _affect_snapshot [L2946–2954].
+    - BUT Monday's PAD/current_emotion are driven by the event_type assigned
+      to the user's utterance (A)+(B). User "I'm sad" changes Monday INTERNAL
+      state as if a rejection-shaped world event occurred.
+    - Thalamus live glue passes to Language/Reasoning/output:
+      current_emotion / emotion, intensity, emotional_tone, voice_prosody,
+      pleasure/arousal/dominance [thalamus.py:2521–2535, 2625–2635].
+      No user_affect references in thalamus.py, conversation.py,
+      direct_reasoning.py, language_generation.py, or autonomous_thinking.py.
+    - Reasoning: emotion_result → current_emotion [direct_reasoning.py:502–592].
+    - AutonomousThinking: emotion/intensity/unresolved from get_state
+      [autonomous_thinking.py:292–334].
+    Design error: separated user model is dead weight on the live path;
+    consumers act on Monday's named state malformed from user affect.
+
+(E) Semantic/MiniLM inherits the broken ontology; hash path is theater
+    Evidence:
+    - Prototypes encode sad under rejection [L1788–1791] — embedding agreement
+      reinforces the wrong event type.
+    - basic/hash embeddings: high eligibility bar, almost never primary
+      [~L1848–1851]; without sentence_transformer, semantic has no authority.
+    - Paraphrases without listed fragments stay neutral (probe).
+    Design role: optional agreement booster for the same first-match taxonomy,
+    not a meaning layer that owns classification.
+
+(F) Double-appraisal / respike / appraise_internal
+    Evidence:
+    - Per user turn: one appraise inside _understand, one _apply_appraisal in
+      get_emotional_response [L1065–1072]. Happy path is not double-apply.
+    - But keyword/soft rebuild can REPLACE AppraisalResult with another
+      event_type (still sad→rejection) before apply [L2051–2070].
+    - Autonomous/inner-life: appraise_internal_event classifies thought text
+      with same _CLASSIFIERS and applies PAD again [L1100–1156];
+      process_message_safe exposes appraise_internal / internal_event
+      [L3133–3172]; nudge_from_inner_life [L3177–3203].
+    - Thalamus pre-turn get_state + curiosity read unresolved_appraisals
+      [thalamus.py:2147–2163, 2278–2290].
+    Design error: internal re-appraisal of NL thoughts through user-utterance
+    classifiers is a second emotion driver with no separate "Monday thought
+    about X" model — loop/respike risk by design.
+
+(G) What live consumers actually use
+    - Thalamus: current_emotion/emotion, intensity, emotional_tone,
+      voice_prosody, PAD scalars, unresolved_appraisals. Passes emotion +
+      tone + intensity into Language; full emotional_state into Reasoning as
+      emotion_result; gates curiosity on intensity/unresolved. NOT user_affect.
+    - Conversation: owns emotional_share intent via its own keyword/intent
+      path [conversation.py:152–211]; curiosity uses intensity +
+      unresolved_appraisals [L641–690]. last_cue is NOT owned by emotion.
+    - SocialContextLobe: owns last_cue / emotional_share continuity
+      [social_context_lobe.py:146–153, 224, 272] — separate from emotion PAD.
+    - Reasoning (direct_reasoning): emotion_result → empathic_grounded_reply;
+      emits emotion=current_emotion [L502–592].
+    - Language: emotion / emotional_tone / intensity for composition
+      [language_generation.py:150–180, 754–807]; may query emotion lobe
+      [L876–894]. Named tone dominates; PAD rarely composition-critical.
+    - AutonomousThinking: emotion name, intensity, unresolved_appraisals
+      [autonomous_thinking.py:216–334, 461–493].
+
+---------------------------------------------------------------------------
+4. VERDICT
+---------------------------------------------------------------------------
+Poorly designed? YES.
+
+Why: The live emotion path is not an affect engine; it is an event-label
+router. User text is forced through first-match substring (and soft/keyword/
+semantic twins of the same map) into a small interpersonal event enum that
+mis-labels basic affect self-reports (sadness→rejection), then a static PAD
+vector is looked up, ~80% overwritten into state, and a named feeling is
+chosen by noisy nearest-prototype with intensity invented after the fact.
+UserAffectModel exists but Thalamus/Reasoning/Language/Autonomous consume
+Monday's named emotion/intensity/tone — so user feeling and Monday feeling
+are collapsed for every downstream lobe. Semantic/MiniLM does not rescue
+this: its prototypes encode the same ontology, and without ST the path is
+inert. Persistence is a sticky side-effect of intensity decay and unresolved
+bias, not mood dynamics. Honest docs would still leave a fundamentally wrong
+control architecture for "how Monday feels."
+
+---------------------------------------------------------------------------
+5. WHAT A REAL EMOTION ENGINE MUST OWN
+    vs WHAT CONVERSATION/SOCIAL ALREADY OWN
+---------------------------------------------------------------------------
+Emotion must own (and currently does not, coherently):
+  - Monday's own affective state as slow mood + fast pulse, with real
+    integration/decay (not 80% overwrite + random top-3 label).
+  - Clean channel separation: (1) estimated USER affect, (2) Monday INTERNAL
+    affect, (3) optional situation/event features — never implement (1) by
+    writing (1) into (3) as "rejection."
+  - Situation appraisal about goals/harm/agency/coping — not a synonym table
+    from feeling words to event enums.
+  - Consumer contract publishing BOTH channels so Language/Reasoning can
+    empathize with USER while expressing Monday INTERNAL.
+  - Internal thought influence that is not "re-run user utterance classifiers
+    on the thought string."
+
+Conversation / Social already own (do not redesign here):
+  - Intent detection including emotional_share [conversation.py].
+  - last_cue / continuity / greeting-checkin-goodbye rituals
+    [social_context_lobe.py].
+  - Empathic reply strategy selection and curiosity attachment points
+    (keep consuming emotion signals — but correct ones).
+
+Pattern / Reasoning / Language remain consumers of emotion signals, not
+owners of mood.
+
+---------------------------------------------------------------------------
+6. FILE:LINE EVIDENCE INDEX
+---------------------------------------------------------------------------
+Wire-up:
+  run_abin.py:98–100,127                 EmotionalProcess as "emotion"
+  thalamus.py:2271–2273                  process_input each turn
+  thalamus.py:2521–2535,2625–2635        consumer fields passed downstream
+  advanced_emotional_engine.py:2974–2979 process_input → get_emotional_response
+  advanced_emotional_engine.py:1043–1072 understand → apply
+
+Appraisal / wrong ontology:
+  L247–252   claim: meaning; keywords weak
+  L257–273   _EVENT_PAD lookup table
+  L276–292   _USER_EMOTION_BY_EVENT
+  L296–307   _CLASSIFIERS; sadness phrases under rejection
+  L703–715   _EXPLICIT_SOFT_EVENT sad→rejection
+  L840–845   _classify_event first-match substring
+  L872–896   _compute_monday_pad = table * severity
+  L1788–1791 semantic rejection prototypes include sad wording
+  L2051–2054 keyword rebuild sadness→rejection
+
+PAD / persistence / switch:
+  L1481–1512 _apply_appraisal PAD blend → pad_to_emotion → switch
+  L2497–2507 _update_pad_state decay=0.8
+  L2514–2536 _pad_to_emotion_choice top-3 RNG
+  L2564–2566 _switch_to_emotion intensity hardcoded
+  L2585–2609 _update_emotion_persistence / unresolved
+  L1100–1156 appraise_internal_event re-entry
+
+Consumers:
+  direct_reasoning.py:502–592
+  language_generation.py:150–180,876–894
+  conversation.py:152–211,641–690
+  social_context_lobe.py:146–153,224,272   (last_cue — NOT emotion)
+  autonomous_thinking.py:216–334,461–493
+
+Live probe (this diagnosis run): "I'm sad" → rejection → nostalgic;
+paraphrases without listed fragments → neutral.
+
+END.
