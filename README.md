@@ -19,14 +19,31 @@ All socket code has been removed. Lobes communicate through direct function
 calls via Thalamus.
 
 `run_abin.create_core_systems()` creates the prompted path:
-conversation → Notus → emotion → reasoning → language → output. Each lobe
+conversation → Notus → emotion → reasoning → language → output
+(plus live Attention/Executive/Pattern/Social/Motor/Voice/MetaAwareness/
+SharedRepresentation and related lobes registered on current main). Each lobe
 receives `{"type", "content", "source", "message_id"}` and `content` holds the
 message payload.
 
-The direct core intentionally excludes the legacy/experimental launcher,
-PostgreSQL-backed `notus.py`, GUI, socket integrations, and autonomous loops.
-They remain in the repository for compatibility work but are not imported by
-`run_abin.py`.
+### Notus memory
+
+- **Primary path:** PostgreSQL `ActiveNotusMemorySystem` when
+  `create_core_systems()` is called without a custom `notus_factory`.
+- **Outage fallback:** if a Notus store/query returns an error or raises
+  (caught by `Thalamus.send_message`), the prompted path continues using a
+  bounded per-user in-memory queue (`notus_outage_fallback.py`, max 64
+  records/user, FIFO eviction). Queued records carry stable per-event
+  `event_id`s. Recovery is strict FIFO (stop on first sync failure).
+  `Thalamus.retry_unsaved_notus_records()` uses event_ids so a double retry
+  does not intentionally re-store the same queued event. This does **not**
+  restore legacy `monday_memory` / `retrieve_relevant_memory` /
+  `sync_memory_to_notus` APIs.
+- **Tests:** inject SQLite `DirectNotusProcess` via `notus_factory=` and set
+  `enable_autonomous=False` for Postgres-free, loop-free acceptance runs of
+  `test_direct_core_pipeline.py` and `test_notus_integration.py`.
+
+Legacy/experimental launcher, GUI, and socket integrations remain in the tree
+for compatibility work but are not the live prompted path.
 
 ## Learning system (easy to find)
 
@@ -37,9 +54,11 @@ They remain in the repository for compatibility work but are not imported by
   lobe under runtime data)
 - `thalamus.py` — learning router and global `teach_monday`/`learning_overview`
   handlers
-- `direct_notus.py` — conversation memory adapter (separate from lobe-local
-  learning state)
-- `test_direct_core_pipeline.py` — learning behavior tests
+- `direct_notus.py` — SQLite conversation memory adapter (injectable for tests;
+  separate from lobe-local learning state)
+- `notus_outage_fallback.py` — bounded per-user Notus outage queue
+- `test_direct_core_pipeline.py` / `test_notus_integration.py` — direct-core +
+  Notus fallback acceptance
 
 ## 3D model generator
 
