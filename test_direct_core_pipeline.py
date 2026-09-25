@@ -116,14 +116,22 @@ def test_prompted_core_path_keeps_user_memory_isolated(tmp_path):
         shutdown_core_systems(systems)
 
 
-def test_prompted_core_path_renders_grounded_greeting_and_gravity_answer(tmp_path):
+def test_prompted_core_path_renders_greeting_and_ungrounded_fail_closed(tmp_path):
+    """Greeting still speaks; ungrounded encyclopedia asks fail closed (no canned gravity)."""
     systems = _boot(tmp_path)
     try:
         greeting = systems["thalamus"].process_user_input("hello")
         gravity = systems["thalamus"].process_user_input("What is gravity?")
         assert "hello" in greeting.lower() or "hi" in greeting.lower()
-        assert "mass" in gravity.lower()
-        assert "attraction" in gravity.lower()
+        low = gravity.lower()
+        # Provider canned encyclopedias ripped; Language Mad Libs quarantined.
+        assert "mass" not in low
+        assert "attraction" not in low
+        assert (
+            "enough to go on" in low
+            or "enough grounded" in low
+            or low.rstrip().endswith("?")
+        )
     finally:
         shutdown_core_systems(systems)
 

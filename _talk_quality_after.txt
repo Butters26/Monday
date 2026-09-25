@@ -1,0 +1,73 @@
+=== WANT-GAP1 TALK QUALITY AFTER ===
+time: 2026-09-25 17:33:26 MDT
+runtime: /tmp/talkgap-after-ytwywbvq
+user_id: talkgap-after-user
+
+DESIGN:
+  Live Language mouth prefers grounded_structures / Notus facts / usable answer.
+  Empty grounding → one honest question (or MetaCognition GROUNDED_REFUSAL).
+  GrammarEngine phrase-bank Mad Libs quarantined off live compose_sentence.
+  Dead get_past_statements probe removed; working_set turns merged for salvage.
+
+--- DIRECT LanguageGenerator (empty grounding) ---
+uncertainty_empty: "I don't have enough to go on yet — what should I know?"  honest=True madlib=False PASS=True
+uncertainty_topic: "I don't have enough to go on yet — what should I know?"  honest=True madlib=False PASS=True
+state_fact_invent: "I don't have enough to go on yet — what should I know?"  honest=True madlib=False PASS=True
+acknowledge: "I don't have enough to go on yet — what should I know?"  honest=True madlib=False PASS=True
+question_bank: "I don't have enough to go on yet — what should I know?"  honest=True madlib=False PASS=True
+conversation_empty: "I don't have enough to go on yet — what should I know?"  honest=True madlib=False PASS=True
+preference_bank: "I don't have enough to go on yet — what should I know?"  honest=True madlib=False PASS=True
+structures_compose: 'Your name is Matthew. You live in Boulder.' PASS=True
+
+--- Dead probe ---
+get_past_statements call site present: False PASS=True
+Mad-Libs live compose docstring gone: PASS=True
+_compose_honest_ungrounded present: PASS=True
+GROUNDED_REFUSAL: "I don't have enough grounded information for that yet. What should I know?"
+not_stock_stamp: PASS=True
+
+--- LIVE process_user_input (no prior facts) ---
+Q: "What is my sister's name?"
+  reply: "I don't have enough to go on yet — what should I know?"
+  madlib=False PASS=True
+Q: 'What is the capital of Atlantis?'
+  reply: "I don't have enough to go on yet — what should I know?"
+  madlib=False PASS=True
+Q: 'Tell me about blorptastic widgets'
+  reply: "I don't have enough to go on yet — what should I know?"
+  madlib=False PASS=True
+Q: 'Hello'
+  reply: 'Hello! Nice to meet you'
+  madlib=False PASS=True
+
+--- LIVE grounded path (seed then ask) ---
+SEED: 'My name is Matthew' -> 'Got it — your name is Matthew.'
+SEED: 'I live in Boulder' -> 'Got it — you live in Boulder.'
+Q: 'What is my name and where do I live?'
+  reply: 'Your name is Matthew. You live in Boulder.'
+  has_matthew=True has_boulder=True madlib=False PASS=True
+  last_grounded_structures=[{'subject': 'user', 'relation': 'name', 'predicate': 'name', 'value': 'Matthew', 'object': 'Matthew', 'certainty': 1.0}, {'subject': 'user', 'relation': 'lives_in', 'predicate': 'lives_in', 'value': 'Boulder', 'object': 'Boulder', 'certainty': 1.0}]
+
+--- SUMMARY ---
+direct_empty_honest PASS=True
+structures_compose PASS=True
+dead_probe_removed PASS=True
+live_empty_no_madlibs PASS=True
+live_grounded_matthew_boulder PASS=True
+OVERALL_GAP1 PASS=True
+
+BEFORE→AFTER:
+  BEFORE direct uncertainty: Mad-Libs / 'I'm thinking about that.' / invent relevance
+  AFTER  direct uncertainty: "I don't have enough to go on yet — what should I know?"
+  BEFORE live multi-fact after seed: 'Can you tell me more?' (memories not merged)
+  AFTER  live multi-fact: 'Your name is Matthew. You live in Boulder.'
+  BEFORE get_past_statements probed (dead handler)
+  AFTER  probe removed
+  BEFORE GROUNDED_REFUSAL stock stamp 'Please provide more context...'
+  AFTER  GROUNDED_REFUSAL: "I don't have enough grounded information for that yet. What should I know?"
+
+Honest remaining gaps (not claimed fixed):
+  - Greeting/goodbye still pick from small social banks (intentional Language social).
+  - MetaCognition ownership unchanged; refusal still Meta-owned.
+  - FTS AND-gate on multi-token asks still weak; working_set merge mitigates recent turns.
+  - Learning redesign / dual_stream / whole-Monday 100% NOT claimed.

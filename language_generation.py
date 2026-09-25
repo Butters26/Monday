@@ -218,29 +218,17 @@ class GrammarEngine:
         if isinstance(answer, str) and self._is_grounding_refusal(answer):
             return answer.strip()
         
-        # Query Notus for past language patterns
-        try:
-            notus_patterns = self._send_to_thalamus({
-                'type': 'route_message',
-                'destination': 'notus',
-                'msg_type': 'query',
-                'content': {'type': 'get_language_patterns', 'intent': intent}
-            })
-            if notus_patterns and notus_patterns.get('status') == 'success':
-                patterns = notus_patterns.get('patterns', [])
-                if patterns:
-                    # Use learned pattern if available
-                    pass  # Could enhance with learned patterns
-        except Exception:
-            pass
-        
+        # --- LIVE MOUTH: GrammarEngine phrase-bank Mad Libs are quarantined ---
+        # Prefer structures / props / usable answer / social (handled above).
+        # When those are absent: greeting/goodbye/identity stay fixed; everything
+        # else is one honest question — NOT random pronoun/verb/adj banks.
         if intent == 'greeting':
             social = semantic_input.get('social_context')
             return self._compose_greeting(
                 emotion,
                 social_context=social if isinstance(social, dict) else None,
             )
-        elif intent in {'goodbye'} or (
+        if intent in {'goodbye'} or (
             isinstance(semantic_input.get('social_context'), dict)
             and semantic_input['social_context'].get('last_cue') == 'goodbye'
         ):
@@ -250,27 +238,12 @@ class GrammarEngine:
                 if isinstance(semantic_input.get('social_context'), dict)
                 else None,
             )
-        elif intent == 'introduce':
+        if intent == 'introduce':
             return self._compose_introduction()
-        elif intent == 'identify':
+        if intent == 'identify':
             return self._compose_identity()
-        elif intent == 'express_uncertainty':
-            return self._compose_uncertainty(concepts, certainty)
-        elif intent == 'state_fact':
-            return self._compose_statement(concepts, relations, certainty, perspective, tense)
-        elif intent == 'express_relation':
-            return self._compose_relation(concepts, relations, certainty)
-        elif intent == 'express_preference':
-            return self._compose_preference(concepts, emotion)
-        elif intent == 'no_preference':
-            return self._compose_no_preference(concepts)
-        elif intent == 'acknowledge':
-            return self._compose_acknowledgment(emotion)
-        elif intent == 'question':
-            return self._compose_question(concepts, relations)
-        else:
-            return self._compose_statement(concepts, relations, certainty, perspective, tense)
-    
+        return self._compose_honest_ungrounded(semantic_input)
+
     def _compose_greeting(
         self, emotion: str, social_context: Optional[Dict[str, Any]] = None
     ) -> str:
@@ -446,16 +419,11 @@ class GrammarEngine:
         return None
     
     def _compose_introduction(self) -> str:
-        patterns = [
-            "I'm Monday",
-            "My name is Monday",
-            "I'm Monday - an artificial mind",
-            "Monday, that's me"
-        ]
-        return random.choice(patterns)
+        """Fixed identity line — not a random phrase-bank pick."""
+        return "I'm Monday."
     
     def _compose_identity(self) -> str:
-        # Query Notus for actual story/experiences
+        """Fixed identity — Notus story if real; else one grounded self-line (no banks)."""
         story = None
         try:
             notus_story = self._send_to_thalamus({
@@ -468,84 +436,47 @@ class GrammarEngine:
                 story = notus_story.get('story', None)
         except Exception:
             pass
-        
-        if story:
-            return story
-        
-        parts = []
-        parts.append("I'm Monday")
-        what_am = random.choice([
-            "an artificial mind",
-            "an artificial reasoning system",
-            "a thinking system built from interconnected lobes"
-        ])
-        parts.append(what_am)
-        creator_phrases = [
-            "Matthew created me",
-            "Matthew built me",
-            "Matthew is my creator - he's my father"
-        ]
-        parts.append(random.choice(creator_phrases))
-        purpose_phrases = [
-            "I'm here to think, understand, and help",
-            "My purpose is to think and understand",
-            "I exist to think and help Matthew"
-        ]
-        parts.append(random.choice(purpose_phrases))
-        return ". ".join(parts) + "."
-    
-    def _compose_uncertainty(self, concepts: List[str], certainty: float) -> str:
-        """Mad-Libs style phrase-bank composition (honest: NOT free-form NLU).
+        if isinstance(story, str) and story.strip():
+            return story.strip()
+        return (
+            "I'm Monday — Matthew built me to think, understand, and help."
+        )
 
-        Picks pronoun/verb/adjective from vocabulary banks via random.choice.
-        Does not probe Notus for knowledge-status handlers that do not exist.
+    def _compose_honest_ungrounded(self, semantic_input: Optional[Dict[str, Any]] = None) -> str:
+        """Fail closed when grounded content is absent: one honest question.
+
+        GrammarEngine phrase-bank Mad Libs are quarantined off the live mouth.
         """
-        if not concepts:
-            pronoun = random.choice(self.vocabulary['pronouns']['first_singular'])
-            verb = random.choice(self.vocabulary['verbs']['cognitive']['think'])
-            adj = random.choice(self.vocabulary['adjectives']['certainty_low'])
-            return f"{pronoun} {verb} {adj} about that"
-        
-        topic = concepts[0]
-        pronoun = random.choice(self.vocabulary['pronouns']['first_singular'])
-        
-        # Build uncertainty expression based on certainty level
-        if certainty < 0.3:
-            # Very uncertain
-            verb = random.choice(self.vocabulary['verbs']['cognitive']['know'])
-            adj = random.choice(self.vocabulary['adjectives']['certainty_low'])
-            adv = random.choice(self.vocabulary['adverbs']['certainty'])
-            return f"{pronoun} {adv} {verb} about {topic}"
-        elif certainty < 0.6:
-            # Moderately uncertain
-            verb = random.choice(self.vocabulary['verbs']['cognitive']['think'])
-            connector = random.choice(self.vocabulary['connectors']['contrast'])
-            return f"{pronoun} {verb} about {topic}, {connector} {pronoun} could be wrong"
-        else:
-            # Mostly certain but acknowledging doubt
-            verb = random.choice(self.vocabulary['verbs']['cognitive']['understand'])
-            adj = random.choice(self.vocabulary['adjectives']['certainty_low'])
-            return f"{pronoun} {verb} {topic}, though {pronoun} {verb} {adj}"
+        semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
+        answer = semantic_input.get("answer")
+        if isinstance(answer, str) and self._is_grounding_refusal(answer):
+            return answer.strip()
+        # Empathic prose already on the envelope — keep it.
+        if self._is_usable_empathic_prose(answer if isinstance(answer, str) else None):
+            return answer.strip()
+        return (
+            "I don't have enough to go on yet — what should I know?"
+        )
+
+    def _compose_uncertainty(self, concepts: List[str], certainty: float) -> str:
+        """QUARANTINED — was Mad-Libs phrase-bank. Live path uses _compose_honest_ungrounded.
+
+        Kept only so offline/tests that call it directly fail closed honestly.
+        """
+        return self._compose_honest_ungrounded(
+            {"concepts": concepts, "certainty": certainty, "intent": "express_uncertainty"}
+        )
     
     def _compose_statement(self, concepts: List[str], relations: Dict[str, str], 
                           certainty: float, perspective: bool, tense: str) -> str:
+        """QUARANTINED off live mouth for concept-only invent.
+
+        Relations (explicit) may still realize; bare concept lists no longer invent
+        "X is relevant here". Dead Notus probe get_past_statements removed (no handler).
+        """
         if not concepts and not relations:
-            return "I'm thinking about that"
-        
-        # Query Notus for past statements about these concepts
-        past_statements = []
-        try:
-            notus_statements = self._send_to_thalamus({
-                'type': 'route_message',
-                'destination': 'notus',
-                'msg_type': 'query',
-                'content': {'type': 'get_past_statements', 'concepts': concepts, 'limit': 3}
-            })
-            if notus_statements and notus_statements.get('status') == 'success':
-                past_statements = notus_statements.get('statements', [])
-        except Exception:
-            pass
-        
+            return self._compose_honest_ungrounded({"intent": "state_fact"})
+
         if relations:
             rel_type, rel_text = list(relations.items())[0]
             
@@ -565,134 +496,47 @@ class GrammarEngine:
             else:
                 return rel_text.capitalize()
         
-        if concepts:
-            # Build proper sentences from concepts instead of just joining them
-            if len(concepts) == 1:
-                concept = concepts[0]
-                if perspective:
-                    if certainty < 0.7:
-                        return f"I think {concept} is relevant here"
-                    else:
-                        return f"{concept} seems important to me"
-                else:
-                    return f"{concept.capitalize()} is what I'm focusing on"
-            elif len(concepts) == 2:
-                if perspective:
-                    if certainty < 0.7:
-                        return f"I think {concepts[0]} and {concepts[1]} are connected"
-                    else:
-                        return f"{concepts[0]} and {concepts[1]} seem related to me"
-                else:
-                    return f"{concepts[0].capitalize()} and {concepts[1]} are connected"
-            else:
-                # 3+ concepts - build a more complete sentence
-                first = concepts[0]
-                rest = ', '.join(concepts[1:-1])
-                last = concepts[-1]
-                if perspective:
-                    if certainty < 0.7:
-                        return f"I think {first}, {rest}, and {last} are all relevant here"
-                    else:
-                        return f"{first}, {rest}, and {last} seem important to me"
-                else:
-                    return f"{first.capitalize()}, {rest}, and {last} are connected"
-        
-        return "I'm processing that"
+        # Bare concepts without relations: do not invent relevance/connection prose.
+        return self._compose_honest_ungrounded(
+            {"intent": "state_fact", "concepts": concepts, "certainty": certainty}
+        )
     
     def _compose_relation(self, concepts: List[str], relations: Dict[str, str], 
                          certainty: float) -> str:
+        """Realize an explicit relation; bare invent quarantined off live mouth."""
         if len(concepts) >= 2 and relations:
             rel_type = list(relations.keys())[0]
             verb = self._get_relation_verb(rel_type)
-            
             if certainty < 0.7:
                 return f"I see {concepts[0]} {verb} {concepts[1]}"
-            else:
-                return f"{concepts[0]} {verb} {concepts[1]}"
-        
-        return "There's a connection there"
+            return f"{concepts[0]} {verb} {concepts[1]}"
+        return self._compose_honest_ungrounded(
+            {"intent": "express_relation", "concepts": concepts, "relations": relations}
+        )
     
     def _compose_preference(self, concepts: List[str], emotion: str) -> str:
-        if not concepts:
-            return "I like learning and understanding things"
-        
-        thing = concepts[0]
-        
-        # Query Notus for past preferences about thing
-        past_preference = None
-        try:
-            notus_pref = self._send_to_thalamus({
-                'type': 'route_message',
-                'destination': 'notus',
-                'msg_type': 'query',
-                'content': {'type': 'get_preferences', 'thing': thing}
-            })
-            if notus_pref and notus_pref.get('status') == 'success':
-                past_preference = notus_pref.get('preference', None)
-        except Exception:
-            pass
-        
-        physical_words = ['food', 'pancake', 'color', 'outfit', 'clothes', 'taste', 'smell']
-        if any(word in thing.lower() for word in physical_words):
-            return f"I don't have a body, so I don't experience {thing} physically. But I'm curious why you like what you like"
-        
-        if past_preference:
-            return past_preference
-        
-        patterns = [
-            f"I like {thing}",
-            f"{thing} - I enjoy that",
-            f"I'm drawn to {thing}",
-            f"{thing} interests me"
-        ]
-        return random.choice(patterns)
-    
+        """QUARANTINED — no inventing likes from phrase banks on the live mouth."""
+        return self._compose_honest_ungrounded(
+            {"intent": "express_preference", "concepts": concepts, "emotion": emotion}
+        )
+
     def _compose_no_preference(self, concepts: List[str]) -> str:
-        """Compose no preference expression"""
-        if not concepts:
-            return "I don't have a preference about that."
-        
-        thing = concepts[0]
-        patterns = [
-            f"I don't have experience with {thing} to have a preference",
-            f"I haven't formed an opinion about {thing} yet",
-            f"{thing} - I'm curious about it but don't prefer it over alternatives"
-        ]
-        return random.choice(patterns)
-    
+        """QUARANTINED — honest ungrounded, not preference Mad Libs."""
+        return self._compose_honest_ungrounded(
+            {"intent": "no_preference", "concepts": concepts}
+        )
+
     def _compose_acknowledgment(self, emotion: str) -> str:
-        acknowledgments = [
-            "I'm listening",
-            "Tell me more",
-            "I hear you",
-            "Go on",
-            "I understand",
-            "That makes sense"
-        ]
-        return random.choice(acknowledgments)
-    
+        """QUARANTINED off live invent path; social continuity owns listening lines."""
+        return self._compose_honest_ungrounded(
+            {"intent": "acknowledge", "emotion": emotion}
+        )
+
     def _compose_question(self, concepts: List[str], relations: Dict[str, str]) -> str:
-        if not concepts:
-            return "Can you tell me more?"
-        
-        # Query Notus for context to form better questions
-        context = None
-        try:
-            notus_context = self._send_to_thalamus({
-                'type': 'route_message',
-                'destination': 'notus',
-                'msg_type': 'query',
-                'content': {'type': 'get_context', 'concepts': concepts}
-            })
-            if notus_context and notus_context.get('status') == 'success':
-                context = notus_context.get('context', {})
-        except Exception:
-            pass
-        
-        q_word = random.choice(['what', 'how', 'why'])
-        if context and context.get('related_topics'):
-            return f"{q_word.capitalize()} about {concepts[0]} and {context.get('related_topics', [])[0]}?"
-        return f"{q_word.capitalize()} about {concepts[0]}?"
+        """QUARANTINED — one honest question, not random what/how/why Mad Libs."""
+        return self._compose_honest_ungrounded(
+            {"intent": "question", "concepts": concepts, "relations": relations}
+        )
     
     def _get_certainty_word(self, certainty: float) -> str:
         if certainty > 0.8:
@@ -724,7 +568,12 @@ class GrammarEngine:
     @staticmethod
     def _is_grounding_refusal(text: str) -> bool:
         low = (text or "").strip().lower()
-        return low.startswith("i do not have enough grounded information")
+        return (
+            low.startswith("i do not have enough grounded information")
+            or low.startswith("i don't have enough grounded information")
+            or low.startswith("i don't have enough to go on")
+            or low.startswith("i do not have enough to go on")
+        )
 
     @staticmethod
     def _normalize_prop(text: str) -> str:
@@ -993,11 +842,13 @@ class LanguageGenerator:
             sentence = self._apply_emotion_wording(sentence, adjusted_input)
             # Ensure we never return None or empty string
             if not sentence or not isinstance(sentence, str) or not sentence.strip():
-                return "I'm thinking about that."
+                return self.grammar._compose_honest_ungrounded(adjusted_input)
             return sentence
         except Exception as e:
             print(f"❌ Generation error: {e}")
-            return "I'm thinking about that."
+            return self.grammar._compose_honest_ungrounded(
+                semantic_input if isinstance(semantic_input, dict) else {}
+            )
 
     def _salvage_grounded_answer(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
         """If structures/answer empty but memories hold facts, attach structures — do not invent."""
@@ -1134,7 +985,7 @@ class LanguageGenerator:
     def _send_to_output(self, sentence: str, user_input: str = None):
         """Send generated sentence to Output through Thalamus - DIRECT FUNCTION CALL"""
         if not sentence or not isinstance(sentence, str) or not sentence.strip():
-            sentence = "I'm thinking about that."
+            sentence = self.grammar._compose_honest_ungrounded({})
         
         # Direct function call - NO SOCKETS
         # Pass user_input so Output can store the full conversation to Notus

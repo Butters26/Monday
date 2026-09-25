@@ -1,0 +1,53 @@
+=== WANT-GAP1 TALK QUALITY BEFORE ===
+time: 2026-09-25 17:31:19 MDT
+runtime: /tmp/talkgap-before-gyeqjzpr
+user_id: talkgap-before-user
+
+--- DIRECT LanguageGenerator (GrammarEngine banks on empty grounding) ---
+uncertainty_empty: 'me believe uncertain about that'
+uncertainty_topic: "I'm thinking about that."
+state_fact_invent: 'I think blorptastic is relevant here'
+acknowledge: 'Go on'
+question_bank: 'How about flibbertigibbet?'
+conversation_empty: "I'm thinking about that"
+preference_bank: 'jazz interests me'
+
+--- Dead probe check ---
+notus_memory: get_past_statements present=False
+notus: get_past_statements present=False
+direct_notus: get_past_statements present=False
+language calls get_past_statements: True
+Mad-Libs docstring present: True
+past_statements used after fetch: False
+past_statements referenced after fetch: False
+
+--- LIVE process_user_input (no prior facts) ---
+Q: "What is my sister's name?"
+  reply: 'Can you tell me more?'
+  grounded_refusal=False
+  ends_question=True
+  madlib_phrase_bank=False
+Q: 'What is the capital of Atlantis?'
+  reply: 'Can you tell me more?'
+  grounded_refusal=False
+  ends_question=True
+  madlib_phrase_bank=False
+Q: 'Tell me about blorptastic widgets'
+  reply: 'Can you tell me more?'
+  grounded_refusal=False
+  ends_question=True
+  madlib_phrase_bank=False
+Q: 'Hello'
+  reply: 'Hi there'
+  grounded_refusal=False
+  ends_question=False
+  madlib_phrase_bank=False
+
+--- LIVE grounded path (seed then ask) ---
+SEED: 'My name is Matthew' -> 'Got it — your name is Matthew.'
+SEED: 'I live in Boulder' -> 'Got it — you live in Boulder.'
+Q: 'What is my name and where do I live?'
+  reply: 'Can you tell me more?'
+  has_matthew=False
+  has_boulder=False
+  grounded_refusal=False

@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 GROUNDED_REFUSAL = (
-    "I do not have enough grounded information to answer that. "
-    "Please provide more context or a fact I can reason from."
+    "I don't have enough grounded information for that yet. "
+    "What should I know?"
 )
 
 _UNCERTAINTY_MARKERS = (

@@ -15,7 +15,12 @@ Authority: run_abin.create_core_systems + thalamus live path;
 ---------------------------------------------------------------------------
 GAP 1 — Talk quality (Language Mad Libs / Reasoning refusal / canned leftovers)
 ---------------------------------------------------------------------------
-WHAT'S WRONG
+STATUS: CLOSED 2026-09-25 (WANT-GAP1) — see _talk_quality_before.txt /
+        _talk_quality_after.txt. Mad Libs quarantined off live mouth;
+        empty → honest question; get_past_statements probe removed;
+        working_set turns merged for grounded salvage. NOT whole-Monday 100%.
+
+WHAT WAS WRONG
   Provider canned encyclopedias were ripped from DeterministicResponseProvider.render
   (direct_response.py:1209–1239 — returns None; no greeting/gravity/memory
   short-circuits; no "Please tell me more" filler). That is honest fail-closed

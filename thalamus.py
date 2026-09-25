@@ -2377,6 +2377,28 @@ class Thalamus:
                     memories.append({**m, "role": "monday"})
                     have.add(key)
         ctx = dict(ctx)
+        # When FTS/query AND-gates bury personal facts, working_set turns still
+        # hold recent teach lines — surface them so Language can compose grounded
+        # structures instead of falling through to empty-mouth handling.
+        ws = ctx.get("working_set") if isinstance(ctx.get("working_set"), dict) else {}
+        turns = ws.get("turns") if isinstance(ws, dict) else None
+        if isinstance(turns, list) and turns:
+            have = {
+                str(m.get("content") or "").strip().casefold()
+                for m in memories
+                if isinstance(m, dict)
+            }
+            for turn in turns:
+                if not isinstance(turn, dict):
+                    continue
+                content = str(turn.get("content") or "").strip()
+                if not content:
+                    continue
+                key = content.casefold()
+                if key in have:
+                    continue
+                memories.append(dict(turn))
+                have.add(key)
         ctx["memories"] = memories
 
         # Pattern: continuous observe from Perception/Attention/Conversation/Emotion,
@@ -2577,6 +2599,9 @@ class Thalamus:
                 grounded_structures = None
                 self.last_grounded_structures = None
                 reasoning_answer = semantic_input.get("answer")
+        # Hand memories to Language so salvage/compose can use Notus facts.
+        if "memory_context" not in semantic_input or not semantic_input.get("memory_context"):
+            semantic_input["memory_context"] = list(memories) if isinstance(memories, list) else []
         language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
         if language["status"] != "success":
             return "I'm having trouble finding the words right now."
