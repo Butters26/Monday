@@ -32,19 +32,25 @@ except Exception:  # pragma: no cover
 
 @dataclass
 class VoiceProfile:
-    """Voice characteristics for TTS"""
+    """pyttsx3 rate/gender hint profile — NOT a formant TTS stack.
+
+    Live create_core_systems uses enable_tts=False, so these knobs are inert
+    on the prompted path. formant_shift/nasality/vibrato_* are unused even when
+    TTS is on (pyttsx3 only roughly maps speed/pitch). Kept as documentation of
+    intended voice character, not as active synthesis parameters.
+    """
     name: str
     pitch_base: float
     pitch_range: float
-    formant_shift: float
+    formant_shift: float  # UNUSED by Output TTS path
     speed: float
-    breathiness: float
-    nasality: float
-    warmth: float
-    clarity: float
-    resonance: float
-    vibrato_depth: float
-    vibrato_rate: float
+    breathiness: float  # UNUSED by Output TTS path
+    nasality: float  # UNUSED
+    warmth: float  # UNUSED by Output TTS path
+    clarity: float  # UNUSED by Output TTS path
+    resonance: float  # UNUSED by Output TTS path
+    vibrato_depth: float  # UNUSED
+    vibrato_rate: float  # UNUSED
 
 # ============================================================================
 # PREDEFINED VOICES
@@ -154,7 +160,10 @@ class OutputEnvelope:
 
 
 class OutputLobe:
-    """Output system - handles all expression and communication"""
+    """Output system — expression envelopes + optional local TTS fallback.
+
+    Live path: enable_tts=False. VoiceLobe owns real (stub) synthesis when asked.
+    """
     
     def __init__(self, thalamus=None, enable_tts: bool = True):
         self.running = True
@@ -197,7 +206,11 @@ class OutputLobe:
             self._initialize_tts()
         
     def _apply_voice_profile(self, profile_name: str = 'monday'):
-        """Apply voice profile settings to TTS engine"""
+        """Map VoiceProfile.speed/pitch_base onto pyttsx3 only.
+
+        formant_shift / nasality / vibrato_* / breathiness / warmth / clarity /
+        resonance are NOT applied — pyttsx3 cannot use them.
+        """
         if not self.tts_engine or not self.tts_available:
             return
         

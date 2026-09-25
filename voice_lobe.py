@@ -52,7 +52,13 @@ def _recv_all(conn, n, timeout=5.0):
 
 @dataclass
 class VoiceProfile:
-    """Voice characteristics"""
+    """Formant-stub oscillator knobs (NOT full TTS / vocal-tract model).
+
+    Used by VoiceSynthesizer: pitch_base/range, formant_shift, speed,
+    breathiness, warmth, clarity, resonance. nasality and vibrato_* are
+    declared for future use but NOT read by the synthesizer body.
+    Unknown words collapse to crude letter→'ah' phonemization.
+    """
 
     name: str
     pitch_base: float
@@ -60,12 +66,12 @@ class VoiceProfile:
     formant_shift: float = 1.0
     speed: float = 1.0
     breathiness: float = 0.1
-    nasality: float = 0.05
+    nasality: float = 0.05  # UNUSED by VoiceSynthesizer
     warmth: float = 0.5
     clarity: float = 0.7
     resonance: float = 1.0
-    vibrato_depth: float = 0.02
-    vibrato_rate: float = 5.0
+    vibrato_depth: float = 0.02  # UNUSED by VoiceSynthesizer
+    vibrato_rate: float = 5.0  # UNUSED by VoiceSynthesizer
 
 
 VOICE_PROFILES = {
@@ -158,7 +164,12 @@ TEXT_TO_PHONEMES = {
 
 
 class VoiceSynthesizer:
-    """Synthesize speech from text (formant stub → real WAV file)."""
+    """DEMO formant/sine stub → WAV. Not a production TTS engine.
+
+    Known lexicon words map to hand phonemes; everything else letter→'ah'.
+    Writes a real WAV so play status can be honest (synthesized /
+    play_unavailable) — audio quality is oscillator-demo, not speech.
+    """
 
     def __init__(self, voice_profile: VoiceProfile, sample_rate: int = 22050):
         self.voice = voice_profile
@@ -186,6 +197,7 @@ class VoiceSynthesizer:
         return phonemes
 
     def _simple_phonemize(self, word: str) -> list:
+        """Crude fallback: vowels→'ah', consonants→letter. Not G2P."""
         phonemes = []
         vowels = "aeiou"
         for char in word:
@@ -534,6 +546,9 @@ class VoiceLobe:
             "current_voice": self.voice_config.get("voice_name"),
             "auto_play": bool(self.voice_config.get("auto_play")),
             "synth_backend": self._synth_backend,
+            "synth_kind": "formant_sine_stub",
+            "nasality_unused": True,
+            "vibrato_unused": True,
             "speak_count": self._speak_count,
             "last_voice": dict(last) if last else None,
             "users": sorted(self._last_by_user.keys()),
