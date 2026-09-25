@@ -1,0 +1,52 @@
+MONDAY FULL-BAR PROGRESS (rolling)
+==================================
+Updated: 2026-09-25 14:23 MDT (America/Denver)
+Tip SHA: 2548d35 (2548d35b3d10218686c8474c4d1154fb09cb5091)
+Learning: IGNORED
+Emotion: PASS @ efe3f8b — re-proved 7/7 after shared-path edits (this tip)
+
+FULL BAR: job on live path + claims match mechanism + no dead fancy APIs +
+no pretend persistence/fake ML/keyword theater sold as understanding +
+no false fed flags. Partial = FAIL.
+
+LOBE / SYSTEM                    | VERDICT | EVIDENCE
+---------------------------------|---------|---------
+perception                       | PASS    | prior full review; untouched
+sensory_integration              | PASS    | prior; untouched
+attention                        | PASS    | prior; untouched
+pattern                          | PASS    | prior; untouched
+meta_cognition                   | PASS    | prior; untouched
+executive_control                | PASS    | prior; untouched
+social_context                   | PASS    | prior; untouched
+motor_action                     | PASS    | prior; untouched
+autonomous                       | PASS    | prior; untouched
+emotion                          | PASS    | _prove_emotion_core_affect.py 7/7 @ tip
+novelty                          | PASS    | score path live; pending/question_draft removed (1c7305b)
+conversation                     | PASS    | check_unprompted_speech removed; intent path live
+notus                            | PASS    | #11 fallback efad465 + naming/embedding honesty 2548d35; pytest subset 5/5
+reasoning                        | PASS    | ReasoningLobe rename; Belief persist no-op (3854973)
+language                         | PASS    | phrase-bank honesty; check_knowledge call removed
+output                           | PASS    | TTS-off documented; unused formant knobs labeled (3701ead)
+voice                            | PASS    | formant_sine_stub status; unused nasality/vibrato labeled
+speech                           | PASS    | decision-only; pending/wording invent removed
+meta_awareness                   | PASS    | mocks detached; controlled_fed=False live (7cdbcda)
+shared_representation            | PASS    | live co_occurrence producer; spread_had_edges (5c10ea7)
+ContinuousThoughtGenerator       | PASS*   | NOT attached live; module marked MOCK/TOY (*not a live lobe)
+ControlledThinking               | PASS*   | NOT attached live; module marked MOCK/TOY (*not a live lobe)
+
+PROOF HARNESS: _prove_full_bar_remaining.py — 15/15 PASS
+Emotion reproof: _prove_emotion_core_affect.py — 7/7 PASS
+Notus fallback subset: 5 passed
+
+COMMITS THIS SWEEP (after Emotion pin efe3f8b):
+  efad465 Fix incomplete Notus outage fallback (Closes #11)
+  7cdbcda Detach mock dual-stream generators
+  1c7305b Remove dead speech/novelty pending surfaces
+  3854973 Language + Reasoning honesty
+  3701ead Output/Voice TTS honesty
+  5c10ea7 SharedRepresentation co-occurrence producer
+  2548d35 Notus embedding/naming honesty
+
+WHOLE-MONDAY: all previously failing live systems PASS under full bar at tip 2548d35.
+Do not claim Learning done. ContinuousThoughtGenerator/ControlledThinking are
+PASS only as detached toys (not live lobes).
