@@ -101,22 +101,30 @@ def label_from_va(v: float, a: float) -> str:
     # Near setpoint / low activation → calm
     if abs(v) < 0.22 and abs(a) < 0.28:
         return "calm"
-    if v >= 0.25:
+    # Positive valence → happy/excited (never fall into negative branch)
+    if v >= 0.22:
         return "excited" if a >= 0.35 else "happy"
-    # Negative valence
-    if a >= 0.55:
-        return "scared" if v <= -0.45 else "angry"
-    if a >= 0.25:
-        return "angry" if v <= -0.55 else "worried"
-    if a <= -0.05:
-        return "sad"
-    return "worried" if v < -0.25 else "calm"
+    # Negative valence only
+    if v < 0.0:
+        if a >= 0.55:
+            return "scared" if v <= -0.45 else "angry"
+        if a >= 0.25:
+            return "angry" if v <= -0.55 else "worried"
+        if a <= -0.05:
+            return "sad"
+        return "worried" if v < -0.25 else "calm"
+    # Tiny positive / edge with elevated arousal
+    return "excited" if a >= 0.35 else "calm"
 
 
 class SelfImpact:
     """
-    Detects ONLY impacts that hit Monday herself.
+    SelfImpact v1 — aimed-at-her pattern detector (NOT full OCC/goal understanding).
+
+    Detects ONLY impacts that hit Monday herself via regex patterns
+    (insult / praise / abandon / gift aimed at her).
     Explicit user self-reports never produce a her-mood delta.
+    Full goal/standards SelfImpact is explicitly NOT required for Emotion PASS.
     """
 
     # User feeling about themselves — must NOT move her core affect.

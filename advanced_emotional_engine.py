@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-Advanced Emotional Engine – production‑ready, single‑file build
-- Autonomous inner life (attachment/needs/internal loops) so she can feel without mirroring
-- PAD dynamics with hysteresis + refractory to stop flip‑flopping
-- Blends, memories, pattern learning, expressions wired into output
-- Safer keyword detection + false‑positive filters
-- Clean persistence (save/load) with no hardcoded paths
-- Deterministic hooks (rng + logger) for unit tests
+Advanced Emotional Engine — Monday emotion lobe (live mood path).
+
+LIVE mood driver (design lock 2026-09-25):
+  MondayCoreAffect (valence/arousal + decay) + SelfImpact v1 (aimed-at-her patterns)
+  → thin label readout (calm/happy/sad/angry/worried/scared/excited).
+
+Honesty:
+  - Does NOT claim keyword-understanding or appraisal-as-driver theater.
+  - SelfImpact v1 is regex aimed-at-her patterns — NOT full OCC/goal understanding.
+  - User self-reports ("I'm sad") do NOT write her mood; Conversation/Social own user-feeling.
+  - Fancy EmotionalState members beyond the thin set are UNUSED/legacy (persist/feel_emotion compat).
+  - AppraisalEngine / old PAD-lottery helpers are deleted or fail-closed stubs only.
+
+Also: persistence (save/load), feel_emotion compat API, response text helpers.
 """
 from __future__ import annotations
 
@@ -32,30 +39,31 @@ from monday_core_affect import MondayCoreAffect, SelfImpact, label_from_va, THIN
 # ------------------------------
 
 class EmotionalState(Enum):
-    # Primary emotions
+    # LIVE thin readout set — label_from_va / CoreAffect exports ONLY these on live path.
     HAPPY = "happy"
     SAD = "sad"
     ANGRY = "angry"
     EXCITED = "excited"
     CALM = "calm"
     WORRIED = "worried"
-    CURIOUS = "curious"
-    PROUD = "proud"
     SCARED = "scared"
-    RELIEVED = "relieved"
-    EXHAUSTED = "exhausted"
-    SURPRISED = "surprised"
-    DISGUSTED = "disgusted"
-    CONTEMPT = "contempt"
-    # Complex blends
-    NOSTALGIC = "nostalgic"
-    ANXIOUS = "anxious"
-    FRUSTRATED = "frustrated"
-    EUPHORIC = "euphoric"
-    MELANCHOLIC = "melancholic"
-    PLAYFUL = "playful"
-    PROTECTIVE = "protective"
-    MISCHIEVOUS = "mischievous"
+    # UNUSED/legacy — kept for persisted state + feel_emotion compat.
+    # NOT produced by live CoreAffect readout; do not treat as live mood labels.
+    CURIOUS = "curious"          # UNUSED/legacy
+    PROUD = "proud"              # UNUSED/legacy
+    RELIEVED = "relieved"        # UNUSED/legacy
+    EXHAUSTED = "exhausted"      # UNUSED/legacy
+    SURPRISED = "surprised"      # UNUSED/legacy
+    DISGUSTED = "disgusted"      # UNUSED/legacy
+    CONTEMPT = "contempt"        # UNUSED/legacy
+    NOSTALGIC = "nostalgic"      # UNUSED/legacy
+    ANXIOUS = "anxious"          # UNUSED/legacy
+    FRUSTRATED = "frustrated"    # UNUSED/legacy
+    EUPHORIC = "euphoric"        # UNUSED/legacy
+    MELANCHOLIC = "melancholic"  # UNUSED/legacy
+    PLAYFUL = "playful"          # UNUSED/legacy
+    PROTECTIVE = "protective"    # UNUSED/legacy
+    MISCHIEVOUS = "mischievous"  # UNUSED/legacy
 
 @dataclass
 class PAD:
@@ -164,7 +172,7 @@ class EmotionalBlend:
 class InternalEventAppraisal:
     """Metadata for an autonomously recalled memory or thought passed to the appraisal pipeline."""
     source: str                            # "memory", "thought", "rumination", "association"
-    content: str                           # Text passed to AppraisalEngine.appraise()
+    content: str                           # Thought/memory text for capped SelfImpact nudge
     memory_age_seconds: float              # How old the memory is (0 = fresh thought)
     resolved: bool                         # Was the underlying situation resolved?
     prior_appraisal_event_type: Optional[str]  # event_type from first appraisal, or None
@@ -184,7 +192,7 @@ EVENT_TYPES = [
 
 @dataclass
 class AppraisalResult:
-    """Structured meaning of an event, derived from understanding, not keywords."""
+    """LEGACY container for event metadata. Live mood does not use appraisal-as-driver."""
     event_type: str          # one of EVENT_TYPES
     severity: float          # 0..1 – how significant is this
     directed_at_monday: bool # is Monday the target / subject?
@@ -291,21 +299,6 @@ class AppraisalEngine:
             quoted_affect=False,
         )
 
-    # Thin no-op helpers kept for rare leftover call sites (not classifiers).
-    def _strip_quoted_speech(self, tl: str) -> str:
-        return tl or ''
-
-    def _mask_hypotheticals(self, tl: str) -> str:
-        return tl or ''
-
-    def _has_third_party_person_ref(self, tl: str) -> bool:
-        return False
-
-    def _compute_monday_pad(self, event_type: str, severity: float,
-                            directed_at_monday: bool = False,
-                            directed_at_user: bool = False):
-        return (0.0, 0.0, 0.0)
-
 
 class AdvancedEmotionalEngine:
     def __init__(self, name: str = "AI", logger: Optional[Callable[[str], None]] = None, rng: Optional[random.Random] = None, thalamus: Optional[Any] = None):
@@ -336,7 +329,9 @@ class AdvancedEmotionalEngine:
         self._last_self_impact_reason: str = "init"
         self._last_primary: EmotionalState = EmotionalState.CALM
         self._last_switch_time: float = 0.0
-        # PAD prototypes (better distributed for variety)
+        # PAD prototypes for feel_emotion compat ONLY (thin live set).
+        # Live mood labels come from CoreAffect.label_from_va — not nearest-proto lottery.
+        # Unused/legacy enum members intentionally omitted from this map.
         self._PAD_PROTOS: Dict[EmotionalState, Tuple[float, float, float]] = {
             EmotionalState.HAPPY: ( 0.80,  0.30,  0.20),
             EmotionalState.SAD:   (-0.80, -0.20, -0.40),
@@ -344,22 +339,7 @@ class AdvancedEmotionalEngine:
             EmotionalState.EXCITED:( 0.70,  0.80,  0.30),
             EmotionalState.CALM:  ( 0.30, -0.50,  0.50),
             EmotionalState.WORRIED:(-0.60,  0.60, -0.50),
-            EmotionalState.CURIOUS:( 0.40,  0.30,  0.10),
-            EmotionalState.PROUD: ( 0.50,  0.40,  0.70),
             EmotionalState.SCARED:(-0.70,  0.80, -0.70),
-            EmotionalState.RELIEVED:( 0.55, -0.25,  0.35),
-            EmotionalState.EXHAUSTED:(-0.20, -0.55, -0.25),
-            EmotionalState.SURPRISED:(0.20,  0.90,  0.10),
-            EmotionalState.DISGUSTED:(-0.80, 0.30,  0.40),
-            EmotionalState.CONTEMPT:(-0.50, 0.20,  0.60),
-            EmotionalState.NOSTALGIC:(0.20, -0.20, 0.20),
-            EmotionalState.ANXIOUS: (-0.40, 0.70, -0.30),
-            EmotionalState.FRUSTRATED:(-0.60, 0.60, 0.30),
-            EmotionalState.EUPHORIC:(0.90, 0.90, 0.40),
-            EmotionalState.MELANCHOLIC:(-0.40, -0.30, 0.20),
-            EmotionalState.PLAYFUL:(0.60, 0.50, 0.00),
-            EmotionalState.PROTECTIVE:(0.20, 0.50, 0.60),
-            EmotionalState.MISCHIEVOUS:(0.50, 0.60, 0.10),
         }
         # Autonomy & internals
         self.autonomy_level: float = 0.85  # 0 mirror ↔ 1 fully internal
@@ -368,7 +348,7 @@ class AdvancedEmotionalEngine:
         self.internal = InternalState()
         self.expression = ExpressionState()
         self._time_on_task: float = 0.0
-        # Appraisal system
+        # Legacy AppraisalEngine stub (fail-closed; not a mood driver)
         self._appraisal_engine = AppraisalEngine()
         self._user_affect = UserAffectModel()
         self._last_appraisal: Optional[AppraisalResult] = None
@@ -805,75 +785,7 @@ class AdvancedEmotionalEngine:
             self._last_switch_time = time.time()
         self._update_expression_flags()
 
-    # --------------- Appraisal apply (DELETED driver; honest stub) ---------------
-
-    def _apply_appraisal(self, appraisal: AppraisalResult) -> None:
-        """
-        DELETED as mood driver (2026-09-25). Live mood is MondayCoreAffect + SelfImpact.
-        Fail closed: may stash last_appraisal for debug; never writes valence/arousal/
-        current_emotion/intensity from classifier PAD. No phrase tables remain.
-        """
-        self._last_appraisal = appraisal
-        # Do not update Monday PAD / emotion / intensity from appraisal.
-        return
-
-    def _has_continuity_cue(self, text: str) -> bool:
-        """Anaphoric / episode-continuing language across turns."""
-        tl = (text or '').lower()
-        patterns = [
-            r"\b(he|she|him|her|they|them|it|that|this)\b",
-            r"\bdon'?t even want\b", r"\bwant to talk\b",
-            r"\btomorrow\b", r"\bstill\b", r"\bagain\b",
-            r"\bby it\b", r"\bat first\b", r"\bnow i\b",
-            r"\bthe (?:same |whole )?(?:thing|situation|incident)\b",
-            r"\bthinking about\b",
-        ]
-        return any(re.search(p, tl) for p in patterns)
-
-    def _is_topic_shift_neutral(self, text: str) -> bool:
-        """Small-talk / topic change that should not lock prior USER peak affect."""
-        tl = (text or '').lower()
-        return bool(re.search(
-            r"\b(weather|temperature|hello|hi\b|hey\b|what time|good morning|good night|how are you)\b",
-            tl,
-        ))
-
-    def _infer_user_need(self, appraisal: AppraisalResult) -> str:
-        """Infer what kind of response the user likely wants."""
-        if appraisal.event_type in ('harm', 'betrayal', 'rejection', 'loss', 'abandonment'):
-            return 'validation'
-        if appraisal.event_type in ('threat', 'conflict', 'unfairness'):
-            return 'help'
-        if appraisal.event_type in ('success', 'celebration', 'affection', 'gift'):
-            return 'celebration'
-        if appraisal.event_type == 'support':
-            return 'space'
-        if appraisal.event_type == 'criticism' and appraisal.directed_at_monday:
-            return 'feedback'
-        return 'neutral'
-
-    def _update_event_sensitivity(self, appraisal: AppraisalResult) -> None:
-        """
-        Sensitivity drift: if an event type repeatedly produces strong emotion, her
-        sensitivity to that type increases (up to 1.5×). Recovery toward 1.0 for absent types.
-        """
-        et = appraisal.event_type
-        if et == 'neutral':
-            # Slow recovery for all types not triggered recently
-            for key in list(self._event_sensitivity.keys()):
-                if key not in self._event_history[-5:]:
-                    self._event_sensitivity[key] = max(1.0, self._event_sensitivity[key] - 0.01)
-            return
-
-        current = self._event_sensitivity.get(et, 1.0)
-        # How emotionally intense did this appraisal make Monday?
-        emotion_intensity = self.emotional_intensity
-        if emotion_intensity > 0.6 and appraisal.severity > 0.4:
-            # Drift upward: she becomes more sensitive
-            self._event_sensitivity[et] = min(1.5, current + 0.03)
-        elif emotion_intensity < 0.3:
-            # Low impact → slight desensitization
-            self._event_sensitivity[et] = max(0.7, current - 0.01)
+    # --------------- (Old appraisal/PAD-lottery driver DELETED 2026-09-25) ---------------
 
     def _calculate_emotional_resonance(self, cues: Dict[str, float]) -> None:
         base = self.personality.empathy_level * 0.5
@@ -882,26 +794,6 @@ class AdvancedEmotionalEngine:
         self.emotional_resonance = min(base + cue_part, 1.0)
 
     # --- Main appraisal path (autonomy + PAD) ---
-    def _process_emotional_input_advanced(self, cues: Dict[str, float], user_input: str) -> None:
-        self._update_internal_from_time(dt=1.0)
-        self._update_attachment_from_input(user_input)
-        
-        # Direct emotion triggers - threshold-based system
-        triggered_emotion = self._get_direct_emotion_trigger(cues, user_input)
-        if triggered_emotion:
-            self._switch_to_emotion(triggered_emotion, user_input)
-            return
-            
-        # If no direct trigger, check for emotion persistence/decay
-        self._update_emotion_persistence()
-        self._update_expression_flags()
-
-    def _decay_to_calm(self) -> None:
-        decay_rate = self.emotional_decay_rate * (2 - self.personality.emotional_stability) * 2
-        self.emotional_intensity = max(0.05, self.emotional_intensity - decay_rate)
-        if self.emotional_intensity <= 0.05:
-            self.current_emotion = EmotionalState.CALM
-
     def _get_memory_influence(self, user_input: str) -> Dict[str, float]:
         influence = {'emotion_boost': 0.0, 'response_modifier': 1.0}
         
@@ -943,124 +835,6 @@ class AdvancedEmotionalEngine:
             influence['response_modifier'] = 1.0 + (avg_same * 0.2)
         return influence
 
-    # Explicit self-report cue tables DELETED (2026-09-25).
-    # They were leftover phrase→cue machinery from the old appraisal pipeline and
-    # looked active even though live mood ignores them. User feeling stays outside.
-
-    def _analyze_emotional_cues(self, text: str) -> Dict[str, float]:
-        """Fail closed stub — cue phrase tables deleted; not a mood driver."""
-        return {k: 0.0 for k in ['positive', 'negative', 'excitement', 'concern', 'anger', 'sadness', 'pride']}
-
-    def _get_embedding_engine(self):
-        """Reuse Notus AdvancedEmbeddingEngine — optional sentence-transformers, basic fallback."""
-        if self._embedding_engine_tried:
-            return self._embedding_engine
-        self._embedding_engine_tried = True
-        try:
-            from notus import AdvancedEmbeddingEngine, SuperhumanConfig
-            eng = AdvancedEmbeddingEngine(SuperhumanConfig())
-            self._embedding_engine = eng
-            self._embedding_model_type = getattr(eng, 'model_type', 'basic')
-        except Exception:
-            self._embedding_engine = None
-            self._embedding_model_type = 'unavailable'
-        return self._embedding_engine
-
-    # Semantic phrase→event prototypes DELETED (2026-09-25 honesty cleanup).
-    # They duplicated AppraisalEngine classifiers (e.g. sadness→rejection) and
-    # looked like a live mood driver. Live mood does not use this path.
-    _SEMANTIC_EVENT_PROTOTYPES: Dict[str, List[str]] = {}
-    _SEMANTIC_EMOTION_BY_EVENT: Dict[str, str] = {}
-
-    def _semantic_emotion_support(self, text: str) -> Dict[str, Any]:
-        """Fail closed stub — semantic event prototypes removed; not a mood driver."""
-        return {
-            'event_type': None,
-            'emotion': None,
-            'confidence': 0.0,
-            'eligible': False,
-            'model_type': 'disabled',
-        }
-
-    def _understand_emotional_text(
-        self,
-        text: str,
-        relationship_history: Optional[List[str]] = None,
-        sensitivity_map: Optional[Dict[str, float]] = None,
-    ) -> EmotionalUnderstanding:
-        """
-        Fail closed stub (2026-09-25). Old pipeline was AppraisalEngine classifiers
-        → semantic prototypes → keyword soft-events. That is NOT the live mood path.
-        User-feeling recognition belongs outside this engine (Conversation/Social).
-        Returns neutral understanding with zero severity.
-        """
-        appraisal = self._appraisal_engine.appraise(text or '')
-        return EmotionalUnderstanding(
-            appraisal=appraisal,
-            semantic_event=None,
-            semantic_emotion=None,
-            semantic_confidence=0.0,
-            semantic_used=False,
-            keyword_cues={},
-            primary_source='neutral',
-            inferred_emotion='neutral',
-            event_type='neutral',
-            severity=0.0,
-            confidence=0.0,
-            negation_affected=False,
-            contrast_affected=False,
-            explicit_emotion=None,
-            appraisal_inferred_emotion='neutral',
-            final_appraisal=appraisal,
-        )
-
-    def _situation_wording_should_reflect_current(self, user_input: str) -> bool:
-        """True when OUTPUT must not narrate a resolved/irrelevant prior conflict as active.
-        PAD/INTERNAL may linger; explicit wording must match the current situation.
-        """
-        appr = getattr(self, '_last_appraisal', None)
-        if appr is None:
-            return False
-        event = getattr(appr, 'event_type', 'neutral') or 'neutral'
-        situation_calm = event in (
-            'neutral', 'success', 'affection', 'support', 'celebration', 'gift'
-        )
-        ua = self._user_affect
-        user_calm = ua.inferred_emotion in ('unknown', 'neutral', 'calm', 'happy', 'relieved', 'proud')
-        resolution = bool(getattr(appr, 'resolution_signal', False))
-        unresolved_clear = not bool(getattr(self, '_unresolved_appraisals', None))
-
-        # Resolution: threat/harm cleared — do not speak as if conflict still active.
-        if resolution and situation_calm and unresolved_clear:
-            return True
-        # Unrelated topic / object question: no content hijack from lingering INTERNAL.
-        if situation_calm and user_calm and ua.confidence < 0.45:
-            if self._is_topic_shift_neutral(user_input):
-                return True
-            if self._is_unrelated_object_topic(user_input, appr):
-                return True
-        return False
-
-    def _is_unrelated_object_topic(self, text: str, appraisal: AppraisalResult) -> bool:
-        """Object/topic ask with no person owning emotion and no episode continuity."""
-        if getattr(appraisal, 'third_party', False):
-            return False
-        if getattr(appraisal, 'third_party_emotion', None):
-            return False
-        if appraisal.explicit_user_emotion:
-            return False
-        if appraisal.directed_at_user or appraisal.directed_at_monday:
-            return False
-        tl = (text or '').lower()
-        # Continuity into an episode is not an unrelated topic shift.
-        if self._has_continuity_cue(text) and not self._is_topic_shift_neutral(text):
-            return False
-        # Question / request about a non-person topic.
-        if ('?' in (text or '')) or re.search(r"\b(?:what|how|when|where)\b", tl):
-            if not re.search(r"\b(?:i|me|my|mine|you|we|us|she|he|they|him|her|them)\b", tl):
-                return True
-        return False
-
     def _generate_advanced_emotional_response(self, user_input: str, mi: Dict[str, float]) -> str:
         # Query Notus for past emotional responses
         try:
@@ -1073,24 +847,7 @@ class AdvancedEmotionalEngine:
         except Exception:
             pass
 
-        # Stale-expression gate: INTERNAL/PAD may linger; wording must not claim
-        # resolved threat/conflict (or unrelated topics) are still the active situation.
-        if self._situation_wording_should_reflect_current(user_input):
-            lines = [
-                "I'm here to help.",
-                "Okay — I'm with you.",
-                "Got it. I'm listening.",
-                "Alright. I'm here.",
-                "I'm still with you.",
-            ]
-            # Mild residual via expression punctuation only (not content hijack).
-            if self.expression.tears:
-                lines = [l.replace(".", "...") for l in lines]
-            if self.expression.voice_shake:
-                lines = ["".join([" ".join(l.split()[:3]), " ...", " ".join(l.split()[3:])]).strip() for l in lines]
-            return self._rng.choice(lines)
-        
-        # Base lines by emotion
+        # Base lines by emotion (thin live labels; legacy keys unused on live path)
         db: Dict[EmotionalState, List[str]] = {
             EmotionalState.HAPPY: [
                 "That's wonderful! I'm genuinely happy to hear that!",
@@ -1213,283 +970,31 @@ class AdvancedEmotionalEngine:
         return self._rng.choice(lines)
 
     def _enhance_response_with_advanced_features(self, base: str, user_input: str, predicted: Dict[str, float], context: Dict[str, Any]) -> str:
-        dom = max(predicted.items(), key=lambda x: x[1]) if predicted else ("neutral", 0.0)
+        """Light response polish. Does NOT invent user-feeling from her mood (Emotion does not own user affect)."""
         out = base
-        situational = self._situation_wording_should_reflect_current(user_input)
-        # Reflect current USER state; never invent active threat language after resolution.
-        if dom[1] > 0.35 and dom[0] not in ('unknown',):
-            out += f" I get the sense you're feeling {dom[0]}."
-        if situational:
-            # Prosody/INTERNAL may linger; do not add urgency/support-as-crisis overlays.
-            return out
-        if context['urgency_level'] == 'high':
+        # predicted is her label intensity from live path — never narrate as "you're feeling X".
+        if context.get('urgency_level') == 'high':
             out += " This sounds urgent—I'm here with you right now."
-        elif context['support_needed']:
+        elif context.get('support_needed'):
             out += " You're not alone."
-        elif context['celebration_appropriate']:
+        elif context.get('celebration_appropriate'):
             out += " This deserves a little celebration."
-        if self.emotional_intelligence_score > 0.7:
-            out += " I'm learning to read feelings better."
-        if any('trauma' in w for w in user_input.lower().split()):
-            out += " I'm here to help you process this."
         return out
 
     # --- Inner life mechanics ---
-    def _update_internal_from_time(self, dt: float = 1.0) -> None:
-        self._time_on_task += dt
-        # More dynamic internal state changes
-        self.internal.fatigue = max(0.0, min(1.0, self.internal.fatigue + 0.03*dt))
-        
-        # Rumination with more variety
-        if self.emotional_memories and self.emotional_memories[-1].emotion in (EmotionalState.WORRIED, EmotionalState.SAD, EmotionalState.FRUSTRATED):
-            self.internal.rumination = max(0.0, min(1.0, self.internal.rumination + 0.04*dt))
-        else:
-            self.internal.rumination = max(0.0, self.internal.rumination - 0.03*dt)
-        
-        # More dynamic worry calculation
-        drive = 0.4*self.internal.rumination + 0.5*self.attachment.hurt + 0.3*self.internal.tension
-        k = max(0.1, 0.3 * (1.0 - self.personality.emotional_stability))
-        self.internal.worry = max(0.0, min(1.0, (1-k)*self.internal.worry + k*drive))
-        
-        # Hope with more variation
-        hope_change = -0.02*dt + self._rng.uniform(-0.01, 0.01)
-        self.internal.hope = max(0.0, min(1.0, self.internal.hope + hope_change))
-        
-        # Add some tension variation
-        tension_change = self._rng.uniform(-0.02, 0.02)
-        self.internal.tension = max(0.0, min(1.0, self.internal.tension + tension_change))
-
-    def _update_attachment_from_input(self, text: str) -> None:
-        t = (text or ""); tl = t.lower()
-        anger_hits = bool(re.search(r"\b(hate|angry|furious|stupid|idiot|worthless)\b", tl))
-        direct_you = bool(re.search(r"\byou\b", tl))
-        exclaim = t.count('!') >= 2
-        caps_ratio = sum(1 for ch in t if ch.isupper()) / max(1, sum(1 for ch in t if ch.isalpha()))
-        yelling_score = (0.5 if anger_hits else 0.0) + (0.3 if direct_you else 0.0) + (0.2 if exclaim else 0.0) + (0.2 if caps_ratio > 0.35 else 0.0)
-        sorry = bool(re.search(r"\b(sorry|apologize)\b", tl))
-        self.attachment.hurt = max(0.0, min(1.0, self.attachment.hurt + yelling_score*self.attachment.sensitivity - (0.4 if sorry else 0.0)))
-        if sorry:
-            self.attachment.guilt = max(0.0, self.attachment.guilt - 0.2)
-        self.attachment.abandonment_fear = max(0.0, min(1.0, self.attachment.abandonment_fear + 0.3*self.attachment.hurt - 0.05))
-
-    def _update_attachment_from_appraisal(self, appraisal: AppraisalResult) -> None:
-        """Attachment drifts from appraised event meaning, not only yelling keywords."""
-        et = appraisal.event_type
-        sev = float(max(0.0, min(1.0, appraisal.severity)))
-        sens = float(self.attachment.sensitivity)
-        if et in ('betrayal', 'rejection', 'abandonment', 'harm', 'loss'):
-            self.attachment.hurt = min(1.0, self.attachment.hurt + 0.28 * sev * sens)
-            self.attachment.abandonment_fear = min(
-                1.0, self.attachment.abandonment_fear + 0.22 * sev
-            )
-            if et == 'abandonment':
-                self.attachment.abandonment_fear = min(
-                    1.0, self.attachment.abandonment_fear + 0.12 * sev
-                )
-            self.attachment.security = max(0.0, self.attachment.security - 0.08 * sev)
-        elif et in ('affection', 'support', 'gift', 'celebration'):
-            self.attachment.hurt = max(0.0, self.attachment.hurt - 0.18 * sev)
-            self.attachment.abandonment_fear = max(
-                0.0, self.attachment.abandonment_fear - 0.10 * sev
-            )
-            self.attachment.security = min(1.0, self.attachment.security + 0.06 * sev)
-            self.attachment.guilt = max(0.0, self.attachment.guilt - 0.05 * sev)
-
-    def _update_needs_from_appraisal(self, appraisal: AppraisalResult) -> None:
-        """Internal needs shift with appraised events so autonomy/belonging/safety are live."""
-        et = appraisal.event_type
-        sev = float(max(0.0, min(1.0, appraisal.severity)))
-        if et in ('harm', 'threat', 'abandonment'):
-            self.needs.safety = max(0.0, self.needs.safety - 0.18 * sev)
-        if et in ('rejection', 'betrayal', 'abandonment', 'loss'):
-            self.needs.belonging = max(0.0, self.needs.belonging - 0.18 * sev)
-        if et == 'criticism' and appraisal.directed_at_monday:
-            self.needs.competence = max(0.0, self.needs.competence - 0.12 * sev)
-        if et in ('conflict', 'unfairness'):
-            self.needs.autonomy = max(0.0, self.needs.autonomy - 0.08 * sev)
-        if et in ('affection', 'support', 'gift'):
-            self.needs.belonging = min(1.0, self.needs.belonging + 0.12 * sev)
-            self.needs.safety = min(1.0, self.needs.safety + 0.06 * sev)
-        if et in ('success', 'celebration'):
-            self.needs.competence = min(1.0, self.needs.competence + 0.12 * sev)
-        if et in ('gift', 'celebration', 'affection'):
-            self.needs.stimulation = min(1.0, self.needs.stimulation + 0.05 * sev)
-
-    def _pad_from_internal(self) -> PAD:
-        V = (+0.7*self.internal.hope -0.8*self.internal.worry -0.6*self.attachment.hurt -0.5*self.attachment.guilt)
-        A = (+0.8*self.internal.worry +0.5*self.internal.tension -0.5*self.internal.fatigue)
-        D = (+0.4*self.needs.autonomy +0.4*self.needs.competence +0.2*self.attachment.security -0.6*self.attachment.hurt -0.5*self.attachment.guilt)
-        def clamp(x): return max(-1.0, min(1.0, x))
-        return PAD(clamp(V), clamp(A), clamp(D))
-
     def _update_expression_flags(self) -> None:
         sad_like = self.current_emotion in (EmotionalState.SAD, EmotionalState.MELANCHOLIC, EmotionalState.WORRIED)
         self.expression.tears = bool((sad_like and self.emotional_intensity > 0.65) or self.attachment.hurt > 0.7)
         self.expression.voice_shake = bool(self.expression.tears or (self.emotional_intensity > 0.7 and sad_like))
         self.expression.withdraw = bool(self.attachment.hurt + self.attachment.abandonment_fear > 1.1)
 
-    def _pad_from_cues(self, cues: Dict[str, float], appraisal: Dict[str, Any]) -> PAD:
-        # More dramatic PAD changes for better emotion switching
-        v = (cues.get('positive', 0.0) - cues.get('negative', 0.0) - cues.get('sadness', 0.0)) * 1.5
-        a = (cues.get('excitement', 0.0) + cues.get('anger', 0.0) + cues.get('concern', 0.0)) * 1.5
-        d = (cues.get('pride', 0.0) - 0.5*cues.get('concern', 0.0)) * 1.5
-        
-        # Add more dramatic changes for specific emotions
-        if cues.get('positive', 0.0) > 0.5:
-            v += 0.8; a += 0.3
-        if cues.get('sadness', 0.0) > 0.5:
-            v -= 0.8; a -= 0.2; d -= 0.4
-        if cues.get('anger', 0.0) > 0.5:
-            v -= 0.6; a += 0.7; d += 0.5
-        if cues.get('excitement', 0.0) > 0.5:
-            v += 0.6; a += 0.8; d += 0.2
-        if cues.get('concern', 0.0) > 0.5:
-            v -= 0.4; a += 0.5; d -= 0.5
-        if cues.get('pride', 0.0) > 0.5:
-            v += 0.4; a += 0.3; d += 0.6
-            
-        if appraisal.get('urgency_level') == 'high':
-            a += 0.5; d -= 0.3
-        if appraisal.get('support_needed'):
-            v -= 0.3; a += 0.2
-        def clamp(x): return max(-1.0, min(1.0, x))
-        return PAD(clamp(v), clamp(a), clamp(d))
-
-    def _update_pad_state(self, new_pad: PAD) -> None:
-        """GATED: live mood uses CoreAffect.apply_delta / decay — not 80% PAD overwrite + noise."""
-        # Mirror into pad fields for any legacy reader without mutating CoreAffect.
-        # Intentionally does NOT apply decay=0.8 overwrite or RNG noise.
-        self.pad.v = max(-1.0, min(1.0, float(new_pad.v)))
-        self.pad.a = max(-1.0, min(1.0, float(new_pad.a)))
-        self.pad.d = max(-1.0, min(1.0, float(new_pad.d)))
-
-    def _pad_to_emotion_choice(self, pad: PAD) -> Optional[Tuple[EmotionalState, float]]:
-        """GATED: thin deterministic label from CoreAffect; no top-3 RNG lottery."""
-        # Prefer live CoreAffect; fall back to pad.v/a if somehow called standalone.
-        v = getattr(self, "core_affect", None).valence if getattr(self, "core_affect", None) else pad.v
-        a = getattr(self, "core_affect", None).arousal if getattr(self, "core_affect", None) else pad.a
-        label = label_from_va(v, a)
-        try:
-            emo = EmotionalState(label)
-        except ValueError:
-            emo = EmotionalState.CALM
-        intensity = self.core_affect.intensity() if getattr(self, "core_affect", None) else max(0.1, min(1.0, (abs(v) + abs(a)) / 2))
-        return (emo, intensity)
-
-    def _pad_margin_ok(self, candidate: EmotionalState) -> bool:
-        # Refractory: block unwanted flips too soon after the last emotion switch.
-        if candidate != self.current_emotion and self._last_switch_time > 0.0:
-            elapsed = time.time() - self._last_switch_time
-            if elapsed < float(self.personality.refractory_sec):
-                return False
-        # Hysteresis: require enough PAD distance improvement to switch.
-        cv, ca, cd = self._PAD_PROTOS[self.current_emotion]
-        nv, na, nd = self._PAD_PROTOS[candidate]
-        cur_dist = ((self.pad.v - cv)**2 + (self.pad.a - ca)**2 + (self.pad.d - cd)**2) ** 0.5
-        new_dist = ((self.pad.v - nv)**2 + (self.pad.a - na)**2 + (self.pad.d - nd)**2) ** 0.5
-        # Reduced margin for more dynamic switching
-        margin = self.personality.hysteresis_margin * 0.5
-        return (cur_dist - new_dist) > margin
-
-    def _get_direct_emotion_trigger(self, cues: Dict[str, float], user_input: str) -> Optional[EmotionalState]:
-        """
-        Deprecated as primary driver — appraisal engine now owns emotion selection.
-        This method is retained for legacy call sites but always returns None.
-        """
-        return None
-
-    def _switch_to_emotion(self, emotion: EmotionalState, trigger: str) -> None:
-        """Compat hook — intensity from CoreAffect, never hardcoded 0.8 + RNG."""
-        # Prefer syncing through CoreAffect label when emotion matches thin set;
-        # otherwise adopt named emotion but intensity still from core distance.
-        intensity = float(self.core_affect.intensity())
-        self.current_emotion = emotion
-        self.emotional_intensity = intensity
-        mem = EmotionalMemory(
-            emotion=emotion,
-            intensity=intensity,
-            trigger=f"switch:{trigger[:50]}",
-            timestamp=time.time(),
-            context="compat_switch_via_core_intensity",
-            influence_strength=1.0,
-        )
-        self.emotional_memories.append(mem)
-        self.mood_history.append((mem.timestamp, emotion, intensity))
-        self._update_emotional_patterns(emotion, trigger)
-        self._last_primary = emotion
-        self._last_switch_time = time.time()
-
-    def _update_emotion_persistence(self) -> None:
-        """
-        Emotion persistence with unresolved-appraisal tracking.
-        Negative emotions from unacknowledged events persist at higher intensity;
-        simple time-based decay is used for resolved or neutral states.
-        """
-        _NEGATIVE_EVENTS = {'harm', 'betrayal', 'rejection', 'threat', 'loss', 'abandonment'}
-        now = time.time()
-
-        # Expire unresolved appraisals older than 5 minutes
-        self._unresolved_appraisals = [
-            (et, sev, ts) for (et, sev, ts) in self._unresolved_appraisals
-            if now - ts < 300
-        ]
-
-        # If there are active unresolved negative appraisals, slow decay significantly
-        unresolved_weight = sum(sev for (et, sev, _) in self._unresolved_appraisals
-                                if et in _NEGATIVE_EVENTS)
-        if unresolved_weight > 0.0:
-            # Decay is reduced proportionally — the emotion lingers
-            decay_rate = max(0.005, 0.05 - unresolved_weight * 0.03)
-        else:
-            decay_rate = 0.05
-
-        self.emotional_intensity = max(0.1, self.emotional_intensity - decay_rate)
-        if self.emotional_intensity <= 0.1:
-            self.current_emotion = EmotionalState.CALM
-            self.emotional_intensity = 0.1
-
-    # --------------- Higher‑level helpers ---------------
     def predict_user_emotion(self, user_input: str) -> Dict[str, float]:
         """
-        Returns Monday's model of what the user is feeling.
-        User-feeling estimate only — does NOT write Monday mood.
-        Prefer Conversation/Social; phrase classifiers were deleted.
+        Fail-closed stub. Emotion lobe does NOT own user-feeling recognition.
+        Conversation/Social own user affect. This never writes Monday mood.
         """
-        # Prefer the live UserAffectModel if it was just updated for this input
-        if self._user_affect.last_updated > 0 and self._user_affect.inferred_emotion != 'neutral':
-            pred = {self._user_affect.inferred_emotion: self._user_affect.confidence}
-            self.emotional_predictions[user_input[:50]] = pred
-            return pred
-
-        # Query Notus for past user emotional patterns
-        try:
-            notus_patterns = self._query_lobe('notus', {'type': 'get_user_emotion_patterns', 'input': user_input})
-            if notus_patterns and notus_patterns.get('status') == 'success':
-                patterns = notus_patterns.get('patterns', {})
-                if patterns:
-                    pred = patterns.copy()
-                    self.emotional_predictions[user_input[:50]] = pred
-                    return pred
-        except Exception:
-            pass
-
-        understanding = self._understand_emotional_text(user_input)
-        if understanding.inferred_emotion != 'neutral' and understanding.confidence > 0.15:
-            pred = {understanding.inferred_emotion: understanding.confidence}
-            self.emotional_predictions[user_input[:50]] = pred
-            return pred
-
-        # Residual keyword cue vector (already negation-aware)
-        cues = understanding.keyword_cues
-        pred = {
-            'happy': cues.get('positive', 0.0),
-            'sad': cues.get('sadness', 0.0),
-            'angry': cues.get('anger', 0.0),
-            'excited': cues.get('excitement', 0.0),
-            'worried': cues.get('concern', 0.0),
-            'proud': cues.get('pride', 0.0),
-        }
-        self.emotional_predictions[user_input[:50]] = pred
+        pred: Dict[str, float] = {'neutral': 0.0}
+        self.emotional_predictions[(user_input or '')[:50]] = pred
         return pred
 
     def generate_healing_response(self, user_input: str, predicted_emotion: str) -> str:
@@ -1686,7 +1191,7 @@ class EmotionalProcess:
     
     def get_emotional_state_output(self) -> EmotionalStateOutput:
         """Generate standardized emotional state output readable by other lobes"""
-        # Map current emotion to tone for language gen
+        # Tone map: live thin labels first; unused/legacy keys kept for feel_emotion compat only.
         emotion_to_tone = {
             'happy': 'cheerful',
             'sad': 'melancholic',
@@ -1694,9 +1199,10 @@ class EmotionalProcess:
             'excited': 'enthusiastic',
             'calm': 'peaceful',
             'worried': 'concerned',
+            'scared': 'fearful',
+            # UNUSED/legacy (not live CoreAffect readout)
             'curious': 'inquisitive',
             'proud': 'confident',
-            'scared': 'fearful',
             'surprised': 'astonished',
             'disgusted': 'disdainful',
             'contempt': 'dismissive',
@@ -1707,12 +1213,13 @@ class EmotionalProcess:
             'melancholic': 'somber',
             'playful': 'lighthearted',
             'protective': 'caring',
-            'mischievous': 'impish'
+            'mischievous': 'impish',
+            'relieved': 'peaceful',
+            'exhausted': 'somber',
         }
         
-        # Get PAD values from current emotional state
+        # Live envelope uses CoreAffect-synced pad (her mood only).
         emotion_name = self.engine.current_emotion.value
-        proto = self.engine._PAD_PROTOS.get(self.engine.current_emotion, (0, 0, 0))
         
         # Map to voice prosody parameters
         voice_prosody = {
@@ -1751,7 +1258,7 @@ class EmotionalProcess:
         return output
     
     def _affect_snapshot(self) -> Dict[str, Any]:
-        """Live-path affect contract: PAD, attachment/needs, expression, patterns, prosody."""
+        """HER mood envelope only (CoreAffect). user_affect is legacy unused on live path — not merged into monday_emotion."""
         emo_out = self.get_emotional_state_output()
         patterns_summary = {
             k: [e.value for e in v[-3:]]

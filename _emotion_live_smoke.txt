@@ -1,0 +1,6 @@
+turn="I'm sad" monday=calm v=0.150 ua=neutral reason=user_self_report_ignored_for_her_mood
+turn="You're stupid" monday=worried v=-0.300 ua=neutral reason=insult:\b(?:you'?re|you are)\s+(?:stupid|worthless|useless|dumb|an idiot|pathetic)\b
+turn='okay' monday=calm v=-0.219 ua=neutral reason=no_self_impact
+turn='I love you Monday' monday=excited v=0.247 ua=neutral reason=praise:\bi\s+love\s+(?:you|monday)\b
+turn='what time is it' monday=happy v=0.230 ua=neutral reason=no_self_impact
+SMOKE: PASS

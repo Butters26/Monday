@@ -1,0 +1,66 @@
+EMOTION LOBE FULL-BAR VERDICT
+================================
+Date: 2026-09-25 (America/Denver)
+HEAD: PENDING_PIN
+Scope: Emotion only (advanced_emotional_engine.py + monday_core_affect.py)
+Learning: NOT touched
+Result: PASS
+
+Full bar checklist
+------------------
+1. Designed job on live path (CoreAffect + SelfImpact v1 + thin labels): PASS
+   - Proof harness _prove_emotion_core_affect.py: 7/7 PASS
+   - Live create_core_systems smoke: PASS (see _emotion_live_smoke.txt)
+2. Claims match mechanism: PASS
+   - Module/docstrings no longer claim keyword-understanding / appraisal-as-driver /
+     Maximum sophistication emotion theater.
+   - SelfImpact documented honestly as SelfImpact v1 (aimed-at-her patterns),
+     not full OCC/goal understanding.
+3. No dead fancy APIs that look live: PASS
+   - Deleted uncalled orphans incl. _infer_user_need, _update_*_from_appraisal,
+     _pad_from_cues, _analyze_emotional_cues, _process_emotional_input_advanced,
+     _semantic_emotion_support, _understand_emotional_text, _apply_appraisal,
+     _switch_to_emotion, _pad_to_emotion_choice, _pad_margin_ok, _update_pad_state,
+     _get_direct_emotion_trigger, _update_emotion_persistence, cue/PAD lottery path,
+     and empty semantic prototype tables.
+   - AppraisalEngine retained as fail-closed neutral stub only (external compat).
+   - predict_user_emotion fail-closed (Emotion does not own user-feeling).
+4. Fancy EmotionalState enum: PASS
+   - Live thin set: calm/happy/sad/angry/worried/scared/excited.
+   - Other members marked UNUSED/legacy; not produced by CoreAffect readout.
+   - _PAD_PROTOS trimmed to thin live set (feel_emotion compat only).
+5. User-feeling not owned by Emotion: PASS
+   - get_emotional_response / envelopes are HER CoreAffect only.
+   - "I'm sad" → reason=user_self_report_ignored_for_her_mood; monday stays calm.
+   - No merge of user self-report into monday_emotion; enhance_response no longer
+     narrates her mood as "you're feeling X".
+6. Proof harness: PASS — 7/7 (see evidence below)
+7. This verdict file: PASS
+
+Evidence — proof harness
+------------------------
+BASELINE core_affect v=0.150 a=-0.100 label=calm
+PASS: user_self_report_im_sad — v=0.150 a=-0.100 emo=calm int=0.120 reason='user_self_report_ignored_for_her_mood' near_base=True no_rejection=True
+PASS: user_self_report_i_feel_sad — v=0.150 a=-0.100 emo=calm reason='user_self_report_ignored_for_her_mood'
+PASS: insult_aimed_at_her_drops_valence — v_before=0.150 v_after=-0.300 a=0.250 emo=worried int=0.605 reason="insult:\\b(?:you'?re|you are)\\s+(?:stupid|worthless|useless|dumb|an idiot|pathetic)\\b"
+PASS: insult_then_quiet_decay_not_reset — after_insult v=-0.300 emo=worried; quiet1 v=-0.219 emo=calm; quiet2 v=-0.153 emo=calm
+PASS: quiet_turns_decay_no_random_flip — vals=['-0.301', '-0.220', '-0.153', '-0.099', '-0.054'] labels=['worried', 'calm', 'calm', 'calm', 'calm'] ints_quiet=['0.120', '0.120', '0.120', '0.120', '0.120']
+PASS: internal_thought_capped_nudge — v0=0.150 v1=0.096 a1=-0.064 dv=0.054 reason='internal_neg_nudge'
+PASS: praise_raises_valence — v_before=0.150 v_after=0.550 emo=happy
+
+SUMMARY: PASS — 7/7 cases
+
+Evidence — live smoke
+---------------------
+turn="I'm sad" monday=calm v=0.150 ua=neutral reason=user_self_report_ignored_for_her_mood
+turn="You're stupid" monday=worried v=-0.300 ua=neutral reason=insult:\b(?:you'?re|you are)\s+(?:stupid|worthless|useless|dumb|an idiot|pathetic)\b
+turn='okay' monday=calm v=-0.219 ua=neutral reason=no_self_impact
+turn='I love you Monday' monday=excited v=0.247 ua=neutral reason=praise:\bi\s+love\s+(?:you|monday)\b
+turn='what time is it' monday=happy v=0.230 ua=neutral reason=no_self_impact
+SMOKE: PASS
+
+Design lock notes
+-----------------
+- Full OCC/goal SelfImpact NOT required for this PASS.
+- SelfImpact v1 = aimed-at-her regex patterns (insult/praise/abandon/gift).
+- User affect remains Conversation/Social responsibility.
