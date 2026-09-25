@@ -16,9 +16,9 @@ plus AutonomousSpeechSystem as social WHEN/WHETHER filter for speak-worthy
 asides (does not invent wording or audio) —
 plus SharedRepresentationSystem as common semantic substrate (stable concept IDs) —
 plus MetaAwareness tracking process / dual-stream mode (wandering vs focused;
-distinct from MetaCognition epistemic watching), with ContinuousThoughtGenerator
-and ControlledThinking attached as spontaneous/controlled stream generators —
-not the full legacy socket stack.
+distinct from MetaCognition epistemic watching). ContinuousThoughtGenerator and
+ControlledThinking stay in-tree as optional/unwired toys — NOT attached on the
+live path (no mock *_fed stamps) — not the full legacy socket stack.
 """
 
 from __future__ import annotations
@@ -46,8 +46,6 @@ from motor_action_lobe import MotorActionLobe
 from voice_lobe import VoiceLobe
 from meta_awareness import MetaAwareness
 from shared_representation import SharedRepresentationSystem
-from continuous_thought_generator import ContinuousThoughtGenerator
-from controlled_thinking import ControlledThinking
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -141,14 +139,11 @@ def create_core_systems(
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
 
-    # Dual-stream leftovers: generators under MetaAwareness (not separate lobes).
+    # Dual-stream generators NOT attached live: ContinuousThoughtGenerator and
+    # ControlledThinking are mock/toy modules. MetaAwareness still tracks mode
+    # (wandering/focused) from real user turns / asides without feeding toys.
     # dual_stream_thinking.py stays unwired (Anthropic-only demo).
-    spontaneous = ContinuousThoughtGenerator()
-    controlled = ControlledThinking(max_reasoning_depth=5)
-    systems["meta_awareness"].set_spontaneous_system(spontaneous)
-    systems["meta_awareness"].set_controlled_system(controlled)
-    systems["continuous_thought_generator"] = spontaneous
-    systems["controlled_thinking"] = controlled
+    # Optional: callers may still systems["meta_awareness"].set_*_system(...) by hand.
 
     if enable_autonomous:
         autonomous = AutonomousThinkingLoop(thalamus=thalamus)

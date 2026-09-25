@@ -11,9 +11,12 @@ Distinct from MetaCognition (epistemic watcher of reasoning/language outputs):
   MetaAwareness = "Which stream am I in, and is this spontaneous thought
                    worth engaging?"
 
-Optional stream generators (ContinuousThoughtGenerator / ControlledThinking)
-may be attached via set_spontaneous_system / set_controlled_system; MetaAwareness
-remains awareness, not the generator owner.
+Optional stream generators may be attached via set_spontaneous_system /
+set_controlled_system for experiments. Live create_core_systems does NOT attach
+ContinuousThoughtGenerator or ControlledThinking (those are mock/toy modules).
+When no generator is attached, envelopes report generator_attached=False and
+do not stamp controlled_fed/spontaneous_fed as if real cognition ran.
+MetaAwareness remains awareness, not the generator owner.
 
 Does not classify intent, invent facts, compose replies, plan actions,
 synthesize speech, or replace MetaCognition.
@@ -293,8 +296,13 @@ class MetaAwareness:
         engagement_score = max(engagement_score, self.state.engagement_threshold)
         meta_comment = "Focusing on user-driven turn"
         question = self._formulate_question(thought)
-        # Feed controlled stream generator if attached (smallest glue).
-        controlled_extra: Dict[str, Any] = {}
+        # Optional controlled generator — live path leaves this None.
+        # Never stamp controlled_fed=True unless a generator is actually attached
+        # AND started without error (experimental hook only; not sold as cognition).
+        controlled_extra: Dict[str, Any] = {
+            "controlled_generator_attached": self.controlled_system is not None,
+            "controlled_fed": False,
+        }
         if self.controlled_system is not None:
             try:
                 goal = (user_input or intent or "user_turn").strip()[:120] or "user_turn"
@@ -309,17 +317,13 @@ class MetaAwareness:
                             "intent": intent or None,
                         },
                     )
-                controlled_extra = {
-                    "controlled_fed": True,
-                    "controlled_goal": goal,
-                    "controlled_focused": bool(
-                        getattr(self.controlled_system, "is_focused", True)
-                    ),
-                }
+                    controlled_extra.update({
+                        "controlled_fed": True,
+                        "controlled_goal": goal,
+                        "controlled_note": "experimental_generator_only_not_live_cognition",
+                    })
             except Exception:
-                controlled_extra = {"controlled_fed": False, "controlled_error": True}
-        else:
-            controlled_extra = {"controlled_fed": False}
+                controlled_extra["controlled_error"] = True
         env = self._envelope(
             prior_mode=prior,
             engagement_action="engaged",
@@ -369,25 +373,25 @@ class MetaAwareness:
         """After prompted turn completes, return toward spontaneous/wandering."""
         prior = self.state.mode.value
         self.shift_to_wandering(reason)
-        # Feed spontaneous stream generator if attached (sample only — do not
-        # re-engage/focus during release; that would fight wandering).
-        spontaneous_extra: Dict[str, Any] = {}
+        # Optional spontaneous generator — live path leaves this None.
+        # Sample-only when attached; never implies real dual-stream cognition.
+        spontaneous_extra: Dict[str, Any] = {
+            "spontaneous_generator_attached": self.spontaneous_system is not None,
+            "spontaneous_fed": False,
+        }
         if self.spontaneous_system is not None:
             try:
                 gen = getattr(self.spontaneous_system, "generate_thought", None)
                 thought = gen() if callable(gen) else None
                 if isinstance(thought, dict):
-                    spontaneous_extra = {
+                    spontaneous_extra.update({
                         "spontaneous_fed": True,
                         "spontaneous_trigger": thought.get("trigger"),
                         "spontaneous_text": str(thought.get("text") or "")[:120],
-                    }
-                else:
-                    spontaneous_extra = {"spontaneous_fed": False}
+                        "spontaneous_note": "experimental_generator_only_not_live_cognition",
+                    })
             except Exception:
-                spontaneous_extra = {"spontaneous_fed": False, "spontaneous_error": True}
-        else:
-            spontaneous_extra = {"spontaneous_fed": False}
+                spontaneous_extra["spontaneous_error"] = True
         env = self._envelope(
             prior_mode=prior,
             engagement_action="none",

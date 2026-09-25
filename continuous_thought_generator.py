@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Continuous Thought Generator - Prototype
-Monday's internal thought stream - NOT scheduled, but flowing naturally
+Continuous Thought Generator — MOCK / TOY (NOT on live create_core_systems path).
+
+Weighted random over hardcoded memories/associations. Does NOT implement real
+cognition. Kept for experiments; MetaAwareness may attach it manually, but
+run_abin.create_core_systems does not.
 """
 
 import time
@@ -48,7 +51,7 @@ class ContinuousThoughtGenerator:
         self.last_thought = None
         self.last_concepts = []
         
-        # Mock memory/knowledge (standalone - no dependencies)
+        # MOCK memory/knowledge — hardcoded lists, not live Notus/Representation.
         self.memories = [
             {"content": "Matthew created me", "emotion": 0.9},
             {"content": "Coffee helps people wake up", "emotion": 0.3},

@@ -1,6 +1,9 @@
 """
-Monday's Controlled Thinking System
-Handles deliberate, focused reasoning with goal-directed attention and synthesis. 
+Controlled Thinking — MOCK / TOY (NOT on live create_core_systems path).
+
+Fixed-sentence "conclusions" and shallow step lists. Does NOT implement real
+deliberate reasoning. Kept for experiments; MetaAwareness may attach it
+manually, but run_abin.create_core_systems does not.
 """
 
 from dataclasses import dataclass, field
@@ -121,7 +124,7 @@ class ControlledThinking:
         """Synthesize reasoning into a conclusion"""
         goal = self.current_goal
         goal.completed = True
-        goal.conclusion = f"After reasoning about {goal.description}, I've considered multiple angles"
+        goal.conclusion = f"[mock] After reasoning about {goal.description}, I've considered multiple angles"
         self.is_focused = False
         return goal.conclusion
     
