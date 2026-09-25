@@ -1470,6 +1470,10 @@ class DirectNotusProcess:
                     "healthy": self.running,
                     "backend": "sqlite",
                     "fts5": self._fts_available,
+                    "embedding_model_type": "none",
+                    "retrieval_kind": "sqlite_fts_or_like",
+                    "semantic_understanding": False,
+                    "note": "DirectNotus is injectable SQLite/FTS test adapter — not MiniLM semantic NLU",
                 },
             }
 

@@ -9,7 +9,12 @@ from notus_memory import NotusMemorySystem
 
 
 class ActiveNotusMemorySystem(NotusMemorySystem):
-    """Memory-only Notus used by run_abin."""
+    """Memory-only Notus used by run_abin (PostgreSQL primary).
+
+    Inherits legacy SuperhumanMemorySystem naming in the stack; live status
+    reports embedding_model_type via _embedding_honesty(). Hash/basic mode is
+    not sold as semantic understanding.
+    """
 
     def _init_database(self) -> None:
         # Let the historical memory engine create its PostgreSQL schema first.

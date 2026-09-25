@@ -4,7 +4,7 @@ One job: memory.
 One database backend: PostgreSQL.
 
 This uses the strongest memory primitives already present in ``notus.py``
-(semantic retrieval, episodic memory, durable facts, working memory and memory
+(retrieval via hash-or-transformer embeddings, episodic memory, durable facts, working memory and memory
 associations) but deliberately does not expose the old response-generation or
 "EnhancedMonday" compatibility layer.
 """
@@ -1573,6 +1573,23 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             out.append(m)
         return out
 
+
+    def _embedding_honesty(self) -> Dict[str, Any]:
+        """Surface real embedding backend — hash is not semantic understanding."""
+        eng = getattr(self, "embedding_engine", None)
+        model_type = getattr(eng, "model_type", "unknown") if eng is not None else "unknown"
+        is_basic = model_type == "basic"
+        return {
+            "embedding_model_type": model_type,
+            "retrieval_kind": "hash_similarity" if is_basic else "sentence_transformer",
+            "semantic_understanding": False if is_basic else True,
+            "note": (
+                "basic=deterministic hash fingerprint vectors; not semantic NLU"
+                if is_basic
+                else "sentence-transformers MiniLM embeddings available"
+            ),
+        }
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         payload = self._payload(message)
@@ -1585,6 +1602,7 @@ class NotusMemorySystem(SuperhumanMemorySystem):
                     "healthy": self.running,
                     "backend": "postgresql",
                     "ready": self.memory_ready.is_set(),
+                    **self._embedding_honesty(),
                 },
             }
 
@@ -1639,9 +1657,21 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             query = str(payload.get("query", payload.get("text", "")) or "")
             limit = max(1, min(int(payload.get("limit", 15)), 100))
             memories = self.retrieve_memories_smart(query, user_id=user_id, limit=limit)
+            honesty = self._embedding_honesty()
             return {
                 "status": "success",
-                "content": {"results": memories, "memories": memories, "count": len(memories)},
+                "content": {
+                    "results": memories,
+                    "memories": memories,
+                    "count": len(memories),
+                    **honesty,
+                    # Keep key name "semantic" for compat but flag when hash-only.
+                    "semantic_label": (
+                        "compat_key_only_hash_retrieval"
+                        if honesty["embedding_model_type"] == "basic"
+                        else "sentence_transformer_retrieval"
+                    ),
+                },
             }
 
         if msg_type == "query_context":
@@ -1667,14 +1697,18 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             facts = self._dedupe_memory_rows(facts)
             combined = self._prefer_identity_name_rows(query, combined)
             facts = self._prefer_identity_name_rows(query, facts)
+            honesty = self._embedding_honesty()
             return {
                 "status": "success",
                 "content": {
                     "memories": combined,
+                    # "semantic" key retained for envelope compat; when
+                    # embedding_model_type=basic this is hash retrieval, not NLU.
                     "semantic": combined,
                     "facts": facts,
                     "episodic": episodes,
                     "working_set": self.get_working_set(),
+                    **honesty,
                 },
             }
 

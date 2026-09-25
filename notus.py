@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""
-Fixed Superhuman Memory System - Actually works with cheap AI
-Instead of trying to BE the AI, this helps your cheap AI be smarter
+"""Notus memory core helpers (embeddings + SQLite/legacy store classes).
+
+Live path uses ActiveNotusMemorySystem (notus_memory_core) → NotusMemorySystem
+(notus_memory) which subclasses SuperhumanMemorySystem here under a legacy name.
+
+Embedding honesty:
+  model_type='sentence_transformer' — real MiniLM embeddings when installed.
+  model_type='basic' — deterministic hash fingerprint vectors (MD5/sha seeds).
+  Hash cosine is NOT semantic understanding; status/query must surface model_type.
 """
 
 import json
@@ -54,8 +60,8 @@ EMBEDDING_DIM = 768
 DB_LOCK = Lock()
 
 @dataclass
-class SuperhumanConfig:
-    """Configuration for the superhuman memory system"""
+class NotusConfig:
+    """Configuration for Notus memory / embedding behavior."""
     
     # Semantic similarity settings
     similarity_threshold: float = 0.4  # Lower threshold to catch more context
@@ -108,16 +114,25 @@ USER'S CURRENT MESSAGE: {user_input}
 
 INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
 
+# Legacy aliases — old names were capability theater.
+SuperhumanConfig = NotusConfig
+# AdvancedEmbeddingEngine alias added after class body via late bind below.
+
 class MemoryType:
     EPISODIC = "episodic"
     SEMANTIC = "semantic"
     PROCEDURAL = "procedural"
     CONVERSATION = "conversation"
 
-class AdvancedEmbeddingEngine:
-    """Simplified but robust embedding engine"""
+class NotusEmbeddingEngine:
+    """Hash-or-transformer embeddings for Notus retrieval.
+
+    When sentence-transformers is unavailable, model_type='basic' uses
+    deterministic hash fingerprint vectors. That path is lexical/hash
+    similarity — do not describe it as semantic understanding.
+    """
     
-    def __init__(self, config: SuperhumanConfig):
+    def __init__(self, config: "NotusConfig"):
         self.config = config
         self.model = None
         self.tokenizer = None
@@ -250,6 +265,7 @@ class AdvancedEmbeddingEngine:
             return self._get_basic_embedding(text)
 
     def _get_basic_embedding(self, text: str) -> np.ndarray:
+        """Deterministic hash fingerprint vector — NOT a semantic embedding."""
         """Token-hash embedding: each unique word maps to a fixed dimension via its hash,
         so unrelated texts get distinct vectors instead of colliding on frequency rank."""
         try:
@@ -325,7 +341,13 @@ class NamedEntityRecognition:
             logger.warning(f"Entity extraction failed: {e}")
             return {"PERSON": [], "ORG": [], "LOC": [], "MISC": []}
 
+AdvancedEmbeddingEngine = NotusEmbeddingEngine  # legacy alias
+
 class SuperhumanMemorySystem:
+    """Legacy class name (kept for imports). Prefer ActiveNotusMemorySystem live.
+
+    Embedding quality depends on embedding_engine.model_type — see NotusEmbeddingEngine.
+    """
     """Fixed memory system that helps your cheap AI instead of replacing it"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
@@ -334,7 +356,7 @@ class SuperhumanMemorySystem:
         self.db_path = storage_path or MEMORY_DB_PATH
         
         # Initialize components
-        self.embedding_engine = AdvancedEmbeddingEngine(self.config)
+        self.embedding_engine = NotusEmbeddingEngine(self.config)
         self.entity_recognition = NamedEntityRecognition()
         
         # Thread safety
@@ -365,7 +387,7 @@ class SuperhumanMemorySystem:
         except Exception as e:
             logger.warning(f"Env override failed: {e}")
 
-        logger.info(f"🧠 Fixed Superhuman Memory System initialized")
+        logger.info("Notus memory system initialized (legacy SuperhumanMemorySystem class)")
 
         # Seed baseline editor knowledge (idempotent) - run in background thread
         def _background_seed():
@@ -3305,7 +3327,9 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 
 # Export the main classes
 __all__ = [
+    'NotusConfig',
     'SuperhumanConfig',
+    'NotusEmbeddingEngine',
     'AdvancedEmbeddingEngine',
     'MemoryType',
     'SuperhumanMemorySystem',
