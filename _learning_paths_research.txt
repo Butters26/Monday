@@ -1,0 +1,254 @@
+LEARNING PATHS RESEARCH (diagnose only — no redesign claim)
+===========================================================
+Tip SHA: d41523a8f76f5121dbcab7edeaf200a92ed799ba
+         (d41523a Fix full-bar progress tip SHA after amend.)
+Date: 2026-09-25 ~15:20 MDT (America/Denver)
+Scope: Inventory EVERY Learning path/entry surface in learning/ and
+       Thalamus learning routers. Research/diagnose only — Learning was
+       ignored during full-bar; Matthew is OPENING Learning research now.
+       Do NOT mark Learning done. Prefer zero code changes (none made).
+
+Sources read:
+  learning/api.py, learning/__init__.py, learning/lobe_learning_store.py
+  thalamus.py (_LEARNING_ROUTE_TYPES, teach_monday, learning_overview,
+               _handle_lobe_learning, _auto_adapt_from_interaction,
+               _learned_guidance_for_message, send_message, handle_request)
+  run_abin.create_core_systems (no Learning lobe)
+  No dedicated learning tests in tree (only learning/*.py package).
+
+---------------------------------------------------------------------------
+A. PACKAGE SURFACE (learning/)
+---------------------------------------------------------------------------
+
+1) learning.api.teach_monday
+   file:symbol  learning/api.py:teach_monday
+   How today: Validates non-empty lesson string; builds payload; calls
+     thalamus.handle_request({"type":"teach_monday","content":payload}).
+   Wrong: Wrapper only — real work is Thalamus keyword lesson router.
+     Not invoked by process_user_input. Caller must know the API.
+   Better: Should teach_monday ever auto-fire from Conversation intent
+     "correction"/"teaching"? Or stay explicit operator API?
+
+2) learning.api.learning_overview
+   file:symbol  learning/api.py:learning_overview
+   How today: handle_request type learning_overview → per-lobe stats+skills.
+   Wrong: Read-only inspection of JSON stores; does not prove skills affect
+     behavior.
+   Better: Overview should show last_applied_at / use_count and which live
+     turns actually consumed guidance (today use_count increments on recall
+     for guidance injection even if lobe ignores the field).
+
+3) learning.api.teach_lobe_skill
+   file:symbol  learning/api.py:teach_lobe_skill
+   How today: thalamus.send_message(lobe, "teach_skill", payload).
+   Wrong: Targeted write into that lobe's JSON store via Thalamus intercept;
+     lobe process_message never sees teach_skill (routed before lobe call).
+   Better: Is per-lobe skill the right unit, or should skills be global with
+     lobe affinity tags?
+
+4) learning.api.list_lobe_skills
+   file:symbol  learning/api.py:list_lobe_skills
+   How today: send_message(lobe, "list_skills", …) → store.recall key_prefix
+     "skill:".
+   Wrong: Lists stored strings; no behavioral binding evidence.
+   Better: Pair each skill with "last effect on reply" proof field.
+
+5) learning.lobe_learning_store.LobeLearningStore
+   file:symbol  learning/lobe_learning_store.py:LobeLearningStore
+   Methods: learn, recall, adjust (reinforce|contradict|forget), stats
+   How today: Per-lobe JSON file under runtime_dir()/lobe_learning/{lobe}.json.
+     Thread RLock; atomic tmp replace; confidence/evidence/contradiction;
+     weak prompt-injection filter (_UNSAFE_FACT); keyword term AND-match recall.
+   Wrong / hollow:
+     - Persistence is real JSON (not pretend) — but "learning" is fact strings,
+       not weights, policies, or prompt diffs that change lobe codepaths.
+     - Recall is bag-of-words term filter (all terms must appear) — keyword theater
+       for retrieval.
+     - No schema migration; version:1 only.
+     - notus is excluded from auto-store attach (thalamus.register_lobe).
+   Better: Decide store backend (JSON vs Notus memory_type lobe_learning:*) —
+     Thalamus stamps memory_type but never writes Notus for these facts.
+     Stronger retrieval than AND-of-tokens. Consumer contract before more writers.
+
+---------------------------------------------------------------------------
+B. THALAMUS LEARNING ROUTERS (wired when Thalamus exists)
+---------------------------------------------------------------------------
+
+_LEARNING_ROUTE_TYPES (thalamus.py:~L42–51):
+  learn, recall, teach_skill, list_skills,
+  reinforce_learning, contradict_learning, forget_learning, learning_stats
+
+6) Thalamus.register_lobe → LobeLearningStore attach
+   file:symbol  thalamus.py:Thalamus.register_lobe (~L145–146)
+   How today: Every registered lobe except "notus" gets
+     lobe._lobe_learning_store = LobeLearningStore(name).
+   Wired on live create_core_systems: YES (side effect of register_lobe for
+     all core lobes). Store exists even if never taught.
+   Wrong: Silent attach implies lobes "have learning"; they do not read it.
+   Better: Attach lazily on first teach, or require explicit Learning enable.
+
+7) Thalamus.teach_monday
+   file:symbol  thalamus.py:Thalamus.teach_monday (~L292–348)
+   How today:
+     - _classify_lesson_type via regex _LESSON_TYPE_PATTERNS
+       (correction|feedback|skill) — keyword theater for routing.
+     - _learning_targets_for_lesson uses _LOBE_LEARNING_RULES + extra keyword
+       gates (pattern needs "pattern|math…"; language needs "grammar|word…").
+     - For each target: _handle_lobe_learning(..., "teach_skill", …).
+     - Falls back to ALL candidates if nothing matched.
+   Wired: handle_request type teach_monday (~L3518–3519). NOT on
+     process_user_input.
+   Wrong: Spreads one lesson across many lobes as near-duplicate skill facts;
+     classification is substring; "applied_count" means JSON write success,
+     not behavior change.
+   Better: Single canonical lesson record + explicit lobe adapters that
+     opt-in. Or teach only Conversation/Language/Reasoning first.
+
+8) Thalamus.learning_overview
+   file:symbol  thalamus.py:Thalamus.learning_overview (~L350–384)
+   How today: For each non-notus lobe → learning_stats + list_skills.
+   Wired: handle_request. Operator/debug surface.
+   Wrong: Looks like a learning dashboard for a trained mind.
+   Better: Annotate "consumer: none" until a live path reads skills.
+
+9) Thalamus._handle_lobe_learning
+   file:symbol  thalamus.py:Thalamus._handle_lobe_learning (~L386–472)
+   How today: Intercepts learning msg types; never calls lobe.process_message.
+     teach_skill → store.learn with skill: key and composed "Skill behavior: …".
+     reinforce/contradict/forget → store.adjust.
+     recall/list_skills/stats → store.recall/stats.
+   Wrong: Lobes cannot customize learning; ownership is all-Thalamus.
+     memory_type "lobe_learning:{dest}" is metadata only (no Notus write here).
+   Better: Either lobe-owned process_message handlers, or keep central store
+     but add a mandatory apply() hook lobes implement.
+
+10) Thalamus.send_message learning intercept
+    file:symbol  thalamus.py:Thalamus.send_message (~L541–542)
+    How today: if msg_type in _LEARNING_ROUTE_TYPES → _handle_lobe_learning.
+    Wired on live path: YES for any send_message with those types.
+    Wrong: Easy to think lobes handle "learn" — they never see it.
+
+11) Thalamus._learned_guidance_for_message
+    file:symbol  thalamus.py:Thalamus._learned_guidance_for_message (~L186–231)
+    How today: On non-learning send_message, recall up to 5 facts
+      min_confidence 0.55, mark_used=True; inject
+      envelope_content["learned_guidance"] + applied_learning count.
+      Falls back to recall("") if query empty match fails.
+    Wrong / critical hollow:
+      - NO lobe module reads content["learned_guidance"] (repo scan: only
+        thalamus.py mentions the string).
+      - mark_used increments use_count → stats look "applied" while behavior
+        unchanged (pretend application).
+      - Fallback recall("") can dump unrelated high-confidence facts into
+        every message envelope as noise.
+    Better: Require each lobe to acknowledge guidance or strip the field.
+      Stop mark_used until a consumer confirms apply. Drop empty-query fallback.
+
+12) Thalamus._auto_adapt_from_interaction
+    file:symbol  thalamus.py:Thalamus._auto_adapt_from_interaction (~L474–529)
+    Called from: send_message after every lobe response (~L584).
+    How today: On success → learn key behavior:{msg_type} with canned fact
+      "keep behavior that returns status success…". On failure → contradict
+      that key + learn recovery:{msg_type} canned fact.
+    Wrong: Status-code reinforcement theater. Pollutes every lobe JSON with
+      near-identical behavior:* facts unrelated to user teaching. Not on a
+      Matthew-facing teach path; silent side effect of traffic.
+    Better: Disable by default; or adapt only when Conversation tags explicit
+      feedback. Never treat HTTP-like status as skill learning.
+
+13) handle_request teach_monday / learning_overview
+    file:symbol  thalamus.py:Thalamus.handle_request (~L3518–3521)
+    Wired: YES as request types. Orphan relative to chat daemon / web UI —
+      no teach endpoint in _monday_chat_daemon.py / _monday_web_chat.py.
+
+---------------------------------------------------------------------------
+C. LIVE create_core_systems / Thalamus vs ORPHAN
+---------------------------------------------------------------------------
+
+On live create_core_systems (run_abin.py):
+  - No Learning lobe registered.
+  - learning package is NOT imported.
+  - Side effect: every registered lobe gets LobeLearningStore JSON file path
+    ready; _auto_adapt writes on traffic; _learned_guidance injects unread
+    lists on send_message.
+  - process_user_input: does NOT mention teach_monday / learning / learn /
+    applied_learning (confirmed). Prompted chat does not teach.
+
+Explicit operator APIs (wired if caller uses them):
+  teach_monday, learning_overview, send_message(*_LEARNING_ROUTE_TYPES),
+  learning.api.* wrappers.
+
+Orphan / adjacent (not Learning package, but "learn from life" modules):
+  experience_processor.py:ExperienceProcessor — NOT in create_core_systems
+  behavioral_reinforcement.py:BehavioralReinforcement — NOT in create_core_systems
+  self_reflection.py — not registered by create_core_systems
+  TASK_LIST.txt still checkmarks some of these as done historically — stale
+  relative to live path.
+
+---------------------------------------------------------------------------
+D. WHAT'S WRONG — CROSS-CUTTING DIAGNOSIS
+---------------------------------------------------------------------------
+1. Dead relative to prompted talk: teach_* never called by daemon/web/PUI.
+2. Pretend application: learned_guidance injected + use_count++ with zero readers.
+3. Keyword theater: lesson_type patterns, lobe target keyword gates, recall AND-terms.
+4. auto_adapt spam: every successful send_message "learns" keep-success prose.
+5. Wrong ownership: Thalamus owns all learning ops; lobes cannot specialize.
+6. Split from Notus: lobe_learning JSON parallel to memory; memory_type unused.
+7. No tests for learning package on tip.
+8. Full-bar policy correctly IGNORED Learning — opening research must not
+   confuse "JSON store exists" with "she learns."
+
+---------------------------------------------------------------------------
+E. WHAT CAN BE BETTER — DESIGN QUESTIONS (for Matthew)
+---------------------------------------------------------------------------
+See section F (decision questions). Concrete upgrade directions if he picks a path:
+  A. Minimal honest: disable auto_adapt + guidance injection until a consumer
+     exists; keep teach_monday as operator JSON notebook.
+  B. One live consumer: Language or Conversation reads learned_guidance for
+     taught tone/behavior skills; proof harness required.
+  C. Notus-backed lessons: store lessons as Notus facts with type lobe_learning;
+     delete parallel JSON or sync it.
+  D. Kill Learning package: move "teach" into Conversation intent → Notus only.
+
+---------------------------------------------------------------------------
+F. OPEN RESEARCH QUESTIONS (Matthew should decide)
+---------------------------------------------------------------------------
+1. Is Learning in-scope for "get her to what I want" now, or still deferred
+   while talk quality / durable self / Notus identity are P0?
+
+2. Should ordinary chat teach her (auto from corrections), or only explicit
+   teach_monday / operator tools?
+
+3. Who is the first consumer of a taught skill — Language, Conversation,
+   Reasoning, or Emotion — and what observable reply change counts as proof?
+
+4. Keep per-lobe JSON stores, move to Notus, or both with a single source of truth?
+
+5. Keep, gate, or delete _auto_adapt_from_interaction (status-success theater)?
+
+6. What happens to experience_processor / behavioral_reinforcement /
+   self_reflection — promote, archive, or fold into Learning/Notus?
+
+7. Should chat daemon/web expose a /teach endpoint once a consumer exists?
+
+8. Lesson routing: keep keyword _LESSON_TYPE_PATTERNS / _LOBE_LEARNING_RULES,
+   or replace with explicit lobe targets in the teach API only?
+
+---------------------------------------------------------------------------
+G. PATH ↔ WIRED SUMMARY TABLE
+---------------------------------------------------------------------------
+Path                              | create_core / live PUI | Thalamus API | Hollow?
+----------------------------------|------------------------|--------------|--------
+LobeLearningStore attach          | side-effect YES        | n/a          | store empty until write
+teach_monday                      | NO                     | YES          | writes≠behavior
+learning_overview                 | NO                     | YES          | inspect only
+teach_skill / learn               | NO (unless caller)     | YES intercept| writes≠behavior
+list_skills / recall / stats      | NO                     | YES          | ok as inspect
+reinforce/contradict/forget       | NO                     | YES          | unused by UI
+_learned_guidance injection       | YES (every send)       | n/a          | unread + mark_used theater
+_auto_adapt_from_interaction      | YES (every send)       | n/a          | status theater
+learning.api wrappers             | NO                     | via Thalamus | thin
+ExperienceProcessor               | NO                     | self-reg if constructed | orphan
+BehavioralReinforcement           | NO                     | self-reg if constructed | orphan
+
+End of Learning research. No Learning code changed.
