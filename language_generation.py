@@ -495,9 +495,12 @@ class GrammarEngine:
         return ". ".join(parts) + "."
     
     def _compose_uncertainty(self, concepts: List[str], certainty: float) -> str:
-        """Generate uncertainty statement compositionally - NO TEMPLATES"""
+        """Mad-Libs style phrase-bank composition (honest: NOT free-form NLU).
+
+        Picks pronoun/verb/adjective from vocabulary banks via random.choice.
+        Does not probe Notus for knowledge-status handlers that do not exist.
+        """
         if not concepts:
-            # Build: pronoun + verb + adj + prep + demonstrative
             pronoun = random.choice(self.vocabulary['pronouns']['first_singular'])
             verb = random.choice(self.vocabulary['verbs']['cognitive']['think'])
             adj = random.choice(self.vocabulary['adjectives']['certainty_low'])
@@ -505,20 +508,6 @@ class GrammarEngine:
         
         topic = concepts[0]
         pronoun = random.choice(self.vocabulary['pronouns']['first_singular'])
-        
-        # Query Notus for knowledge status
-        knowledge_status = None
-        try:
-            notus_knowledge = self._send_to_thalamus({
-                'type': 'route_message',
-                'destination': 'notus',
-                'msg_type': 'query',
-                'content': {'type': 'check_knowledge', 'topic': topic}
-            })
-            if notus_knowledge and notus_knowledge.get('status') == 'success':
-                knowledge_status = notus_knowledge.get('status', {})
-        except Exception:
-            pass
         
         # Build uncertainty expression based on certainty level
         if certainty < 0.3:

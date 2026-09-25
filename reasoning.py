@@ -151,11 +151,16 @@ class Experience:
     changed_me_how: Optional[str] = None
 
 # ============================================================================
-# MAXIMUM SOPHISTICATION REASONING LOBE
+# REASONING LOBE (symbolic / rule + memory path)
 # ============================================================================
 
-class MaximumSophisticationReasoning:
-    """ABIN's mind - as sophisticated as symbolic AI can be"""
+class ReasoningLobe:
+    """Symbolic reasoning over facts, patterns, and in-process beliefs.
+
+    Beliefs are process-local: seeded by _initialize_self_awareness each
+    construct. They are NOT durably persisted to Notus (no
+    get_abin_persistent_state / save_abin_persistent_state handlers exist).
+    """
     
     def __init__(self, thalamus=None):
         self.running = True
@@ -166,12 +171,12 @@ class MaximumSophisticationReasoning:
         self.self_model = SelfModel(
             birth_time=time.time(),
             capabilities=[
-                "I can reason and build theories",
-                "I can remember everything through Notus",
-                "I can see and hear through my sensors",
-                "I can feel emotions through my emotional engine",
-                "I can recognize patterns",
-                "I can think autonomously"
+                "I can reason over facts and patterns on the live path",
+                "I can retrieve memories when Notus is available",
+                "I can use Perception hearing/vision when those probes succeed",
+                "I have a CoreAffect mood (Emotion lobe)",
+                "I can use Pattern co-occurrence signals when present",
+                "I can run an autonomous inner-thought loop when enabled",
             ],
             limitations=[
                 "I'm not human - I process information differently",
@@ -423,65 +428,19 @@ class MaximumSophisticationReasoning:
             return {'intent': 'statement', 'confidence': 0.5, 'method': 'default'}
     
     def _load_persistent_state_from_memory(self):
-        """Load persistent self from Notus memory"""
-        try:
-            # Query Notus for my persistent state
-            state_data = self._query_memory('get_abin_persistent_state', {})
-            
-            if state_data and state_data.get('status') == 'success':
-                # Restore beliefs, preferences, narrative
-                saved_state = state_data.get('state', {})
-                
-                # Restore beliefs
-                if 'beliefs' in saved_state:
-                    for belief_data in saved_state['beliefs']:
-                        self.beliefs[belief_data['about']] = Belief(**belief_data)
-                
-                # Restore narrative
-                if 'narrative' in saved_state:
-                    for exp_data in saved_state['narrative']:
-                        self.life_narrative.append(Experience(**exp_data))
-                
-                # Restore how I've changed
-                if 'changes' in saved_state:
-                    self.how_i_have_changed = saved_state['changes']
-                
-                self.self_model.experiences_count = len(self.life_narrative)
-        except Exception:
-            # First time - no saved state yet
-            pass
+        """Beliefs are process-local — Notus has no persistent-state handlers.
+
+        Kept as a named hook so callers do not invent get_abin_persistent_state
+        traffic. Always a no-op; beliefs come from _initialize_self_awareness.
+        """
+        return None
     
     def _save_persistent_state_to_memory(self):
-        """Save persistent self to Notus"""
-        try:
-            state = {
-                'beliefs': [
-                    {
-                        'about': b.about,
-                        'what_i_believe': b.what_i_believe,
-                        'why_i_believe_it': b.why_i_believe_it,
-                        'confidence': b.confidence,
-                        'formed_when': b.formed_when
-                    }
-                    for b in self.beliefs.values()
-                ],
-                'narrative': [
-                    {
-                        'what_happened': e.what_happened,
-                        'when': e.when,
-                        'how_it_felt': e.how_it_felt,
-                        'what_it_meant_to_me': e.what_it_meant_to_me,
-                        'emotional_tone': e.emotional_tone,
-                        'changed_me_how': e.changed_me_how
-                    }
-                    for e in self.life_narrative[-50:]  # Last 50 experiences
-                ],
-                'changes': self.how_i_have_changed
-            }
-            
-            self._query_memory('save_abin_persistent_state', {'state': state})
-        except Exception:
-            pass
+        """No-op: Notus has no save_abin_persistent_state handler.
+
+        Beliefs remain in-process only. Do not send pretend persist messages.
+        """
+        return None
     
     def _query_memory(self, query_type: str, data: Dict) -> Optional[Dict]:
         """Query Notus memory system through Thalamus - DIRECT FUNCTION CALL"""
@@ -3051,17 +3010,19 @@ class MaximumSophisticationReasoning:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
     
     def shutdown(self):
-        """Save state before shutdown"""
-        print("💾 Saving persistent state to memory...")
-        self._save_persistent_state_to_memory()
-        
+        """Stop lobe. Beliefs are process-local — no Notus persist."""
+        self._save_persistent_state_to_memory()  # honest no-op
         self.running = False
         # No sockets to close
 
 if __name__ == "__main__":
-    lobe = MaximumSophisticationReasoning()
+    lobe = ReasoningLobe()
     try:
         lobe.start()
     except KeyboardInterrupt:
         print("\n🛑 ABIN reasoning shutting down...")
         lobe.shutdown()
+
+
+# Legacy alias — old name was capability theater.
+MaximumSophisticationReasoning = ReasoningLobe

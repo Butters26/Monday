@@ -1,9 +1,8 @@
-"""Direct envelope adapter for the legacy maximum-sophistication reasoner.
+"""Direct envelope adapter for the live ReasoningLobe.
 
-The direct core deliberately keeps persistence in :mod:`direct_notus`, but the
-conclusion is still created by ``MaximumSophisticationReasoning.think_about``.
-This adapter only translates the direct envelope and supplies clean,
-user-scoped evidence in the shape the legacy reasoner expects.
+Conclusion text still comes from ``ReasoningLobe.think_about`` (legacy alias
+``MaximumSophisticationReasoning`` kept for imports). This adapter translates
+the direct envelope and supplies user-scoped evidence.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-from reasoning import Fact, MaximumSophisticationReasoning
+from reasoning import Fact, MaximumSophisticationReasoning, ReasoningLobe
 from direct_response import (
     answer_from_grounded_memories,
     content_tokens,
@@ -54,13 +53,13 @@ _BASELINE_EVIDENCE = (
 )
 
 
-class DirectMaximumSophisticationAdapter:
+class DirectReasoningAdapter:
     """Make the full legacy reasoner safe and usable on the prompted path."""
 
     def __init__(
         self,
         thalamus: Any = None,
-        reasoner_factory: Callable[..., MaximumSophisticationReasoning] = MaximumSophisticationReasoning,
+        reasoner_factory: Callable[..., ReasoningLobe] = ReasoningLobe,
     ) -> None:
         self.running = True
         self.thalamus = thalamus
@@ -126,7 +125,7 @@ class DirectMaximumSophisticationAdapter:
                 value = match.group("value").strip(" .!?")
                 if noun and value and not re.search(r"\b(?:is|are|and|named)\b", noun):
                     parts.append(f"Your {noun}'s name is {value}.")
-        fav = DirectMaximumSophisticationAdapter._normalise_favorite_fact(text)
+        fav = DirectReasoningAdapter._normalise_favorite_fact(text)
         if fav:
             parts.append(fav)
         live = re.search(
@@ -178,7 +177,7 @@ class DirectMaximumSophisticationAdapter:
 
     @staticmethod
     def _normalise_personal_fact(text: str) -> Optional[str]:
-        facts = DirectMaximumSophisticationAdapter._normalise_personal_facts(text)
+        facts = DirectReasoningAdapter._normalise_personal_facts(text)
         if not facts:
             return None
         if len(facts) == 1:
@@ -638,3 +637,7 @@ class DirectMaximumSophisticationAdapter:
         shutdown = getattr(self.reasoner, "shutdown", None)
         if callable(shutdown):
             shutdown()
+
+
+# Legacy alias — old name was theater.
+DirectMaximumSophisticationAdapter = DirectReasoningAdapter
