@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Shared Representation — common semantic substrate for Monday lobes.
+"""Shared Representation — common concept substrate for Monday lobes.
 
 Owns stable concept identity, canonical names/aliases, structured relationships,
-activation state, and bounded spreading activation. Concept identity is
-extremely conservative: exact normalized surface match, then explicit
-add_alias(); no automatic plural/morphology folding. Does NOT own Pattern
-discovery, Reasoning conclusions, Attention focus, Emotion, Notus memory,
-Language wording, MetaCognition/MetaAwareness, Executive, or Learning.
+activation state, and bounded spreading activation when edges exist.
+
+Live producer: resolve_terms/resolve_from_text records weak co_occurrence
+relationships between co-activated seed concepts on the same turn so spread
+has real edges (not an empty graph sold as working spread).
+
+Concept identity is extremely conservative: exact normalized surface match,
+then explicit add_alias(); no automatic plural/morphology folding. Does NOT
+own Pattern discovery, Reasoning conclusions, Attention focus, Emotion, Notus
+memory, Language wording, MetaCognition/MetaAwareness, Executive, or Learning.
 
 Persistence: own JSON under runtime_dir()/shared_representation.json — NOT Notus.
 Old representation.py stays unwired (historical only).
@@ -105,6 +110,7 @@ _VALID_REL_TYPES = frozenset(
         "opposite_of",
         "associated_with",
         "personal_assoc",
+        "co_occurrence",  # live resolve_terms producer
     }
 )
 
@@ -646,9 +652,30 @@ class SharedRepresentationSystem:
             seen.add(concept.concept_id)
             ids.append(concept.concept_id)
             resolved.append(concept.to_public())
+        # Live producer: co-occurrence edges among seeds so spread is not a no-op.
+        edges_added = 0
+        if len(ids) >= 2:
+            # Adjacent pairs only (bounded); both directions for undirected spread.
+            scope = "user" if user_id else "global"
+            for i in range(len(ids) - 1):
+                a, b = ids[i], ids[i + 1]
+                if a == b:
+                    continue
+                for src, tgt in ((a, b), (b, a)):
+                    rel = self.add_relationship(
+                        src,
+                        tgt,
+                        "co_occurrence",
+                        strength=0.35,
+                        scope=scope,
+                        user_id=user_id,
+                    )
+                    if rel is not None:
+                        edges_added += 1
         activation_map: Dict[str, float] = {}
+        edge_count = len(self._edges_for_spread(user_id))
         if activate and ids:
-            # Seed all, then one coordinated spread pass from each seed
+            # Seed all, then bounded spread (meaningful once co_occurrence edges exist).
             for cid in ids:
                 part = self.activate(
                     cid, activate_amount, user_id=user_id, spread=True
@@ -671,6 +698,9 @@ class SharedRepresentationSystem:
                 for c in self.get_active_concepts()
             ],
             "user_id": user_id,
+            "relationship_edges": edge_count,
+            "co_occurrence_edges_added": edges_added,
+            "spread_had_edges": edge_count > 0,
         }
 
     def resolve_from_text(
@@ -706,6 +736,9 @@ class SharedRepresentationSystem:
             "active_concepts": list(body.get("active_concepts") or []),
             "activation": dict(body.get("activation") or {}),
             "user_id": body.get("user_id"),
+            "relationship_edges": body.get("relationship_edges", 0),
+            "co_occurrence_edges_added": body.get("co_occurrence_edges_added", 0),
+            "spread_had_edges": bool(body.get("spread_had_edges")),
             "source": "shared_representation",
             "timestamp": time.time(),
         }
@@ -728,6 +761,8 @@ class SharedRepresentationSystem:
                 "status": "success",
                 "healthy": True,
                 "concept_count": len(self.concepts),
+                "global_relationship_count": len(self.global_relationships),
+                "live_co_occurrence_producer": True,
                 "store_path": str(self.store_path),
             }
 
