@@ -1,9 +1,9 @@
 MONDAY FULL-BAR PROGRESS (rolling)
 ==================================
-Updated: 2026-09-25 14:23 MDT (America/Denver)
-Tip SHA: 3b4e2be (3b4e2be8b92e8489d1c21ec75bbfd1a78d99bb03)
+Updated: 2026-09-25 14:41 MDT (America/Denver)
+Tip SHA: c93f50d (c93f50de0031ca37ff82478992ba8a92fbb53d41)
 Learning: IGNORED
-Emotion: PASS @ efe3f8b — re-proved 7/7 after shared-path edits (this tip)
+Emotion: PASS — re-proved 7/7 @ this tip (_prove_emotion_core_affect.py)
 
 FULL BAR: job on live path + claims match mechanism + no dead fancy APIs +
 no pretend persistence/fake ML/keyword theater sold as understanding +
@@ -27,15 +27,17 @@ notus                            | PASS    | #11 fallback efad465 + naming/embed
 reasoning                        | PASS    | ReasoningLobe rename; Belief persist no-op (3854973)
 language                         | PASS    | phrase-bank honesty; check_knowledge call removed
 output                           | PASS    | TTS-off documented; unused formant knobs labeled (3701ead)
-voice                            | PASS    | formant_sine_stub status; unused nasality/vibrato labeled
+voice                            | PASS    | formant_sine_stub required (synth_kind None must FAIL)
 speech                           | PASS    | decision-only; pending/wording invent removed
 meta_awareness                   | PASS    | mocks detached; controlled_fed=False live (7cdbcda)
 shared_representation            | PASS    | live co_occurrence producer; spread_had_edges (5c10ea7)
-ContinuousThoughtGenerator       | PASS*   | NOT attached live; module marked MOCK/TOY (*not a live lobe)
-ControlledThinking               | PASS*   | NOT attached live; module marked MOCK/TOY (*not a live lobe)
+ContinuousThoughtGenerator       | PASS*   | NOT attached live; module marked MOCK/TOY (*detached toy only)
+ControlledThinking               | PASS*   | NOT attached live; module marked MOCK/TOY (*detached toy only)
 
-PROOF HARNESS: _prove_full_bar_remaining.py — 15/15 PASS
-Emotion reproof: _prove_emotion_core_affect.py — 7/7 PASS
+PROOF HARNESS: _prove_full_bar_remaining.py — SUMMARY: PASS — 15/15
+  written proof: _full_bar_remaining_proof.txt (SUMMARY: PASS — 15/15)
+Emotion reproof: _prove_emotion_core_affect.py — SUMMARY: PASS — 7/7 cases
+  written proof: _emotion_core_affect_proof.txt (SUMMARY: PASS — 7/7 cases)
 Notus fallback subset: 5 passed
 
 COMMITS THIS SWEEP (after Emotion pin efe3f8b):
@@ -46,10 +48,11 @@ COMMITS THIS SWEEP (after Emotion pin efe3f8b):
   3701ead Output/Voice TTS honesty
   5c10ea7 SharedRepresentation co-occurrence producer
   2548d35 Notus embedding/naming honesty
+  (this tip) Align full-bar proof with tip; tighten voice stub check
 
-WHOLE-MONDAY: all previously failing live systems PASS under full bar at tip 2548d35.
+WHOLE-MONDAY: all previously failing live systems PASS under full bar at this tip.
 Do not claim Learning done. ContinuousThoughtGenerator/ControlledThinking are
-PASS only as detached toys (not live lobes).
+PASS* only as detached toys (not live lobes) — not attached via create_core_systems.
 
 
 CI NOTE

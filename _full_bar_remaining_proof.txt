@@ -1,0 +1,25 @@
+🆕 Novelty signal from perception: score=1.00 is_novel=True
+🧠 Reasoning: think_about started
+🧠 Reasoning: user_input = 'Hi Monday, my favorite color is teal'
+🧠 Reasoning pulled context: Found 1 stored memories, 0 facts, and 0 episodes
+🧠 Reasoning pulled user info: Have 0 facts about user and 0 recorded interactions
+🆕 Novelty signal from reasoning: score=0.00 is_novel=False
+❤️  Emotional state saved
+FULL-BAR REMAINING PROOF
+========================
+PASS: mocks_detached — CTG/CT not in create_core_systems
+PASS: meta_no_false_fed — fed=False attached=False
+PASS: speech_pending_removed — get_pending_speech removed: speech lobe is decision-only on live path; Language 
+PASS: speech_evaluate_live — True
+PASS: conversation_poll_removed — check_unprompted_speech removed; speech lobe is decision-only
+PASS: novelty_pending_removed — get_pending_questions removed; Novelty is score-only
+PASS: novelty_score_works — score=0.425
+PASS: shared_rep_edges — added=8 edges=8
+PASS: reasoning_alias — DirectReasoningAdapter
+PASS: reasoning_persist_noop — ReasoningLobe
+PASS: language_no_templates_claim — GrammarEngine._compose_uncertainty scrubbed
+PASS: output_tts_off — tts_available=False engine=None
+PASS: voice_stub_labeled — {'synth_kind': 'formant_sine_stub', 'nasality_unused': True, 'vibrato_unused': True}
+PASS: notus_fallback_wired — thalamus.notus_fallback
+PASS: prompted_path_reply — Got it — your favorite color is teal.
+SUMMARY: PASS — 15/15

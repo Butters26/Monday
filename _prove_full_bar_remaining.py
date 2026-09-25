@@ -192,14 +192,12 @@ def main() -> int:
             )
         )
 
-        # 9. Voice status honesty
+        # 9. Voice status honesty — require explicit stub label (None must FAIL)
         vs = systems["voice"].get_status()
         results.append(
             (
                 "voice_stub_labeled",
-                vs.get("synth_kind") == "formant_sine_stub"
-                or "formant" in str(vs).lower()
-                or vs.get("nasality_unused") is True,
+                vs.get("synth_kind") == "formant_sine_stub",
                 str({k: vs.get(k) for k in ("synth_kind", "nasality_unused", "vibrato_unused")}),
             )
         )
