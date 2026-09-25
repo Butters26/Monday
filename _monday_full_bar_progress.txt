@@ -1,7 +1,7 @@
 MONDAY FULL-BAR PROGRESS (rolling)
 ==================================
 Updated: 2026-09-25 14:23 MDT (America/Denver)
-Tip SHA: 0dc4233 (0dc423386a440c8dd9e2c0bf5ee22b6499921d51)
+Tip SHA: b8a8d53 (b8a8d531e205ec376a2972c1c1010c531007620e)
 Learning: IGNORED
 Emotion: PASS @ efe3f8b — re-proved 7/7 after shared-path edits (this tip)
 
