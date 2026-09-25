@@ -1,3 +1,7 @@
+😊 Emotion→Novelty: worried int=0.60 novelty_score=0.38
+🛑 Autonomous Speech System shutdown
+💾 Saving persistent state to memory...
+❤️  Emotional state saved
 BASELINE core_affect v=0.150 a=-0.100 label=calm
 PASS: user_self_report_im_sad — v=0.150 a=-0.100 emo=calm int=0.120 reason='user_self_report_ignored_for_her_mood' near_base=True no_rejection=True
 PASS: user_self_report_i_feel_sad — v=0.150 a=-0.100 emo=calm reason='user_self_report_ignored_for_her_mood'
@@ -8,3 +12,5 @@ PASS: internal_thought_capped_nudge — v0=0.150 v1=0.096 a1=-0.064 dv=0.054 rea
 PASS: praise_raises_valence — v_before=0.150 v_after=0.550 emo=happy
 
 SUMMARY: PASS — 7/7 cases
+
+Wrote /workspace/Monday/_emotion_core_affect_proof.txt
