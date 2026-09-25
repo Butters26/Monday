@@ -125,7 +125,8 @@ class NoveltyLobe:
 
         self.novelty_memories: List[NoveltyMemory] = []
         self.processing_novelties: Dict[str, NoveltySignal] = {}
-        self.pending_user_responses: Dict[str, Dict[str, Any]] = {}
+        # pending_user_responses / question_draft queue REMOVED — Conversation
+        # owns curiosity questions; Novelty only scores familiarity.
 
         # Real familiarity stores — not random.
         self.familiar_tokens: Set[str] = set()
@@ -363,10 +364,18 @@ class NoveltyLobe:
             return self._handle_emotional_response(payload)
 
         if msg_type == "user_response":
-            return self._handle_user_response(payload)
+            # Learning-from-answer path for old question drafts — retired.
+            return {
+                "status": "error",
+                "message": "user_response/pending questions removed; Novelty is score-only",
+            }
 
         if msg_type == "get_pending_questions":
-            return {"status": "success", "pending": self.pending_user_responses}
+            return {
+                "status": "error",
+                "message": "get_pending_questions removed; Novelty is score-only",
+                "pending": {},
+            }
 
         if msg_type == "health":
             return {
@@ -475,56 +484,22 @@ class NoveltyLobe:
                 "novelty_score": score,
             }
 
-        # Optionally draft a question for consumers that ask — do not send.
-        question = self._generate_question_from_emotion(
-            stimulus=stimulus,
-            emotion=emotion,
-            intensity=intensity,
-            valence=valence,
-            similar_experiences=self._query_local_similar(stimulus),
-        )
-        if question and stimulus:
-            self.pending_user_responses[stimulus] = {
-                "emotion": emotion,
-                "intensity": intensity,
-                "valence": valence,
-                "question": question,
-                "timestamp": time.time(),
-                "novelty_score": score,
-            }
-
+        # Do NOT draft/queue questions — Conversation owns curiosity wording.
         self._update_emotional_momentum(valence)
         return {
             "status": "noted_elevated",
             "stimulus": stimulus,
-            "question_draft": question,
             "novelty_score": score,
+            "question_draft": None,
             "dispatched_to_language": False,
+            "note": "score_only_no_question_queue",
         }
 
     def _handle_user_response(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        stimulus = message.get("stimulus")
-        user_answer = message.get("answer")
-        if stimulus not in self.pending_user_responses:
-            return {"status": "error", "message": "Unknown stimulus"}
-
-        context = self.pending_user_responses.pop(stimulus)
-        memory = NoveltyMemory(
-            stimulus_type=self._classify_stimulus_type(str(stimulus)),
-            stimulus=str(stimulus),
-            initial_emotion=context["emotion"],
-            intensity=float(context["intensity"]),
-            valence=float(context["valence"]),
-            timestamp=time.time(),
-            user_response=str(user_answer) if user_answer is not None else None,
-            learned_value=self._extract_value_from_response(
-                str(user_answer) if user_answer else ""
-            ),
-        )
-        self.novelty_memories.append(memory)
-        self._store_in_notus(str(stimulus), memory)
-        self._update_emotional_momentum(float(context["valence"]))
-        return {"status": "learned", "stimulus": stimulus, "memory_stored": True}
+        return {
+            "status": "error",
+            "message": "pending question responses removed; Novelty is score-only",
+        }
 
     def _query_local_similar(self, stimulus: str) -> List[NoveltyMemory]:
         similar: List[NoveltyMemory] = []
@@ -654,8 +629,8 @@ class NoveltyLobe:
         self.emotional_momentum = max(-1.0, min(1.0, self.emotional_momentum))
 
     def get_question_to_ask_user(self, stimulus: str) -> Optional[str]:
-        if stimulus in self.pending_user_responses:
-            return self.pending_user_responses[stimulus].get("question")
+        if False:  # pending question queue removed
+            return None
         return None
 
     def shutdown(self) -> None:

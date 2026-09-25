@@ -580,22 +580,13 @@ class ConversationSystem:
             }
         
         elif msg_type == 'check_unprompted_speech':
-            # Check if Monday wants to say something unprompted
-            try:
-                speech_result = self.thalamus.send_message('speech', 'get_pending_speech', {})
-                if speech_result and speech_result.get('status') == 'success':
-                    speech_item = speech_result.get('speech')
-                    if speech_item:
-                        # Monday has something to say!
-                        return {
-                            'status': 'success',
-                            'has_speech': True,
-                            'speech': speech_item.get('content', '')
-                        }
-            except Exception as e:
-                pass
-            
-            return {'status': 'success', 'has_speech': False}
+            # Removed: speech pending queue is dead. Live asides are Thalamus-
+            # delivered after speech.evaluate_thought; Conversation does not poll.
+            return {
+                'status': 'error',
+                'message': 'check_unprompted_speech removed; speech lobe is decision-only',
+                'has_speech': False,
+            }
         
         elif msg_type == 'get_history':
             return {

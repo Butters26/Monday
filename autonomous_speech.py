@@ -34,18 +34,15 @@ class AutonomousSpeechSystem:
         """Social WHEN/WHETHER filter for speak-worthy autonomous thoughts.
 
         Live path: create_core_systems passes thalamus= and registers lobe
-        name "speech". Do not invent wording (Language) or audio (Voice).
-        generate_natural_speech / should_initiate_speech are legacy helpers
-        only — not consulted on the live prompted path.
+        name "speech". Decision-only: evaluate_thought → SpeechDecision.
+        Does not invent wording (Language) or audio (Voice). Dead pending /
+        wording-invent APIs removed from the live message surface.
         """
         # Prefer explicit thalamus from create_core_systems; avoid get_thalamus()
         # singleton (that instance is not the live core Thalamus).
         self.thalamus = thalamus if thalamus is not None else None
         self.running = True
         self.last_decision: Optional[Dict[str, Any]] = None
-
-        # Speech queue (legacy pull path; live path does not drain this)
-        self.pending_speech: List[Dict[str, Any]] = []
 
         # State
         self.user_is_typing = False
@@ -55,12 +52,6 @@ class AutonomousSpeechSystem:
         self.min_speech_interval = 15.0  # Natural pause between unsolicited comments
         self.conversation_active = False
         self.last_user_input_time = time.time()
-
-        # Natural behavior (legacy unprompted helpers only)
-        self.can_initiate = True  # Can start conversations
-        self.silence_threshold = 120.0  # After 2 min silence, might say something
-        self.curiosity_threshold = 0.7  # How curious before sharing
-        self.excitement_threshold = 0.6  # How excited before blurting out
 
         # Social rules - human-like
         self.interruption_threshold = 0.85  # High bar for interrupting
@@ -100,9 +91,16 @@ class AutonomousSpeechSystem:
 
         if msg_type == 'evaluate_thought':
             return self._evaluate_thought(message)
-        
-        elif msg_type == 'get_pending_speech':
-            return self._get_pending_speech()
+
+        elif msg_type in ('get_pending_speech', 'generate_unprompted', 'queue_speech'):
+            return {
+                'status': 'error',
+                'message': (
+                    f'{msg_type} removed: speech lobe is decision-only on live path; '
+                    'Language owns wording; Thalamus delivers allowed asides'
+                ),
+                'decision_only': True,
+            }
         
         elif msg_type == 'user_typing':
             self.user_is_typing = message.get('is_typing', False)
@@ -124,17 +122,6 @@ class AutonomousSpeechSystem:
             self.last_user_input_time = time.time()
             self.user_present = True
             return {'status': 'success'}
-        
-        elif msg_type == 'generate_unprompted':
-            # Request to generate unprompted speech
-            should_speak, trigger = self.should_initiate_speech()
-            if should_speak:
-                context = message.get('context', {})
-                speech = self.generate_natural_speech(trigger, context)
-                if speech:
-                    self.queue_speech(speech, priority=0.6)
-                    return {'status': 'success', 'generated': True, 'speech': speech}
-            return {'status': 'success', 'generated': False, 'reason': trigger}
         
         elif msg_type == 'health':
             return {'status': 'success', 'healthy': True}
@@ -202,9 +189,7 @@ class AutonomousSpeechSystem:
             priority=intensity,
         )
 
-        # Decision-only on live path: do NOT enqueue into pending_speech.
-        # Thalamus delivers allowed asides directly; pending_speech remains
-        # for legacy queue_speech / generate_unprompted / get_pending_speech.
+        # Decision-only: Thalamus delivers allowed asides; no pending queue.
 
         payload = asdict(decision)
         self.last_decision = dict(payload)
@@ -264,159 +249,14 @@ class AutonomousSpeechSystem:
         else:
             return 'never'  # Keep internal
     
-    def _get_pending_speech(self) -> Dict[str, Any]:
-        """Get speech items ready to deliver"""
-        with self.lock:
-            # Check if we can speak now
-            time_since_speech = time.time() - self.last_speech_time
-            if time_since_speech < self.min_speech_interval:
-                return {
-                    'status': 'success',
-                    'speech': None,
-                    'reason': 'Waiting for speech interval'
-                }
-            
-            # Get highest priority item
-            if self.pending_speech:
-                speech = self.pending_speech.pop(0)
-                return {
-                    'status': 'success',
-                    'speech': speech
-                }
-            
-            return {
-                'status': 'success',
-                'speech': None,
-                'reason': 'No pending speech'
-            }
-    
-    def queue_speech(self, content: str, priority: float = 0.5) -> str:
-        """Direct method to queue speech"""
-        speech_id = f"speech_{int(time.time() * 1000)}"
-        
-        with self.lock:
-            self.pending_speech.append({
-                'thought_id': speech_id,
-                'content': content,
-                'priority': priority,
-                'timing': 'wait',
-                'queued_at': time.time()
-            })
-            self.pending_speech.sort(key=lambda x: x['priority'], reverse=True)
-        
-        return speech_id
-    
-    def get_next_speech(self) -> Optional[Dict[str, Any]]:
-        """Public method to get next speech item"""
-        result = self._get_pending_speech()
-        return result.get('speech')
-    
-    def get_status(self) -> Dict[str, Any]:
-        """Diagnostic snapshot for live-path proofs."""
-        with self.lock:
-            pending = len(self.pending_speech)
-        return {
-            "healthy": True,
-            "user_is_typing": self.user_is_typing,
-            "user_is_busy": self.user_is_busy,
-            "user_present": self.user_present,
-            "conversation_active": self.conversation_active,
-            "pending_speech": pending,
-            "last_speech_time": self.last_speech_time,
-            "last_user_input_time": self.last_user_input_time,
-            "last_decision": dict(self.last_decision) if self.last_decision else None,
-            "min_speech_interval": self.min_speech_interval,
-        }
-
     def start(self):
         """Start the speech system (legacy CLI loop)."""
         print("🗣️ Autonomous Speech System running...")
         while self.running:
             time.sleep(1)
     
-    def generate_natural_speech(self, trigger: str, context: Dict[str, Any]) -> Optional[str]:
-        """Legacy helper — NOT used on live path (Language owns wording)."""
-        
-        emotion = context.get('emotion', 'neutral')
-        curiosity = context.get('curiosity', 0.5)
-        recent_topic = context.get('recent_topic', '')
-        
-        # Different triggers = different speech styles
-        
-        if trigger == 'curiosity':
-            # Natural curious questions
-            starters = [
-                "I've been wondering...",
-                "You know what's interesting?",
-                "I just thought of something—",
-                "Hey, random question:",
-                "This might sound weird, but"
-            ]
-            import random
-            return f"{random.choice(starters)} {recent_topic}"
-        
-        elif trigger == 'excitement':
-            # Excited observations
-            if emotion in ['happy', 'excited', 'euphoric']:
-                return f"Oh! I just realized something about {recent_topic}!"
-        
-        elif trigger == 'concern':
-            # Gentle check-ins
-            if emotion in ['worried', 'anxious']:
-                return "You doing okay?"
-        
-        elif trigger == 'silence':
-            # Break comfortable silence naturally
-            return "What are you thinking about?"
-        
-        elif trigger == 'observation':
-            # Natural observations
-            return f"Hm. {recent_topic}"
-        
-        return None
-    
-    def should_initiate_speech(self) -> tuple:
-        """Legacy helper — NOT used on live path (would invent unprompted chat)."""
-        
-        # Don't speak if user literally just said something
-        time_since_input = time.time() - self.last_user_input_time
-        if time_since_input < 5.0:
-            return False, "User just spoke"
-        
-        # Don't spam
-        time_since_speech = time.time() - self.last_speech_time
-        if time_since_speech < self.min_speech_interval:
-            return False, "Too soon"
-        
-        # Check emotional state - high emotion = more likely to speak
-        try:
-            emotion_state = self.thalamus.send_message('emotion', 'get_state', {})
-            if emotion_state and emotion_state.get('status') == 'success':
-                intensity = emotion_state.get('intensity', 0.0)
-                emotion = emotion_state.get('emotion', 'calm')
-                
-                # Excited/curious = want to share
-                if emotion in ['excited', 'curious', 'surprised'] and intensity > self.excitement_threshold:
-                    return True, "excited_to_share"
-                
-                # Worried/anxious = might reach out
-                if emotion in ['worried', 'anxious'] and intensity > 0.7:
-                    return True, "concerned"
-        except:
-            pass
-        
-        # Long silence = natural check-in
-        if time_since_input > self.silence_threshold:
-            return True, "silence"
-        
-        # Default: stay quiet unless something compelling happens
-        return False, "No trigger"
-    
-    def shutdown(self):
-        """Graceful shutdown"""
-        self.running = False
-        print("🛑 Autonomous Speech System shutdown")
-
+    # generate_natural_speech / should_initiate_speech / queue_speech REMOVED —
+    # Language owns wording; live speech lobe is decision-only.
 
 if __name__ == "__main__":
     print("🗣️ Autonomous Speech System starting...")
