@@ -1,9 +1,9 @@
 MONDAY FULL-BAR PROGRESS (rolling)
 ==================================
-Updated: 2026-09-25 14:42 MDT (America/Denver)
-Tip SHA: 899c21d (899c21d8f756cbe669c3d32917ff9b456bc1fccb)
+Updated: 2026-09-25 15:05 MDT (America/Denver)
+Tip SHA: 44c6685 (44c6685e8ebcaeb83d128ada8c9b7b16aa862291)
 Learning: IGNORED
-Emotion: PASS — re-proved 7/7 @ this tip (_prove_emotion_core_affect.py)
+Emotion: PASS — re-proved 7/7 @ prior tip (_prove_emotion_core_affect.py)
 
 FULL BAR: job on live path + claims match mechanism + no dead fancy APIs +
 no pretend persistence/fake ML/keyword theater sold as understanding +
@@ -28,7 +28,8 @@ reasoning                        | PASS    | ReasoningLobe rename; Belief persis
 language                         | PASS    | phrase-bank honesty; check_knowledge call removed
 output                           | PASS    | TTS-off documented; unused formant knobs labeled (3701ead)
 voice                            | PASS    | formant_sine_stub required (synth_kind None must FAIL)
-speech                           | PASS    | decision-only; pending/wording invent removed
+speech                           | PASS    | decision-only (WHEN/WHETHER); no wording invent; delivery is Thalamus.deliver_unprompted_speech → Output/Voice/Notus + chat poll push
+thalamus (unprompted delivery)   | PASS    | deliver_unprompted_speech live; cooldown/intensity/speech gates; _prove_unprompted_speech.py 7/7
 meta_awareness                   | PASS    | mocks detached; controlled_fed=False live (7cdbcda)
 shared_representation            | PASS    | live co_occurrence producer; spread_had_edges (5c10ea7)
 ContinuousThoughtGenerator       | PASS*   | NOT attached live; module marked MOCK/TOY (*detached toy only)
@@ -36,9 +37,20 @@ ControlledThinking               | PASS*   | NOT attached live; module marked MO
 
 PROOF HARNESS: _prove_full_bar_remaining.py — SUMMARY: PASS — 15/15
   written proof: _full_bar_remaining_proof.txt (SUMMARY: PASS — 15/15)
+Unprompted speech: _prove_unprompted_speech.py — SUMMARY: PASS — 7/7
+  written proof: _unprompted_speech_proof.txt
 Emotion reproof: _prove_emotion_core_affect.py — SUMMARY: PASS — 7/7 cases
   written proof: _emotion_core_affect_proof.txt (SUMMARY: PASS — 7/7 cases)
 Notus fallback subset: 5 passed
+
+HONEST DELIVERY NOTE
+--------------------
+Speech lobe remains decision-only. Unprompted speak is NOT Conversation poll
+theater. Autonomous mints speak_worthy thoughts; Thalamus.deliver_unprompted_speech
+delivers (Output+Voice+Notus) under cooldown/intensity/relevance/speech gates;
+chat daemon background + poll/pending (+ web /pending every ~3s) push to UI.
+Provider canned Mad-Libs ripped from DirectResponseProvider.render (no
+grounded-info / please-tell-me-more / Hello / gravity / memory short-circuits).
 
 COMMITS THIS SWEEP (after Emotion pin efe3f8b):
   efad465 Fix incomplete Notus outage fallback (Closes #11)
@@ -48,12 +60,14 @@ COMMITS THIS SWEEP (after Emotion pin efe3f8b):
   3701ead Output/Voice TTS honesty
   5c10ea7 SharedRepresentation co-occurrence producer
   2548d35 Notus embedding/naming honesty
-  (this tip) Align full-bar proof with tip; tighten voice stub check
+  899c21d Align full-bar proof with tip; tighten voice stub check
+  (this tip) Unprompted speech delivery + rip canned provider fallback
 
 WHOLE-MONDAY: all previously failing live systems PASS under full bar at this tip.
 Do not claim Learning done. ContinuousThoughtGenerator/ControlledThinking are
 PASS* only as detached toys (not live lobes) — not attached via create_core_systems.
-
+Do not claim human-like unprompted speech — mechanism is gated delivery of
+Autonomous-worded speak_worthy thoughts.
 
 CI NOTE
 -------

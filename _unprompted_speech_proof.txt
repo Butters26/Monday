@@ -1,0 +1,14 @@
+✅ Autonomous Thinking Loop registered with Thalamus
+🧠 Autonomous Thinking Loop background starting...
+🛑 Autonomous Thinking Loop shutdown
+❤️  Emotional state saved
+UNPROMPTED SPEECH PROOF
+=======================
+PASS: first_spoke — reason=delivered text='The quiet tonight sits heavy — I noticed it on my own.'
+PASS: text_from_aside — got='The quiet tonight sits heavy — I noticed it on my own.'
+PASS: cooldown_blocks_dump — reason=cooldown spoke=False
+PASS: api_present — deliver_unprompted_speech
+PASS: provider_no_canned_question — None
+PASS: provider_no_canned_hello — None
+PASS: provider_no_canned_gravity — None
+SUMMARY: PASS — 7/7

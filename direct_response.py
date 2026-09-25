@@ -1045,8 +1045,8 @@ class ResponseProvider(Protocol):
         user_input: str,
         understanding: Dict[str, Any],
         memories: Iterable[Dict[str, Any]],
-    ) -> str:
-        """Return a complete user-facing response."""
+    ) -> Optional[str]:
+        """Return a grounded response, or None when nothing honest to say."""
 
 
 @dataclass(frozen=True)
@@ -1211,19 +1211,13 @@ class DeterministicResponseProvider:
         user_input: str,
         understanding: Dict[str, Any],
         memories: Iterable[Dict[str, Any]],
-    ) -> str:
-        """Realize intent from the prompt and grounded fact memories."""
+    ) -> Optional[str]:
+        """Realize intent from grounded facts / empathic affect — no canned encyclopedias.
+
+        Returns None when there is nothing honest to say so Thalamus/Language can
+        compose from structures or fail closed without Mad-Libs filler.
+        """
         clean_memories = self._safe_memories(memories)
-
-        if self._greeting.fullmatch(user_input or ""):
-            return "Hello! How can I help?"
-
-        if re.search(
-            r"\b(?:are you okay|how are you|how(?:'s| is) it going)\b",
-            user_input or "",
-            re.IGNORECASE,
-        ):
-            return "I'm here — thanks for checking in. How are you?"
 
         teaching = self._teaching_ack(user_input or "")
         if teaching:
@@ -1233,15 +1227,6 @@ class DeterministicResponseProvider:
         if fact_answer:
             return fact_answer
 
-        if self._gravity.search(user_input or ""):
-            return (
-                "Gravity is the force of attraction between masses. "
-                "It pulls objects toward each other, which is why objects fall toward Earth."
-            )
-        if self._memory.search(user_input or ""):
-            return "Memory is information retained so it can be retrieved and used later."
-
-        intent = understanding.get("intent") if isinstance(understanding, dict) else None
         emo_state = None
         if isinstance(understanding, dict):
             emo_state = understanding.get("emotion_result") or understanding.get("emotional_state")
@@ -1249,9 +1234,6 @@ class DeterministicResponseProvider:
         if empathic:
             return empathic
 
-        if intent in {"question", "request"} or looks_questionish(user_input or ""):
-            return (
-                "I do not have enough grounded information to answer that. "
-                "Please provide more context or a fact I can reason from."
-            )
-        return "I understand. Please tell me more about what you would like to discuss."
+        # No greeting / how-are-you / gravity / memory canned short-circuits.
+        # No "I do not have enough grounded..." / "Please tell me more..." filler.
+        return None

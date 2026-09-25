@@ -2440,7 +2440,7 @@ class Thalamus:
         early_structures = semantic_input.get("grounded_structures")
         has_structures = isinstance(early_structures, list) and bool(early_structures)
         if reasoning_answer is None and not has_structures:
-            # Provider fallback — pass emotion so empathic path can fire.
+            # Provider fallback — grounded facts / empathic only; no canned filler.
             # Skip when Reasoning already supplied grounded structures for Language.
             try:
                 understanding_with_emotion = dict(understanding) if isinstance(understanding, dict) else {}
@@ -2451,8 +2451,22 @@ class Thalamus:
             except Exception:
                 reasoning_answer = None
             reasoning_answer = self._first_usable_text(reasoning_answer)
+            # Reject legacy canned strings if a stale provider still emits them.
+            if isinstance(reasoning_answer, str):
+                _low = reasoning_answer.strip().lower()
+                if (
+                    _low.startswith("i do not have enough grounded information")
+                    or _low.startswith("i understand. please tell me more")
+                    or _low == "hello! how can i help?"
+                    or _low.startswith("gravity is the force of attraction")
+                    or _low.startswith("memory is information retained")
+                    or _low.startswith("i'm here — thanks for checking in")
+                    or _low.startswith("i'm here - thanks for checking in")
+                ):
+                    reasoning_answer = None
             if reasoning_answer is None:
-                # Last chance: structured facts from memories before hard inability.
+                # Last chance: structured facts from memories; else leave None so
+                # Language can compose from intent/social (no Mad-Libs invent).
                 try:
                     salvage_structs = structures_from_grounded_memories(user_input, memories)
                 except Exception:
@@ -2460,8 +2474,6 @@ class Thalamus:
                 if salvage_structs:
                     semantic_input["grounded_structures"] = salvage_structs
                     has_structures = True
-                else:
-                    reasoning_answer = "I am unable to formulate a response right now."
         semantic_input.setdefault(
             "intent", understanding.get("intent", "conversation")
         )
@@ -2805,6 +2817,27 @@ class Thalamus:
         except Exception:
             return
 
+
+    def _undo_eager_speak_satiation(self, autonomous, aside: Optional[Dict[str, Any]]) -> None:
+        """Reverse pop_spoken_aside's eager satiation bump until we actually deliver."""
+        if autonomous is None or not isinstance(aside, dict):
+            return
+        topic = str(aside.get("topic_key") or "")
+        if not topic:
+            return
+        try:
+            sat = getattr(autonomous, "_speak_satiation", None)
+            updated = getattr(autonomous, "_speak_sat_updated", None)
+            step = float(getattr(autonomous, "_SPEAK_SAT_STEP", 0.55) or 0.55)
+            if isinstance(sat, dict) and topic in sat:
+                sat[topic] = max(0.0, float(sat.get(topic) or 0.0) - step)
+                if sat[topic] <= 1e-9:
+                    sat.pop(topic, None)
+                    if isinstance(updated, dict):
+                        updated.pop(topic, None)
+        except Exception:
+            pass
+
     def _requeue_speak_worthy(self, autonomous, aside: Dict[str, Any], now: float = 0.0) -> None:
         """Put a speak-worthy aside back on the autonomous queue if possible."""
         if autonomous is None or not isinstance(aside, dict):
@@ -2966,6 +2999,8 @@ class Thalamus:
                     aside = None
         if not isinstance(aside, dict):
             return reply
+        # pop_spoken_aside bumps satiation eagerly; undo until we actually attach.
+        self._undo_eager_speak_satiation(autonomous, aside)
         content = aside.get("content")
         if not isinstance(content, str) or not content.strip():
             return reply
@@ -3057,6 +3092,318 @@ class Thalamus:
             pass
         self._last_spoken_aside_time = now
         return f"{reply.rstrip()}\n\n{content.strip()}"
+
+
+    def deliver_unprompted_speech(self, user_id: str = "matthew") -> Dict[str, Any]:
+        """Deliver one speak-worthy aside with no user turn (true unprompted).
+
+        Speech stays WHEN/WHETHER; aside content is already worded by Autonomous
+        (do not invent via Language Mad Libs). Delivery: Output → Voice → Notus.
+        Respects aside cooldown / intensity / relevance / speech gates — rare.
+        """
+        user_id = str(user_id or "matthew")
+        now = time.time()
+        cooldown = float(getattr(self, "_spoken_aside_cooldown_sec", 45.0))
+        last = float(getattr(self, "_last_spoken_aside_time", 0.0) or 0.0)
+        if (now - last) < cooldown:
+            return {"spoke": False, "text": None, "reason": "cooldown"}
+
+        if self._executive_should_inhibit("speak_worthy_aside"):
+            return {"spoke": False, "text": None, "reason": "executive_inhibit"}
+
+        with self.lobe_handlers_lock:
+            autonomous = self.lobe_handlers.get("autonomous")
+            has_emotion = "emotion" in self.lobe_handlers
+            has_output = "output" in self.lobe_handlers
+
+        turn_intensity = 0.5
+        unresolved: List[Any] = []
+        emotion_name = "neutral"
+        voice_prosody: Dict[str, Any] = {}
+        emotional_tone = None
+        expression: Dict[str, Any] = {}
+        emphasis: List[Any] = []
+        pleasure = arousal = dominance = None
+        if has_emotion:
+            try:
+                pre_state = self.send_and_wait("emotion", "get_state", {})
+                if pre_state.get("status") == "success":
+                    body = self._content(pre_state)
+                    if not isinstance(body, dict):
+                        body = {}
+                    raw = pre_state.get("intensity", body.get("intensity", 0.5))
+                    try:
+                        turn_intensity = float(raw if raw is not None else 0.5)
+                    except (TypeError, ValueError):
+                        turn_intensity = 0.5
+                    unresolved = (
+                        pre_state.get("unresolved_appraisals")
+                        or body.get("unresolved_appraisals")
+                        or []
+                    )
+                    emotion_name = str(
+                        pre_state.get("current_emotion")
+                        or body.get("current_emotion")
+                        or body.get("emotion")
+                        or "neutral"
+                    )
+                    voice_prosody = (
+                        body.get("voice_prosody")
+                        or pre_state.get("voice_prosody")
+                        or {}
+                    )
+                    if not isinstance(voice_prosody, dict):
+                        voice_prosody = {}
+                    emotional_tone = body.get("emotional_tone") or pre_state.get(
+                        "emotional_tone"
+                    )
+                    expression = body.get("expression") or pre_state.get("expression") or {}
+                    if not isinstance(expression, dict):
+                        expression = {}
+                    emphasis = body.get("emphasis") or pre_state.get("emphasis") or []
+                    if not isinstance(emphasis, list):
+                        emphasis = []
+                    pleasure = body.get("pleasure", pre_state.get("pleasure"))
+                    arousal = body.get("arousal", pre_state.get("arousal"))
+                    dominance = body.get("dominance", pre_state.get("dominance"))
+            except Exception:
+                pass
+
+        aside = self._pop_speak_worthy_candidate()
+        if aside is None and unresolved:
+            aside = self._mint_speak_worthy_from_inner_life()
+        if not isinstance(aside, dict):
+            return {"spoke": False, "text": None, "reason": "no_candidate"}
+        # pop_spoken_aside bumps satiation eagerly; hold that until we deliver.
+        self._undo_eager_speak_satiation(autonomous, aside)
+
+        content = aside.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return {"spoke": False, "text": None, "reason": "empty_content"}
+
+        try:
+            thought_intensity = float(aside.get("intensity", 0.5) or 0.5)
+        except (TypeError, ValueError):
+            thought_intensity = 0.5
+        trigger = str(aside.get("trigger", "") or "")
+        unresolvedish = trigger.startswith("unresolved_") or trigger.startswith(
+            "memory_unresolved_"
+        )
+        min_thought = 0.50 if unresolvedish else 0.55
+        min_turn = 0.55 if unresolvedish else 0.65
+        if thought_intensity < min_thought and turn_intensity < min_turn:
+            if autonomous is not None:
+                self._requeue_speak_worthy(autonomous, aside, now)
+            return {"spoke": False, "text": None, "reason": "intensity_gate"}
+
+        gate_fn = (
+            getattr(autonomous, "aside_passes_relevance_gate", None)
+            if autonomous
+            else None
+        )
+        if callable(gate_fn):
+            # Unprompted: no user turn. Reuse satiation/urgency rules but let the
+            # aside's own intensity count toward the no_turn high-intensity path
+            # (global affect alone may be calm while the thought is hot).
+            gate_emo = {"intensity": max(float(turn_intensity), float(thought_intensity))}
+            if unresolved:
+                gate_emo["unresolved_appraisals"] = list(unresolved)
+            try:
+                allowed, gate_reason = gate_fn(
+                    aside, user_text="", emotional_state=gate_emo
+                )
+            except Exception:
+                allowed, gate_reason = True, "gate_error_allow"
+            if not allowed:
+                demote = getattr(autonomous, "demote_aside_to_internal", None)
+                if callable(demote):
+                    try:
+                        demote(aside)
+                    except Exception:
+                        pass
+                try:
+                    aside["speak_worthy"] = False
+                    aside["relevance_gate_reason"] = gate_reason
+                except Exception:
+                    pass
+                return {
+                    "spoke": False,
+                    "text": None,
+                    "reason": f"relevance:{gate_reason}",
+                }
+            try:
+                aside["relevance_gate_reason"] = gate_reason
+            except Exception:
+                pass
+
+        try:
+            speech_decision = self._speech_evaluate_aside(aside)
+        except Exception:
+            speech_decision = {"should_speak": True, "reason": "speech_eval_error"}
+        if not bool(speech_decision.get("should_speak", True)):
+            reason = str(speech_decision.get("reason") or "speech_blocked")
+            try:
+                aside["speech_gate_reason"] = reason
+            except Exception:
+                pass
+            if self._speech_block_is_temporary(reason):
+                if autonomous is not None:
+                    self._requeue_speak_worthy(autonomous, aside, now)
+            else:
+                demote = (
+                    getattr(autonomous, "demote_aside_to_internal", None)
+                    if autonomous
+                    else None
+                )
+                if callable(demote):
+                    try:
+                        demote(aside)
+                    except Exception:
+                        pass
+                try:
+                    aside["speak_worthy"] = False
+                except Exception:
+                    pass
+            return {"spoke": False, "text": None, "reason": f"speech:{reason}"}
+
+        bump = getattr(autonomous, "_bump_speak_satiation", None) if autonomous else None
+        if callable(bump):
+            try:
+                bump(str(aside.get("topic_key") or ""))
+            except Exception:
+                pass
+
+        # Already worded by Autonomous — do NOT invent via Language.
+        text = content.strip()
+
+        try:
+            self._meta_awareness_notice_thought(aside, user_id=user_id)
+        except Exception:
+            pass
+
+        if not has_output:
+            # Still mark delivered so cooldown / speech interval stay honest.
+            try:
+                self._speech_notify_delivered()
+            except Exception:
+                pass
+            self._last_spoken_aside_time = now
+            try:
+                spoken = self.send_and_wait(
+                    "notus",
+                    "store",
+                    {
+                        "role": "monday",
+                        "content": text,
+                        "user_id": user_id,
+                        "memory_type": "conversation",
+                        "tag": "Spoken",
+                        "importance": 6.5,
+                        "mode": "memory",
+                    },
+                )
+            except Exception as exc:
+                spoken = {"status": "error", "message": str(exc)}
+            if not isinstance(spoken, dict) or spoken.get("status") != "success":
+                self.notus_fallback.enqueue(
+                    user_id=user_id,
+                    role="monday",
+                    content=text,
+                    memory_type="conversation",
+                    extra={"tag": "Spoken", "importance": 6.5, "mode": "memory"},
+                )
+            return {"spoke": True, "text": text, "reason": "delivered_no_output"}
+
+        output = self.send_and_wait(
+            "output",
+            "generate_output",
+            {
+                "text": text,
+                "emotion": emotion_name,
+                "intensity": turn_intensity,
+                "voice_prosody": voice_prosody,
+                "emotional_tone": emotional_tone,
+                "emphasis": emphasis,
+                "expression": expression,
+                "pleasure": pleasure,
+                "arousal": arousal,
+                "dominance": dominance,
+                "user_input": "",
+                "user_id": user_id,
+                "preserve_text": True,
+                "unprompted": True,
+            },
+        )
+        output_body = self._content(output) if isinstance(output, dict) else {}
+        if not isinstance(output_body, dict):
+            output_body = {}
+        envelope = output_body.get("envelope") or (
+            output.get("envelope") if isinstance(output, dict) else None
+        )
+        if not isinstance(envelope, dict):
+            envelope = {
+                "text": output_body.get("text", text),
+                "expression": expression,
+                "delivery": output_body.get("delivery") or {},
+                "emotional_tone": emotional_tone,
+                "voice_prosody": voice_prosody,
+                "emotion": emotion_name,
+                "intensity": turn_intensity,
+            }
+        self.last_output_envelope = envelope
+        reply = (
+            (envelope.get("text") if isinstance(envelope, dict) else None)
+            or output_body.get("text")
+            or text
+        )
+        if not isinstance(reply, str) or not reply.strip():
+            reply = text
+
+        try:
+            self._voice_speak_for_output(
+                reply,
+                user_id=user_id,
+                emotion=emotion_name,
+                intensity=turn_intensity,
+                voice_prosody=voice_prosody,
+            )
+        except Exception:
+            pass
+
+        try:
+            spoken = self.send_and_wait(
+                "notus",
+                "store",
+                {
+                    "role": "monday",
+                    "content": reply.strip(),
+                    "user_id": user_id,
+                    "memory_type": "conversation",
+                    "tag": "Spoken",
+                    "importance": 6.5,
+                    "mode": "memory",
+                },
+            )
+        except Exception as exc:
+            spoken = {"status": "error", "message": str(exc)}
+        if not isinstance(spoken, dict) or spoken.get("status") != "success":
+            self.notus_fallback.enqueue(
+                user_id=user_id,
+                role="monday",
+                content=reply.strip(),
+                memory_type="conversation",
+                extra={"tag": "Spoken", "importance": 6.5, "mode": "memory"},
+            )
+        else:
+            self._flush_notus_fallback_best_effort(user_id)
+
+        try:
+            self._speech_notify_delivered()
+        except Exception:
+            pass
+        self._last_spoken_aside_time = now
+        self._last_pre_output_final_text = reply
+        return {"spoke": True, "text": reply, "reason": "delivered"}
 
 
     def _maybe_attach_curiosity_follow_up(
