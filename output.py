@@ -165,7 +165,7 @@ class OutputLobe:
     Live path: enable_tts=False. VoiceLobe owns real (stub) synthesis when asked.
     """
     
-    def __init__(self, thalamus=None, enable_tts: bool = True):
+    def __init__(self, thalamus=None, enable_tts: bool = True, runtime_directory=None):
         self.running = True
         # Removed: self.gui_socket_path - all communication through Thalamus
         self.last_sent_text = None  # Prevent duplicate sends
@@ -198,7 +198,9 @@ class OutputLobe:
         self.last_voice: Optional[Dict[str, Any]] = None
         # Honest TTS stub: write spoken lines to a runtime buffer when no speaker.
         try:
-            self._speech_buffer_path = Path(runtime_dir()) / "output_speech_buffer.txt"
+            directory = Path(runtime_directory) if runtime_directory else runtime_dir()
+            directory.mkdir(parents=True, exist_ok=True)
+            self._speech_buffer_path = directory / "output_speech_buffer.txt"
         except Exception:
             self._speech_buffer_path = Path("/tmp/monday_output_speech_buffer.txt")
         self._speech_buffer: List[str] = []

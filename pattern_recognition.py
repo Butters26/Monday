@@ -99,7 +99,7 @@ class PareidoliaPattern:
 class AdvancedPatternRecognition:
     """Human-like pattern recognition - sees everything"""
     
-    def __init__(self, thalamus=None):
+    def __init__(self, thalamus=None, runtime_directory=None):
         self.running = True
         # Direct reference to Thalamus (NO SOCKETS). Prefer the live instance
         # passed by run_abin so we do not attach to a separate singleton.
@@ -178,8 +178,10 @@ class AdvancedPatternRecognition:
         self.discovered_signal_patterns: Dict[Tuple[str, Tuple[str, ...]], DiscoveredSignalPattern] = {}
         self._observe_id = 0  # increments each observe(); combo reinforce once per id
         self._knowledge_dirty = False
-        # Prefer Pattern-local file under runtime_dir(); tests set MONDAY_RUNTIME_DIR.
-        self.knowledge_path = Path(runtime_dir()) / "pattern_knowledge.json"
+        # Honor the core's explicit runtime directory before the environment default.
+        directory = Path(runtime_directory) if runtime_directory else runtime_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        self.knowledge_path = directory / "pattern_knowledge.json"
 
         # Initialize default templates, then overlay Pattern-owned learned state
         self._initialize_default_templates()

@@ -50,3 +50,10 @@ jobs:
 
       - name: Run live Notus memory behavior check
         run: python live_notus_memory_check.py
+
+      - name: Run direct-core and outage recovery acceptance tests
+        env:
+          MONDAY_EMBEDDING_FORCE_BASIC: "1"
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: python -m pytest -q test_direct_core_pipeline.py test_notus_integration.py

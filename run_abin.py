@@ -34,7 +34,6 @@ from autonomous_speech import AutonomousSpeechSystem
 from conversation import ConversationSystem
 from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
-from notus_memory_core import ActiveNotusMemorySystem
 from direct_notus import DirectNotusProcess
 from output import OutputLobe
 from novelty_lobe import NoveltyLobe
@@ -116,6 +115,12 @@ def open_primary_notus(*, thalamus: Any) -> Any:
         connect_errors = (ConnectionError, OSError, TimeoutError, ImportError)
 
     try:
+        if psycopg2 is None:
+            raise ImportError("psycopg2 is unavailable")
+        # Load the PostgreSQL implementation only when selecting that backend.
+        # Injected SQLite tests and the boot fallback must not require its driver.
+        from notus_memory_core import ActiveNotusMemorySystem
+
         notus = ActiveNotusMemorySystem(thalamus=thalamus)
     except connect_errors as exc:
         sqlite_path = shared_direct_notus_path()
@@ -180,7 +185,7 @@ def create_core_systems(
     """
     directory = Path(runtime_directory) if runtime_directory else runtime_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    thalamus = Thalamus()
+    thalamus = Thalamus(runtime_directory=str(directory))
     if notus_factory is None:
         notus = open_primary_notus(thalamus=thalamus)
     else:
@@ -200,7 +205,7 @@ def create_core_systems(
         "sensory_integration": SensoryIntegrationLobe(thalamus=thalamus),
         "attention": AttentionLobe(thalamus=thalamus),
         "novelty": NoveltyLobe(thalamus=thalamus),
-        "pattern": AdvancedPatternRecognition(thalamus=thalamus),
+        "pattern": AdvancedPatternRecognition(thalamus=thalamus, runtime_directory=str(directory)),
         "conversation": ConversationSystem(thalamus=thalamus),
         "notus": notus,
         "emotion": EmotionalProcess(
@@ -211,7 +216,7 @@ def create_core_systems(
             **({"reasoner_factory": reasoning_factory} if reasoning_factory else {}),
         ),
         "language": LanguageGenerator(thalamus=thalamus),
-        "output": OutputLobe(thalamus=thalamus, enable_tts=False),
+        "output": OutputLobe(thalamus=thalamus, enable_tts=False, runtime_directory=str(directory)),
         "meta_cognition": MetaCognitionLobe(thalamus=thalamus),
         "executive_control": ExecutiveControlLobe(thalamus=thalamus),
         "social_context": SocialContextLobe(thalamus=thalamus),
