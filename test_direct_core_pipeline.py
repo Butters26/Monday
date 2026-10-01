@@ -235,9 +235,23 @@ def test_full_reasoner_think_about_runs_for_every_direct_prompt(tmp_path):
         shutdown_core_systems(systems)
 
 
-def test_create_core_systems_is_socket_and_postgres_free_with_injected_notus(tmp_path):
+def test_create_core_systems_is_socket_and_postgres_free_with_injected_notus(tmp_path, monkeypatch):
     """Proof: injectable Notus boots without sockets or PostgreSQL."""
     import socket
+    import builtins
+
+    original_import = builtins.__import__
+
+    def reject_postgres(name, *args, **kwargs):
+        if name == "psycopg2" or name.startswith("psycopg2."):
+            raise AssertionError("Injected Notus must not load PostgreSQL")
+        return original_import(name, *args, **kwargs)
+
+    def reject_socket(*args, **kwargs):
+        raise AssertionError("The direct core must not open a socket")
+
+    monkeypatch.setattr(builtins, "__import__", reject_postgres)
+    monkeypatch.setattr(socket, "socket", reject_socket)
 
     systems = _boot(tmp_path)
     try:
@@ -251,7 +265,62 @@ def test_create_core_systems_is_socket_and_postgres_free_with_injected_notus(tmp
         # Touch process path once.
         reply = systems["thalamus"].process_user_input("ping")
         assert isinstance(reply, str) and reply.strip()
-        # Sanity: stdlib socket module still importable; core did not require PG.
-        assert socket is not None
     finally:
         shutdown_core_systems(systems)
+
+
+def test_default_notus_falls_back_when_postgres_driver_is_missing(tmp_path, monkeypatch):
+    """Missing optional driver must reach durable SQLite, not fail at import."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def without_postgres(name, *args, **kwargs):
+        if name == "psycopg2" or name.startswith("psycopg2."):
+            raise ImportError("simulated missing PostgreSQL driver")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_postgres)
+    monkeypatch.setenv("MONDAY_NOTUS_SQLITE", str(tmp_path / "shared.sqlite3"))
+    systems = create_core_systems(str(tmp_path / "runtime"), enable_autonomous=False)
+    try:
+        assert systems["notus_identity"]["backend"] == "sqlite"
+        assert systems["notus_identity"]["role"] == "shared_direct_fallback"
+        assert Path(systems["notus_identity"]["sqlite_path"]) == tmp_path / "shared.sqlite3"
+        result = systems["notus"].process_message({
+            "type": "store",
+            "content": {"role": "user", "content": "fallback survives restart", "user_id": "audit"},
+        })
+        assert result["status"] == "success"
+    finally:
+        shutdown_core_systems(systems)
+
+    reopened = create_core_systems(str(tmp_path / "other-runtime"), enable_autonomous=False)
+    try:
+        rows = reopened["notus"].retrieve_memories("fallback survives restart", user_id="audit")
+        assert any(row["content"] == "fallback survives restart" for row in rows)
+    finally:
+        shutdown_core_systems(reopened)
+
+
+def test_explicit_runtime_directory_isolates_non_notus_state(tmp_path):
+    """Independent cores must not silently share Pattern or lobe learning files."""
+    first = _boot(tmp_path / "first")
+    second = _boot(tmp_path / "second")
+    try:
+        first_dir = tmp_path / "first" / "runtime"
+        second_dir = tmp_path / "second" / "runtime"
+        for systems, directory in ((first, first_dir), (second, second_dir)):
+            assert systems["pattern"].knowledge_path == directory / "pattern_knowledge.json"
+            assert systems["output"]._speech_buffer_path == directory / "output_speech_buffer.txt"
+            for name, lobe in systems["thalamus"].lobe_handlers.items():
+                if name != "notus":
+                    assert lobe._lobe_learning_store.path == directory / "lobe_learning" / f"{name}.json"
+        lesson = {"user_id": "audit", "key": "isolated_lesson", "fact": "This lesson belongs to the first core."}
+        store = first["reasoning"]._lobe_learning_store
+        assert store.learn(lesson)["status"] == "success"
+        assert not second["reasoning"]._lobe_learning_store.path.exists()
+        assert first["reasoning"]._lobe_learning_store.path.exists()
+    finally:
+        shutdown_core_systems(first)
+        shutdown_core_systems(second)

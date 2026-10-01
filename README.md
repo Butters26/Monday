@@ -1,4 +1,4 @@
-# Monday
+# Mercy
 
 This repository currently contains two separate systems built with traditional
 programming rather than AI/ML frameworks:
@@ -15,8 +15,13 @@ local recovery files. Do not add runtime data to Git.
 
 ## Direct-call core
 
-All socket code has been removed. Lobes communicate through direct function
-calls via Thalamus.
+The active core's lobes communicate through direct function calls via Thalamus.
+The chat daemon uses a Unix socket for its client connection; some experimental
+modules still contain legacy socket code.
+
+Start the core with `python run_abin.py`. `python start_brain.py`,
+`python launch_abin.py`, and `bash run_all.sh` use that same entry point.
+`launch_abin.py` now starts the REPL rather than the disconnected legacy GUI.
 
 `run_abin.create_core_systems()` creates the prompted path:
 conversation → Notus → emotion → reasoning → language → output
@@ -48,8 +53,10 @@ message payload.
   `enable_autonomous=False` for Postgres-free, loop-free acceptance runs of
   `test_direct_core_pipeline.py` and `test_notus_integration.py`.
 
-Legacy/experimental launcher, GUI, and socket integrations remain in the tree
-for compatibility work but are not the live prompted path.
+Experimental GUI and socket integrations remain in the tree for compatibility
+work but are not the live prompted path. In particular, `abin_interface.py`
+generates canned replies without calling the core, and `monday_interface/`
+does not initialize the registered core. They are not working Mercy frontends.
 
 ## Learning system (easy to find)
 

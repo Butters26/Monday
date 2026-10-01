@@ -1,0 +1,1471 @@
+{
+  "source_commit": "a3692c4e8b9e5c5159d6cda3f98b098a278ab259",
+  "original_file_count": 244,
+  "scope": "Repository-wide byte/structure/reference scan plus targeted live-path execution; not exhaustive behavioral verification of every optional module",
+  "files": [
+    {
+      "path": ".github/agents/database-agent.agent.md",
+      "role": "agent instructions",
+      "changed": false,
+      "checks": "Byte comparison and retention review"
+    },
+    {
+      "path": ".github/agents/debug-agent.agent.md",
+      "role": "agent instructions",
+      "changed": false,
+      "checks": "Byte comparison and retention review"
+    },
+    {
+      "path": ".github/agents/documentation-agent.agent.md",
+      "role": "agent instructions",
+      "changed": false,
+      "checks": "Byte comparison and retention review"
+    },
+    {
+      "path": ".github/agents/lobe-builder-agent.agent.md",
+      "role": "agent instructions",
+      "changed": false,
+      "checks": "Byte comparison and retention review"
+    },
+    {
+      "path": ".github/agents/my-agent-smith.agent.md",
+      "role": "agent instructions",
+      "changed": false,
+      "checks": "Byte comparison and retention review"
+    },
+    {
+      "path": ".github/agents/my-agent.agent.md",
+      "role": "removed",
+      "changed": true,
+      "checks": "Exact duplicate of .github/agents/my-agent-smith.agent.md"
+    },
+    {
+      "path": ".github/agents/refactoring-agent.agent.md",
+      "role": "agent instructions",
+      "changed": false,
+      "checks": "Byte comparison and retention review"
+    },
+    {
+      "path": ".github/agents/testing-agent.agent.md",
+      "role": "agent instructions",
+      "changed": false,
+      "checks": "Byte comparison and retention review"
+    },
+    {
+      "path": ".github/workflows/direct-core.yml",
+      "role": "CI",
+      "changed": true,
+      "checks": "Workflow step review; acceptance suite now executed"
+    },
+    {
+      "path": ".gitignore",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "Agent smith",
+      "role": "removed",
+      "changed": true,
+      "checks": "Exact duplicate of .github/agents/my-agent-smith.agent.md"
+    },
+    {
+      "path": "CODE_REVIEW_ANALYSIS.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "CONFIG_INDEX.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "DETAILED_CODE_REVIEW.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "FIXES_APPLIED.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "FIX_GUIDE_INTEGRATION_ISSUES.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "IMPLEMENTATION_COMPLETE.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "Monday 0.2",
+      "role": "removed",
+      "changed": true,
+      "checks": "Unreferenced 48,105-line concatenated legacy snapshot; Python syntax error at line 3744"
+    },
+    {
+      "path": "NOVELTY_LOBE_COMPLETE.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "NOVELTY_LOBE_INTEGRATION.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "NOVELTY_LOBE_STATUS.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "NOVELTY_QUICK_SUMMARY.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "PERCEPTION_NOVELTY_INTEGRATION.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "README.md",
+      "role": "documentation/historical evidence",
+      "changed": true,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "README_NOVELTY.md",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "TASK_LIST.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_attention_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_attention_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_attention_handoff_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_attention_handoff_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_quiet_diversity_soak.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_quiet_diversity_traces.jsonl",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_respike_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_satiation_soak.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_satiation_traces.jsonl",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_speech_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_speech_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_speech_design.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_speech_queue_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_autonomous_speech_queue_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_conversation_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_conversation_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_dualstream_leftovers_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_dualstream_leftovers_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_dualstream_leftovers_design.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_emotion_core_affect_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_emotion_design_diagnosis.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_emotion_full_bar_verdict.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_emotion_live_smoke.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_emotion_what_we_must_build.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_executive_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_executive_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_executive_goal_signal_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_full_bar_remaining_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_language_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_language_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_language_structured_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_learning_paths_research.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_metaawareness_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_metaawareness_aside_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_metaawareness_aside_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_metaawareness_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_metaawareness_design.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_metacognition_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_metacognition_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_metacognition_contradiction_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_monday_chat_daemon.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "_monday_full_bar_progress.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_monday_say.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "_monday_want_gap_inventory.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_monday_web_chat.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "_motor_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_motor_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_motor_design.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_notus_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_notus_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_notus_fix_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_novelty_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_novelty_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_output_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_output_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_output_final_order_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_ceilings_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_ceilings_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_combo_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_combo_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_combo_regress.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_combo_spam.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_compose_tighten_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_compose_tighten_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_config_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_config_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_emotion_combo_live.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_emotion_live_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_emotion_live_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_emotion_regress.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_flush_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_flush_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_integration_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_integration_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_persist_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_persist_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_short_durability_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_short_durability_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_wire_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_wire_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_wrap_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_pattern_wrap_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_perception_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_perception_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_perception_open_vision_fixtures/SOURCES.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_perception_open_vision_fixtures/scene_A_locomotive.jpg",
+      "role": "test fixture",
+      "changed": false,
+      "checks": "Byte comparison and fixture-reference inventory; semantic models/devices not exercised"
+    },
+    {
+      "path": "_perception_open_vision_fixtures/scene_B_pizza.jpg",
+      "role": "test fixture",
+      "changed": false,
+      "checks": "Byte comparison and fixture-reference inventory; semantic models/devices not exercised"
+    },
+    {
+      "path": "_perception_open_vision_fixtures/scene_C_ambiguous_noise.png",
+      "role": "test fixture",
+      "changed": false,
+      "checks": "Byte comparison and fixture-reference inventory; semantic models/devices not exercised"
+    },
+    {
+      "path": "_perception_open_vision_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_perception_semantic_fixtures/nonspeech_noise.wav",
+      "role": "test fixture",
+      "changed": false,
+      "checks": "Byte comparison and fixture-reference inventory; semantic models/devices not exercised"
+    },
+    {
+      "path": "_perception_semantic_fixtures/scene_ambiguous_noise.png",
+      "role": "test fixture",
+      "changed": false,
+      "checks": "Byte comparison and fixture-reference inventory; semantic models/devices not exercised"
+    },
+    {
+      "path": "_perception_semantic_fixtures/scene_red_circle.png",
+      "role": "test fixture",
+      "changed": false,
+      "checks": "Byte comparison and fixture-reference inventory; semantic models/devices not exercised"
+    },
+    {
+      "path": "_perception_semantic_fixtures/scene_sun_grass.png",
+      "role": "test fixture",
+      "changed": false,
+      "checks": "Byte comparison and fixture-reference inventory; semantic models/devices not exercised"
+    },
+    {
+      "path": "_perception_semantic_fixtures/speech_clear.wav",
+      "role": "test fixture",
+      "changed": false,
+      "checks": "Byte comparison and fixture-reference inventory; semantic models/devices not exercised"
+    },
+    {
+      "path": "_perception_semantic_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_prove_emotion_core_affect.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "_prove_full_bar_remaining.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "_prove_unprompted_speech.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "_prove_want_gap5_belief_persist.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "_prove_want_gap8_notus_identity.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "_reasoning_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_reasoning_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_reasoning_interactions_speech_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_sensory_integration_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_sensory_integration_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_sensory_integration_isolation_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_shared_representation_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_shared_representation_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_shared_representation_design.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_shared_representation_identity_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_shared_representation_identity_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_shared_representation_plural_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_shared_representation_plural_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_closing_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_closing_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_closing_regress.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_context_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_context_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_context_design.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_continuity_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_continuity_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_social_continuity_envelopes.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "_talk_quality_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_talk_quality_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_unprompted_speech_proof.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_voice_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_voice_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_voice_design.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_voice_isolation_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_voice_isolation_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_want_gap5_belief_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_want_gap5_belief_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_want_gap8_after.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_want_gap8_before.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "_want_gap8_pytest.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "abin_interface.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "advanced_emotional_engine.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "advanced_modeling.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "analyze_shadowheart.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "attention_lobe.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "autonomous_selection.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "autonomous_speech.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "autonomous_thinking.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "behavioral_reinforcement.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "brain_config.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "concept_data.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "continuous_thought_generator.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "controlled_thinking.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "conversation.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "convert_wem_to_wav.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "demo_3d.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "demo_advanced.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "direct_notus.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "direct_reasoning.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "direct_response.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "dual_stream_thinking.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "executive_control_lobe.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "experience_processor.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "integration_test.py",
+      "role": "removed",
+      "changed": true,
+      "checks": "Obsolete stub integration script; imports absent value_goal_management_lobe; superseded by current acceptance tests"
+    },
+    {
+      "path": "interface_config.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "language_generation.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "launch_abin.py",
+      "role": "entrypoint/test/optional module",
+      "changed": true,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "learning/__init__.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "learning/api.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "learning/lobe_learning_store.py",
+      "role": "active core/support",
+      "changed": true,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "live_notus_memory_check.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "meta_awareness.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "meta_cognition_lobe.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "migrate_sqlite_to_postgresql.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "model_3d.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_character.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_core_affect.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "monday_interface/__init__.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_interface/brain_connector.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_interface/components/__init__.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_interface/components/chat_panel.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_interface/components/debug_panel.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_interface/components/emotion_display.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_interface/interface.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_interface/main.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "monday_interface/styles.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "motor_action_lobe.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "notus.py",
+      "role": "active core/support",
+      "changed": true,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "notus_helpers.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "notus_memory.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "notus_memory_core.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "notus_outage_fallback.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "notus_v2.py",
+      "role": "removed",
+      "changed": true,
+      "checks": "Unimported older SQLite Notus implementation with dozens of copied methods"
+    },
+    {
+      "path": "novelty_lobe.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "output.py",
+      "role": "active core/support",
+      "changed": true,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "output_config.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "pattern_config.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "pattern_recognition.py",
+      "role": "active core/support",
+      "changed": true,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "perception.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "perception_config.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "postgresql_schema.sql",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "reasoning.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "reasoning_config.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "representation.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "representation_config.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "requirements.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "run_abin.py",
+      "role": "active core/support",
+      "changed": true,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "run_all.sh",
+      "role": "launcher",
+      "changed": true,
+      "checks": "Shell syntax and canonical entrypoint routing"
+    },
+    {
+      "path": "runtime_paths.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "self_reflection.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "sensory_integration_lobe.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "shared_representation.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "social_context_lobe.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "start_brain.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "test_direct_core_pipeline.py",
+      "role": "entrypoint/test/optional module",
+      "changed": true,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "test_notus_integration.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "thalamus.py",
+      "role": "active core/support",
+      "changed": true,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    },
+    {
+      "path": "thalamus_config.json",
+      "role": "configuration/evidence",
+      "changed": false,
+      "checks": "JSON validation and reference scan"
+    },
+    {
+      "path": "thalamus_status.txt",
+      "role": "documentation/historical evidence",
+      "changed": false,
+      "checks": "Byte comparison and source-reference scan; historical claims are not current verification"
+    },
+    {
+      "path": "voice_analyzer.py",
+      "role": "entrypoint/test/optional module",
+      "changed": false,
+      "checks": "Python AST and local import reference scan; no blanket unused-code deletion"
+    },
+    {
+      "path": "voice_lobe.py",
+      "role": "active core/support",
+      "changed": false,
+      "checks": "Python AST and import review; active path acceptance/proof coverage varies by module"
+    }
+  ]
+}

@@ -90,8 +90,13 @@ _LOBE_LEARNING_RULES = {
 class Thalamus:
     """Synchronously route direct calls between registered lobes."""
 
-    def __init__(self, response_provider: Optional[ResponseProvider] = None) -> None:
+    def __init__(
+        self,
+        response_provider: Optional[ResponseProvider] = None,
+        runtime_directory: Optional[str] = None,
+    ) -> None:
         self.running = True
+        self.runtime_directory = runtime_directory
         self.lobe_handlers: Dict[str, Any] = {}
         self.lobe_handlers_lock = threading.RLock()
         self.lobe_status: Dict[str, str] = {}
@@ -143,7 +148,7 @@ class Thalamus:
             self.lobe_handlers[name] = lobe
             self.lobe_status[name] = "online"
         if name != "notus" and not hasattr(lobe, "_lobe_learning_store"):
-            setattr(lobe, "_lobe_learning_store", LobeLearningStore(name))
+            setattr(lobe, "_lobe_learning_store", LobeLearningStore(name, self.runtime_directory))
         return {"status": "success", "content": {"registered": name}, "registered": name}
 
     @staticmethod
