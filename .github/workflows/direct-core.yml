@@ -45,11 +45,11 @@ jobs:
 
       - name: Check active core syntax and JSON configuration
         run: |
-          python -m py_compile run_abin.py thalamus.py phase3_thalamus.py direct_reasoning.py language_comprehension.py shared_representation.py shared_representation_phase2.py notus.py notus_memory.py live_notus_memory_check.py
+          python -m py_compile run_abin.py thalamus.py phase3_thalamus.py phase4_thalamus.py phase4_conversation.py direct_reasoning.py language_comprehension.py shared_representation.py shared_representation_phase2.py notus.py notus_memory.py live_notus_memory_check.py
           python -c "import glob,json; [json.load(open(path, encoding='utf-8')) for path in glob.glob('*.json')]"
 
-      - name: Run Shared Representation and Phase 3 language tests
-        run: python -m pytest -q test_shared_representation_semantics.py test_shared_representation_phase2.py test_language_phase3.py
+      - name: Run Shared Representation, Phase 3, and Phase 4 tests
+        run: python -m pytest -q test_shared_representation_semantics.py test_shared_representation_phase2.py test_language_phase3.py test_phase4_routing.py
 
       - name: Run live Notus memory behavior check
         run: python live_notus_memory_check.py
