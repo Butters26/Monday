@@ -4,6 +4,7 @@ from shared_representation_phase2 import (
     Phase2SharedRepresentationSystem,
     SharedRepresentationLanguageGenerator,
 )
+from thalamus import Thalamus
 
 
 class _Router:
@@ -175,3 +176,29 @@ def test_phase3_legacy_thalamus_resolution_path_delegates_to_language(tmp_path):
     assert len(body["proposition_ids"]) == 1
     assert body["language_understanding"]["contract"] == "language_understanding_v1"
     assert body["co_occurrence_edges_added"] == 0
+
+
+def test_phase3_real_thalamus_live_representation_path_uses_language(tmp_path):
+    thalamus = Thalamus()
+    shared = Phase2SharedRepresentationSystem(
+        thalamus=thalamus,
+        store_path=tmp_path / "shared-live.json",
+    )
+    language = SharedRepresentationLanguageGenerator(thalamus=thalamus)
+    assert thalamus.register_lobe("language", language)["status"] == "success"
+    assert thalamus.register_lobe("shared_representation", shared)["status"] == "success"
+
+    perception = {"modality": "text", "concepts": [], "entities": [], "novelty_flags": []}
+    result = thalamus._resolve_representation_live(
+        "Steve gave the dog a ball yesterday.",
+        perception_payload=perception,
+        user_id="u1",
+    )
+
+    assert result["phase3_language_comprehension"] is True
+    assert result["legacy_raw_text_parser_used"] is False
+    assert len(result["proposition_ids"]) == 1
+    assert result["language_understanding"]["contract"] == "language_understanding_v1"
+    assert perception["concept_ids"] == result["concept_ids"]
+    assert perception["resolved_concepts"] == result["resolved"]
+    thalamus.shutdown()
