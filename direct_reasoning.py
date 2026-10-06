@@ -46,6 +46,7 @@ _NAME_QUESTION = re.compile(
     re.IGNORECASE,
 )
 _POISON_MARKERS = ("How it felt:", "What it meant:")
+_MERCY_ROLES = {"monday", "assistant", "abin", "mercy"}
 _BASELINE_EVIDENCE = (
     "Gravity is the force of attraction between masses. It pulls objects toward each other, including objects toward Earth.",
     "Photosynthesis is the process by which plants use light energy to turn water and carbon dioxide into glucose, releasing oxygen.",
@@ -71,6 +72,218 @@ class DirectReasoningAdapter:
             self.reasoner.facts[evidence] = Fact(
                 content=evidence, confidence=1.0, source="direct_core_baseline"
             )
+
+    @staticmethod
+    def _response_content(response: Dict[str, Any]) -> Dict[str, Any]:
+        content = response.get("content") if isinstance(response, dict) else None
+        return content if isinstance(content, dict) else (response if isinstance(response, dict) else {})
+
+    @staticmethod
+    def _dedupe_memories(memories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        seen = set()
+        out: List[Dict[str, Any]] = []
+        for memory in memories:
+            if not isinstance(memory, dict):
+                continue
+            content = str(memory.get("content") or memory.get("text") or "").strip()
+            role = str(memory.get("role") or "").strip().lower()
+            key = (role, content.casefold())
+            if not content or key in seen:
+                continue
+            seen.add(key)
+            out.append(dict(memory))
+        return out
+
+    def _prepare_memory_context(self, direct_input: Dict[str, Any]) -> Dict[str, Any]:
+        """Reasoning owns evidence preparation; Thalamus only routes Notus output."""
+        raw = direct_input.get("memory_context")
+        context = dict(raw) if isinstance(raw, dict) else {}
+        memories = [
+            dict(item)
+            for item in (context.get("memories") or [])
+            if isinstance(item, dict)
+        ]
+
+        working_set = context.get("working_set")
+        if isinstance(working_set, dict):
+            for turn in working_set.get("turns") or []:
+                if isinstance(turn, dict):
+                    memories.append(dict(turn))
+
+        understanding = direct_input.get("understanding")
+        understanding = understanding if isinstance(understanding, dict) else {}
+        if understanding.get("intent") == "monday_speech_ask" and self.thalamus is not None:
+            try:
+                recent = self.thalamus.send_message(
+                    "notus",
+                    "get_recent",
+                    {
+                        "user_id": str(direct_input.get("user_id") or "default"),
+                        "limit": 25,
+                    },
+                    source="reasoning",
+                )
+            except Exception:
+                recent = {"status": "error"}
+            if isinstance(recent, dict) and recent.get("status") == "success":
+                body = self._response_content(recent)
+                current = str(direct_input.get("user_input") or "").strip().casefold()
+                for memory in body.get("memories") or []:
+                    if not isinstance(memory, dict):
+                        continue
+                    role = str(memory.get("role") or "").strip().lower()
+                    if role not in _MERCY_ROLES:
+                        continue
+                    content = str(memory.get("content") or "").strip()
+                    if not content or content.casefold() == current:
+                        continue
+                    item = dict(memory)
+                    item["role"] = "monday"
+                    memories.append(item)
+
+        context["memories"] = self._dedupe_memories(memories)
+        return context
+
+    @staticmethod
+    def _route_expression_context(
+        semantic_input: Dict[str, Any], direct_input: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Attach already-owned context to Reasoning's semantic handoff."""
+        out = dict(semantic_input)
+        out["user_input"] = str(direct_input.get("user_input") or "")
+
+        social = direct_input.get("social_context")
+        if isinstance(social, dict) and social:
+            out["social_context"] = dict(social)
+
+        emotion = direct_input.get("emotion_result")
+        emotion = emotion if isinstance(emotion, dict) else {}
+        if emotion.get("emotional_tone") is not None:
+            out.setdefault("emotional_tone", emotion.get("emotional_tone"))
+        if emotion.get("intensity") is not None:
+            out.setdefault("emotional_intensity", emotion.get("intensity"))
+        if emotion.get("current_emotion") or emotion.get("emotion"):
+            out.setdefault(
+                "emotion",
+                emotion.get("current_emotion", emotion.get("emotion", "neutral")),
+            )
+
+        representation = direct_input.get("representation_result")
+        representation = representation if isinstance(representation, dict) else {}
+        if representation.get("status") == "success":
+            out["representation_concept_ids"] = list(representation.get("concept_ids") or [])
+            out["representation_referent_ids"] = list(representation.get("referent_ids") or [])
+            out["input_representation_proposition_ids"] = list(
+                representation.get("proposition_ids") or []
+            )
+            if isinstance(representation.get("language_understanding"), dict):
+                out["language_understanding"] = representation["language_understanding"]
+
+        out["native_semantics_finalized"] = True
+        out["semantic_owner"] = "reasoning"
+        return out
+
+    @staticmethod
+    def _surface(value: Any) -> Optional[str]:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (str, int, float)):
+            text = str(value).strip()
+            return text or None
+        return None
+
+    def _resolve_shared_concept(self, value: Any) -> Optional[str]:
+        surface = self._surface(value)
+        if not surface or self.thalamus is None:
+            return None
+        response = self.thalamus.send_message(
+            "shared_representation",
+            "resolve_terms",
+            {"terms": [surface], "activate": False},
+            source="reasoning",
+        )
+        if not isinstance(response, dict) or response.get("status") != "success":
+            return None
+        body = self._response_content(response)
+        ids = body.get("concept_ids") or []
+        return str(ids[0]) if isinstance(ids, list) and ids else None
+
+    def _register_grounded_structures(
+        self,
+        structures: Any,
+        *,
+        turn_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Publish Reasoning-owned meaning to SR; SR stores but does not infer it."""
+        if not isinstance(structures, list) or self.thalamus is None:
+            return []
+        registered: List[Dict[str, Any]] = []
+        for structure in structures:
+            if not isinstance(structure, dict):
+                continue
+            predicate_surface = self._surface(
+                structure.get("predicate") or structure.get("relation")
+            )
+            if not predicate_surface:
+                continue
+            predicate_id = self._resolve_shared_concept(predicate_surface)
+            if not predicate_id:
+                continue
+
+            roles: Dict[str, str] = {}
+            supplied_roles = structure.get("roles")
+            if isinstance(supplied_roles, dict):
+                for role, target in supplied_roles.items():
+                    role_name = str(role or "").strip()
+                    target_id = self._resolve_shared_concept(target)
+                    if role_name and target_id:
+                        roles[role_name] = target_id
+            else:
+                subject_id = self._resolve_shared_concept(structure.get("subject"))
+                object_id = self._resolve_shared_concept(
+                    structure.get("object", structure.get("value"))
+                )
+                if subject_id:
+                    roles["subject"] = subject_id
+                if object_id:
+                    roles["object"] = object_id
+            if not roles:
+                continue
+
+            try:
+                certainty = max(0.0, min(1.0, float(structure.get("certainty", 1.0))))
+            except (TypeError, ValueError):
+                certainty = 1.0
+            qualifiers = (
+                dict(structure.get("qualifiers") or {})
+                if isinstance(structure.get("qualifiers"), dict)
+                else {}
+            )
+            qualifiers.setdefault("certainty", certainty)
+            response = self.thalamus.send_message(
+                "shared_representation",
+                "register_proposition",
+                {
+                    "predicate_id": predicate_id,
+                    "roles": roles,
+                    "qualifiers": qualifiers,
+                    "user_id": user_id,
+                    "provenance": {
+                        "producer_lobe": "reasoning",
+                        "source_type": "reasoning_grounded_structure",
+                        "turn_id": turn_id,
+                        "confidence": certainty,
+                    },
+                },
+                source="reasoning",
+            )
+            if not isinstance(response, dict) or response.get("status") != "success":
+                continue
+            body = self._response_content(response)
+            if body.get("proposition_id") or body.get("id"):
+                registered.append(dict(body))
+        return registered
 
     @staticmethod
     def _clean_memories(memories: Any, user_input: str) -> List[Dict[str, Any]]:
@@ -299,7 +512,7 @@ class DirectReasoningAdapter:
                 return None
             return composed
         # Legacy composition can turn an evidence-free question into a word bag;
-        # that is not a conclusion. Let Thalamus use its emergency fallback.
+        # that is not a conclusion. Leave the semantic handoff empty.
         return None
 
 
@@ -465,6 +678,8 @@ class DirectReasoningAdapter:
         direct_input = payload.get("input", {}) if isinstance(payload, dict) else {}
         if not isinstance(direct_input, dict):
             direct_input = {}
+        direct_input = dict(direct_input)
+        direct_input["memory_context"] = self._prepare_memory_context(direct_input)
         user_input = direct_input.get("user_input", "")
         user_input = user_input if isinstance(user_input, str) else ""
         understanding = direct_input.get("understanding", {})
@@ -605,9 +820,19 @@ class DirectReasoningAdapter:
             semantic_input["representation_concept_ids"] = list(
                 representation_result.get("concept_ids") or []
             )
+            semantic_input["representation_referent_ids"] = list(
+                representation_result.get("referent_ids") or []
+            )
+            semantic_input["input_representation_proposition_ids"] = list(
+                representation_result.get("proposition_ids") or []
+            )
             semantic_input["representation_highly_active"] = list(
                 representation_result.get("highly_active_concepts") or []
             )[:12]
+            if isinstance(representation_result.get("language_understanding"), dict):
+                semantic_input["language_understanding"] = representation_result[
+                    "language_understanding"
+                ]
         if fact_structures:
             # Reasoning owns grounded meaning — Language owns sentence construction.
             semantic_input["grounded_structures"] = fact_structures
@@ -623,13 +848,34 @@ class DirectReasoningAdapter:
             semantic_input.update(
                 {"answer": answer, "conclusion": answer, "propositions": [answer]}
             )
+        semantic_input = self._route_expression_context(semantic_input, direct_input)
+        structures = semantic_input.get("grounded_structures")
+        if isinstance(structures, list) and structures:
+            user_id = str(direct_input.get("user_id") or "default")
+            registered = self._register_grounded_structures(
+                structures,
+                turn_id=str(message.get("message_id")) if message.get("message_id") else None,
+                user_id=user_id,
+            )
+            if registered:
+                semantic_input["representation_proposition_ids"] = [
+                    str(item.get("proposition_id") or item.get("id"))
+                    for item in registered
+                    if item.get("proposition_id") or item.get("id")
+                ]
+                semantic_input["representation_propositions"] = registered
+                semantic_input["representation_contract"] = "shared_representation_native"
+                semantic_input["representation_user_id"] = user_id
+
         return {
             "status": "success",
             "content": {
                 "thinking": thinking,
                 "semantic_input": semantic_input,
                 "composed_response": thinking.get("composed_response"),
+                "native_semantics_finalized": True,
             },
+            "native_semantics_finalized": True,
         }
 
     def shutdown(self) -> None:

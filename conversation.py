@@ -488,6 +488,37 @@ class ConversationSystem:
         while self.running:
             time.sleep(0.1)
     
+    @staticmethod
+    def _linguistic_context(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Carry Language-owned structure into Conversation without reinterpreting it."""
+        context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+        perception = payload.get("perception") if isinstance(payload.get("perception"), dict) else {}
+        if not perception and isinstance(context.get("perception"), dict):
+            perception = context.get("perception") or {}
+
+        language_understanding = payload.get("language_understanding")
+        if not isinstance(language_understanding, dict):
+            language_understanding = perception.get("language_understanding")
+        if not isinstance(language_understanding, dict):
+            language_understanding = context.get("language_understanding")
+
+        def _ids(name: str) -> List[str]:
+            value = payload.get(name)
+            if not isinstance(value, list):
+                value = perception.get(name)
+            if not isinstance(value, list):
+                value = context.get(name)
+            return [str(item) for item in (value or []) if item]
+
+        return {
+            "language_understanding": (
+                language_understanding if isinstance(language_understanding, dict) else None
+            ),
+            "proposition_ids": _ids("proposition_ids"),
+            "referent_ids": _ids("referent_ids"),
+            "concept_ids": _ids("concept_ids"),
+        }
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
         msg_type = message.get('type')
@@ -566,18 +597,31 @@ class ConversationSystem:
                     if promoted:
                         understanding['entities'] = promoted + rest
 
-            return {
-                'status': 'success',
-                'content': {
-                    'understanding': understanding,
-                    'intent': understanding.get('intent'),
-                    'confidence': understanding.get('confidence'),
-                    'sentiment': understanding.get('sentiment'),
-                    'entities': understanding.get('entities', []),
-                    'slots': understanding.get('slots', {}),
-                    'ask_kind': understanding.get('ask_kind'),
-                }  # Thalamus will transform this
+            routed = self._linguistic_context(payload)
+            if isinstance(routed.get("language_understanding"), dict):
+                # Conversation owns dialogue intent/context. Language owns the
+                # linguistic interpretation below; preserve it verbatim.
+                understanding["language_understanding"] = routed["language_understanding"]
+                understanding["representation_proposition_ids"] = routed["proposition_ids"]
+                understanding["representation_referent_ids"] = routed["referent_ids"]
+                understanding["representation_concept_ids"] = routed["concept_ids"]
+                understanding["linguistic_context_source"] = "language_via_shared_representation"
+
+            content = {
+                'understanding': understanding,
+                'intent': understanding.get('intent'),
+                'confidence': understanding.get('confidence'),
+                'sentiment': understanding.get('sentiment'),
+                'entities': understanding.get('entities', []),
+                'slots': understanding.get('slots', {}),
+                'ask_kind': understanding.get('ask_kind'),
             }
+            if isinstance(routed.get("language_understanding"), dict):
+                content["language_understanding"] = routed["language_understanding"]
+                content["proposition_ids"] = routed["proposition_ids"]
+                content["referent_ids"] = routed["referent_ids"]
+                content["concept_ids"] = routed["concept_ids"]
+            return {'status': 'success', 'content': content}
         
         elif msg_type == 'check_unprompted_speech':
             # Removed: speech pending queue is dead. Live asides are Thalamus-

@@ -1,10 +1,8 @@
 import json
 
-from shared_representation_phase2 import (
-    Phase2SharedRepresentationSystem,
-    SharedRepresentationLanguageGenerator,
-    SharedRepresentationReasoningAdapter,
-)
+from shared_representation import SharedRepresentationSystem
+from language_generation import LanguageGenerator
+from direct_reasoning import DirectReasoningAdapter
 
 
 class _Router:
@@ -18,11 +16,11 @@ class _Router:
         )
 
 
-def test_phase2_reasoning_publishes_and_language_hydrates(tmp_path):
-    shared = Phase2SharedRepresentationSystem(store_path=tmp_path / "shared.json")
+def test_native_reasoning_publishes_and_language_hydrates(tmp_path):
+    shared = SharedRepresentationSystem(store_path=tmp_path / "shared.json")
     router = _Router(shared)
 
-    reasoning = object.__new__(SharedRepresentationReasoningAdapter)
+    reasoning = object.__new__(DirectReasoningAdapter)
     reasoning.thalamus = router
     registered = reasoning._register_grounded_structures(
         [
@@ -47,7 +45,7 @@ def test_phase2_reasoning_publishes_and_language_hydrates(tmp_path):
     assert proposition.provenance.turn_id == "turn-7"
     assert proposition.qualifiers["certainty"] == 0.95
 
-    language = object.__new__(SharedRepresentationLanguageGenerator)
+    language = object.__new__(LanguageGenerator)
     language.thalamus = router
     hydrated = language._hydrate_shared_propositions(
         {"representation_proposition_ids": [proposition_id]}
@@ -67,9 +65,9 @@ def test_phase2_reasoning_publishes_and_language_hydrates(tmp_path):
     ]
 
 
-def test_phase2_propositions_remain_transient(tmp_path):
+def test_native_propositions_remain_transient(tmp_path):
     path = tmp_path / "shared.json"
-    shared = Phase2SharedRepresentationSystem(store_path=path)
+    shared = SharedRepresentationSystem(store_path=path)
 
     subject = shared.resolve_concept("user")
     predicate = shared.resolve_concept("lives_in")

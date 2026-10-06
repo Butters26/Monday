@@ -186,9 +186,9 @@ class Thalamus:
             "active_concepts": [],
             "activation": {},
             "language_understanding": None,
-            "phase3_language_comprehension": False,
-            "phase4_language_first": True,
-            "legacy_raw_text_parser_used": False,
+            "language_comprehension_available": False,
+            "language_first": True,
+            "raw_text_parser_used": False,
             "user_id": user_id,
             "source": "shared_representation",
         }
@@ -317,9 +317,9 @@ class Thalamus:
             "language_understanding": (
                 understanding if isinstance(understanding, dict) else None
             ),
-            "phase3_language_comprehension": isinstance(understanding, dict),
-            "phase4_language_first": True,
-            "legacy_raw_text_parser_used": False,
+            "language_comprehension_available": isinstance(understanding, dict),
+            "language_first": True,
+            "raw_text_parser_used": False,
             "user_id": user_id,
             "source": "shared_representation",
         }

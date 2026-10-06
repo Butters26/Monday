@@ -14,6 +14,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from collections import deque
 from thalamus import get_thalamus
+from language_comprehension import LanguageComprehensionEngine
 
 # FIX: optional deterministic seed for reproducible output
 SEED = os.environ.get("LANG_SEED")
@@ -698,6 +699,7 @@ class LanguageGenerator:
     def __init__(self, thalamus=None):
         self.running = True
         self.grammar = GrammarEngine()
+        self.comprehension = LanguageComprehensionEngine()
         
         # Persistent connection to Thalamus (created once at startup, reused forever)
         # Direct reference to Thalamus (NO SOCKETS)
@@ -709,6 +711,331 @@ class LanguageGenerator:
         self.current_emotional_state = None
         self.emotion_cache_time = 0
     
+    def _send_shared(self, msg_type: str, content: Dict[str, Any]) -> Dict[str, Any]:
+        if self.thalamus is None:
+            return {}
+        response = self.thalamus.send_message(
+            "shared_representation", msg_type, content, source="language"
+        )
+        return response if isinstance(response, dict) else {}
+
+    @staticmethod
+    def _response_content(response: Dict[str, Any]) -> Dict[str, Any]:
+        content = response.get("content") if isinstance(response, dict) else None
+        return content if isinstance(content, dict) else (response if isinstance(response, dict) else {})
+
+    def _candidate_concepts(self, surface: str) -> List[Dict[str, Any]]:
+        response = self._send_shared("lookup_surface", {"surface": surface})
+        if response.get("status") != "success":
+            return []
+        candidates = self._response_content(response).get("candidate_concepts") or []
+        return [dict(item) for item in candidates if isinstance(item, dict)]
+
+    def _resolve_or_create_concept(
+        self, surface: str, *, allow_create: bool
+    ) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+        candidates = self._candidate_concepts(surface)
+        if len(candidates) == 1:
+            cid = candidates[0].get("concept_id") or candidates[0].get("id")
+            return (str(cid) if cid else None), candidates
+        if len(candidates) > 1:
+            return None, candidates
+        if not allow_create:
+            return None, []
+        response = self._send_shared(
+            "resolve_terms", {"terms": [surface], "activate": False}
+        )
+        if response.get("status") != "success":
+            return None, []
+        body = self._response_content(response)
+        ids = list(body.get("concept_ids") or [])
+        resolved = [
+            dict(item)
+            for item in (body.get("resolved") or [])
+            if isinstance(item, dict)
+        ]
+        return (str(ids[0]) if ids else None), resolved
+
+    def comprehend(
+        self,
+        text: str,
+        *,
+        user_id: str = "default",
+        turn_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Language interprets text; SR only assigns IDs and stores supplied meaning."""
+        understanding = self.comprehension.analyze(text)
+        mentions = [
+            dict(item)
+            for item in understanding.get("mentions") or []
+            if isinstance(item, dict)
+        ]
+        clauses = [
+            dict(item)
+            for item in understanding.get("clauses") or []
+            if isinstance(item, dict)
+        ]
+        resolved_concepts: Dict[str, Dict[str, Any]] = {}
+        concept_ids: List[str] = []
+        referent_ids: List[str] = []
+        proposition_ids: List[str] = []
+        mention_refs: Dict[str, str] = {}
+        unresolved_ambiguities: List[Dict[str, Any]] = []
+
+        for mention in mentions:
+            mention_id = str(mention.get("mention_id") or "")
+            surface = str(mention.get("concept_surface") or "").strip()
+            if not mention_id or not surface:
+                mention["selected_concept_id"] = None
+                mention["instance_id"] = None
+                continue
+            selected, candidates = self._resolve_or_create_concept(
+                surface, allow_create=True
+            )
+            mention["candidate_concepts"] = candidates
+            mention["candidate_concept_ids"] = [
+                str(item.get("concept_id") or item.get("id"))
+                for item in candidates
+                if item.get("concept_id") or item.get("id")
+            ]
+            mention["selected_concept_id"] = selected
+            if len(candidates) > 1 and selected is None:
+                unresolved_ambiguities.append(
+                    {
+                        "mention_id": mention_id,
+                        "surface": surface,
+                        "candidate_concept_ids": list(mention["candidate_concept_ids"]),
+                    }
+                )
+                mention["instance_id"] = None
+                continue
+            if not selected:
+                mention["instance_id"] = None
+                continue
+            if selected not in concept_ids:
+                concept_ids.append(selected)
+            for candidate in candidates:
+                cid = candidate.get("concept_id") or candidate.get("id")
+                if cid and str(cid) == selected:
+                    resolved_concepts[selected] = candidate
+                    break
+            instance_response = self._send_shared(
+                "register_instance",
+                {
+                    "concept_id": selected,
+                    "label": mention.get("surface"),
+                    "properties": {
+                        "mention_id": mention_id,
+                        "linguistic_kind": mention.get("kind"),
+                        "quantity": mention.get("quantity"),
+                        "pronoun": bool(mention.get("pronoun")),
+                    },
+                    "user_id": user_id,
+                    "provenance": {
+                        "producer_lobe": "language",
+                        "source_type": "user_utterance_linguistic_interpretation",
+                        "turn_id": turn_id,
+                        "confidence": float(understanding.get("confidence") or 0.0),
+                    },
+                },
+            )
+            if instance_response.get("status") == "success":
+                body = self._response_content(instance_response)
+                instance_id = body.get("instance_id") or body.get("id")
+                if instance_id:
+                    instance_id = str(instance_id)
+                    mention["instance_id"] = instance_id
+                    mention_refs[mention_id] = instance_id
+                    referent_ids.append(instance_id)
+                    continue
+            mention["instance_id"] = None
+
+        for clause in clauses:
+            predicate_surface = str(clause.get("predicate_surface") or "").strip()
+            predicate_known = bool(clause.get("predicate_known"))
+            if predicate_surface:
+                predicate_id, predicate_candidates = self._resolve_or_create_concept(
+                    predicate_surface, allow_create=predicate_known
+                )
+            else:
+                predicate_id, predicate_candidates = None, []
+            clause["predicate_candidate_concepts"] = predicate_candidates
+            clause["predicate_candidate_concept_ids"] = [
+                str(item.get("concept_id") or item.get("id"))
+                for item in predicate_candidates
+                if item.get("concept_id") or item.get("id")
+            ]
+            clause["predicate_id"] = predicate_id
+            if predicate_id and predicate_id not in concept_ids:
+                concept_ids.append(predicate_id)
+            for candidate in predicate_candidates:
+                cid = candidate.get("concept_id") or candidate.get("id")
+                if cid and str(cid) == predicate_id:
+                    resolved_concepts[predicate_id] = candidate
+                    break
+
+            role_mentions = clause.get("roles") if isinstance(clause.get("roles"), dict) else {}
+            shared_roles: Dict[str, str] = {}
+            unresolved_roles: List[str] = []
+            for role, mention_id in role_mentions.items():
+                ref = mention_refs.get(str(mention_id))
+                if ref:
+                    shared_roles[str(role)] = ref
+                else:
+                    unresolved_roles.append(str(role))
+            clause["shared_roles"] = shared_roles
+            clause["unresolved_roles"] = unresolved_roles
+            if not predicate_id or unresolved_roles or not shared_roles:
+                clause["proposition_id"] = None
+                continue
+
+            qualifiers = dict(clause.get("qualifiers") or {})
+            qualifiers.setdefault("linguistic_voice", clause.get("voice"))
+            proposition_response = self._send_shared(
+                "register_proposition",
+                {
+                    "predicate_id": predicate_id,
+                    "roles": shared_roles,
+                    "qualifiers": qualifiers,
+                    "user_id": user_id,
+                    "provenance": {
+                        "producer_lobe": "language",
+                        "source_type": "user_utterance_linguistic_interpretation",
+                        "turn_id": turn_id,
+                        "clause_id": clause.get("clause_id"),
+                        "confidence": float(
+                            clause.get("confidence")
+                            or understanding.get("confidence")
+                            or 0.0
+                        ),
+                    },
+                },
+            )
+            if proposition_response.get("status") == "success":
+                body = self._response_content(proposition_response)
+                proposition_id = body.get("proposition_id") or body.get("id")
+                if proposition_id:
+                    proposition_id = str(proposition_id)
+                    clause["proposition_id"] = proposition_id
+                    proposition_ids.append(proposition_id)
+                    continue
+            clause["proposition_id"] = None
+
+        understanding["mentions"] = mentions
+        understanding["clauses"] = clauses
+        understanding["unresolved_ambiguities"] = unresolved_ambiguities
+        understanding["concept_ids"] = concept_ids
+        understanding["referent_ids"] = referent_ids
+        understanding["proposition_ids"] = proposition_ids
+        understanding["representation_contract"] = "shared_representation_native"
+        understanding["user_id"] = user_id
+        return {
+            "language_understanding": understanding,
+            "resolved_concepts": list(resolved_concepts.values()),
+            "concept_ids": concept_ids,
+            "referent_ids": referent_ids,
+            "proposition_ids": proposition_ids,
+        }
+
+    def _name_for_reference(
+        self, reference_id: Any, user_id: Optional[str]
+    ) -> Optional[str]:
+        ref = str(reference_id or "").strip()
+        if not ref:
+            return None
+        response = self._send_shared("get_concept", {"concept_id": ref})
+        if response.get("status") == "success":
+            concept = self._response_content(response)
+            name = concept.get("canonical_name") or concept.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        response = self._send_shared(
+            "get_instance", {"instance_id": ref, "user_id": user_id}
+        )
+        if response.get("status") == "success":
+            instance = self._response_content(response)
+            label = instance.get("label")
+            if isinstance(label, str) and label.strip():
+                return label.strip()
+            concept_id = instance.get("concept_id")
+            if concept_id:
+                parent = self._send_shared("get_concept", {"concept_id": str(concept_id)})
+                if parent.get("status") == "success":
+                    body = self._response_content(parent)
+                    name = body.get("canonical_name") or body.get("name")
+                    if isinstance(name, str) and name.strip():
+                        return name.strip()
+        return ref
+
+    def _structure_from_proposition(
+        self, proposition_id: Any, user_id: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        response = self._send_shared(
+            "get_proposition",
+            {"proposition_id": str(proposition_id), "user_id": user_id},
+        )
+        if response.get("status") != "success":
+            return None
+        proposition = self._response_content(response)
+        predicate = self._name_for_reference(proposition.get("predicate_id"), user_id)
+        if not predicate:
+            return None
+        roles = proposition.get("roles") if isinstance(proposition.get("roles"), dict) else {}
+        subject_ref = (
+            roles.get("subject")
+            or roles.get("agent")
+            or roles.get("experiencer")
+            or roles.get("theme")
+        )
+        object_ref = (
+            roles.get("object")
+            or roles.get("theme")
+            or roles.get("patient")
+            or roles.get("recipient")
+            or roles.get("value")
+        )
+        subject = self._name_for_reference(subject_ref, user_id)
+        obj = self._name_for_reference(object_ref, user_id)
+        qualifiers = proposition.get("qualifiers") if isinstance(proposition.get("qualifiers"), dict) else {}
+        provenance = proposition.get("provenance") if isinstance(proposition.get("provenance"), dict) else {}
+        try:
+            certainty = float(
+                qualifiers.get("certainty", provenance.get("confidence", 1.0))
+            )
+        except (TypeError, ValueError):
+            certainty = 1.0
+        return {
+            "subject": subject,
+            "relation": predicate,
+            "predicate": predicate,
+            "value": obj,
+            "object": obj,
+            "certainty": certainty,
+            "proposition_id": str(proposition.get("proposition_id") or proposition_id),
+        }
+
+    def _hydrate_shared_propositions(
+        self, semantic_input: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        if not isinstance(semantic_input, dict) or self.thalamus is None:
+            return semantic_input
+        proposition_ids = semantic_input.get("representation_proposition_ids")
+        if not isinstance(proposition_ids, list) or not proposition_ids:
+            return semantic_input
+        user_id = semantic_input.get("representation_user_id")
+        user_id = str(user_id).strip() if user_id is not None else None
+        structures: List[Dict[str, Any]] = []
+        for proposition_id in proposition_ids:
+            structure = self._structure_from_proposition(proposition_id, user_id)
+            if isinstance(structure, dict):
+                structures.append(structure)
+        if structures:
+            semantic_input = dict(semantic_input)
+            semantic_input["grounded_structures"] = structures
+            semantic_input["propositions"] = structures
+            semantic_input["representation_hydrated"] = True
+        return semantic_input
+
     def _query_emotional_state(self) -> Dict[str, Any]:
         """Query current emotional state from Emotional Engine"""
         try:
@@ -821,6 +1148,8 @@ class LanguageGenerator:
         if not isinstance(semantic_input, dict):
             return ""
         
+        semantic_input = self._hydrate_shared_propositions(dict(semantic_input))
+
         # CRITICAL FIX: Check if this is a novelty question
         # If Novelty Lobe sent a question, use it directly instead of composing
         if semantic_input.get('is_novelty_question') and semantic_input.get('question_to_ask'):
@@ -849,84 +1178,17 @@ class LanguageGenerator:
             )
 
     def _salvage_grounded_answer(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
-        """If structures/answer empty but memories hold facts, attach structures — do not invent."""
+        """Normalize already-supplied semantic structures; never select memory evidence."""
         existing = semantic_input.get("grounded_structures")
         if isinstance(existing, list) and existing:
             return semantic_input
-        # Dict propositions already count as structures.
-        props = semantic_input.get("propositions")
-        if isinstance(props, list) and any(isinstance(p, dict) for p in props):
-            semantic_input["grounded_structures"] = [
-                p for p in props if isinstance(p, dict)
-            ]
-            semantic_input["answer"] = ""
-            return semantic_input
-        answer = semantic_input.get("answer", "")
-        user_input = semantic_input.get("user_input") or semantic_input.get("user_text") or ""
-        memories = semantic_input.get("memory_context") or []
-        # If answer is already usable non-refusal prose, try strip to structures —
-        # but keep teaching acks / empathic / social lines as finished prose.
-        if isinstance(answer, str) and answer.strip() and not self.grammar._is_grounding_refusal(answer):
-            low = answer.strip().lower()
-            keep_prose = low.startswith((
-                "got it", "hello", "hi ", "hey", "that sounds", "i hear",
-                "i can feel", "i'm here", "i am here", "i am sitting",
-                "i'm sitting", "i'm thinking", "can you tell", "could you",
-            ))
-            if keep_prose:
-                return semantic_input
-            try:
-                from direct_response import prose_answer_to_structures
-                structs = prose_answer_to_structures(answer)
-            except Exception:
-                structs = None
-            if structs:
-                semantic_input["grounded_structures"] = structs
-                semantic_input["propositions"] = structs
+        propositions = semantic_input.get("propositions")
+        if isinstance(propositions, list):
+            structures = [item for item in propositions if isinstance(item, dict)]
+            if structures:
+                semantic_input = dict(semantic_input)
+                semantic_input["grounded_structures"] = structures
                 semantic_input["answer"] = ""
-                return semantic_input
-            return semantic_input
-        if not user_input or not isinstance(memories, list):
-            return semantic_input
-        try:
-            from direct_response import structures_from_grounded_memories, prose_answer_to_structures
-            structs = structures_from_grounded_memories(user_input, memories)
-        except Exception:
-            structs = None
-        if structs:
-            semantic_input["grounded_structures"] = structs
-            semantic_input["propositions"] = structs
-            semantic_input["answer"] = ""
-            return semantic_input
-        # Fallback: prose salvage for narrative paths Language still pass-throughs.
-        try:
-            from direct_response import answer_from_grounded_memories
-            grounded = answer_from_grounded_memories(user_input, memories)
-        except Exception:
-            grounded = None
-        if not isinstance(grounded, str) or not grounded.strip():
-            return semantic_input
-        if self.grammar._is_grounding_refusal(grounded):
-            return semantic_input
-        try:
-            from direct_response import prose_answer_to_structures
-            structs = prose_answer_to_structures(grounded)
-        except Exception:
-            structs = None
-        if structs:
-            semantic_input["grounded_structures"] = structs
-            semantic_input["propositions"] = structs
-            semantic_input["answer"] = ""
-            return semantic_input
-        semantic_input["answer"] = grounded.strip()
-        if not isinstance(props, list) or not props:
-            parts = [p.strip() for p in grounded.replace("? ", "?. ").split(". ") if p.strip()]
-            normalized = []
-            for part in parts:
-                if part and part[-1] not in ".!?":
-                    part = part + "."
-                normalized.append(part)
-            semantic_input["propositions"] = normalized or [grounded.strip()]
         return semantic_input
 
 
@@ -1013,6 +1275,17 @@ class LanguageGenerator:
         msg_type = message.get('type')
         payload = message.get('content', message)
         
+        if msg_type == 'comprehend':
+            text = payload.get('text') or payload.get('user_input') or ''
+            user_id = str(payload.get('user_id') or 'default')
+            turn_id = payload.get('turn_id') or message.get('message_id')
+            result = self.comprehend(
+                str(text),
+                user_id=user_id,
+                turn_id=str(turn_id) if turn_id else None,
+            )
+            return {'status': 'success', 'content': result, **result}
+
         if msg_type in {'generate', 'generate_grounded'}:
             semantic_input = payload.get('semantic_input', payload)
             sentence = self.generate(semantic_input)

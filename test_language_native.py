@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from phase3_thalamus import Phase3Thalamus as Thalamus
-from shared_representation_phase2 import (
-    Phase2SharedRepresentationSystem,
-    SharedRepresentationLanguageGenerator,
-)
+from thalamus import Thalamus
+from shared_representation import SharedRepresentationSystem
+from language_generation import LanguageGenerator
 
 
 class _Router:
@@ -26,9 +24,9 @@ class _Router:
 
 
 def _systems(tmp_path):
-    shared = Phase2SharedRepresentationSystem(store_path=tmp_path / "shared.json")
+    shared = SharedRepresentationSystem(store_path=tmp_path / "shared.json")
     router = _Router(shared)
-    language = SharedRepresentationLanguageGenerator(thalamus=router)
+    language = LanguageGenerator(thalamus=router)
     router.language = language
     shared.thalamus = router
     return shared, language, router
@@ -49,7 +47,7 @@ def _one_clause(result):
     return understanding, understanding["clauses"][0]
 
 
-def test_phase3_ditransitive_registers_roles_time_and_referents(tmp_path):
+def test_native_ditransitive_registers_roles_time_and_referents(tmp_path):
     shared, language, _ = _systems(tmp_path)
     result = language.comprehend(
         "Steve gave the dog a ball yesterday.", user_id="u1", turn_id="turn-1"
@@ -72,7 +70,7 @@ def test_phase3_ditransitive_registers_roles_time_and_referents(tmp_path):
     assert proposition.provenance.source_type == "user_utterance_linguistic_interpretation"
 
 
-def test_phase3_active_and_passive_preserve_semantic_roles(tmp_path):
+def test_native_active_and_passive_preserve_semantic_roles(tmp_path):
     shared, language, _ = _systems(tmp_path)
 
     active = language.comprehend("The dog chased the cat.", user_id="u1")
@@ -93,7 +91,7 @@ def test_phase3_active_and_passive_preserve_semantic_roles(tmp_path):
     assert passive_clause["voice"] == "passive"
 
 
-def test_phase3_preserves_negation_modality_time_and_quantity(tmp_path):
+def test_native_preserves_negation_modality_time_and_quantity(tmp_path):
     shared, language, _ = _systems(tmp_path)
     result = language.comprehend(
         "Steve might not give the dog three balls tomorrow.", user_id="u1"
@@ -115,7 +113,7 @@ def test_phase3_preserves_negation_modality_time_and_quantity(tmp_path):
     assert proposition.qualifiers["quantities"]["theme"] == 3.0
 
 
-def test_phase3_keeps_multiword_noun_phrase_as_one_concept(tmp_path):
+def test_native_keeps_multiword_noun_phrase_as_one_concept(tmp_path):
     shared, language, _ = _systems(tmp_path)
     result = language.comprehend("The control panel failed.", user_id="u1")
     _, clause = _one_clause(result)
@@ -128,7 +126,7 @@ def test_phase3_keeps_multiword_noun_phrase_as_one_concept(tmp_path):
     assert shared.get_candidate_concepts("the control panel") == []
 
 
-def test_phase3_ambiguity_returns_candidates_and_does_not_guess(tmp_path):
+def test_native_ambiguity_returns_candidates_and_does_not_guess(tmp_path):
     shared, language, _ = _systems(tmp_path)
     first = shared.resolve_concept("bank", concept_type="financial_institution")
     second = shared.create_concept_sense("bank", concept_type="river_edge")
@@ -148,7 +146,7 @@ def test_phase3_ambiguity_returns_candidates_and_does_not_guess(tmp_path):
     assert understanding["unresolved_ambiguities"]
 
 
-def test_phase3_unknown_predicate_is_explicit_and_not_registered(tmp_path):
+def test_native_unknown_predicate_is_explicit_and_not_registered(tmp_path):
     _, language, _ = _systems(tmp_path)
     result = language.comprehend("Steve florbed the dog.", user_id="u1")
     understanding, clause = _one_clause(result)
@@ -160,7 +158,7 @@ def test_phase3_unknown_predicate_is_explicit_and_not_registered(tmp_path):
     assert "florbed" in understanding["unknown_words"]
 
 
-def test_phase3_legacy_thalamus_resolution_path_delegates_to_language(tmp_path):
+def test_shared_representation_rejects_raw_text_interpretation(tmp_path):
     shared, _, router = _systems(tmp_path)
     response = router.send_message(
         "shared_representation",
@@ -168,23 +166,18 @@ def test_phase3_legacy_thalamus_resolution_path_delegates_to_language(tmp_path):
         {"text": "Steve gave the dog a ball yesterday.", "user_id": "u1"},
         source="thalamus",
     )
-
-    assert response["status"] == "success"
-    body = response["content"]
-    assert body["phase3_language_comprehension"] is True
-    assert body["legacy_raw_text_parser_used"] is False
-    assert len(body["proposition_ids"]) == 1
-    assert body["language_understanding"]["contract"] == "language_understanding_v1"
-    assert body["co_occurrence_edges_added"] == 0
+    assert response["status"] == "error"
+    assert "belongs to language" in response["message"]
 
 
-def test_phase3_real_thalamus_live_representation_path_uses_language(tmp_path):
+
+def test_native_real_thalamus_live_representation_path_uses_language(tmp_path):
     thalamus = Thalamus()
-    shared = Phase2SharedRepresentationSystem(
+    shared = SharedRepresentationSystem(
         thalamus=thalamus,
         store_path=tmp_path / "shared-live.json",
     )
-    language = SharedRepresentationLanguageGenerator(thalamus=thalamus)
+    language = LanguageGenerator(thalamus=thalamus)
     assert thalamus.register_lobe("language", language)["status"] == "success"
     assert thalamus.register_lobe("shared_representation", shared)["status"] == "success"
 
@@ -195,8 +188,8 @@ def test_phase3_real_thalamus_live_representation_path_uses_language(tmp_path):
         user_id="u1",
     )
 
-    assert result["phase3_language_comprehension"] is True
-    assert result["legacy_raw_text_parser_used"] is False
+    assert result["language_comprehension_available"] is True
+    assert result["raw_text_parser_used"] is False
     assert len(result["proposition_ids"]) == 1
     assert result["language_understanding"]["contract"] == "language_understanding_v1"
     assert perception["concept_ids"] == result["concept_ids"]

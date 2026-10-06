@@ -696,35 +696,47 @@ class SharedRepresentationSystem:
         return [{"id": c.concept_id, "concept_id": c.concept_id, "name": c.canonical_name, "canonical_name": c.canonical_name, "activation": float(c.activation), "concept_type": c.concept_type} for c in self.get_active_concepts(threshold=thr)]
 
     def resolve_terms(self, terms: Sequence[str], *, user_id: Optional[str] = None, activate: bool = True, activate_amount: float = 1.0) -> Dict[str, Any]:
-        resolved: List[Dict[str, Any]] = []; ids: List[str] = []; seen: Set[str] = set()
+        """Assign/reuse IDs and optionally activate them; never infer relationships."""
+        resolved: List[Dict[str, Any]] = []
+        ids: List[str] = []
+        seen: Set[str] = set()
         with self._lock:
             if activate:
-                for c in self.concepts.values(): c.activation = 0.0
+                for concept in self.concepts.values():
+                    concept.activation = 0.0
         for term in terms:
-            c = self.resolve_concept(str(term), create=True)
-            if not c or c.concept_id in seen: continue
-            seen.add(c.concept_id); ids.append(c.concept_id); resolved.append(c.to_public())
-        edges_added = 0
-        if len(ids) >= 2:
-            scope = "user" if user_id else "global"
-            for i in range(len(ids)-1):
-                a,b=ids[i],ids[i+1]
-                if a==b: continue
-                for src,tgt in ((a,b),(b,a)):
-                    if self.add_relationship(src,tgt,"co_occurrence",0.35,scope=scope,user_id=user_id): edges_added += 1
-        amap: Dict[str,float] = {}; edge_count=len(self._edges_for_spread(user_id))
+            concept = self.resolve_concept(str(term), create=True)
+            if not concept or concept.concept_id in seen:
+                continue
+            seen.add(concept.concept_id)
+            ids.append(concept.concept_id)
+            resolved.append(concept.to_public())
+        activation: Dict[str, float] = {}
+        edge_count = len(self._edges_for_spread(user_id))
         if activate and ids:
-            for cid in ids:
-                for k,v in self.activate(cid,activate_amount,user_id=user_id,spread=True).items(): amap[k]=max(amap.get(k,0.0),v)
-        return {"status":"success","resolved":resolved,"concept_ids":ids,"activation":amap,"highly_active_concepts":self.get_highly_active(),"active_concepts":[{"id":c.concept_id,"name":c.canonical_name,"activation":float(c.activation)} for c in self.get_active_concepts()],"user_id":user_id,"relationship_edges":edge_count,"co_occurrence_edges_added":edges_added,"spread_had_edges":edge_count>0}
-
-    def resolve_from_text(self, text: str, *, user_id: Optional[str] = None, extra_terms: Optional[Iterable[str]] = None, activate: bool = True) -> Dict[str, Any]:
-        terms=[t for t in self._normalize_surface(text).split() if t and t not in _STOP and len(t)>1]
-        if extra_terms:
-            for t in extra_terms:
-                s=self._normalize_surface(str(t))
-                if s and s not in _STOP: terms.append(s)
-        return self.resolve_terms(terms,user_id=user_id,activate=activate)
+            for concept_id in ids:
+                for key, value in self.activate(
+                    concept_id,
+                    activate_amount,
+                    user_id=user_id,
+                    spread=True,
+                ).items():
+                    activation[key] = max(activation.get(key, 0.0), value)
+        return {
+            "status": "success",
+            "resolved": resolved,
+            "concept_ids": ids,
+            "activation": activation,
+            "highly_active_concepts": self.get_highly_active(),
+            "active_concepts": [
+                {"id": c.concept_id, "name": c.canonical_name, "activation": float(c.activation)}
+                for c in self.get_active_concepts()
+            ],
+            "user_id": user_id,
+            "relationship_edges": edge_count,
+            "co_occurrence_edges_added": 0,
+            "spread_had_edges": edge_count > 0,
+        }
 
     def envelope(self, resolve_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         b=dict(resolve_result or {})
@@ -734,13 +746,15 @@ class SharedRepresentationSystem:
         msg_type=message.get("type") or message.get("message_type") or ""; content=message.get("content") if isinstance(message.get("content"),dict) else {}
         if not content and isinstance(message,dict): content={k:v for k,v in message.items() if k not in {"type","message_type","source","message_id","content"}}
         if msg_type=="health": return {"status":"success","healthy":True,"concept_count":len(self.concepts),"global_relationship_count":len(self.global_relationships),"transient_instance_count":len(self.instances),"transient_proposition_count":len(self.propositions),"live_co_occurrence_producer":True,"store_path":str(self.store_path)}
-        if msg_type in {"resolve","resolve_terms","resolve_from_text"}:
+        if msg_type=="resolve_from_text":
+            return {"status":"error","message":"raw text interpretation belongs to language","content":{}}
+        if msg_type in {"resolve","resolve_terms"}:
             uid=content.get("user_id")
-            if msg_type=="resolve_from_text" or content.get("text"): result=self.resolve_from_text(str(content.get("text") or ""),user_id=uid,extra_terms=content.get("terms") or content.get("concepts"),activate=bool(content.get("activate",True)))
-            else:
-                terms=content.get("terms") or content.get("concepts") or []
-                if content.get("term"): terms=list(terms)+[content.get("term")]
-                result=self.resolve_terms(list(terms),user_id=uid,activate=bool(content.get("activate",True)))
+            if content.get("text"):
+                return {"status":"error","message":"shared_representation accepts supplied terms/IDs, not raw text","content":{}}
+            terms=content.get("terms") or content.get("concepts") or []
+            if content.get("term"): terms=list(terms)+[content.get("term")]
+            result=self.resolve_terms(list(terms),user_id=uid,activate=bool(content.get("activate",True)))
             env=self.envelope(result); return {"status":"success","content":env,**env}
         if msg_type in {"get_candidate_concepts","lookup_surface","resolve_span"}:
             surface=content.get("surface") or content.get("term") or content.get("text")
