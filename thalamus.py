@@ -1449,6 +1449,10 @@ class Thalamus:
             "activation": {},
             "user_id": user_id,
             "source": "shared_representation",
+            "language_understanding": None,
+            "referent_ids": [],
+            "proposition_ids": [],
+            "phase3_language_comprehension": False,
         }
         with self.lobe_handlers_lock:
             has = "shared_representation" in self.lobe_handlers
@@ -1512,12 +1516,22 @@ class Thalamus:
             "user_id": body.get("user_id", user_id),
             "source": "shared_representation",
             "timestamp": body.get("timestamp"),
+            "language_understanding": body.get("language_understanding"),
+            "referent_ids": list(body.get("referent_ids") or []),
+            "proposition_ids": list(body.get("proposition_ids") or []),
+            "phase3_language_comprehension": bool(
+                body.get("phase3_language_comprehension")
+            ),
+            "legacy_raw_text_parser_used": body.get("legacy_raw_text_parser_used"),
         }
         self.last_representation = dict(env)
         # Annotate perception envelope with stable IDs (non-destructive).
         if isinstance(perception_payload, dict):
             perception_payload["concept_ids"] = list(env["concept_ids"])
             perception_payload["resolved_concepts"] = list(env["resolved"])
+            perception_payload["language_understanding"] = env["language_understanding"]
+            perception_payload["referent_ids"] = list(env["referent_ids"])
+            perception_payload["proposition_ids"] = list(env["proposition_ids"])
         return env
 
     def _motor_plan_from_turn(

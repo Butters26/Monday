@@ -201,4 +201,7 @@ def test_phase3_real_thalamus_live_representation_path_uses_language(tmp_path):
     assert result["language_understanding"]["contract"] == "language_understanding_v1"
     assert perception["concept_ids"] == result["concept_ids"]
     assert perception["resolved_concepts"] == result["resolved"]
+    assert perception["language_understanding"] == result["language_understanding"]
+    assert perception["referent_ids"] == result["referent_ids"]
+    assert perception["proposition_ids"] == result["proposition_ids"]
     thalamus.shutdown()
