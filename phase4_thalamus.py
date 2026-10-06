@@ -802,6 +802,40 @@ class Phase4Thalamus(Phase3Thalamus):
                 self._flush_notus_fallback_best_effort(user_id)
         return reply
 
+    def process_user_input(self, user_input: str, user_id: str = "default") -> str:
+        """Run the legacy orchestration with Phase 4 semantic ownership enforced.
+
+        The legacy coordinator still contains migration-era semantic repair code.
+        Phase 4 does not permit that code to make semantic decisions. Instead,
+        Reasoning returns a finalized semantic envelope and this router temporarily
+        disables the legacy repair helpers while the inherited orchestration routes
+        that envelope through MetaCognition, Language, Output, and the other lobes.
+        """
+        import thalamus as legacy_module
+
+        forbidden = {
+            "relevance_score": legacy_module.relevance_score,
+            "answer_from_grounded_memories": legacy_module.answer_from_grounded_memories,
+            "structures_from_grounded_memories": legacy_module.structures_from_grounded_memories,
+            "prose_answer_to_structures": legacy_module.prose_answer_to_structures,
+            "_attribute_asked": legacy_module._attribute_asked,
+            "_fact_covers_attribute": legacy_module._fact_covers_attribute,
+        }
+
+        # Neutralize only Thalamus's migration-era semantic choices. Reasoning and
+        # Language import/own their corresponding helpers independently.
+        legacy_module.relevance_score = lambda _query, _candidate: 1.0
+        legacy_module._attribute_asked = lambda _query: None
+        legacy_module._fact_covers_attribute = lambda _candidate, _attribute: True
+        legacy_module.answer_from_grounded_memories = lambda _query, _memories: None
+        legacy_module.structures_from_grounded_memories = lambda _query, _memories: []
+        legacy_module.prose_answer_to_structures = lambda _answer: []
+        try:
+            return super().process_user_input(user_input, user_id=user_id)
+        finally:
+            for name, value in forbidden.items():
+                setattr(legacy_module, name, value)
+
 
 Thalamus = Phase4Thalamus
 
