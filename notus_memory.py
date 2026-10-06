@@ -160,6 +160,7 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             "it", "its", "have", "has", "had", "will", "just", "also", "so",
             "as", "if", "but", "not", "no", "yes", "ok", "okay", "hey", "hi",
             "hello", "got", "know", "which", "whose",
+            "now", "currently",
             "there", "here", "into", "over", "under", "again", "any", "some",
         }
     )
@@ -224,8 +225,10 @@ class NotusMemorySystem(SuperhumanMemorySystem):
         # Identity asks: "what am I called" / name predicate / readable "name is".
         # "what am I called" is handled by _augment_identity_query (+ name),
         # not by aliasing everyday "call" onto the name predicate.
-        "name": frozenset({"name", "named"}),
-        "named": frozenset({"name", "named"}),
+        "name": frozenset({"name", "named", "called", "call"}),
+        "named": frozenset({"name", "named", "called", "call"}),
+        "called": frozenset({"name", "named", "called", "call"}),
+        "call": frozenset({"name", "named", "called", "call"}),
     }
 
     @classmethod
@@ -372,6 +375,10 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             if "name" not in cls._content_tokens(q):
                 if not re.search(r"(?i)\bname\b", q):
                     return q + " name"
+        # "What's my dog called?" — inject name so dog_name facts score.
+        if re.search(r"(?i)\bmy\s+[a-z][a-z ]{0,40}?\s+called\b", q):
+            if "name" not in cls._content_tokens(q) and not re.search(r"(?i)\bname\b", q):
+                return q + " name"
         return q
 
     @classmethod
@@ -1261,10 +1268,10 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             _add("user", _slug(noun), val)
 
         # I live in / I work as|at|in — durable location/job.
-        # Stop before compound clauses ("… and I work as …").
+        # Stop before compound clauses, and before ", not <old>" corrections.
         for m in re.finditer(
-            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
-            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?=\s+and\s+i\b|[.!?]|$)",
+            r"(?i)\b(?:no[,\s]+)?(?:please\s+)?(?:remember\s+(?:that\s+)?)?i\s+live\s+in\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s.-]{0,60}?)(?=\s*,\s*not\b|\s+and\s+i\b|[.!?]|$)",
             t,
         ):
             place = m.group(1).strip(" .!?")
@@ -1278,13 +1285,38 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             if place and _value_ok(place):
                 _add("user", "lives_in", place)
         for m in re.finditer(
-            r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
-            r"([A-Za-z0-9][A-Za-z0-9\s,.-]{0,60}?)(?=\s+and\s+i\b|[.!?]|$)",
+            r"(?i)\b(?:no[,\s]+)?(?:please\s+)?(?:remember\s+(?:that\s+)?)?i\s+work\s+(as|at|in)\s+"
+            r"([A-Za-z0-9][A-Za-z0-9\s.-]{0,60}?)(?=\s*,\s*not\b|\s+and\s+i\b|[.!?]|$)",
             t,
         ):
             job = m.group(2).strip(" .!?")
             if job and _value_ok(job):
                 _add("user", f"work_{m.group(1).lower()}", job)
+
+        # Third-party durable location: "Pewdiepie moved to Japan in 2022"
+        # / "PewDiePie lives in Japan".
+        for m in re.finditer(
+            r"(?i)\b([A-Z][A-Za-z0-9][\w'-]{1,40})\s+moved\s+to\s+"
+            r"([A-Z][A-Za-z0-9][\w\s'-]{0,40}?)(?=\s+in\s+\d{4}\b|[.!?]|$)",
+            t,
+        ):
+            who = m.group(1).strip()
+            place = m.group(2).strip(" .!?")
+            if who.lower() in {"i", "we", "they", "he", "she", "it", "you"}:
+                continue
+            if place and _value_ok(place):
+                _add(who, "lives_in", place)
+        for m in re.finditer(
+            r"(?i)\b([A-Z][A-Za-z0-9][\w'-]{1,40})\s+lives\s+in\s+"
+            r"([A-Z][A-Za-z0-9][\w\s'-]{0,40}?)(?=\s+now\b|[.!?]|$)",
+            t,
+        ):
+            who = m.group(1).strip()
+            place = m.group(2).strip(" .!?")
+            if who.lower() in {"i", "we", "they", "he", "she", "it", "you"}:
+                continue
+            if place and _value_ok(place):
+                _add(who, "lives_in", place)
 
         return out
 
@@ -1324,12 +1356,18 @@ class NotusMemorySystem(SuperhumanMemorySystem):
             return f"Your {noun}'s name is {obj}."
         if pred.startswith("favorite_") or pred.startswith("favourite_"):
             return f"Your {pred.replace('_', ' ')} is {obj}."
+        sub_l = (subject or "").strip().lower()
+        self_sub = sub_l in {"user", "i", "me", ""}
         if pred == "lives_in":
-            return f"You live in {obj}."
+            if self_sub:
+                return f"You live in {obj}."
+            return f"{subject} lives in {obj}."
         if pred.startswith("work_"):
             prep = pred[5:] or "as"
-            return f"You work {prep} {obj}."
-        if (subject or "").lower() in {"user", "i", "me"}:
+            if self_sub:
+                return f"You work {prep} {obj}."
+            return f"{subject} works {prep} {obj}."
+        if self_sub:
             return f"Your {pred.replace('_', ' ')} is {obj}."
         return f"{subject} {pred.replace('_', ' ')} {obj}".strip()
 

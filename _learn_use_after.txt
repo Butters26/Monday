@@ -1,0 +1,34 @@
+AFTER — live path create_core_systems + process_user_input (separate processes)
+sqlite=/tmp/monday_learn_after.kIUEmx/notus.sqlite3
+
+=== SESSION A (teach) ===
+INPUT (matthew): My dog's name is Biscuit
+REPLY: Your dog's name is Biscuit.
+
+INPUT (matthew): Pewdiepie moved to Japan in 2022
+REPLY: I don't have enough to go on yet — what should I know?
+
+INPUT (matthew): I work at Xcel
+REPLY: Got it — you work at Xcel.
+
+INPUT (matthew): No, I work at SEG Sparkstone, not Xcel.
+REPLY: Got it — you work at SEG Sparkstone, not Xcel.
+
+INPUT (alice): My dog's name is Rover
+REPLY: Your dog's name is Rover.
+
+=== SESSION B (fresh process, ask) ===
+INPUT (matthew): What's my dog called?
+REPLY: Your dog's name is Biscuit.
+
+INPUT (matthew): Where does Pewdiepie live now?
+REPLY: Pewdiepie lives in Japan.
+
+INPUT (matthew): Where do I work?
+REPLY: You work at SEG Sparkstone.
+
+INPUT (alice): What's my dog called?
+REPLY: Your dog's name is Rover.
+
+INPUT (matthew): What time is it on Mars?
+REPLY: I don't have enough to go on yet — what should I know?

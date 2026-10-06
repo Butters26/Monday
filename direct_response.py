@@ -25,6 +25,7 @@ _STOPWORDS = frozenset(
         "as", "if", "but", "not", "no", "yes", "ok", "okay", "hey", "hi",
         "hello", "named", "name", "got", "know", "say", "said", "just",
         "there", "here", "into", "over", "under", "again", "more",
+        "now", "currently", "anymore",
     }
 )
 
@@ -327,19 +328,27 @@ def format_predicate_fact(predicate: str, obj: str, subject: str = "user") -> st
         return f"Your {noun}'s name is {obj}."
     if pred.startswith("favorite_") or pred.startswith("favourite_"):
         return f"Your {pred.replace('_', ' ')} is {obj}."
+    sub_l = (subject or "").strip().lower()
+    self_sub = sub_l in {"user", "i", "me", ""}
     if pred == "lives_in":
-        return f"You live in {obj}."
+        if self_sub:
+            return f"You live in {obj}."
+        return f"{subject} lives in {obj}."
     if pred.startswith("work_"):
         prep = pred[5:] or "as"
-        if prep == "as" and obj and obj[0].isalpha() and not obj.lower().startswith(
-            ("a ", "an ", "the ")
-        ):
-            article = "an" if obj[0].lower() in "aeiou" else "a"
-            return f"You work as {article} {obj}."
-        return f"You work {prep} {obj}."
+        if self_sub:
+            if prep == "as" and obj and obj[0].isalpha() and not obj.lower().startswith(
+                ("a ", "an ", "the ")
+            ):
+                article = "an" if obj[0].lower() in "aeiou" else "a"
+                return f"You work as {article} {obj}."
+            return f"You work {prep} {obj}."
+        return f"{subject} works {prep} {obj}."
     if pred in {"codeword", "password", "passcode"}:
-        return f"Your {pred} is {obj}."
-    if (subject or "").lower() in {"user", "i", "me", ""}:
+        if self_sub:
+            return f"Your {pred} is {obj}."
+        return f"{subject} {pred} is {obj}."
+    if self_sub:
         return f"Your {pred.replace('_', ' ')} is {obj}."
     return f"{subject} {pred.replace('_', ' ')} {obj}".strip()
 
@@ -559,9 +568,9 @@ def _attribute_asked(query: str) -> Optional[str]:
     )
     if name_poss:
         return " ".join(name_poss.group(1).lower().split()) + " name"
-    # "what is my pet named" / "what is my dog named" → same as noun name attribute
+    # "what is my pet named/called" / "what is my dog named" → noun name attribute
     named_q = re.search(
-        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)\s+named\b",
+        r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)\s+(?:named|called)\b",
         q,
         re.IGNORECASE,
     )
@@ -770,10 +779,10 @@ def answer_from_grounded_memories(
             q,
             re.IGNORECASE,
         )
-        # "what is my pet named" — same noun-name slot (Pattern must not own this)
+        # "what is my pet named/called" — same noun-name slot
         if not name_q:
             name_q = re.search(
-                r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)\s+named\b",
+                r"\bwhat(?:'s|\s+is)\s+my\s+([a-z][a-z ]{0,40}?)\s+(?:named|called)\b",
                 q,
                 re.IGNORECASE,
             )
@@ -863,6 +872,30 @@ def answer_from_grounded_memories(
                 return rephrase_user_memory(fact)
         return ""
 
+    def _other_live_answer() -> Optional[str]:
+        # "Where does Pewdiepie live (now)?" — third-party lives_in / moved-to facts.
+        m = re.search(
+            r"\bwhere\s+does\s+([A-Za-z][\w'-]{1,40})\s+live\b",
+            q,
+            re.IGNORECASE,
+        )
+        if not m:
+            return None
+        who = m.group(1).strip()
+        who_l = who.casefold()
+        if who_l in {"i", "you", "we", "he", "she", "it", "they"}:
+            return None
+        for _role, fact in snippets:
+            low = fact.casefold()
+            if who_l not in low:
+                continue
+            if any(
+                key in low
+                for key in ("live in", "lives in", "living in", "moved to")
+            ):
+                return fact if fact.endswith((".", "!", "?")) else fact + "."
+        return ""
+
     def _dog_answer() -> Optional[str]:
         if not re.search(r"\b(?:my\s+)?dog\b", q, re.IGNORECASE):
             return None
@@ -909,6 +942,7 @@ def answer_from_grounded_memories(
         _name_answer,
         _fav_answer,
         _live_answer,
+        _other_live_answer,
         _job_answer,
         _dog_answer,
         _codeword_answer,

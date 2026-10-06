@@ -670,7 +670,51 @@ class DirectNotusProcess:
             "timestamp": now,
         }
         self.working_set["turns"].append(item)
-        return {"status": "success", "content": {"stored": True, **item}}
+        learned: List[Dict[str, Any]] = []
+        if role == "user":
+            try:
+                from notus_memory import NotusMemorySystem
+
+                triples = NotusMemorySystem.extract_personal_fact_triples(content.strip())
+            except Exception:
+                triples = []
+            for subject, predicate, obj, value in triples:
+                try:
+                    fact = self.store_brain_fact(
+                        subject,
+                        predicate,
+                        obj,
+                        value=value,
+                        confidence=0.9,
+                        user_id=user_id,
+                    )
+                except Exception:
+                    continue
+                if not isinstance(fact, dict):
+                    continue
+                try:
+                    from notus_memory import NotusMemorySystem
+
+                    readable = NotusMemorySystem.format_personal_fact(
+                        str(fact.get("subject") or ""),
+                        str(fact.get("predicate") or ""),
+                        str(fact.get("object") or ""),
+                    )
+                except Exception:
+                    readable = ""
+                learned.append(
+                    {
+                        "id": fact.get("id"),
+                        "subject": fact.get("subject"),
+                        "predicate": fact.get("predicate"),
+                        "object": fact.get("object"),
+                        "content": readable,
+                    }
+                )
+        return {
+            "status": "success",
+            "content": {"stored": True, "facts_learned": learned, **item},
+        }
 
     def store_brain_fact(
         self,
@@ -890,36 +934,101 @@ class DirectNotusProcess:
         user_id: str = "default",
         limit: int = 10,
     ) -> List[Dict[str, Any]]:
+        """Recall durable facts for a user by content overlap (empty means empty).
+
+        Uses the same content-token / alias scoring as NotusMemorySystem so
+        paraphrases like "What's my dog called?" hit dog_name facts. FTS AND
+        alone misses those because query fillers are not in the triple.
+        """
         if not isinstance(user_id, str) or not user_id:
             return []
+        from notus_memory import NotusMemorySystem
 
         normalized_limit = self._normalise_limit(limit, 10)
+        query = NotusMemorySystem._augment_identity_query((query or "").strip())
+        if not query:
+            return []
+        query_tokens = NotusMemorySystem._content_tokens(query)
+        if not query_tokens:
+            return []
 
         with self._lock:
             connection = self._require_connection()
-            rows = self._search_fact_rows(query, user_id)
-            ranked: List[Tuple[float, str, sqlite3.Row]] = []
+            rows = connection.execute(
+                """
+                SELECT f.*
+                FROM brain_facts AS f
+                WHERE f.user_id = ?
+                  AND f.is_contradicted = 0
+                ORDER BY f.created_at ASC
+                LIMIT 5000
+                """,
+                (user_id,),
+            ).fetchall()
 
+            scored: List[Tuple[float, str, sqlite3.Row, str]] = []
             for row in rows:
-                text = " ".join(
-                    str(row[name] or "")
-                    for name in ("subject", "predicate", "object", "value")
+                subject = str(row["subject"] or "")
+                predicate = str(row["predicate"] or "")
+                obj = str(row["object"] or "")
+                value = str(row["value"] or "")
+                fact_text = f"{subject} {predicate} {obj}" + (
+                    f" = {value}" if value else ""
                 )
-                score = self._match_quality(query, text)
-                if row["fts_rank"] is not None:
-                    score += max(0.0, -float(row["fts_rank"]))
+                try:
+                    readable = NotusMemorySystem.format_personal_fact(
+                        subject, predicate, obj
+                    )
+                except Exception:
+                    readable = fact_text
+                blob = f"{fact_text} {readable}".replace("_", " ")
+                overlap = NotusMemorySystem._overlap_score(query_tokens, blob)
+                if overlap < NotusMemorySystem._MIN_RELEVANCE:
+                    continue
+                blob_tokens = NotusMemorySystem._content_tokens(blob)
+                blob_exp = NotusMemorySystem._expand_tokens(blob_tokens)
+                if not any(
+                    NotusMemorySystem._alias_set(qt) & blob_exp for qt in query_tokens
+                ):
+                    continue
+                significant = NotusMemorySystem._significant_tokens(query_tokens)
+                if len(query_tokens) >= 2 and significant:
+                    sig_covered = all(
+                        NotusMemorySystem._alias_set(t) & blob_exp for t in significant
+                    )
+                    if len(significant) >= 2 and not sig_covered and overlap < 0.75:
+                        continue
+                    if overlap < max(NotusMemorySystem._MIN_RELEVANCE, 0.5) and not sig_covered:
+                        continue
+                and_bonus = 0.0
+                if significant and all(
+                    NotusMemorySystem._alias_set(t) & blob_exp for t in significant
+                ):
+                    and_bonus = 0.14 if len(significant) >= 2 else 0.10
+                phrase = NotusMemorySystem._phrase_bonus(query, blob)
+                conf = float(row["confidence"] or 0.0)
+                score = overlap + and_bonus + phrase + (0.05 * conf)
+                # Prefer exact predicate name over *_name on bare identity asks.
+                pred_l = predicate.strip().lower()
+                if pred_l == "name" and "name" in query_tokens:
+                    score += 0.2
+                elif pred_l.endswith("_name"):
+                    noun = pred_l[: -len("_name")].replace("_", " ")
+                    noun_toks = NotusMemorySystem._content_tokens(noun)
+                    if noun_toks & query_tokens:
+                        score += 0.12
                 recency = str(row["last_reinforced"] or row["created_at"] or "")
-                ranked.append((score, recency, row))
+                scored.append((score, recency, row, readable))
 
-            ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
-            chosen = ranked[:normalized_limit]
+            scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            chosen = scored[:normalized_limit]
 
             if chosen:
                 connection.executemany(
                     "UPDATE brain_facts "
                     "SET usage_count = usage_count + 1 "
                     "WHERE id = ?",
-                    [(int(row["id"]),) for _, _, row in chosen],
+                    [(int(row["id"]),) for _, _, row, _ in chosen],
                 )
                 connection.commit()
 
@@ -938,8 +1047,10 @@ class DirectNotusProcess:
                 "is_contradicted": False,
                 "conflicts_with": self._decode_conflicts(row["conflicts_with"]),
                 "match_score": float(score),
+                "role": "fact",
+                "content": readable,
             }
-            for score, _recency, row in chosen
+            for score, _recency, row, readable in chosen
         ]
 
     def store_episodic_event(
@@ -1722,13 +1833,34 @@ class DirectNotusProcess:
             )
             facts = self.query_brain_facts(query, user_id, limit)
             episodes = self.query_episodic_events(query, user_id, limit)
+            # Durable facts first so Reasoning/Language see taught knowledge.
+            fact_memories = []
+            for fact in facts:
+                if not isinstance(fact, dict):
+                    continue
+                item = dict(fact)
+                item["role"] = "fact"
+                if not item.get("content"):
+                    try:
+                        from notus_memory import NotusMemorySystem
+
+                        item["content"] = NotusMemorySystem.format_personal_fact(
+                            str(item.get("subject") or ""),
+                            str(item.get("predicate") or ""),
+                            str(item.get("object") or ""),
+                        )
+                    except Exception:
+                        item["content"] = ""
+                if item.get("content"):
+                    fact_memories.append(item)
+            combined = fact_memories + list(memories or [])
 
             return {
                 "status": "success",
                 "content": {
                     "query_text": query,
-                    "semantic": memories,
-                    "memories": memories,
+                    "semantic": combined,
+                    "memories": combined,
                     "facts": facts,
                     "episodic": episodes,
                     "working_set": self._working_set_for_user(user_id),
