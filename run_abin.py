@@ -32,8 +32,11 @@ from attention_lobe import AttentionLobe
 from autonomous_thinking import AutonomousThinkingLoop
 from autonomous_speech import AutonomousSpeechSystem
 from conversation import ConversationSystem
-from direct_reasoning import DirectMaximumSophisticationAdapter
-from language_generation import LanguageGenerator
+from shared_representation_phase2 import (
+    DirectMaximumSophisticationAdapter,
+    LanguageGenerator,
+    SharedRepresentationSystem,
+)
 from notus_memory_core import ActiveNotusMemorySystem
 from direct_notus import DirectNotusProcess
 from output import OutputLobe
@@ -47,7 +50,6 @@ from social_context_lobe import SocialContextLobe
 from motor_action_lobe import MotorActionLobe
 from voice_lobe import VoiceLobe
 from meta_awareness import MetaAwareness
-from shared_representation import SharedRepresentationSystem
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
