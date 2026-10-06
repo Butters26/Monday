@@ -7,14 +7,13 @@ on:
       - phase5_migrate.py
       - .github/workflows/phase5-migrate.yml
 
-permissions:
-  contents: read
-
 jobs:
   migrate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -26,18 +25,11 @@ jobs:
         run: python -m py_compile run_abin.py thalamus.py conversation.py direct_reasoning.py language_generation.py language_comprehension.py shared_representation.py notus.py notus_memory.py
       - name: Verify native architecture
         run: python -m pytest -q test_shared_representation_semantics.py test_shared_representation_native.py test_language_native.py test_native_routing.py test_direct_core_pipeline.py test_notus_integration.py
-      - name: Package validated Phase 5 files
-        uses: actions/upload-artifact@v4
-        with:
-          name: phase5-native-files
-          path: |
-            conversation.py
-            direct_reasoning.py
-            language_generation.py
-            shared_representation.py
-            thalamus.py
-            run_abin.py
-            test_shared_representation_native.py
-            test_language_native.py
-            test_native_routing.py
-            .github/workflows/direct-core.yml
+      - name: Commit validated native migration
+        run: |
+          git config user.name "Mercy Phase 5 Migration"
+          git config user.email "actions@github.com"
+          git add -A
+          git diff --cached --quiet && exit 1
+          git commit -m "Complete Phase 5 native cognitive migration"
+          git push origin HEAD:main
