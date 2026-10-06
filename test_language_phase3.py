@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from phase3_thalamus import Phase3Thalamus as Thalamus
 from shared_representation_phase2 import (
     Phase2SharedRepresentationSystem,
     SharedRepresentationLanguageGenerator,
 )
-from thalamus import Thalamus
 
 
 class _Router:
@@ -201,4 +201,6 @@ def test_phase3_real_thalamus_live_representation_path_uses_language(tmp_path):
     assert result["language_understanding"]["contract"] == "language_understanding_v1"
     assert perception["concept_ids"] == result["concept_ids"]
     assert perception["resolved_concepts"] == result["resolved"]
+    assert perception["proposition_ids"] == result["proposition_ids"]
+    assert perception["language_understanding"]["contract"] == "language_understanding_v1"
     thalamus.shutdown()
