@@ -1,0 +1,37 @@
+IN: What time is it on Mars?
+OUT: "I don't have enough to go on yet — what should I know?"
+
+IN: Tell me about gravity
+OUT: "I don't have enough to go on yet — what should I know?"
+
+IN: asdfghjkl
+OUT: "I don't have enough to go on yet — what should I know?"
+
+IN: xyzzy plugh qwerty
+OUT: "I don't have enough to go on yet — what should I know?"
+
+IN: What is the capital of Atlantis?
+OUT: "I don't have enough to go on yet — what should I know?"
+
+=== isolated user_id=fallback_rip_probe ===
+
+IN: What time is it on Mars?
+OUT: "I don't have enough to go on yet — what should I know?"
+OK: True
+
+IN: Tell me about gravity
+OUT: "I don't have enough to go on yet — what should I know?"
+OK: True
+
+IN: asdfghjkl
+OUT: "I don't have enough to go on yet — what should I know?"
+OK: True
+
+IN: xyzzy plugh qwerty
+OUT: "I don't have enough to go on yet — what should I know?"
+OK: True
+
+IN: What is the capital of Atlantis?
+OUT: "I don't have enough to go on yet — what should I know?"
+OK: True
+

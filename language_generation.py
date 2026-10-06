@@ -214,14 +214,14 @@ class GrammarEngine:
             answer = ""
         if isinstance(answer, str) and answer.strip() and not self._is_grounding_refusal(answer):
             return answer.strip()
-        # Honest empty: keep the grounded refusal — do not invent via grammar.
+        # Honest empty: silence — do not invent via grammar or echo stock refusals.
         if isinstance(answer, str) and self._is_grounding_refusal(answer):
-            return answer.strip()
+            return ""
         
         # --- LIVE MOUTH: GrammarEngine phrase-bank Mad Libs are quarantined ---
         # Prefer structures / props / usable answer / social (handled above).
         # When those are absent: greeting/goodbye/identity stay fixed; everything
-        # else is one honest question — NOT random pronoun/verb/adj banks.
+        # else is silence — NOT a stock question or random phrase banks.
         if intent == 'greeting':
             social = semantic_input.get('social_context')
             return self._compose_greeting(
@@ -443,20 +443,18 @@ class GrammarEngine:
         )
 
     def _compose_honest_ungrounded(self, semantic_input: Optional[Dict[str, Any]] = None) -> str:
-        """Fail closed when grounded content is absent: one honest question.
+        """Fail closed when grounded content is absent: silence (no stock line).
 
         GrammarEngine phrase-bank Mad Libs are quarantined off the live mouth.
+        Matthew: when she has nothing real to say, she says nothing.
         """
         semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
         answer = semantic_input.get("answer")
-        if isinstance(answer, str) and self._is_grounding_refusal(answer):
-            return answer.strip()
-        # Empathic prose already on the envelope — keep it.
+        # Empathic prose already on the envelope — keep it (grounded affect).
         if self._is_usable_empathic_prose(answer if isinstance(answer, str) else None):
             return answer.strip()
-        return (
-            "I don't have enough to go on yet — what should I know?"
-        )
+        # Grounding refusals and all other ungrounded cases: say nothing.
+        return ""
 
     def _compose_uncertainty(self, concepts: List[str], certainty: float) -> str:
         """QUARANTINED — was Mad-Libs phrase-bank. Live path uses _compose_honest_ungrounded.
@@ -821,7 +819,7 @@ class LanguageGenerator:
     def generate(self, semantic_input: Dict[str, Any]) -> str:
         """Generate sentence from semantic input with emotional awareness"""
         if not isinstance(semantic_input, dict):
-            return "I couldn't understand that."
+            return ""
         
         # CRITICAL FIX: Check if this is a novelty question
         # If Novelty Lobe sent a question, use it directly instead of composing
@@ -840,7 +838,7 @@ class LanguageGenerator:
             sentence = self.grammar.compose_sentence(adjusted_input)
             # Light emotion-tone wording when composing (facts stay intact).
             sentence = self._apply_emotion_wording(sentence, adjusted_input)
-            # Ensure we never return None or empty string
+            # Empty is allowed: silence when there is nothing grounded to say.
             if not sentence or not isinstance(sentence, str) or not sentence.strip():
                 return self.grammar._compose_honest_ungrounded(adjusted_input)
             return sentence
@@ -985,7 +983,8 @@ class LanguageGenerator:
     def _send_to_output(self, sentence: str, user_input: str = None):
         """Send generated sentence to Output through Thalamus - DIRECT FUNCTION CALL"""
         if not sentence or not isinstance(sentence, str) or not sentence.strip():
-            sentence = self.grammar._compose_honest_ungrounded({})
+            # Nothing real to say — do not substitute a stock line; skip Output.
+            return
         
         # Direct function call - NO SOCKETS
         # Pass user_input so Output can store the full conversation to Notus

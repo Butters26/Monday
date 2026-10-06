@@ -1,0 +1,69 @@
+=== FALLBACK / STOCK REPLY RIP CHANGE NOTE ===
+time_local: 2026-10-06 (America/Denver / MT)
+
+Matthew asked (exact words — do not paraphrase):
+he ordered every single fallback message removed from Monday, including the line "I don't have enough to go on yet, what should I know?" (also seen as "I don't have enough to go on yet — what should I know?"). When she has nothing real to say, she should say nothing rather than give a stock line. Matty later: Perception is done on GitHub; do the parked fallback rip; don't invent next phase; don't mark done until stock lines are actually gone on the live path.
+
+What was actually done
+----------------------
+Pulled origin/main first (was behind Phase 3/4 commits) so the rip lands on current live path.
+Live path confirmed: run_abin → Phase4Thalamus.process_user_input (line ~805) → legacy Thalamus.process_user_input → LanguageGenerator.generate → Output.
+
+Lobes/modules OPENED and read before editing:
+  - language_generation.py (GrammarEngine + LanguageGenerator)
+  - conversation.py (intent only; no stock reply banks on mouth)
+  - thalamus.py (process_user_input error/empty stock returns)
+  - phase4_thalamus.py (duplicate stock returns; live PUI delegates to legacy)
+  - output.py (empty-text stock "I'm thinking about that.")
+  - _monday_say.py / _monday_chat_daemon.py (daemon → thalamus.process_user_input)
+  - direct_response.py (provider path; already no canned encyclopedias)
+  - autonomous_speech.py (timing only)
+  - notus_outage_fallback.py (memory queue; not mouth text)
+  - test_direct_core_pipeline.py (expected the old stock line)
+  - run_abin.py (Phase4Thalamus wiring)
+  NO language.py (does not exist)
+
+Files CHANGED:
+  - language_generation.py
+      * _compose_honest_ungrounded → returns "" (silence) instead of
+        "I don't have enough to go on yet — what should I know?"
+      * grounding-refusal path in compose_sentence → "" (do not echo stock)
+      * generate() invalid input → "" (was "I couldn't understand that.")
+      * empty compose allowed; _send_to_output skips Output when empty
+        (no stock substitute)
+  - thalamus.py
+      * empty input / lobe-fail stock returns → "" :
+        "Please send a message."
+        "I'm having trouble perceiving/understanding/processing/thinking/
+         finding the words right now."
+  - phase4_thalamus.py
+      * same six stock returns → "" (dead overridden PUI + consistency)
+  - output.py
+      * generate_output + text_response empty fill
+        "I'm thinking about that." → ""
+  - test_direct_core_pipeline.py
+      * ungrounded gravity case now asserts silence / no stock needles
+
+NOT changed (intentional social replies when cue/intent is real, not
+"nothing to say" fallbacks):
+  - greeting / goodbye / check-in / emotional-share continuity banks
+  - identity/introduction grounded self lines
+  - notus_outage_fallback memory queue (not mouth text)
+
+Proof
+-----
+  before: _fallback_rip_before_live.txt
+          (and older _fallback_rip_before.txt)
+          Ungrounded inputs returned:
+          "I don't have enough to go on yet — what should I know?"
+  after:  _fallback_rip_after_live.txt
+          Same inputs via daemon / _monday_say.py → OUT: ''
+          greeting "hello" still speaks; empty input → ''
+          STOCK_LINE_STILL_FIRES: False
+
+  pytest: test_prompted_core_path_renders_greeting_and_ungrounded_fail_closed PASSED
+
+Daemon: restarted _monday_chat_daemon.py so live path reloads modules.
+
+OUT OF SCOPE (untouched per order): Conversation rebuild, Language parse
+packet, learning redo, inventing next phase.

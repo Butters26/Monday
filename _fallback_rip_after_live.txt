@@ -1,0 +1,43 @@
+=== AFTER: ungrounded inputs (must be silence / empty) ===
+
+IN: What time is it on Mars?
+OUT: ''
+OK: True
+
+IN: Tell me about gravity
+OUT: ''
+OK: True
+
+IN: asdfghjkl
+OUT: ''
+OK: True
+
+IN: xyzzy plugh qwerty
+OUT: ''
+OK: True
+
+IN: What is the capital of Atlantis?
+OUT: ''
+OK: True
+
+=== AFTER: greeting still speaks; empty input silence ===
+
+IN: 'hello'
+OUT: 'Hello! Nice to meet you'
+
+IN: ''
+OUT: ''
+
+=== AFTER via _monday_say.py ===
+
+IN: What time is it on Mars?
+OUT: ''
+
+IN: Tell me about gravity
+OUT: ''
+
+IN: asdfghjkl
+OUT: ''
+
+STOCK_HITS: []
+STOCK_LINE_STILL_FIRES: False

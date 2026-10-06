@@ -123,15 +123,16 @@ def test_prompted_core_path_renders_greeting_and_ungrounded_fail_closed(tmp_path
         greeting = systems["thalamus"].process_user_input("hello")
         gravity = systems["thalamus"].process_user_input("What is gravity?")
         assert "hello" in greeting.lower() or "hi" in greeting.lower()
-        low = gravity.lower()
+        low = (gravity or "").lower()
         # Provider canned encyclopedias ripped; Language Mad Libs quarantined.
+        # Ungrounded → silence (no stock "enough to go on" / filler question).
         assert "mass" not in low
         assert "attraction" not in low
-        assert (
-            "enough to go on" in low
-            or "enough grounded" in low
-            or low.rstrip().endswith("?")
-        )
+        assert "enough to go on" not in low
+        assert "enough grounded" not in low
+        assert "what should i know" not in low
+        assert "i'm thinking about that" not in low
+        assert not low.strip()
     finally:
         shutdown_core_systems(systems)
 

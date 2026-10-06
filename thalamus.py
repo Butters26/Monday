@@ -1974,7 +1974,7 @@ class Thalamus:
     ) -> str:
         """Run the sole prompted path: perception → attention → conversation → Notus → emotion → Pattern → reasoning → language → (aside/curiosity) → output → Notus monday speech."""
         if not isinstance(user_input, str) or not user_input.strip():
-            return "Please send a message."
+            return ""
 
         # Text perception first when registered: normalize + concepts before chat.
         # Callers that already ran Perception (audio/vision) may pass the envelope.
@@ -1989,7 +1989,7 @@ class Thalamus:
                     {"text": user_input, "user_id": user_id},
                 )
                 if perception.get("status") != "success":
-                    return "I'm having trouble perceiving that right now."
+                    return ""
                 perception_payload = self._content(perception)
                 normalized = (
                     perception_payload.get("text")
@@ -2198,7 +2198,7 @@ class Thalamus:
             },
         )
         if conversation["status"] != "success":
-            return "I'm having trouble understanding right now."
+            return ""
         understanding = self._content(conversation).get("understanding", {})
 
         # Executive: set/hold current goal from intent; steer Attention toward it.
@@ -2279,7 +2279,7 @@ class Thalamus:
             "emotion", "process_input", {"user_input": user_input}
         )
         if emotion["status"] != "success":
-            return "I'm having trouble processing that right now."
+            return ""
         emotional_state = self._content(emotion)
         # Ensure unresolved appraisals are visible for curiosity gating.
         if not (emotional_state.get("unresolved_appraisals") or []):
@@ -2442,7 +2442,7 @@ class Thalamus:
             },
         )
         if reasoning["status"] != "success":
-            return "I'm having trouble thinking right now."
+            return ""
         semantic_input, reasoning_answer = self._reasoning_answer(reasoning)
         # Drop reasoning answers that don't overlap the prompt / asked attribute.
         # Empathic / teaching acks are allowed without token overlap.
@@ -2611,7 +2611,7 @@ class Thalamus:
             semantic_input["memory_context"] = list(memories) if isinstance(memories, list) else []
         language = self.send_and_wait("language", "generate", {"semantic_input": semantic_input})
         if language["status"] != "success":
-            return "I'm having trouble finding the words right now."
+            return ""
         response_text = self._content(language).get("sentence", "")
         if isinstance(response_text, str):
             response_text = self._meta_cognition_watch_language(

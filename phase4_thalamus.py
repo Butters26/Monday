@@ -271,7 +271,7 @@ class Phase4Thalamus(Phase3Thalamus):
     ) -> str:
         """Orchestrate one prompted turn without semantic decision-making."""
         if not isinstance(user_input, str) or not user_input.strip():
-            return "Please send a message."
+            return ""
 
         # Perception owns sensory normalization. Thalamus only routes its envelope.
         if perception_payload is None:
@@ -285,7 +285,7 @@ class Phase4Thalamus(Phase3Thalamus):
                     {"text": user_input, "user_id": user_id},
                 )
                 if perception.get("status") != "success":
-                    return "I'm having trouble perceiving that right now."
+                    return ""
                 perception_payload = self._content(perception)
                 normalized = (
                     perception_payload.get("text")
@@ -482,7 +482,7 @@ class Phase4Thalamus(Phase3Thalamus):
             },
         )
         if conversation.get("status") != "success":
-            return "I'm having trouble understanding right now."
+            return ""
         understanding = self._content(conversation).get("understanding", {})
         understanding = understanding if isinstance(understanding, dict) else {}
 
@@ -557,7 +557,7 @@ class Phase4Thalamus(Phase3Thalamus):
             "emotion", "process_input", {"user_input": user_input}
         )
         if emotion.get("status") != "success":
-            return "I'm having trouble processing that right now."
+            return ""
         emotional_state = self._content(emotion)
         if not (emotional_state.get("unresolved_appraisals") or []):
             try:
@@ -609,7 +609,7 @@ class Phase4Thalamus(Phase3Thalamus):
             },
         )
         if reasoning.get("status") != "success":
-            return "I'm having trouble thinking right now."
+            return ""
         semantic_input = self._route_reasoning_semantics(reasoning)
 
         # Phase 4's production Reasoning adapter marks this. Do not replace a
@@ -653,7 +653,7 @@ class Phase4Thalamus(Phase3Thalamus):
             {"semantic_input": semantic_input},
         )
         if language.get("status") != "success":
-            return "I'm having trouble finding the words right now."
+            return ""
         response_text = self._content(language).get("sentence", "")
         if isinstance(response_text, str):
             response_text = self._meta_cognition_watch_language(

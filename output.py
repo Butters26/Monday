@@ -775,7 +775,8 @@ class OutputLobe:
 
             text_output = formatted.get('text', '')
             if not text_output or not isinstance(text_output, str) or not text_output.strip():
-                text_output = "I'm thinking about that."
+                # Silence when Language handed nothing real — no stock filler.
+                text_output = ""
             formatted['text'] = text_output
 
             self.last_emotion_meta = {
@@ -849,7 +850,8 @@ class OutputLobe:
             # Direct text response from Language_generation
             text = payload.get('text', '')
             if not text or not isinstance(text, str) or not text.strip():
-                text = "I'm thinking about that."
+                # Silence — do not substitute a stock thinking line.
+                text = ""
             
             # FIX: Prevent duplicate sends (same text within 10 seconds)
             current_time = time.time()

@@ -1,0 +1,27 @@
+IN: hello
+OUT: 'Hi there'
+
+IN: how are you?
+OUT: "I'm here — thanks for checking in. How are you?"
+
+IN: bye
+OUT: 'Okay, see you later.'
+
+IN: What time is it on Mars?
+OUT: 'See you later.'
+
+IN: Tell me about gravity
+OUT: 'See you later.'
+
+IN: asdfgh
+OUT: 'See you later.'
+
+IN: My dog's name is Biscuit
+OUT: "Your dog's name is Biscuit."
+
+IN: What's my dog called?
+OUT: "Your dog's name is Biscuit."
+
+IN: hello again while notus down  [Notus forced unavailable]
+OUT: 'Take care.'
+
