@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """Phase 2 bridge for Mercy's Shared Representation migration.
 
-This module deliberately wraps the existing live Reasoning, Language, and
-SharedRepresentation classes instead of rewriting them all at once.
+This module deliberately wraps the existing live Reasoning and Language classes
+instead of rewriting them all at once.
 
 Ownership stays explicit:
 - Reasoning supplies grounded meaning it already owns.
 - Shared Representation assigns/reuses concept IDs and stores transient
   propositions supplied by Reasoning. It does not infer roles or truth.
-- Language consumes those proposition IDs and asks Shared Representation for a
-  compatibility view before wording the answer.
+- Language consumes those proposition IDs, resolves their shared references,
+  and converts them into the existing grounded-structure compatibility shape
+  before wording the answer.
 - Existing grounded_structures remain as a fallback during migration.
 
-Once all producers/consumers speak the new proposition contract natively, this
-bridge can be removed without changing the underlying cognitive boundaries.
+The native SharedRepresentationSystem now owns the Phase 1/2 storage and
+message APIs directly. This bridge only connects existing Reasoning/Language to
+that contract; it does not duplicate Shared Representation behavior.
 """
 
 from __future__ import annotations
@@ -28,114 +30,9 @@ from shared_representation import SharedRepresentationSystem as LegacySharedRepr
 
 
 class Phase2SharedRepresentationSystem(LegacySharedRepresentationSystem):
-    """Expose Phase 1 transient representation APIs through the lobe contract."""
+    """Native SharedRepresentationSystem under the Phase 2 import name."""
 
-    @staticmethod
-    def _payload(message: Dict[str, Any]) -> Dict[str, Any]:
-        content = message.get("content")
-        if isinstance(content, dict):
-            return content
-        return {
-            key: value
-            for key, value in message.items()
-            if key not in {"type", "message_type", "source", "message_id", "content"}
-        }
-
-    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        msg_type = str(message.get("type") or message.get("message_type") or "")
-        content = self._payload(message)
-
-        if msg_type == "get_candidate_concepts":
-            surface = str(content.get("surface") or content.get("term") or "")
-            matches = [concept.to_public() for concept in self.get_candidate_concepts(surface)]
-            return {
-                "status": "success",
-                "content": {"surface": surface, "candidates": matches},
-                "candidates": matches,
-            }
-
-        if msg_type == "lookup_surface":
-            surface = str(content.get("surface") or content.get("term") or "")
-            matches = self.lookup_surface(surface)
-            return {
-                "status": "success",
-                "content": {"surface": surface, "candidates": matches},
-                "candidates": matches,
-            }
-
-        if msg_type == "register_instance":
-            instance = self.register_instance(
-                str(content.get("concept_id") or ""),
-                label=content.get("label"),
-                properties=content.get("properties") if isinstance(content.get("properties"), dict) else None,
-                provenance=content.get("provenance"),
-                activation=content.get("activation", 1.0),
-                expires_after_turn=content.get("expires_after_turn"),
-            )
-            if instance is None:
-                return {"status": "error", "message": "could not register instance", "content": {}}
-            public = instance.to_public()
-            return {"status": "success", "content": public, "instance": public}
-
-        if msg_type == "get_instance":
-            instance = self.get_instance(str(content.get("instance_id") or content.get("id") or ""))
-            if instance is None:
-                return {"status": "error", "message": "instance not found", "content": {}}
-            public = instance.to_public()
-            return {"status": "success", "content": public, "instance": public}
-
-        if msg_type == "register_proposition":
-            roles = content.get("roles")
-            proposition = self.register_proposition(
-                str(content.get("predicate_id") or ""),
-                roles if isinstance(roles, dict) else {},
-                qualifiers=content.get("qualifiers") if isinstance(content.get("qualifiers"), dict) else None,
-                provenance=content.get("provenance"),
-                activation=content.get("activation", 1.0),
-                expires_after_turn=content.get("expires_after_turn"),
-            )
-            if proposition is None:
-                return {"status": "error", "message": "could not register proposition", "content": {}}
-            public = proposition.to_public()
-            return {"status": "success", "content": public, "proposition": public}
-
-        if msg_type == "get_proposition":
-            proposition = self.get_proposition(
-                str(content.get("proposition_id") or content.get("id") or "")
-            )
-            if proposition is None:
-                return {"status": "error", "message": "proposition not found", "content": {}}
-            public = proposition.to_public()
-            return {"status": "success", "content": public, "proposition": public}
-
-        if msg_type == "get_active_propositions":
-            try:
-                threshold = float(content.get("threshold", 0.08))
-            except (TypeError, ValueError):
-                threshold = 0.08
-            propositions = [p.to_public() for p in self.get_active_propositions(threshold)]
-            return {
-                "status": "success",
-                "content": {"propositions": propositions},
-                "propositions": propositions,
-            }
-
-        if msg_type == "expire_turn":
-            expired = self.expire_turn(content.get("turn_id"))
-            return {"status": "success", "content": expired, **expired}
-
-        if msg_type == "proposition_to_grounded_structure":
-            proposition_id = str(content.get("proposition_id") or content.get("id") or "")
-            structure = self.proposition_to_grounded_structure(proposition_id)
-            if structure is None:
-                return {"status": "error", "message": "proposition not found", "content": {}}
-            return {
-                "status": "success",
-                "content": {"grounded_structure": structure},
-                "grounded_structure": structure,
-            }
-
-        return super().process_message(message)
+    pass
 
 
 class SharedRepresentationReasoningAdapter(LegacyDirectReasoningAdapter):
@@ -172,6 +69,7 @@ class SharedRepresentationReasoningAdapter(LegacyDirectReasoningAdapter):
         structures: Any,
         *,
         turn_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         if not isinstance(structures, list) or self.thalamus is None:
             return []
@@ -227,6 +125,7 @@ class SharedRepresentationReasoningAdapter(LegacyDirectReasoningAdapter):
                     "predicate_id": predicate_id,
                     "roles": roles,
                     "qualifiers": qualifiers,
+                    "user_id": user_id,
                     "provenance": {
                         "producer_lobe": "reasoning",
                         "source_type": "reasoning_grounded_structure",
@@ -263,9 +162,15 @@ class SharedRepresentationReasoningAdapter(LegacyDirectReasoningAdapter):
         if not isinstance(structures, list) or not structures:
             return result
 
+        payload = message.get("content") if isinstance(message.get("content"), dict) else {}
+        direct_input = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+        user_id = direct_input.get("user_id")
+        user_id = str(user_id).strip() if user_id is not None else None
+
         registered = self._register_grounded_structures(
             structures,
             turn_id=str(message.get("message_id")) if message.get("message_id") else None,
+            user_id=user_id or None,
         )
         if registered:
             semantic_input["representation_proposition_ids"] = [
@@ -275,11 +180,114 @@ class SharedRepresentationReasoningAdapter(LegacyDirectReasoningAdapter):
             ]
             semantic_input["representation_propositions"] = registered
             semantic_input["representation_contract"] = "shared_representation_phase2"
+            if user_id:
+                semantic_input["representation_user_id"] = user_id
         return result
 
 
 class SharedRepresentationLanguageGenerator(LegacyLanguageGenerator):
-    """Consume SR proposition IDs before composing language."""
+    """Consume Shared Representation proposition IDs before composing language."""
+
+    def _send_shared(self, msg_type: str, content: Dict[str, Any]) -> Dict[str, Any]:
+        if self.thalamus is None:
+            return {}
+        response = self.thalamus.send_message(
+            "shared_representation",
+            msg_type,
+            content,
+            source="language",
+        )
+        return response if isinstance(response, dict) else {}
+
+    @staticmethod
+    def _response_content(response: Dict[str, Any]) -> Dict[str, Any]:
+        content = response.get("content")
+        return content if isinstance(content, dict) else response
+
+    def _name_for_reference(self, reference_id: Any, user_id: Optional[str]) -> Optional[str]:
+        ref = str(reference_id or "").strip()
+        if not ref:
+            return None
+
+        concept_response = self._send_shared("get_concept", {"concept_id": ref})
+        if concept_response.get("status") == "success":
+            concept = self._response_content(concept_response)
+            name = concept.get("canonical_name") or concept.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+
+        instance_response = self._send_shared(
+            "get_instance",
+            {"instance_id": ref, "user_id": user_id},
+        )
+        if instance_response.get("status") == "success":
+            instance = self._response_content(instance_response)
+            label = instance.get("label")
+            if isinstance(label, str) and label.strip():
+                return label.strip()
+            concept_id = instance.get("concept_id")
+            if concept_id:
+                parent_response = self._send_shared(
+                    "get_concept",
+                    {"concept_id": str(concept_id)},
+                )
+                if parent_response.get("status") == "success":
+                    parent = self._response_content(parent_response)
+                    name = parent.get("canonical_name") or parent.get("name")
+                    if isinstance(name, str) and name.strip():
+                        return name.strip()
+
+        return ref
+
+    def _legacy_structure_from_proposition(
+        self,
+        proposition_id: Any,
+        user_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        response = self._send_shared(
+            "get_proposition",
+            {"proposition_id": str(proposition_id), "user_id": user_id},
+        )
+        if response.get("status") != "success":
+            return None
+        proposition = self._response_content(response)
+
+        predicate_id = proposition.get("predicate_id")
+        predicate = self._name_for_reference(predicate_id, user_id)
+        if not predicate:
+            return None
+
+        roles = proposition.get("roles")
+        roles = roles if isinstance(roles, dict) else {}
+        subject_ref = roles.get("subject") or roles.get("agent")
+        object_ref = (
+            roles.get("object")
+            or roles.get("theme")
+            or roles.get("patient")
+            or roles.get("recipient")
+            or roles.get("value")
+        )
+        subject = self._name_for_reference(subject_ref, user_id)
+        obj = self._name_for_reference(object_ref, user_id)
+
+        qualifiers = proposition.get("qualifiers")
+        qualifiers = qualifiers if isinstance(qualifiers, dict) else {}
+        provenance = proposition.get("provenance")
+        provenance = provenance if isinstance(provenance, dict) else {}
+        try:
+            certainty = float(qualifiers.get("certainty", provenance.get("confidence", 1.0)))
+        except (TypeError, ValueError):
+            certainty = 1.0
+
+        return {
+            "subject": subject,
+            "relation": predicate,
+            "predicate": predicate,
+            "value": obj,
+            "object": obj,
+            "certainty": certainty,
+            "proposition_id": str(proposition.get("proposition_id") or proposition_id),
+        }
 
     def _hydrate_shared_propositions(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(semantic_input, dict) or self.thalamus is None:
@@ -288,19 +296,12 @@ class SharedRepresentationLanguageGenerator(LegacyLanguageGenerator):
         if not isinstance(proposition_ids, list) or not proposition_ids:
             return semantic_input
 
+        user_id = semantic_input.get("representation_user_id")
+        user_id = str(user_id).strip() if user_id is not None else None
+
         structures: List[Dict[str, Any]] = []
         for proposition_id in proposition_ids:
-            response = self.thalamus.send_message(
-                "shared_representation",
-                "proposition_to_grounded_structure",
-                {"proposition_id": str(proposition_id)},
-                source="language",
-            )
-            if not isinstance(response, dict) or response.get("status") != "success":
-                continue
-            content = response.get("content")
-            content = content if isinstance(content, dict) else response
-            structure = content.get("grounded_structure")
+            structure = self._legacy_structure_from_proposition(proposition_id, user_id)
             if isinstance(structure, dict):
                 structures.append(structure)
 
