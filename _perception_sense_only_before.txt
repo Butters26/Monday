@@ -1,0 +1,75 @@
+=== PERCEPTION SENSE-ONLY BEFORE ===
+time_local: 2026-10-06 11:01:22 MT
+input: "Hey Monday, it's Steve. Just saying hi."
+
+DESIGN_JOB (locked): Sense only — raw + normalize + basic observables.
+Does NOT decide meaning, intent, emotion, truth, or response.
+
+--- perceive_text full ---
+{
+  "concepts": [
+    "hey",
+    "monday",
+    "it's",
+    "steve",
+    "just",
+    "saying",
+    "hi"
+  ],
+  "confidence": 1.0,
+  "entities": [
+    "Monday",
+    "Steve Just"
+  ],
+  "modality": "text",
+  "novelty_flags": [
+    "novel_entity:Monday",
+    "novel_entity:Steve Just",
+    "novel_concept:monday",
+    "novel_concept:it's",
+    "novel_concept:steve",
+    "novel_concept:just",
+    "novel_concept:saying"
+  ],
+  "raw_meta": {
+    "emotions": [],
+    "intent_hints": [],
+    "negations": [],
+    "normalized_text": "Hey Monday, it's Steve. Just saying hi.",
+    "object": null,
+    "questions": [],
+    "raw_text": "Hey Monday, it's Steve. Just saying hi.",
+    "sentiment": "neutral",
+    "source": "text",
+    "subject": "Hey",
+    "timestamp": 1791306082.36674,
+    "verb": null,
+    "words": [
+      "hey",
+      "monday",
+      "it's",
+      "steve",
+      "just",
+      "saying",
+      "hi"
+    ]
+  },
+  "text": "Hey Monday, it's Steve. Just saying hi."
+}
+
+--- interpretation fields that MUST go away ---
+entities = ['Monday', 'Steve Just']
+novelty_flags = ['novel_entity:Monday', 'novel_entity:Steve Just', 'novel_concept:monday', "novel_concept:it's", 'novel_concept:steve', 'novel_concept:just', 'novel_concept:saying']
+raw_meta.emotions = []
+raw_meta.sentiment = 'neutral'
+raw_meta.subject = 'Hey'
+raw_meta.verb = None
+raw_meta.object = None
+raw_meta.questions = []
+raw_meta.intent_hints = []
+raw_meta.negations = []
+process_text_input.sentiment = 'neutral'
+process_text_input.emotions = []
+
+NOTE: This snapshot is BEFORE sense-only edits. Entities/novelty/SVO/sentiment
+show Perception currently lying vs locked description.

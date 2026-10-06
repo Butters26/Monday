@@ -652,7 +652,13 @@ class Thalamus:
         perception_payload: Optional[Dict[str, Any]] = None,
         user_id: str = "default",
     ) -> List[Dict[str, Any]]:
-        """Build competing live-path signals for AttentionLobe (user + perception + ambient)."""
+        """Build competing live-path signals for AttentionLobe (user + perception + ambient).
+
+        Perception is sense-only: emotions / entities / novelty_flags may be
+        missing or empty. Tolerate with .get() defaults — do not invent
+        interpretation here when Perception omits those fields. Emotion and
+        Novelty lobes own those jobs when present.
+        """
         perception_payload = perception_payload if isinstance(perception_payload, dict) else {}
         signals: List[Dict[str, Any]] = []
         text = user_input if isinstance(user_input, str) else ""
@@ -660,6 +666,17 @@ class Thalamus:
             novelty_score = float(perception_payload.get("novelty_score") or 0.0)
         except (TypeError, ValueError):
             novelty_score = 0.0
+        # Sense-only Perception: treat missing interpretation fields as empty.
+        perc_emotions = list(
+            (perception_payload.get("raw_meta") or {}).get("emotions")
+            or perception_payload.get("emotions")
+            or []
+        )
+        perc_entities = list(perception_payload.get("entities") or [])
+        perc_novelty_flags = list(perception_payload.get("novelty_flags") or [])
+        perc_concepts = list(
+            perception_payload.get("concepts") or perception_payload.get("words") or []
+        )
         signals.append(
             {
                 "id": "user_input",
@@ -667,15 +684,11 @@ class Thalamus:
                 "source": "user",
                 "modality": "text",
                 "priority": 0.55,
-                "novelty_flags": list(perception_payload.get("novelty_flags") or []),
+                "novelty_flags": perc_novelty_flags,
                 "novelty_score": novelty_score,
-                "emotions": list(
-                    (perception_payload.get("raw_meta") or {}).get("emotions")
-                    or perception_payload.get("emotions")
-                    or []
-                ),
-                "entities": list(perception_payload.get("entities") or []),
-                "concepts": list(perception_payload.get("concepts") or perception_payload.get("words") or []),
+                "emotions": perc_emotions,
+                "entities": perc_entities,
+                "concepts": perc_concepts,
                 "user_id": user_id,
             }
         )
@@ -693,26 +706,20 @@ class Thalamus:
                     "source": "perception",
                     "modality": str(perception_payload.get("modality") or "text"),
                     "priority": 0.25,
-                    "novelty_flags": list(perception_payload.get("novelty_flags") or []),
+                    "novelty_flags": perc_novelty_flags,
                     "novelty_score": novelty_score,
-                    "emotions": list(
-                        (perception_payload.get("raw_meta") or {}).get("emotions")
-                        or perception_payload.get("emotions")
-                        or []
-                    ),
-                    "entities": list(perception_payload.get("entities") or []),
-                    "concepts": list(
-                        perception_payload.get("concepts")
-                        or perception_payload.get("words")
-                        or []
-                    ),
+                    "emotions": perc_emotions,
+                    "entities": perc_entities,
+                    "concepts": perc_concepts,
                 }
             )
             # SensoryIntegration multi-modal competitors (already fused on stream).
             for sig in perception_payload.get("attention_signals") or []:
                 if isinstance(sig, dict) and sig.get("id"):
                     signals.append(dict(sig))
-            for idx, ent in enumerate(perception_payload.get("entities") or []):
+            # Entity/novelty competitor signals only when Perception (or Novelty
+            # lobe merge) actually supplied them — empty lists are normal.
+            for idx, ent in enumerate(perc_entities):
                 if not isinstance(ent, str) or not ent.strip():
                     continue
                 signals.append(
@@ -727,7 +734,7 @@ class Thalamus:
                 )
                 if idx >= 4:
                     break
-            for idx, flag in enumerate(perception_payload.get("novelty_flags") or []):
+            for idx, flag in enumerate(perc_novelty_flags):
                 if not flag:
                     continue
                 signals.append(
@@ -752,7 +759,7 @@ class Thalamus:
                         "modality": "text",
                         "priority": min(0.55, 0.25 + 0.35 * novelty_score),
                         "novelty_score": novelty_score,
-                        "novelty_flags": list(perception_payload.get("novelty_flags") or [])[:4],
+                        "novelty_flags": perc_novelty_flags[:4],
                     }
                 )
         # Low-salience ambient competitor so ranking is real, not a single dead entry.

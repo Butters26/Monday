@@ -1,0 +1,64 @@
+=== PERCEPTION SENSE-ONLY CHANGE NOTE ===
+time_local: 2026-10-06 (America/Denver / MT)
+
+Matthew asked (exact quote):
+"Hey Steve, before you do anything, can you go match perception to its fucking description?"
+Later demanded the fix on the local checkout because Cursor cloud can't see Butters26/Monday.
+
+LOCKED Perception description:
+Receive raw text/audio/visual input, preserve accurately, clean/normalize, extract basic
+observable features, pass structured representation onward. Does NOT decide meaning,
+intent, emotion, truth, or response.
+
+What was actually done
+----------------------
+Files changed:
+  - perception.py
+  - perception_config.json
+  - thalamus.py
+  - _perception_sense_only_before.txt (new proof)
+  - _perception_sense_only_after.txt (new proof)
+  - _perception_sense_only_change_note.txt (this file)
+
+Behavior REMOVED from Perception text path:
+  - emotion keyword lists / emotion tagging
+  - sentiment positive/negative word lists
+  - question-word tagging as Perception ownership
+  - subject/verb/object grammar guess
+  - capitalized entity detection
+  - novelty_flags / seen_concepts / seen_entities signaling from perceive_text
+  - _maybe_signal_novelty → Novelty lobe from Perception text
+  - process_text_input no longer exposes sentiment/emotions/intent_hints
+
+Behavior KEPT (sense-only):
+  - raw text preserved in raw_meta.raw_text
+  - whitespace normalize → text / normalized_text
+  - basic observables: word list (concepts/words), length, word_count
+  - unified envelope keys entities=[] and novelty_flags=[] kept empty for caller compat
+  - hearing: acoustic features + STT as observed speech text (via sense-only perceive_text);
+    no emotion on transcript
+  - vision: low-level brightness/edges/faces/resolution/complexity; BLIP/CLIP interpretive
+    caption gated OFF by PerceptionLobe.ALLOW_INTERPRETIVE_VISION_CAPTION = False
+    (documented; code retained but not used on live sense-only path)
+
+thalamus.py:
+  - _build_attention_signals tolerates missing/empty emotions/entities/novelty_flags
+  - does NOT re-implement that interpretation inside Perception
+  - entity:/novelty: competitor signals only when lists are non-empty
+
+Config (perception_config.json):
+  - detect_emotions / question_words / emotion_keywords / entity_detection disabled
+  - semantic_vision / interpretive_caption false
+  - notes match locked sense-only description
+
+Proof input: "Hey Monday, it's Steve. Just saying hi."
+  before: entities=['Monday','Steve Just'], novelty novel_entity/novel_concept flags,
+          raw_meta.subject='Hey', sentiment='neutral'
+  after:  entities=[], novelty_flags=[], no sentiment/emotion/S-V-O/questions keys;
+          words/length only
+
+Daemon: yes — restart Monday chat/perception process so it reloads perception.py
+(module is imported at process start; in-place edit alone does not hot-reload).
+
+OUT OF SCOPE (untouched): Conversation, Language, parse packet, lexicon,
+MetaAwareness/MetaCognition, dual_stream_thinking.py.

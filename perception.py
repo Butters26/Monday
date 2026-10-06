@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Perception Lobe — senses → concepts/entities/novelty → thalamus.
+"""Perception Lobe — sense-only intake → structured observations → thalamus.
 
-Modalities (design):
-  - text: always online (normalize + extract concepts/entities)
-  - hearing/audio: real acoustic + semantic STT (whisper/vosk/google) from mic OR file/bytes
-  - vision: real low-level features + optional BLIP generative caption (CLIP supplemental only) from camera OR file/bytes
+LOCKED job: Receive raw text/audio/visual input, preserve accurately,
+clean/normalize, extract basic observable features, pass structured
+representation onward. Does NOT decide meaning, intent, emotion, truth,
+or response.
+
+Modalities:
+  - text: always online — normalize whitespace + basic observables
+    (word list / length). No emotion/sentiment/S-V-O/entities/novelty.
+  - hearing/audio: acoustic features + optional STT as observed speech text.
+    No emotion layered on transcript.
+  - vision: low-level brightness/edges/faces OK. BLIP/CLIP caption is
+    interpretation (not sense) — off by default (ALLOW_INTERPRETIVE_VISION_CAPTION).
 
 Hardware mic/webcam are probed honestly and never claimed live unless
 device open succeeds. File/buffer paths are first-class sensory intake
@@ -45,15 +53,21 @@ ImageSource = Union[PathLike, bytes, bytearray, memoryview]
 
 
 class PerceptionLobe:
-    """Multi-modal perception with honest capability probing + file intake."""
+    """Multi-modal sense-only perception with honest capability probing + file intake.
+
+    Text path: raw + normalize + word/length observables only.
+    Hearing: acoustics + STT transcript as observed text (no emotion).
+    Vision: low-level features; BLIP/CLIP interpretive caption gated off.
+    """
 
     TEXT_ENABLED = True
+    # BLIP/CLIP captions decide scene meaning — interpretation, not sense.
+    # Locked Perception description keeps this False.
+    ALLOW_INTERPRETIVE_VISION_CAPTION = False
 
     def __init__(self, thalamus=None, probe_devices: bool = True) -> None:
         self.thalamus = thalamus if thalamus is not None else get_thalamus()
         self.running = True
-        self.seen_concepts: Set[str] = set()
-        self.seen_entities: Set[str] = set()
 
         # Hardware live flags (mic / camera) — never set without real open.
         self.stt_available = False
@@ -190,10 +204,11 @@ class PerceptionLobe:
         self._stt_backend_reason = "no STT backend (whisper/vosk/speech_recognition)"
 
     def _probe_semantic_vision(self) -> None:
-        """BLIP generative captioning primary; CLIP optional supplemental only.
+        """Probe optional interpretive BLIP/CLIP (not used in sense-only default).
 
-        CLIP candidate labels never define possible captions. Lazy-load weights
-        on first use. Honest degrade when transformers/torch unavailable.
+        BLIP/CLIP decide scene meaning — interpretation. Locked Perception
+        keeps ALLOW_INTERPRETIVE_VISION_CAPTION=False so probes do not feed
+        the live envelope. Lazy-load weights on first use if ever enabled.
         """
         try:
             import torch  # type: ignore
@@ -333,55 +348,50 @@ class PerceptionLobe:
     # ------------------------------------------------------------------
 
     def perceive_text(self, text: str) -> Dict[str, Any]:
-        """Normalize text → concepts/entities/novelty → unified shape."""
+        """Normalize text → basic observables → unified sense-only shape.
+
+        Keeps: raw text, normalized whitespace, word list / length.
+        Does not: emotion, sentiment, question tagging, S-V-O grammar,
+        capitalized entity detection, novelty_flags / seen_concepts signaling.
+        """
         raw = text if isinstance(text, str) else ""
         normalized = self.normalize_text(raw)
-        extracted = self._extract_concepts(normalized)
-        concept_list = list(extracted.get("words") or [])
-        entity_list = list(extracted.get("entities") or [])
-        novelty_flags = self._compute_novelty_flags(normalized, extracted)
-        self._maybe_signal_novelty(normalized, extracted, novelty_flags)
+        extracted = self._extract_basic_observables(normalized)
+        word_list = list(extracted.get("words") or [])
 
         return self._unified(
             "text",
             text=normalized,
-            concepts=concept_list,
-            entities=entity_list,
-            novelty_flags=novelty_flags,
+            concepts=word_list,
+            entities=[],
+            novelty_flags=[],
             confidence=1.0 if normalized else 0.0,
             raw_meta={
                 "raw_text": raw,
                 "normalized_text": normalized,
-                "words": concept_list,
-                "questions": list(extracted.get("questions") or []),
-                "emotions": list(extracted.get("emotions") or []),
-                "sentiment": extracted.get("sentiment", "neutral"),
-                "negations": list(extracted.get("negations") or []),
-                "subject": extracted.get("subject"),
-                "verb": extracted.get("verb"),
-                "object": extracted.get("object"),
-                "intent_hints": list(extracted.get("questions") or []),
+                "words": word_list,
+                "length": int(extracted.get("length") or 0),
+                "word_count": len(word_list),
                 "source": "text",
                 "timestamp": time.time(),
+                "sense_only": True,
             },
         )
 
     def process_text_input(self, text: str) -> Dict[str, Any]:
+        """Compatibility wrapper — same sense-only envelope as perceive_text."""
         result = self.perceive_text(text)
         result["normalized_text"] = result.get("text", "")
         result["words"] = list(result.get("concepts") or [])
         result["type"] = "text_input"
         result["input_type"] = "text"
         result["source"] = "text"
-        result["intent_hints"] = list((result.get("raw_meta") or {}).get("intent_hints") or [])
-        result["sentiment"] = (result.get("raw_meta") or {}).get("sentiment", "neutral")
-        result["emotions"] = list((result.get("raw_meta") or {}).get("emotions") or [])
+        # Intentionally omit sentiment/emotions/intent — not Perception's job.
         return result
 
-    def _extract_concepts(self, text: str) -> Dict[str, Any]:
-        text_lower = text.lower()
+    def _extract_basic_observables(self, text: str) -> Dict[str, Any]:
+        """Basic observable features only: cleaned word tokens + length."""
         words = text.split() if text else []
-
         meaningful_words: List[str] = []
         for word in words:
             cleaned = word.lower().strip(_PUNCT_STRIP)
@@ -389,176 +399,14 @@ class PerceptionLobe:
                 meaningful_words.append(cleaned)
         if not meaningful_words and words:
             meaningful_words = [w.lower().strip(_PUNCT_STRIP) for w in words if w.strip()]
-
-        concepts: Dict[str, Any] = {
+        return {
             "words": meaningful_words,
             "length": len(text),
-            "questions": [],
-            "emotions": [],
-            "entities": [],
-            "negations": [],
-            "subject": None,
-            "verb": None,
-            "object": None,
-            "sentiment": "neutral",
         }
 
-        question_words = ("what", "why", "how", "when", "where", "who", "which")
-        for word in question_words:
-            if word in text_lower.split() or (word in text_lower and "?" in text):
-                if word not in concepts["questions"]:
-                    concepts["questions"].append(word)
-        if text.endswith("?") and not concepts["questions"]:
-            concepts["questions"].append("?")
-
-        negation_words = {
-            "not", "never", "no", "n't", "dont", "don't", "cant", "can't", "wont", "won't",
-        }
-        for i, word in enumerate(words):
-            if word.lower().strip(_PUNCT_STRIP) in negation_words and i + 1 < len(words):
-                concepts["negations"].append(words[i + 1].lower().strip(_PUNCT_STRIP))
-
-        emotion_words = {
-            "happy": ("happy", "joy", "great", "wonderful", "amazing", "glad", "pleased"),
-            "sad": ("sad", "unhappy", "depressed", "down", "miserable", "blue"),
-            "angry": ("angry", "mad", "furious", "hate", "pissed"),
-            "excited": ("excited", "thrilled", "pumped", "enthusiastic"),
-            "worried": ("worried", "anxious", "concerned", "scared", "nervous"),
-        }
-        for emotion, emo_list in emotion_words.items():
-            for emo_word in emo_list:
-                if emo_word in text_lower:
-                    if emo_word in concepts["negations"]:
-                        if emotion == "happy":
-                            concepts["emotions"].append("sad")
-                        elif emotion == "sad":
-                            concepts["emotions"].append("happy")
-                    else:
-                        concepts["emotions"].append(emotion)
-                    break
-
-        common_verbs = (
-            "is", "are", "was", "were", "feel", "think", "want", "need",
-            "like", "love", "hate", "have", "had", "am",
-        )
-        if words:
-            concepts["subject"] = words[0].strip(_PUNCT_STRIP) or None
-            for i, word in enumerate(words):
-                if word.lower().strip(_PUNCT_STRIP) in common_verbs:
-                    concepts["verb"] = word.strip(_PUNCT_STRIP)
-                    if i + 1 < len(words):
-                        concepts["object"] = " ".join(
-                            w.strip(_PUNCT_STRIP) for w in words[i + 1 :]
-                        )
-                    break
-
-        positive_words = {
-            "good", "great", "wonderful", "amazing", "love", "like", "happy", "excellent",
-        }
-        negative_words = {
-            "bad", "terrible", "awful", "hate", "dislike", "sad", "horrible",
-        }
-        tokens = text_lower.split()
-        pos_count = sum(
-            1 for w in tokens
-            if w.strip(_PUNCT_STRIP) in positive_words and w not in concepts["negations"]
-        )
-        neg_count = sum(
-            1 for w in tokens
-            if w.strip(_PUNCT_STRIP) in negative_words and w not in concepts["negations"]
-        )
-        if pos_count > neg_count:
-            concepts["sentiment"] = "positive"
-        elif neg_count > pos_count:
-            concepts["sentiment"] = "negative"
-
-        entity_parts: List[str] = []
-        for i, word in enumerate(words):
-            bare = word.strip(_PUNCT_STRIP)
-            if not bare:
-                continue
-            if i > 0 and len(bare) > 1 and bare[0].isupper() and not bare.isupper():
-                entity_parts.append(bare)
-            elif entity_parts:
-                concepts["entities"].append(" ".join(entity_parts))
-                entity_parts = []
-        if entity_parts:
-            concepts["entities"].append(" ".join(entity_parts))
-
-        seen: Set[str] = set()
-        unique_entities: List[str] = []
-        for ent in concepts["entities"]:
-            key = ent.lower()
-            if key not in seen:
-                seen.add(key)
-                unique_entities.append(ent)
-        concepts["entities"] = unique_entities
-        return concepts
-
-    def _compute_novelty_flags(self, text: str, concepts: Dict[str, Any]) -> List[str]:
-        flags: List[str] = []
-        for entity in concepts.get("entities") or []:
-            key = entity.lower()
-            if key not in self.seen_entities:
-                flags.append(f"novel_entity:{entity}")
-                self.seen_entities.add(key)
-
-        common = {
-            "what", "this", "that", "have", "from", "with", "will", "know",
-            "think", "about", "which", "your", "their", "them", "then", "than",
-        }
-        for word in concepts.get("words") or []:
-            word_lower = word.lower()
-            if len(word_lower) > 3 and word_lower not in self.seen_concepts and word_lower not in common:
-                flags.append(f"novel_concept:{word}")
-                self.seen_concepts.add(word_lower)
-
-        if concepts.get("questions") and len(text) > 20:
-            flags.append("novel_question")
-        return flags
-
-    def _maybe_signal_novelty(
-        self, text: str, concepts: Dict[str, Any], novelty_flags: List[str]
-    ) -> None:
-        if not novelty_flags:
-            return
-        with self.thalamus.lobe_handlers_lock:
-            has_novelty = "novelty" in self.thalamus.lobe_handlers
-        if not has_novelty:
-            return
-
-        novel_entities = [
-            f.split(":", 1)[1] for f in novelty_flags if f.startswith("novel_entity:")
-        ]
-        novel_concepts = [
-            f.split(":", 1)[1] for f in novelty_flags if f.startswith("novel_concept:")
-        ]
-        novel_questions = "novel_question" in novelty_flags
-        confidence = min(
-            0.95,
-            len(novel_entities) * 0.3
-            + len(novel_concepts) * 0.2
-            + (0.15 if novel_questions else 0),
-        )
-        try:
-            self.thalamus.send_message(
-                destination="novelty",
-                msg_type="novelty_signal",
-                content={
-                    "type": "novelty_signal",
-                    "source": "perception",
-                    "stimulus": text,
-                    "stimulus_type": "text_input",
-                    "novel_entities": novel_entities,
-                    "novel_concepts": novel_concepts,
-                    "has_novel_questions": novel_questions,
-                    "novelty_flags": novelty_flags,
-                    "confidence": confidence,
-                },
-                source="perception",
-            )
-        except Exception:
-            pass
+    # Back-compat alias — old name claimed "concepts" that included interpretation.
+    def _extract_concepts(self, text: str) -> Dict[str, Any]:
+        return self._extract_basic_observables(text)
 
     # ------------------------------------------------------------------
     # Audio helpers — real acoustic analysis from WAV samples
@@ -810,14 +658,13 @@ class PerceptionLobe:
         semantic_concepts: List[str] = []
 
         if transcript:
-            # Reuse text semantic extraction — no second NLP system.
+            # STT text as observed speech — sense-only normalize/words, no emotion.
             base = self.perceive_text(transcript)
             text_out = base.get("text")
             semantic_concepts = list(base.get("concepts") or [])
-            entities = list(base.get("entities") or [])
-            novelty_flags = list(dict.fromkeys(
-                list(base.get("novelty_flags") or []) + novelty_flags
-            ))
+            entities = []  # Perception does not own entity interpretation
+            # Keep acoustic salience flags only; text path emits no novelty.
+            novelty_flags = list(dict.fromkeys(novelty_flags))
             confidence = min(0.95, max(0.75, float(base.get("confidence") or 0.75)))
             meta_extra = dict(base.get("raw_meta") or {})
         else:
@@ -1285,11 +1132,13 @@ class PerceptionLobe:
             return result
 
     def _semantic_vision_infer(self, frame: Any) -> Dict[str, Any]:
-        """Generative visual semantics via BLIP image captioning.
+        """OPTIONAL interpretive caption via BLIP (not sense-only Perception).
 
-        Caption is model-generated free text — NOT selection from a candidate
-        list. CLIP may add supplemental class hints only. Honest degradation
-        when model unavailable or low-confidence; never invents objects.
+        Locked Perception description does NOT own scene meaning. Callers must
+        gate this behind ALLOW_INTERPRETIVE_VISION_CAPTION (False by default).
+        Caption is model-generated free text — interpretation, not raw sense.
+        CLIP may add supplemental class hints only. Honest degradation when
+        model unavailable or low-confidence; never invents objects.
         """
         out: Dict[str, Any] = {
             "available": False,
@@ -1439,20 +1288,24 @@ class PerceptionLobe:
         text_out: Optional[str] = None
         confidence = 0.75 if features["faces_detected"] > 0 else 0.6
 
-        if sem_ok and isinstance(caption, str) and caption.strip():
-            # Reuse text concept/entity extraction on the inferred caption.
+        if (
+            self.ALLOW_INTERPRETIVE_VISION_CAPTION
+            and sem_ok
+            and isinstance(caption, str)
+            and caption.strip()
+        ):
+            # Interpretive caption path (opt-in only). Words only from text sense path.
             base = self.perceive_text(caption)
             semantic_concepts = list(base.get("concepts") or [])
-            entities = list(base.get("entities") or [])
-            novelty_flags = list(dict.fromkeys(
-                list(base.get("novelty_flags") or []) + novelty_flags
-            ))
+            entities = []
+            novelty_flags = list(dict.fromkeys(novelty_flags))
             text_out = caption
             confidence = min(0.95, max(0.7, 0.55 + sem_conf * 0.4))
             meta_ling = dict(base.get("raw_meta") or {})
+            meta_ling["interpretive_caption"] = True
         else:
             meta_ling = {}
-            # Honest low-level sensory note when no semantic caption.
+            # Sense-only: low-level sensory note (brightness/edges/faces).
             text_out = (
                 f"[vision {intake}] {features['resolution']} "
                 f"brightness={features['brightness_label']} "
@@ -1460,8 +1313,12 @@ class PerceptionLobe:
                 f"complexity={features['complexity']} "
                 f"dominant={features['dominant_channel']}"
             )
-            if sem_err:
+            # Do not flag "unavailable" when we intentionally skipped interpretation.
+            if sem_err and self.ALLOW_INTERPRETIVE_VISION_CAPTION:
                 novelty_flags.append("semantic_vision_unavailable_or_low_confidence")
+            caption = None
+            objects = []
+            scene = None
 
         if semantic_concepts:
             concepts = semantic_concepts + [c for c in low_level if c not in semantic_concepts]
@@ -1495,6 +1352,8 @@ class PerceptionLobe:
                 "clip_supplemental": semantic.get("clip_supplemental"),
             },
             "semantic_vision_available": bool(self.semantic_vision_available),
+            "interpretive_caption_enabled": bool(self.ALLOW_INTERPRETIVE_VISION_CAPTION),
+            "sense_only": not bool(self.ALLOW_INTERPRETIVE_VISION_CAPTION),
             "camera_live": bool(self.vision_available),
             "timestamp": time.time(),
         }
@@ -1561,7 +1420,23 @@ class PerceptionLobe:
         try:
             frame, load_meta = self._load_image_bgr(path=path, image_bytes=image_bytes)
             features = self._analyze_frame(frame)
-            semantic = self._semantic_vision_infer(frame)
+            # BLIP/CLIP caption = interpretation; sense-only default skips it.
+            semantic = (
+                self._semantic_vision_infer(frame)
+                if self.ALLOW_INTERPRETIVE_VISION_CAPTION
+                else {
+                    "available": False,
+                    "backend": None,
+                    "caption": None,
+                    "objects": [],
+                    "scene": None,
+                    "scores": [],
+                    "confidence": 0.0,
+                    "error": None,
+                    "skipped_reason": "sense_only: interpretive BLIP/CLIP caption disabled",
+                    "clip_supplemental": None,
+                }
+            )
             return self._envelope_from_vision(
                 features,
                 intake="file",
@@ -1630,7 +1505,22 @@ class PerceptionLobe:
                     },
                 )
             features = self._analyze_frame(frame)
-            semantic = self._semantic_vision_infer(frame)
+            semantic = (
+                self._semantic_vision_infer(frame)
+                if self.ALLOW_INTERPRETIVE_VISION_CAPTION
+                else {
+                    "available": False,
+                    "backend": None,
+                    "caption": None,
+                    "objects": [],
+                    "scene": None,
+                    "scores": [],
+                    "confidence": 0.0,
+                    "error": None,
+                    "skipped_reason": "sense_only: interpretive BLIP/CLIP caption disabled",
+                    "clip_supplemental": None,
+                }
+            )
             return self._envelope_from_vision(
                 features,
                 intake="camera",
@@ -1704,6 +1594,8 @@ class PerceptionLobe:
             "stt_backend": self.stt_backend,
             "stt_backend_reason": self._stt_backend_reason,
             "semantic_vision_available": bool(self.semantic_vision_available),
+            "interpretive_caption_enabled": bool(self.ALLOW_INTERPRETIVE_VISION_CAPTION),
+            "sense_only": True,
             "vision_semantic_backend": self.vision_semantic_backend,
             "vision_semantic_reason": self._vision_semantic_reason,
             "audio_reason": self._audio_reason,
@@ -1849,10 +1741,15 @@ class PerceptionLobe:
             print(f"  vision_camera: {self._vision_reason}")
         if senses["vision_file"]:
             print(f"  vision_file: {self._vision_file_reason}")
-        print(
-            f"  semantic_vision: {self.vision_semantic_backend or 'none'} — "
-            f"{self._vision_semantic_reason}"
-        )
+        if self.ALLOW_INTERPRETIVE_VISION_CAPTION:
+            print(
+                f"  semantic_vision(interpretive): {self.vision_semantic_backend or 'none'} — "
+                f"{self._vision_semantic_reason}"
+            )
+        else:
+            print(
+                "  semantic_vision: disabled (sense-only; BLIP/CLIP caption is interpretation)"
+            )
         result = self.thalamus.register_lobe("perception", self)
         if result.get("status") != "success":
             print("Failed to register with Thalamus")

@@ -1,11 +1,14 @@
 {
   "perception": {
     "socket_path": null,
-    "notes": "Live path: PerceptionLobe senses (text required; audio/vision via file/buffer with real acoustics + semantic STT (whisper preferred) and CLIP semantic vision when available, or live device when open succeeds). Unified thalamus shape. No autonomous theater loops.",
+    "notes": "Sense-only Perception: raw text/audio/visual → normalize + basic observables → thalamus. Does NOT decide meaning, intent, emotion, truth, or response. BLIP/CLIP vision caption is interpretation and disabled by default (ALLOW_INTERPRETIVE_VISION_CAPTION=False). Hearing: acoustics + STT observed speech text only — no emotion on top.",
+    "sense_only": true,
     "input_types": {
       "text": {
         "enabled": true,
-        "default": true
+        "default": true,
+        "normalize_whitespace": true,
+        "basic_observables": ["words", "length", "word_count"]
       },
       "audio": {
         "enabled": true,
@@ -16,6 +19,8 @@
         "timeout_seconds": 5,
         "phrase_time_limit_seconds": 10,
         "semantic_stt": true,
+        "stt_as_observed_speech_text": true,
+        "emotion_on_audio": false,
         "stt_backends": [
           "whisper",
           "vosk",
@@ -29,8 +34,12 @@
         "live_camera": "when_available",
         "require_opencv_or_pil": true,
         "camera_index": 0,
-        "semantic_vision": true,
-        "semantic_backend": "clip",
+        "low_level_features": true,
+        "low_level_ok": ["brightness", "edges", "faces", "resolution", "complexity"],
+        "semantic_vision": false,
+        "interpretive_caption": false,
+        "interpretive_caption_note": "BLIP/CLIP caption is interpretation, not sense — disabled to match locked Perception description",
+        "semantic_backend": null,
         "clip_model": "openai/clip-vit-base-patch32",
         "low_level_features_without_semantic": true
       }
@@ -38,7 +47,6 @@
     "unified_output": [
       "modality",
       "text",
-      "caption",
       "transcript",
       "concepts",
       "entities",
@@ -46,6 +54,7 @@
       "confidence",
       "raw_meta"
     ],
+    "unified_output_notes": "entities and novelty_flags remain as empty-compatible keys for callers; text path always emits []. Acoustic/visual extreme salience flags may still appear on audio/vision envelopes as observables, not meaning.",
     "message_types": [
       "perceive_text",
       "perceive_audio",
@@ -55,56 +64,22 @@
       "get_status"
     ],
     "text_processing": {
-      "extract_concepts": true,
-      "detect_questions": true,
-      "detect_emotions": true,
+      "extract_concepts": false,
+      "basic_word_observables": true,
+      "detect_questions": false,
+      "detect_emotions": false,
+      "detect_sentiment": false,
+      "detect_svo_grammar": false,
+      "novelty_signaling": false,
       "min_word_length": 2
     },
-    "question_words": [
-      "what",
-      "why",
-      "how",
-      "when",
-      "where",
-      "who",
-      "which"
-    ],
-    "emotion_keywords": {
-      "happy": [
-        "happy",
-        "joy",
-        "great",
-        "wonderful",
-        "amazing"
-      ],
-      "sad": [
-        "sad",
-        "unhappy",
-        "depressed",
-        "down"
-      ],
-      "angry": [
-        "angry",
-        "mad",
-        "furious",
-        "hate"
-      ],
-      "excited": [
-        "excited",
-        "thrilled",
-        "amazing"
-      ],
-      "worried": [
-        "worried",
-        "anxious",
-        "concerned",
-        "scared"
-      ]
-    },
+    "question_words": [],
+    "emotion_keywords": {},
     "entity_detection": {
-      "enabled": true,
-      "detect_capitalized": true,
-      "min_word_length": 2
+      "enabled": false,
+      "detect_capitalized": false,
+      "min_word_length": 2,
+      "note": "Capitalized-name guessing is interpretation — owned elsewhere, not Perception"
     }
   }
 }

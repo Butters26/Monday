@@ -1,0 +1,95 @@
+=== PERCEPTION SENSE-ONLY AFTER ===
+time_local: 2026-10-06 11:02:41 MT
+input: "Hey Monday, it's Steve. Just saying hi."
+
+LOCKED: Receive raw text/audio/visual input, preserve accurately,
+clean/normalize, extract basic observable features, pass structured
+representation onward. Does NOT decide meaning, intent, emotion, truth, or response.
+
+--- perceive_text full ---
+{
+  "concepts": [
+    "hey",
+    "monday",
+    "it's",
+    "steve",
+    "just",
+    "saying",
+    "hi"
+  ],
+  "confidence": 1.0,
+  "entities": [],
+  "modality": "text",
+  "novelty_flags": [],
+  "raw_meta": {
+    "length": 39,
+    "normalized_text": "Hey Monday, it's Steve. Just saying hi.",
+    "raw_text": "Hey Monday, it's Steve. Just saying hi.",
+    "sense_only": true,
+    "source": "text",
+    "timestamp": 1791306161.3972666,
+    "word_count": 7,
+    "words": [
+      "hey",
+      "monday",
+      "it's",
+      "steve",
+      "just",
+      "saying",
+      "hi"
+    ]
+  },
+  "text": "Hey Monday, it's Steve. Just saying hi."
+}
+
+--- process_text_input keys ---
+[
+  "concepts",
+  "confidence",
+  "entities",
+  "input_type",
+  "modality",
+  "normalized_text",
+  "novelty_flags",
+  "raw_meta",
+  "source",
+  "text",
+  "type",
+  "words"
+]
+
+--- interpretation must be absent/empty ---
+entities = []
+novelty_flags = []
+raw_meta.emotions present=False value=None
+raw_meta.sentiment present=False value=None
+raw_meta.subject present=False value=None
+raw_meta.verb present=False value=None
+raw_meta.object present=False value=None
+raw_meta.questions present=False value=None
+raw_meta.intent_hints present=False value=None
+raw_meta.negations present=False value=None
+process_text_input has sentiment=False emotions=False
+
+--- kept (sense-only) ---
+text = "Hey Monday, it's Steve. Just saying hi."
+concepts/words = ['hey', 'monday', "it's", 'steve', 'just', 'saying', 'hi']
+raw_meta.length = 39
+raw_meta.word_count = 7
+raw_meta.sense_only = True
+
+--- emotion-keyword control input ---
+input2: 'I am so happy and excited but also worried and sad!'
+entities=[] novelty=[]
+raw_meta keys interpretation-ish = []
+
+--- thalamus _build_attention_signals tolerance ---
+signal_ids = ['user_input', 'perception_envelope', 'ambient_noise']
+user_input.entities = []
+user_input.emotions = []
+user_input.novelty_flags = []
+
+get_status.sense_only = True
+get_status.interpretive_caption_enabled = False
+
+PROOF: no emotion/sentiment/S-V-O/entities/novelty from Perception on this input.
