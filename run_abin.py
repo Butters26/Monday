@@ -31,7 +31,7 @@ from advanced_emotional_engine import EmotionalProcess
 from attention_lobe import AttentionLobe
 from autonomous_thinking import AutonomousThinkingLoop
 from autonomous_speech import AutonomousSpeechSystem
-from conversation import ConversationSystem
+from phase4_conversation import Phase4ConversationSystem as ConversationSystem
 from shared_representation_phase2 import (
     DirectMaximumSophisticationAdapter,
     LanguageGenerator,
@@ -51,7 +51,7 @@ from motor_action_lobe import MotorActionLobe
 from voice_lobe import VoiceLobe
 from meta_awareness import MetaAwareness
 from runtime_paths import runtime_dir
-from phase3_thalamus import Phase3Thalamus as Thalamus
+from phase4_thalamus import Phase4Thalamus as Thalamus
 
 # Canonical DirectNotus file when PostgreSQL is unavailable.
 # Intentionally independent of MONDAY_RUNTIME_DIR / monday-chat sock dir so
