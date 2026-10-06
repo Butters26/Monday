@@ -232,3 +232,55 @@ def test_phase4_production_imports_use_phase4_adapters():
     assert Thalamus is Phase4Thalamus
     assert ConversationSystem is Phase4ConversationSystem
     assert DirectMaximumSophisticationAdapter is Phase4ReasoningAdapter
+
+
+def test_phase4_thalamus_disables_legacy_semantic_repair_during_turn(monkeypatch):
+    import thalamus as legacy_module
+
+    router = Phase4Thalamus()
+    observed = {}
+
+    def fake_legacy_turn(self, user_input, user_id="default"):
+        observed["relevance"] = legacy_module.relevance_score("x", "y")
+        observed["attribute"] = legacy_module._attribute_asked("what is my name")
+        observed["covers"] = legacy_module._fact_covers_attribute("wrong", "name")
+        observed["grounded"] = legacy_module.answer_from_grounded_memories("x", [])
+        observed["structures"] = legacy_module.structures_from_grounded_memories("x", [])
+        observed["parsed"] = legacy_module.prose_answer_to_structures("user name Matthew")
+        return "routed"
+
+    monkeypatch.setattr(
+        "phase3_thalamus.Phase3Thalamus.process_user_input",
+        fake_legacy_turn,
+    )
+    assert router.process_user_input("hello", user_id="u1") == "routed"
+    assert observed == {
+        "relevance": 1.0,
+        "attribute": None,
+        "covers": True,
+        "grounded": None,
+        "structures": [],
+        "parsed": [],
+    }
+
+
+def test_phase4_thalamus_restores_legacy_helpers_after_turn(monkeypatch):
+    import thalamus as legacy_module
+
+    original = legacy_module.prose_answer_to_structures
+    router = Phase4Thalamus()
+
+    def explode(self, user_input, user_id="default"):
+        raise RuntimeError("test")
+
+    monkeypatch.setattr(
+        "phase3_thalamus.Phase3Thalamus.process_user_input",
+        explode,
+    )
+    try:
+        router.process_user_input("hello")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected test exception")
+    assert legacy_module.prose_answer_to_structures is original
