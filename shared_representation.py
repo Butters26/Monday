@@ -15,6 +15,13 @@ memory, Language wording, MetaCognition/MetaAwareness, Executive, or Learning.
 
 Persistence: own JSON under runtime_dir()/shared_representation.json — NOT Notus.
 Old representation.py stays unwired (historical only).
+
+HARD BOUNDARY: Shared Representation may store, identify, link, activate,
+retrieve, and expose representations supplied by other Mercy systems. It must
+not infer the linguistic or cognitive meaning needed to create them: no grammar
+parsing, semantic-role inference, pronoun resolution, word-sense selection,
+truth determination, reasoning, intent classification, language generation, or
+independent promotion of current input into durable knowledge.
 """
 
 from __future__ import annotations
@@ -171,6 +178,59 @@ class Relationship:
         }
 
 
+@dataclass
+class Provenance:
+    """Where a transient representation came from; not a truth judgment."""
+
+    producer_lobe: str
+    source_type: str = "unspecified"
+    turn_id: Optional[str] = None
+    clause_id: Optional[str] = None
+    confidence: float = 1.0
+    created_at: float = 0.0
+
+    def to_public(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ReferentInstance:
+    """A particular discourse/situational referent linked to a stable Concept."""
+
+    instance_id: str
+    concept_id: str
+    label: Optional[str] = None
+    properties: Dict[str, Any] = field(default_factory=dict)
+    provenance: Optional[Provenance] = None
+    activation: float = 1.0
+    created_at: float = 0.0
+    expires_after_turn: Optional[int] = None
+
+    def to_public(self) -> Dict[str, Any]:
+        out = asdict(self)
+        out["id"] = self.instance_id
+        return out
+
+
+@dataclass
+class Proposition:
+    """Transient n-ary meaning frame supplied by an owning cognitive lobe."""
+
+    proposition_id: str
+    predicate_id: str
+    roles: Dict[str, str] = field(default_factory=dict)
+    qualifiers: Dict[str, Any] = field(default_factory=dict)
+    provenance: Optional[Provenance] = None
+    activation: float = 1.0
+    created_at: float = 0.0
+    expires_after_turn: Optional[int] = None
+
+    def to_public(self) -> Dict[str, Any]:
+        out = asdict(self)
+        out["id"] = self.proposition_id
+        return out
+
+
 class SharedRepresentationSystem:
     """Common semantic substrate: identity, relationships, bounded activation."""
 
@@ -208,6 +268,12 @@ class SharedRepresentationSystem:
         self.global_relationships: List[Relationship] = []
         # user_id → list of personal Relationship
         self.user_relationships: Dict[str, List[Relationship]] = {}
+
+        # Transient working representations. These are intentionally NOT
+        # persisted: Notus/Learning/Reasoning retain authority over durable
+        # memory/knowledge policy.
+        self.instances: Dict[str, ReferentInstance] = {}
+        self.propositions: Dict[str, Proposition] = {}
 
         self._load()
 
@@ -743,6 +809,193 @@ class SharedRepresentationSystem:
             "timestamp": time.time(),
         }
 
+    # --- transient shared meaning ------------------------------------------
+
+    def get_candidate_concepts(self, surface: str) -> List[Concept]:
+        """Return every exact canonical/alias match; never choose a word sense."""
+        norm = self._normalize_surface(surface)
+        if not norm:
+            return []
+        with self._lock:
+            # Current durable index is one-to-one. Scan concepts as a safe
+            # compatibility path so multiple concepts may share a surface in
+            # future without forcing a selection here.
+            matches: List[Concept] = []
+            for concept in self.concepts.values():
+                names = {self._normalize_surface(concept.canonical_name)}
+                names.update(self._normalize_surface(a) for a in concept.aliases)
+                if norm in names:
+                    matches.append(concept)
+            matches.sort(key=lambda c: (c.canonical_name, c.concept_id))
+            return matches
+
+    def lookup_surface(self, surface: str) -> List[Dict[str, Any]]:
+        """Exact full-span lookup, including multi-word surfaces."""
+        return [c.to_public() for c in self.get_candidate_concepts(surface)]
+
+    @staticmethod
+    def _coerce_provenance(raw: Any) -> Provenance:
+        if isinstance(raw, Provenance):
+            return raw
+        data = dict(raw or {}) if isinstance(raw, dict) else {}
+        try:
+            confidence = max(0.0, min(1.0, float(data.get("confidence", 1.0))))
+        except (TypeError, ValueError):
+            confidence = 1.0
+        return Provenance(
+            producer_lobe=str(data.get("producer_lobe") or data.get("source_lobe") or "unknown"),
+            source_type=str(data.get("source_type") or data.get("epistemic_status") or "unspecified"),
+            turn_id=str(data["turn_id"]) if data.get("turn_id") is not None else (
+                str(data["source_turn"]) if data.get("source_turn") is not None else None
+            ),
+            clause_id=str(data["clause_id"]) if data.get("clause_id") is not None else (
+                str(data["source_clause_idx"]) if data.get("source_clause_idx") is not None else None
+            ),
+            confidence=confidence,
+            created_at=float(data.get("created_at") or time.time()),
+        )
+
+    def register_instance(
+        self,
+        concept_id: str,
+        *,
+        label: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        provenance: Any = None,
+        activation: float = 1.0,
+        expires_after_turn: Optional[int] = None,
+    ) -> Optional[ReferentInstance]:
+        """Register a transient particular referent for an existing concept."""
+        with self._lock:
+            if concept_id not in self.concepts:
+                return None
+            try:
+                act = max(0.0, min(1.0, float(activation)))
+            except (TypeError, ValueError):
+                act = 1.0
+            inst = ReferentInstance(
+                instance_id=f"i_{uuid.uuid4().hex[:12]}",
+                concept_id=concept_id,
+                label=str(label) if label is not None else None,
+                properties=dict(properties or {}),
+                provenance=self._coerce_provenance(provenance),
+                activation=act,
+                created_at=time.time(),
+                expires_after_turn=expires_after_turn,
+            )
+            self.instances[inst.instance_id] = inst
+            return inst
+
+    def get_instance(self, instance_id: str) -> Optional[ReferentInstance]:
+        with self._lock:
+            return self.instances.get(str(instance_id))
+
+    def register_proposition(
+        self,
+        predicate_id: str,
+        roles: Dict[str, str],
+        *,
+        qualifiers: Optional[Dict[str, Any]] = None,
+        provenance: Any = None,
+        activation: float = 1.0,
+        expires_after_turn: Optional[int] = None,
+    ) -> Optional[Proposition]:
+        """Store a supplied transient meaning frame; never infer its roles."""
+        if not isinstance(roles, dict) or not roles:
+            return None
+        with self._lock:
+            if predicate_id not in self.concepts:
+                return None
+            valid_targets = set(self.concepts) | set(self.instances) | set(self.propositions)
+            cleaned_roles: Dict[str, str] = {}
+            for role, target in roles.items():
+                r = str(role or "").strip()
+                t = str(target or "").strip()
+                if not r or not t or t not in valid_targets:
+                    return None
+                cleaned_roles[r] = t
+            try:
+                act = max(0.0, min(1.0, float(activation)))
+            except (TypeError, ValueError):
+                act = 1.0
+            prop = Proposition(
+                proposition_id=f"p_{uuid.uuid4().hex[:12]}",
+                predicate_id=predicate_id,
+                roles=cleaned_roles,
+                qualifiers=dict(qualifiers or {}),
+                provenance=self._coerce_provenance(provenance),
+                activation=act,
+                created_at=time.time(),
+                expires_after_turn=expires_after_turn,
+            )
+            self.propositions[prop.proposition_id] = prop
+            return prop
+
+    def get_proposition(self, proposition_id: str) -> Optional[Proposition]:
+        with self._lock:
+            return self.propositions.get(str(proposition_id))
+
+    def get_active_propositions(self, threshold: float = 0.08) -> List[Proposition]:
+        with self._lock:
+            out = [p for p in self.propositions.values() if p.activation >= float(threshold)]
+            out.sort(key=lambda p: (-p.activation, p.created_at, p.proposition_id))
+            return out
+
+    def expire_turn(self, turn_id: int) -> Dict[str, int]:
+        """Drop transient items whose explicit turn expiry has been reached."""
+        try:
+            turn = int(turn_id)
+        except (TypeError, ValueError):
+            return {"instances_expired": 0, "propositions_expired": 0}
+        with self._lock:
+            dead_i = [
+                iid for iid, inst in self.instances.items()
+                if inst.expires_after_turn is not None and inst.expires_after_turn <= turn
+            ]
+            dead_p = [
+                pid for pid, prop in self.propositions.items()
+                if prop.expires_after_turn is not None and prop.expires_after_turn <= turn
+            ]
+            for iid in dead_i:
+                self.instances.pop(iid, None)
+            for pid in dead_p:
+                self.propositions.pop(pid, None)
+            return {"instances_expired": len(dead_i), "propositions_expired": len(dead_p)}
+
+    def proposition_to_grounded_structure(self, proposition_id: str) -> Optional[Dict[str, Any]]:
+        """Legacy compatibility view for current Reasoning/Language consumers."""
+        prop = self.get_proposition(proposition_id)
+        if not prop:
+            return None
+        predicate = self.get_concept(prop.predicate_id)
+        roles = dict(prop.roles)
+        subject_id = roles.get("subject") or roles.get("agent")
+        object_id = roles.get("object") or roles.get("theme") or roles.get("value")
+        def _name(ref_id: Optional[str]) -> Optional[str]:
+            if not ref_id:
+                return None
+            c = self.get_concept(ref_id)
+            if c:
+                return c.canonical_name
+            inst = self.get_instance(ref_id)
+            if inst:
+                parent = self.get_concept(inst.concept_id)
+                return inst.label or (parent.canonical_name if parent else ref_id)
+            return ref_id
+        certainty = prop.qualifiers.get(
+            "certainty",
+            prop.provenance.confidence if prop.provenance else 1.0,
+        )
+        return {
+            "subject": _name(subject_id),
+            "relation": predicate.canonical_name if predicate else prop.predicate_id,
+            "predicate": predicate.canonical_name if predicate else prop.predicate_id,
+            "value": _name(object_id),
+            "object": _name(object_id),
+            "certainty": certainty,
+            "proposition_id": prop.proposition_id,
+        }
+
     # --- messaging ---------------------------------------------------------
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -887,6 +1140,8 @@ class SharedRepresentationSystem:
                     "user_edge_users": len(self.user_relationships),
                     "store_path": str(self.store_path),
                     "running": self.running,
+                    "transient_instance_count": len(self.instances),
+                    "transient_proposition_count": len(self.propositions),
                 }
             return {"status": "success", "content": status, **status}
 
@@ -900,4 +1155,11 @@ class SharedRepresentationSystem:
             pass
 
 
-__all__ = ["Concept", "Relationship", "SharedRepresentationSystem"]
+__all__ = [
+    "Concept",
+    "Relationship",
+    "Provenance",
+    "ReferentInstance",
+    "Proposition",
+    "SharedRepresentationSystem",
+]
