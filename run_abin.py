@@ -32,8 +32,8 @@ from attention_lobe import AttentionLobe
 from autonomous_thinking import AutonomousThinkingLoop
 from autonomous_speech import AutonomousSpeechSystem
 from phase4_conversation import Phase4ConversationSystem as ConversationSystem
+from phase4_reasoning import Phase4ReasoningAdapter as DirectMaximumSophisticationAdapter
 from shared_representation_phase2 import (
-    DirectMaximumSophisticationAdapter,
     LanguageGenerator,
     SharedRepresentationSystem,
 )
