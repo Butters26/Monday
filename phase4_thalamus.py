@@ -29,6 +29,33 @@ class Phase4Thalamus(Phase3Thalamus):
         content = response.get("content")
         return content if isinstance(content, dict) else response
 
+    @classmethod
+    def _route_reasoning_semantics(cls, response: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize Reasoning's envelope without judging or rewriting meaning.
+
+        Phase 4 Reasoning returns ``semantic_input``. Legacy/injected Reasoning
+        implementations may still return ``answer``, ``conclusion`` and
+        ``propositions`` directly in their content envelope. Carry those fields
+        into the canonical semantic envelope unchanged so Language can consume
+        them. This is schema/routing compatibility only: no relevance scoring,
+        fallback generation, parsing, precedence selection, or fact salvage.
+        """
+        body = cls._response_content(response)
+        semantic = body.get("semantic_input")
+        semantic = dict(semantic) if isinstance(semantic, dict) else {}
+
+        for key in ("answer", "conclusion", "propositions"):
+            if key in semantic:
+                continue
+            value = body.get(key)
+            if value is None:
+                value = response.get(key)
+            if value is not None:
+                semantic[key] = value
+
+        semantic.setdefault("semantic_owner", "reasoning")
+        return semantic
+
     def _empty_representation(self, user_id: str) -> Dict[str, Any]:
         return {
             "status": "absent",
@@ -583,10 +610,7 @@ class Phase4Thalamus(Phase3Thalamus):
         )
         if reasoning.get("status") != "success":
             return "I'm having trouble thinking right now."
-        reasoning_content = self._content(reasoning)
-        semantic_input = reasoning_content.get("semantic_input")
-        if not isinstance(semantic_input, dict):
-            semantic_input = {}
+        semantic_input = self._route_reasoning_semantics(reasoning)
 
         # Phase 4's production Reasoning adapter marks this. Do not replace a
         # missing marker with Thalamus-side semantic repair.
