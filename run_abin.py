@@ -51,7 +51,7 @@ from motor_action_lobe import MotorActionLobe
 from voice_lobe import VoiceLobe
 from meta_awareness import MetaAwareness
 from runtime_paths import runtime_dir
-from thalamus import Thalamus
+from phase3_thalamus import Phase3Thalamus as Thalamus
 
 # Canonical DirectNotus file when PostgreSQL is unavailable.
 # Intentionally independent of MONDAY_RUNTIME_DIR / monday-chat sock dir so
