@@ -7,6 +7,9 @@ on:
       - phase5_migrate.py
       - .github/workflows/phase5-migrate.yml
 
+permissions:
+  contents: write
+
 jobs:
   migrate:
     runs-on: ubuntu-latest
