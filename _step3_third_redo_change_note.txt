@@ -1,0 +1,39 @@
+Step 3 THIRD REDO — no shortcuts (Matty third catch on b8ef040)
+
+OWNED PRIOR FAILS
+- b3d6ec6: swapped regex for frozenset cue lists (anyway/meant/feel…). Matty caught.
+- b8ef040: moved affect into _AFFECT_DEF_MARKERS definition substrings (anger/furious/anxious…);
+  correction = leading "no" / rejection_particle; topics garbage ("is aluminum", "me more",
+  "looks awful tonight", "hold", "fail"); stamped 11/11 PASS anyway. Matty caught again.
+
+WHAT CHANGED (real)
+
+A) Affect — taxonomy only
+- DELETED _AFFECT_DEF_MARKERS entirely from lexicon/oewn_offline.py.
+- sense_is_affective walks OEWN only: hypernyms to emotion.n (oewn-07495208-n) /
+  feeling.n (oewn-00026390-n); adjectives also similar-to + attribute → noun → hypernyms.
+- definition argument ignored (poisoned-gloss proofs pass).
+- Positives: anxiety/happy/afraid/terror/joy reach roots without def markers.
+- Negatives: angry/furious/irate/emotional/passionate/worried/anxious do NOT claim affect
+  (they only matched old def markers). Live sentences match.
+
+B) Correction — not faked
+- Conversation._is_correction always False.
+- dialogue_move=correction is not emitted from leading "no" or contrastive negation.
+- Honest gap: real cross-turn repair/replace not implemented. Polarity stays on Language
+  contrast; Conversation does not rename it correction.
+
+C) Topic — Language content NP heads
+- Copula be+nominal ("The gasket is aluminum") → theme=gasket, attribute=aluminum,
+  topic_head=gasket (no more last-resort "gasket"-as-verb / "is aluminum" subject).
+- Ditransitive pronoun recipient is one token; "Tell me more about it" → about=it
+  (unresolved), topic_head=None (not "me more"). Multi-turn inherits prior gasket.
+- Demonstrative subject + linking verb ("That looks awful tonight") fixed; tonight in _TIME.
+- Conversation consumes packet topic_head; never falls back to predicate_surface.
+
+D) Proofs: positives + negatives; see _step3_third_redo_after_live.txt. OVERALL PASS
+   for A–C on this bar. Step 4 not started.
+
+E) This note admits b3d6ec6 and b8ef040.
+
+F) Step 4 not started. Correction remains an owned gap (not a PASS claim).

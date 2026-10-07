@@ -1,0 +1,58 @@
+=== Step 3 THIRD REDO proof (no shortcuts) ===
+Prior FAIL commits owned: b3d6ec6 (cue lists), b8ef040 (def markers + leading-no correction + garbage topics).
+Fresh ConversationSystem per case so prior-turn topic inheritance is not confused with extraction bugs.
+
+PASS	A0_no_AFFECT_DEF_MARKERS_constant	
+PASS	A0_no_def_substring_match	
+PASS	A_pos_tax_anxiety	hits=['oewn-07539144-n']
+PASS	A_pos_tax_happy	hits=['oewn-01151786-a']
+PASS	A_pos_tax_afraid	hits=['oewn-00078253-a']
+PASS	A_pos_tax_terror	hits=['oewn-07535851-n']
+PASS	A_pos_tax_joy	hits=['oewn-07542591-n']
+PASS	A_pos_tax_happiness	hits=['oewn-14010908-n', 'oewn-07541996-n']
+PASS	A_pos_tax_fear	hits=['oewn-07534492-n', 'oewn-07539768-n']
+PASS	A_neg_tax_angry	hits=[]
+PASS	A_neg_tax_furious	hits=[]
+PASS	A_neg_tax_irate	hits=[]
+PASS	A_neg_tax_emotional	hits=[]
+PASS	A_neg_tax_passionate	hits=[]
+PASS	A_neg_tax_worried	hits=[]
+PASS	A_neg_tax_anxious	hits=[]
+PASS	A_sent_affect::I feel anxiety about the deadline	present=True
+PASS	A_sent_affect::Matthew is happy about the outcome	present=True
+PASS	A_sent_affect::She is afraid of the storm	present=True
+PASS	A_sent_affect::His terror was obvious	present=True
+PASS	A_sent_affect::I am angry about the delay	present=False
+PASS	A_sent_affect::She looks furious tonight	present=False
+PASS	A_sent_affect::The gasket is aluminum	present=False
+PASS	B_no_correction_move::No, the gasket is steel	move=assertion
+PASS	B_is_correction_false::No, the gasket is steel	
+PASS	B_no_correction_move::No	move=social_fragment
+PASS	B_is_correction_false::No	
+PASS	B_no_correction_move::I am not angry about it	move=referent_followup
+PASS	B_is_correction_false::I am not angry about it	
+PASS	C_topic::The gasket is aluminum	topic='gasket' lang_head='gasket'
+PASS	C_topic::No, the gasket is steel	topic='gasket' lang_head='gasket'
+PASS	C_topic::The aluminum gasket failed	topic='gasket' lang_head='gasket'
+PASS	C_topic::Hold that thought	topic='thought' lang_head='thought'
+PASS	C_topic::Tell me more about it	topic=None lang_head=None
+PASS	C_topic::That looks awful tonight	topic=None lang_head=None
+PASS	C_not_garbage::The gasket is aluminum	topic='gasket'
+PASS	C_not_garbage::Tell me more about it	topic=None
+PASS	C_not_garbage::That looks awful tonight	topic=None
+PASS	C_not_garbage::Hold that thought	topic='thought'
+PASS	C_not_garbage::The aluminum gasket failed	topic='gasket'
+PASS	C_multiturn_about_it_inherits_gasket_not_me_more	t1='gasket' t2='gasket' move2='referent_followup'
+PASS	D_move::Are carburetors noisy?	got='question' topic='carburetor'
+PASS	D_move::Matthew is happy about the outcome	got='affect_share' topic='matthew'
+PASS	D_move::I feel anxiety about the deadline	got='affect_share' topic='anxiety'
+PASS	D_move::Hold that thought	got='request' topic='thought'
+PASS	D_move::The gasket is aluminum	got='assertion' topic='gasket'
+
+HONEST GAPS:
+- dialogue_move=correction NOT emitted. Leading 'no' / contrastive negation = polarity only.
+  Real cross-turn repair/replace is unimplemented. Gap owned — not faked.
+- 'of'-complements (afraid of X) not yet parsed as about-roles.
+- angry/furious/etc.: no OEWN taxonomy path to emotion/feeling → affect=False (correct under A).
+
+OVERALL: PASS

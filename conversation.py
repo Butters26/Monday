@@ -10,9 +10,12 @@ Does not: regex turn classification, cue-word dialogue_move lists,
 keyword slots/entities/sentiment, write final prose, invent facts,
 or ground answers in memory.
 
-FAIL note (b3d6ec6): prior Step 3 used frozenset cue lists
-(_TOPIC_SHIFT_DISCOURSE / _CORRECTION_PREDICATES / _AFFECT_PREDICATES).
-Matty caught it; Matthew: no shortcuts. This redo removes those lists.
+FAIL notes (owned):
+- b3d6ec6: frozenset cue lists (_TOPIC_SHIFT_DISCOURSE / _CORRECTION_PREDICATES /
+  _AFFECT_PREDICATES). Matty caught it.
+- b8ef040: _AFFECT_DEF_MARKERS definition substrings + correction = leading "no"
+  + garbage topics ("is aluminum", "me more"). Matty caught it again.
+This redo: taxonomy-only affect, no fake correction move, Language topic_head.
 
 Language owns word/sentence meaning. Conversation places that meaning
 in the exchange. Emotion owns affect. Reasoning owns truth/grounding.
@@ -199,54 +202,57 @@ class ConversationSystem:
         return False
 
     def _topic_from_packet(self, packet: Dict[str, Any]) -> Optional[str]:
-        """Topic anchor from Language content NPs / senses — not cue-word bags."""
+        """Topic = Language topic_head (content NP head) — never predicate glue."""
+        # Language owns head extraction (theme/patient/about). Trust topic_head first.
+        head = packet.get("topic_head")
+        if isinstance(head, str) and head.strip():
+            cleaned = head.strip().lower()
+            if not self._junk_topic(packet, cleaned):
+                return cleaned
         clause = self._primary_clause(packet)
+        if clause and isinstance(clause.get("topic_head"), str) and clause.get("topic_head").strip():
+            cleaned = str(clause.get("topic_head")).strip().lower()
+            if not self._junk_topic(packet, cleaned):
+                return cleaned
+
         mentions = [m for m in (packet.get("mentions") or []) if isinstance(m, dict)]
         mention_by_id = {m.get("mention_id"): m for m in mentions if m.get("mention_id")}
 
-        def _clean(surface: Optional[str]) -> Optional[str]:
+        def _head_of(mention: Dict[str, Any]) -> Optional[str]:
+            if mention.get("pronoun") or mention.get("unresolved_reference"):
+                return None
+            props = mention.get("properties") if isinstance(mention.get("properties"), dict) else {}
+            for key in ("head_lemma", "head"):
+                val = props.get(key)
+                if isinstance(val, str) and val.isalpha() and not self._junk_topic(packet, val):
+                    return val.lower()
+            surface = mention.get("concept_surface") or mention.get("surface")
             if not surface:
                 return None
-            text = " ".join(str(surface).strip().split())
-            if not text:
+            parts = [p for p in str(surface).lower().split() if p.isalpha()]
+            if not parts:
                 return None
-            if self._junk_topic(packet, text):
-                return None
-            return text
+            # Prefer last content token as NP head ("aluminum gasket" → gasket)
+            for part in reversed(parts):
+                if not self._junk_topic(packet, part):
+                    return part
+            return None
 
         if clause:
             roles = clause.get("roles") if isinstance(clause.get("roles"), dict) else {}
-            for role in ("theme", "patient", "topic", "recipient"):
+            for role in ("theme", "patient", "about", "topic"):
                 mid = roles.get(role)
                 mention = mention_by_id.get(mid) if mid else None
-                if mention and not mention.get("pronoun") and not mention.get("unresolved_reference"):
-                    concept = _clean(mention.get("concept_surface")) or _clean(
-                        mention.get("surface")
-                    )
-                    if concept:
-                        return concept.lower()
-            for mention in mentions:
-                if mention.get("pronoun") or mention.get("unresolved_reference"):
+                if not mention:
                     continue
-                concept = _clean(mention.get("concept_surface")) or _clean(
-                    mention.get("surface")
-                )
-                if concept:
-                    return concept.lower()
-            pred_clean = _clean(clause.get("predicate_surface"))
-            if pred_clean and not clause.get("predicative_adjective"):
-                return pred_clean.lower()
-            # Predicative adjective clauses: prefer patient/theme mention already tried;
-            # fall through to mentions below.
-
+                head = _head_of(mention)
+                if head:
+                    return head
         for mention in mentions:
-            if mention.get("pronoun") or mention.get("unresolved_reference"):
-                continue
-            concept = _clean(mention.get("concept_surface")) or _clean(
-                mention.get("surface")
-            )
-            if concept:
-                return concept.lower()
+            head = _head_of(mention)
+            if head:
+                return head
+        # Never fall back to predicate_surface — that produced "hold"/"fail"/"is aluminum".
         return None
 
     def _social_move_from_packet(self, packet: Dict[str, Any]) -> Optional[str]:
@@ -280,13 +286,12 @@ class ConversationSystem:
         return None
 
     def _is_correction(self, packet: Dict[str, Any]) -> bool:
-        """Correction from Language contrast structure — not a 'meant/correct' list."""
-        contrast = packet.get("contrast") if isinstance(packet.get("contrast"), dict) else {}
-        if contrast.get("rejection_particle"):
-            return True
-        if contrast.get("contrastive_negation"):
-            # "... not ..." with material on both sides — structural replace/reject
-            return True
+        """Correction dialogue_move is NOT claimed from leading 'no' / negation.
+
+        FAIL (b8ef040): contrast.rejection_particle and lows[0]=='no' were treated
+        as correction. That is theater. Real repair needs cross-turn replace structure
+        Language does not yet emit. Honest gap: always False until that exists.
+        """
         return False
 
     def _is_affect_share(self, packet: Dict[str, Any]) -> bool:

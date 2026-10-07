@@ -158,61 +158,36 @@ def lemma_and_pos_candidates(surface: str) -> List[Dict[str, str]]:
     return out
 
 
-# OEWN root synsets for affective meaning (lexicon ontology, not dialogue cues).
+# OEWN taxonomy roots for affective meaning (lexicon ontology only).
+# emotion.n.01 / feeling.n.01 — never definition substring lists.
 _AFFECT_ROOT_IDS = frozenset(
     {
         "oewn-07495208-n",  # emotion
-        "oewn-00026390-n",  # feeling (affective states)
+        "oewn-00026390-n",  # feeling
     }
 )
-# Precise definition anchors — avoid bare "feeling" (matches "transmit feelings").
-_AFFECT_DEF_MARKERS = (
-    "emotion",
-    "emotional",
-    "affective",
-    "any strong feeling",
-    "affective and emotional",
-    "anger",
-    "angry",
-    "fear or",
-    "filled with fear",
-    "afraid",
-    "anxiety",
-    "anxious",
-    "apprehension",
-    "worry",
-    "sorrow",
-    "unhappiness",
-    "affection",
-    "hate",
-    "hatred",
-    "dread",
-    "terror",
-    "furious",
-    "mood",
-    "feeling or showing",
-    "showing sorrow",
-    "showing anger",
-    "state of mind",  # undergo an emotional sensation or be in a particular state of mind
-)
 
 
-def sense_is_affective(synset_id: str = "", definition: str = "", *, max_depth: int = 6) -> bool:
-    """True when an OEWN sense sits under emotion/feeling or its definition marks affect."""
-    defn = (definition or "").lower()
-    if any(marker in defn for marker in _AFFECT_DEF_MARKERS):
-        return True
+def sense_is_affective(synset_id: str = "", definition: str = "", *, max_depth: int = 8) -> bool:
+    """True when an OEWN sense reaches emotion/feeling via taxonomy only.
+
+    Walk:
+      - nouns/verbs: hypernyms
+      - adjectives (a/s): similar-to cluster, then attribute → noun, then hypernyms
+
+    The ``definition`` argument is ignored (kept for call-site compatibility).
+    No definition substring matching. No handmade angry/furious word lists.
+    FAIL history: b8ef040 used _AFFECT_DEF_MARKERS; Matty caught it.
+    """
+    del definition  # taxonomy only — never read gloss text for this decision
     sid = (synset_id or "").strip()
     if not sid:
         return False
     try:
         wnet = get_wordnet()
-        syn = None
         try:
             syn = wnet.synset(sid)
         except Exception:
-            syn = None
-        if syn is None:
             return False
         stack = [(syn, 0)]
         seen = set()
@@ -222,8 +197,6 @@ def sense_is_affective(synset_id: str = "", definition: str = "", *, max_depth: 
             if nid in seen or depth > max_depth:
                 continue
             seen.add(nid)
-            # Hypernym walk accepts only emotion/feeling roots — not intermediate
-            # defs that casually mention "feelings" (e.g. communicate senses).
             if nid in _AFFECT_ROOT_IDS:
                 return True
             try:
@@ -231,14 +204,14 @@ def sense_is_affective(synset_id: str = "", definition: str = "", *, max_depth: 
                     stack.append((hyp, depth + 1))
             except Exception:
                 pass
-            # similar-to is an adjective cluster link — use only for a/s POS.
-            try:
-                pos = str(getattr(node, "pos", "") or "")
-                if pos in {"a", "s"}:
-                    for sim in node.get_related("similar"):
-                        stack.append((sim, depth + 1))
-            except Exception:
-                pass
+            pos = str(getattr(node, "pos", "") or "")
+            if pos in {"a", "s"}:
+                for rel in ("similar", "attribute"):
+                    try:
+                        for related in node.get_related(rel):
+                            stack.append((related, depth + 1))
+                    except Exception:
+                        pass
     except Exception:
         return False
     return False

@@ -80,10 +80,12 @@ _TIME = {
     "yesterday": {"temporal_relation": "before_now", "event_time_text": "yesterday"},
     "today": {"temporal_relation": "at_now_day", "event_time_text": "today"},
     "tomorrow": {"temporal_relation": "after_now", "event_time_text": "tomorrow"},
+    "tonight": {"temporal_relation": "at_now_night", "event_time_text": "tonight"},
     "now": {"temporal_relation": "at_now", "event_time_text": "now"},
     "earlier": {"temporal_relation": "before_now", "event_time_text": "earlier"},
     "later": {"temporal_relation": "after_now", "event_time_text": "later"},
 }
+_LINKING_VERBS = frozenset({"look", "seem", "appear", "become", "feel", "get", "grow", "remain", "stay"})
 _NUMBER_WORDS = {
     "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
@@ -505,6 +507,12 @@ class LanguageComprehensionEngine:
             for t in tokens[:idx]
             if not re.fullmatch(r"[.!?,;:]", t)
         ]
+        # Sole preverbal demonstrative/pronoun = subject NP ("That looks awful"),
+        # not a determiner attaching to the verb. Do not noun-penalize the verb.
+        sole_deictic_subject = (
+            len(raw_before) == 1
+            and raw_before[0].lower() in (_DEMONSTRATIVES | _PRONOUNS | _WH)
+        )
         has_subject_material = any(
             t.lower() in _DETERMINERS
             or t.lower() in _PRONOUNS
@@ -514,8 +522,11 @@ class LanguageComprehensionEngine:
         if not content_before and "v" in pos_set and not has_subject_material:
             # True verb-initial imperative ("Tell me…", "Give the dog…").
             score += 4
-        elif "n" in pos_set and not content_before:
-            # Subject slot under a determiner/pronoun — nouny verb readings lose.
+        elif sole_deictic_subject and "v" in pos_set:
+            score += 4
+        elif "n" in pos_set and not content_before and not sole_deictic_subject:
+            # Subject slot under a determiner — nouny verb readings lose
+            # ("The dog barked" — dog must not win as verb).
             score -= 6
         return score
 
@@ -566,9 +577,10 @@ class LanguageComprehensionEngine:
             clear = [c for c in known_candidates if c[2] >= 5]
             known = (clear[0] if clear else known_candidates[0])
 
-        # Predicative adjective after be-auxiliary: "I am furious" / "She is afraid".
-        # Emit adjective index as predicate slot with lemma; caller marks predicative.
-        be_adj = None
+        # Copula: be-AUX + complement (adjective OR nominal).
+        # "Matthew is happy" / "The gasket is aluminum" / "No, the gasket is steel".
+        # Prefer this over noun-with-accidental-verb-reading as the complement itself.
+        be_complement = None  # (idx, lemma, kind) kind in {"adjective","nominal"}
         for idx, token in enumerate(lows):
             if token not in _AUX_RAW or self.lemma(token, prefer_pos="v") != "be":
                 continue
@@ -577,19 +589,21 @@ class LanguageComprehensionEngine:
                 next_idx += 1
             if next_idx >= len(tokens):
                 continue
-            # Skip pronouns/determiners between be and complement? "is she ready" handled by inversion.
             cand = tokens[next_idx]
             cand_low = cand.lower()
             if cand_low in _PRONOUNS or cand_low in _DETERMINERS or cand_low in _PREPOSITIONS:
                 continue
+            if re.fullmatch(r"[.!?,;:]", cand):
+                continue
             pos_set = self._pos_set(cand)
-            if ("a" in pos_set or "s" in pos_set) and "v" not in pos_set:
+            if "a" in pos_set or "s" in pos_set:
+                # Predicative adjective (happy, afraid). Prefer adj lemma even if also v.
                 lemma = self.lemma(cand, prefer_pos="a")
-                be_adj = (next_idx, lemma, True)  # third flag reused as "predicative_adj" marker via known False path
+                be_complement = (next_idx, lemma, "adjective")
                 break
-            if ("a" in pos_set or "s" in pos_set) and not known:
-                lemma = self.lemma(cand, prefer_pos="a")
-                be_adj = (next_idx, lemma, True)
+            if "n" in pos_set:
+                lemma = self.lemma(cand, prefer_pos="n")
+                be_complement = (next_idx, lemma, "nominal")
                 break
 
         # Unknown open-class token in verb position (between subject and object).
@@ -627,14 +641,21 @@ class LanguageComprehensionEngine:
                 break
             return False
 
-        # Prefer predicative adjective over a later verb/noun reading inside a PP
-        # ("I am furious about the delay" — delay must not steal the predicate).
-        if be_adj is not None and (
-            known is None
-            or known[0] > be_adj[0]
-            or _after_preposition(known[0])
-        ):
-            return be_adj[0], be_adj[1], False, True
+        # Copula complement wins over: later PP verbs, complement-as-verb (steel),
+        # and last-resort noun-as-verb (gasket).
+        if be_complement is not None:
+            c_idx, c_lemma, c_kind = be_complement
+            known_ok = (
+                known is not None
+                and known[0] != c_idx
+                and known[0] < c_idx
+                and not _after_preposition(known[0])
+            )
+            # Lexical verb clearly before the be-complement (rare) keeps known.
+            if not known_ok:
+                # Return complement index; caller uses kind via lexical POS / flag.
+                return c_idx, c_lemma, False, True
+
         # Unknown earlier than known (Steve florbed the dog) wins.
         if unknown is not None and (known is None or unknown[0] < known[0]):
             return unknown[0], unknown[1], False, False
@@ -643,12 +664,8 @@ class LanguageComprehensionEngine:
         if unknown is not None:
             return unknown[0], unknown[1], False, False
 
-        # Last resort: second content token.
-        if len(content) >= 2:
-            idx = content[1]
-            low = tokens[idx].lower()
-            if low not in closed:
-                return idx, low, False, self._has_pos(tokens[idx], "v")
+        # No last-resort "second content token" — that produced garbage predicates
+        # like gasket/aluminum. Honest: no verb found.
         return None, None, False, False
 
     def _subject_end(self, tokens: Sequence[str], verb_idx: int) -> int:
@@ -679,6 +696,16 @@ class LanguageComprehensionEngine:
     def _split_ditransitive(
         self, tokens: Sequence[str], start: int, end: int
     ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """Split double-object: recipient NP then theme NP.
+
+        Pronoun recipient is exactly one token ("Tell me more about it" → me | …),
+        never "me more".
+        """
+        if start >= end:
+            return None
+        first = tokens[start].lower()
+        if first in _PRONOUNS:
+            return (start, start + 1), (start + 1, end)
         for idx in range(start + 1, end):
             low = tokens[idx].lower()
             if (
@@ -691,7 +718,88 @@ class LanguageComprehensionEngine:
                 return (start, idx), (idx, end)
         return None
 
+    _DEGREE_ADVERBS = frozenset({"more", "less", "just", "even", "also", "still", "only"})
+
+    def _has_be_auxiliary_before(self, tokens: Sequence[str], idx: int) -> bool:
+        lows = [t.lower() for t in tokens]
+        for i in range(max(0, idx)):
+            if lows[i] in _AUX_RAW and self.lemma(tokens[i], prefer_pos="v") == "be":
+                return True
+        return False
+
+    def _find_about_np(
+        self, tokens: Sequence[str], start: int, end: int, mention_id: str
+    ) -> Optional[LinguisticMention]:
+        """about-complement NP head (patient/theme of 'about'), if present."""
+        lows = [t.lower() for t in tokens]
+        for i in range(start, end):
+            if lows[i] != "about":
+                continue
+            np_start = i + 1
+            np_end = self._trim_object_end(tokens, np_start)
+            np_end = min(np_end, end)
+            if np_start < np_end:
+                return self._noun_phrase(tokens, np_start, np_end, mention_id)
+        return None
+
+    def _content_np_from_span(
+        self, tokens: Sequence[str], start: int, end: int, mention_id: str
+    ) -> Optional[LinguisticMention]:
+        """Build NP from span, skipping leading degree adverbs; prefer about-NP."""
+        if start >= end:
+            return None
+        about = self._find_about_np(tokens, start, end, mention_id)
+        if about is not None:
+            return about
+        i = start
+        lows = [t.lower() for t in tokens]
+        while i < end and lows[i] in self._DEGREE_ADVERBS:
+            i += 1
+        while i < end and lows[i] in _PREPOSITIONS:
+            i += 1
+        if i >= end:
+            return None
+        return self._noun_phrase(tokens, i, end, mention_id)
+
+    def _topic_head_from_roles(
+        self,
+        roles: Dict[str, str],
+        mentions: Sequence[LinguisticMention],
+    ) -> Optional[str]:
+        """Content NP head for topic: about / theme / patient — never glue or time words."""
+        by_id = {m.mention_id: m for m in mentions}
+
+        def _head_of(mention: LinguisticMention) -> Optional[str]:
+            if mention.pronoun or mention.unresolved_reference:
+                return None
+            head = (mention.properties or {}).get("head_lemma") or (
+                mention.properties or {}
+            ).get("head")
+            if head and str(head).isalpha():
+                h = str(head).lower()
+                if h in _TIME or h in self._DEGREE_ADVERBS:
+                    return None
+                return h
+            concept = (mention.concept_surface or mention.surface or "").strip()
+            parts = [p for p in concept.lower().split() if p.isalpha()]
+            parts = [p for p in parts if p not in _TIME and p not in self._DEGREE_ADVERBS]
+            if parts:
+                return parts[-1]
+            return None
+
+        # Prefer about-complement, then theme/patient content (copula subject = gasket).
+        for role in ("theme", "patient", "about", "topic"):
+            mid = roles.get(role)
+            mention = by_id.get(mid) if mid else None
+            if not mention:
+                continue
+            head = _head_of(mention)
+            if head:
+                return head
+        return None
+
     def _qualifiers(self, tokens: Sequence[str]) -> Dict[str, Any]:
+
         lows = [t.lower() for t in tokens]
         q: Dict[str, Any] = {
             "polarity": "negative" if any(t in _NEGATION for t in lows) else "positive"
@@ -942,13 +1050,25 @@ class LanguageComprehensionEngine:
         clause_confidence = 0.0
         predicate_senses: List[Dict[str, Any]] = []
         predicative_adjective: Optional[Dict[str, Any]] = None
+        predicative_nominal = False
+        copular = False
+        topic_head: Optional[str] = None
 
         if verb_idx is not None and predicate:
             pred_token_kind = lexical[verb_idx]["kind"] if verb_idx < len(lexical) else None
-            if pred_token_kind == "adjective" or (
-                verb_idx < len(lexical)
-                and lexical[verb_idx].get("kind") in {"adjective"}
-            ):
+            pos_at_pred = self._pos_set(tokens[verb_idx])
+            copular = self._has_be_auxiliary_before(tokens, verb_idx)
+            is_pred_adj = (
+                pred_token_kind == "adjective"
+                or ("a" in pos_at_pred or "s" in pos_at_pred)
+                and copular
+            )
+            is_pred_nom = (
+                copular
+                and not is_pred_adj
+                and ("n" in pos_at_pred or pred_token_kind in {"noun", "unknown"})
+            )
+            if is_pred_adj:
                 predicate_senses = self._lookup(
                     tokens[verb_idx], pos="a"
                 ) or self._lookup(predicate, pos="a") or self._lookup(tokens[verb_idx])
@@ -957,11 +1077,26 @@ class LanguageComprehensionEngine:
                     "lemma": predicate,
                     "senses": predicate_senses,
                 }
+            elif is_pred_nom:
+                predicative_nominal = True
+                # Copula predicate is be; complement keeps its noun senses on the mention.
+                predicate = "be"
+                predicate_known = True
+                predicate_senses = self._lookup("be", pos="v") or self._lookup("is", pos="v")
             elif predicate_known:
                 predicate_senses = self._lookup(
                     tokens[verb_idx], pos="v"
                 ) or self._lookup(predicate, pos="v")
-            subject_end = self._subject_end(tokens, verb_idx)
+
+            # Subject ends at be-AUX when copular; else at verb_idx.
+            subject_limit = verb_idx
+            if copular:
+                lows_tmp = [t.lower() for t in tokens]
+                for i in range(verb_idx):
+                    if lows_tmp[i] in _AUX_RAW and self.lemma(tokens[i], prefer_pos="v") == "be":
+                        subject_limit = i
+                        break
+            subject_end = self._subject_end(tokens, subject_limit)
             subject = self._noun_phrase(tokens, 0, subject_end, "m1")
             if subject:
                 mentions.append(subject)
@@ -990,6 +1125,24 @@ class LanguageComprehensionEngine:
                 if agent:
                     roles["agent"] = agent.mention_id
                 clause_confidence = 0.92 if subject and agent else 0.68
+            elif is_pred_adj or is_pred_nom:
+                # Copula: subject is theme; complement is attribute; about-PP is about.
+                if subject:
+                    roles["theme"] = subject.mention_id
+                if is_pred_nom:
+                    attr = self._noun_phrase(
+                        tokens, verb_idx, verb_idx + 1, f"m{len(mentions)+1}"
+                    )
+                    if attr:
+                        mentions.append(attr)
+                        roles["attribute"] = attr.mention_id
+                about = self._find_about_np(
+                    tokens, verb_idx + 1, len(tokens), f"m{len(mentions)+1}"
+                )
+                if about:
+                    mentions.append(about)
+                    roles["about"] = about.mention_id
+                clause_confidence = 0.90 if subject else 0.55
             else:
                 object_start = verb_idx + 1
                 while object_start < len(tokens) and tokens[object_start].lower() in (
@@ -1005,24 +1158,33 @@ class LanguageComprehensionEngine:
                         recipient = self._noun_phrase(
                             tokens, a0, a1, f"m{len(mentions)+1}"
                         )
-                        theme = self._noun_phrase(
+                        # Theme = content NP in remnant; about-PP preferred over "more…"
+                        theme = self._content_np_from_span(
                             tokens, b0, b1, f"m{len(mentions)+2}"
                         )
+                        about = None
+                        # If theme came from about-PP, also tag about role.
+                        if theme and any(
+                            tokens[i].lower() == "about" for i in range(b0, min(b1, len(tokens)))
+                        ):
+                            about = theme
                         if recipient:
                             mentions.append(recipient)
-                        if theme:
+                        if theme and about is not theme:
+                            mentions.append(theme)
+                        elif theme and about is theme:
                             mentions.append(theme)
                         if subject:
                             roles["agent"] = subject.mention_id
                         if recipient:
                             roles["recipient"] = recipient.mention_id
-                        if theme:
+                        if about is not None:
+                            roles["about"] = about.mention_id
+                        elif theme is not None:
                             roles["theme"] = theme.mention_id
-                        clause_confidence = (
-                            0.94 if subject and recipient and theme else 0.65
-                        )
+                        clause_confidence = 0.88 if recipient else 0.65
                     else:
-                        obj = self._noun_phrase(
+                        obj = self._content_np_from_span(
                             tokens, object_start, object_end, f"m{len(mentions)+1}"
                         )
                         if obj:
@@ -1033,29 +1195,83 @@ class LanguageComprehensionEngine:
                             roles["theme"] = obj.mention_id
                         clause_confidence = 0.72
                 else:
-                    obj = (
-                        self._noun_phrase(
-                            tokens, object_start, object_end, f"m{len(mentions)+1}"
+                    # Linking verb + predicative adjective: "That looks awful tonight".
+                    link_adj = None
+                    if predicate in _LINKING_VERBS and object_start < len(tokens):
+                        cand = tokens[object_start]
+                        pos_set = self._pos_set(cand)
+                        if "a" in pos_set or "s" in pos_set:
+                            link_adj = {
+                                "surface": cand,
+                                "lemma": self.lemma(cand, prefer_pos="a"),
+                                "senses": self._lookup(cand, pos="a")
+                                or self._lookup(cand),
+                            }
+                            predicative_adjective = link_adj
+                            if subject:
+                                roles["theme"] = subject.mention_id
+                            about = self._find_about_np(
+                                tokens,
+                                object_start + 1,
+                                len(tokens),
+                                f"m{len(mentions)+1}",
+                            )
+                            if about:
+                                mentions.append(about)
+                                roles["about"] = about.mention_id
+                            clause_confidence = 0.88 if subject else 0.55
+                    if link_adj is None:
+                        # Direct object NP up to about-PP; about-complement separate.
+                        lows_span = [t.lower() for t in tokens]
+                        about_at = None
+                        for i in range(object_start, min(object_end, len(tokens))):
+                            if lows_span[i] == "about":
+                                about_at = i
+                                break
+                        obj_end = about_at if about_at is not None else object_end
+                        obj = (
+                            self._noun_phrase(
+                                tokens, object_start, obj_end, f"m{len(mentions)+1}"
+                            )
+                            if object_start < obj_end
+                            else None
                         )
-                        if object_start < object_end
-                        else None
-                    )
-                    if obj:
-                        mentions.append(obj)
-                    if predicate in _EXPERIENCER:
-                        if subject:
-                            roles["experiencer"] = subject.mention_id
                         if obj:
-                            roles["theme"] = obj.mention_id
-                    elif predicate in _THEME_SUBJECT:
-                        if subject:
-                            roles["theme"] = subject.mention_id
-                    else:
-                        if subject:
-                            roles["agent"] = subject.mention_id
-                        if obj:
-                            roles["patient"] = obj.mention_id
-                    clause_confidence = 0.90 if subject else 0.55
+                            mentions.append(obj)
+                        about = None
+                        if about_at is not None:
+                            about = self._find_about_np(
+                                tokens,
+                                about_at,
+                                max(object_end, about_at + 1),
+                                f"m{len(mentions)+1}",
+                            )
+                            # about span may extend past trim if trim cut at time before about — use full tail
+                            if about is None:
+                                about = self._find_about_np(
+                                    tokens,
+                                    about_at,
+                                    len(tokens),
+                                    f"m{len(mentions)+1}",
+                                )
+                        if about:
+                            mentions.append(about)
+                            roles["about"] = about.mention_id
+                        pred_lemma = predicate
+                        if pred_lemma in _EXPERIENCER or pred_lemma == "feel":
+                            if subject:
+                                roles["experiencer"] = subject.mention_id
+                            if obj:
+                                roles["theme"] = obj.mention_id
+                        elif predicate in _THEME_SUBJECT:
+                            if subject:
+                                roles["theme"] = subject.mention_id
+                        else:
+                            if subject:
+                                roles["agent"] = subject.mention_id
+                            if obj:
+                                roles["patient"] = obj.mention_id
+                        clause_confidence = 0.90 if subject else 0.55
 
             for mention in mentions:
                 if mention.unresolved_reference and not any(
@@ -1077,18 +1293,6 @@ class LanguageComprehensionEngine:
             if predicate.isalpha():
                 unknown_words.append(predicate)
 
-        # Standalone unresolved pronouns/demonstratives/proforms not captured as roles.
-        for entry in lexical:
-            kind = entry.get("kind")
-            surf = str(entry.get("surface") or "").lower()
-            if kind == "pronoun" and surf in _PRONOUNS and _DEICTIC.get(surf) is None:
-                if not any(u.get("surface", "").lower() == surf for u in unresolved_references):
-                    # Only add if a mention already tracks it; else light hook.
-                    pass
-            if kind == "determiner" and surf in _DEMONSTRATIVES:
-                # Demonstrative determiner alone is handled in NP builder when sole.
-                pass
-
         speech_features = self._speech_act_features(original, tokens)
         speech_act = self._speech_act(original, tokens)
         contrast = self._contrast_features(tokens, lexical)
@@ -1098,6 +1302,27 @@ class LanguageComprehensionEngine:
             lexical=lexical,
             predicative_adjective=predicative_adjective,
         )
+        # Experiencer + affective theme noun (anxiety/fear/joy…) also marks affect.
+        if not affect.get("present"):
+            for mid_role in ("theme", "patient", "about"):
+                mid = roles.get(mid_role)
+                if not mid:
+                    continue
+                for mention in mentions:
+                    if mention.mention_id != mid:
+                        continue
+                    hits = self._affect_from_senses(mention.senses)
+                    if hits:
+                        affect = {
+                            "present": True,
+                            "evidence": [
+                                {"source": "role_mention_sense", "surface": mention.surface, **h}
+                                for h in hits[:4]
+                            ],
+                        }
+                        break
+
+        topic_head = self._topic_head_from_roles(roles, mentions)
 
         clause = None
         if predicate:
@@ -1107,12 +1332,15 @@ class LanguageComprehensionEngine:
                 "predicate_known": predicate_known,
                 "predicate_senses": predicate_senses,
                 "predicative_adjective": bool(predicative_adjective),
+                "predicative_nominal": predicative_nominal,
+                "copular": copular or bool(predicative_adjective) or predicative_nominal,
                 "voice": "passive" if passive else "active",
                 "roles": dict(roles),
                 "qualifiers": qualifiers,
                 "confidence": clause_confidence,
                 "speech_act": speech_act,
                 "clause_type": speech_act,
+                "topic_head": topic_head,
             }
 
         overall = clause_confidence
@@ -1142,6 +1370,7 @@ class LanguageComprehensionEngine:
             "clause_type": speech_act,
             "contrast": contrast,
             "affect": affect,
+            "topic_head": topic_head if verb_idx is not None else None,
             "confidence": overall,
             "lexicon": {
                 "name": "oewn",

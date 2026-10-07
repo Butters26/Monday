@@ -1,0 +1,5 @@
+BEFORE third redo (at b8ef040):
+- _AFFECT_DEF_MARKERS present in lexicon/oewn_offline.py
+- sense_is_affective used definition substring match first
+- Conversation._is_correction True on rejection_particle / contrastive_negation
+- Topics: "The gasket is aluminum" → "is aluminum"; "Tell me more about it" → "me more"
