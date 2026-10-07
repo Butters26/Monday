@@ -1,0 +1,29 @@
+BEFORE Step 2 — LanguageComprehensionEngine (toy closed lists)
+
+INPUT: Steve gave the dog a ball yesterday.
+  confidence=0.94
+  unknown_words=[]
+  tokens: steve:proper_noun/steve, gave:verb/give, the:determiner/the, dog:noun/dog, a:determiner/a, ball:noun/ball, yesterday:temporal/yesterday, .:punctuation/.
+  clause predicate=give known=True roles={'agent': 'm1', 'recipient': 'm2', 'theme': 'm3'} conf=0.94
+  tokens_with_senses=0 (toy engine has none)
+
+INPUT: The chloroplast performs photosynthesis inside the plant cell.
+  confidence=0.4
+  unknown_words=['chloroplast', 'performs', 'photosynthesis', 'inside', 'plant', 'cell']
+  tokens: the:determiner/the, chloroplast:unknown/chloroplast, performs:unknown/performs, photosynthesis:unknown/photosynthesis, inside:unknown/inside, the:determiner/the, plant:unknown/plant, cell:unknown/cell, .:punctuation/.
+  clause predicate=chloroplast known=False roles={'patient': 'm1'} conf=0.55
+  tokens_with_senses=0 (toy engine has none)
+
+INPUT: Matthew dismantled the carburetor with a torque wrench.
+  confidence=0.4
+  unknown_words=['dismantled', 'carburetor', 'torque', 'wrench']
+  tokens: matthew:proper_noun/matthew, dismantled:unknown/dismantled, the:determiner/the, carburetor:unknown/carburetor, with:preposition/with, a:determiner/a, torque:unknown/torque, wrench:unknown/wrench, .:punctuation/.
+  clause predicate=dismantled known=False roles={'agent': 'm1', 'patient': 'm2'} conf=0.9
+  tokens_with_senses=0 (toy engine has none)
+
+INPUT: xqztplm frobnicates the zygohistidine.
+  confidence=0.4
+  unknown_words=['xqztplm', 'frobnicates', 'zygohistidine']
+  tokens: xqztplm:unknown/xqztplm, frobnicates:unknown/frobnicates, the:determiner/the, zygohistidine:unknown/zygohistidine, .:punctuation/.
+  clause predicate=frobnicates known=False roles={'agent': 'm1', 'patient': 'm2'} conf=0.9
+  tokens_with_senses=0 (toy engine has none)

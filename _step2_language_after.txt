@@ -1,0 +1,61 @@
+AFTER Step 2 — LanguageComprehensionEngine (offline OEWN open vocabulary)
+lexicon_error=None
+
+INPUT: Steve gave the dog a ball yesterday.
+  confidence=0.75 speech_act=declarative
+  unknown_words=[]
+  lexicon={'name': 'oewn', 'version': '2024', 'offline': True, 'error': None}
+  token 'steve' kind=proper_noun lemma=steve known=False senses=0 
+  token 'gave' kind=verb lemma=give known=True senses=8 cause to have, in the abstract sense or physical sense
+  token 'the' kind=determiner lemma=the known=True senses=0 
+  token 'dog' kind=noun lemma=dog known=True senses=7 a dull unattractive unpleasant girl or woman
+  token 'a' kind=determiner lemma=a known=True senses=0 
+  token 'ball' kind=noun lemma=ball known=True senses=8 round object that is hit or thrown or kicked in games
+  token 'yesterday' kind=temporal lemma=yesterday known=True senses=4 the day immediately before today
+  token '.' kind=punctuation lemma=. known=True senses=0 
+  clause predicate=give known=True roles={'agent': 'm1', 'recipient': 'm2', 'theme': 'm3'} conf=0.94
+    pred_sense0=cause to have, in the abstract sense or physical sense
+
+INPUT: The chloroplast performs photosynthesis inside the plant cell.
+  confidence=0.75 speech_act=declarative
+  unknown_words=[]
+  lexicon={'name': 'oewn', 'version': '2024', 'offline': True, 'error': None}
+  token 'the' kind=determiner lemma=the known=True senses=0 
+  token 'chloroplast' kind=noun lemma=chloroplast known=True senses=1 plastid containing chlorophyll and other pigments; in plants that carr
+  token 'performs' kind=verb lemma=perform known=True senses=4 carry out or perform an action
+  token 'photosynthesis' kind=noun lemma=photosynthesis known=True senses=1 synthesis of compounds with the aid of radiant energy (especially in p
+  token 'inside' kind=preposition lemma=inside known=True senses=0 
+  token 'the' kind=determiner lemma=the known=True senses=0 
+  token 'plant' kind=noun lemma=plant known=True senses=3 buildings for carrying on industrial labor
+  token 'cell' kind=noun lemma=cell known=True senses=7 any small compartment
+  token '.' kind=punctuation lemma=. known=True senses=0 
+  clause predicate=perform known=True roles={'agent': 'm1', 'patient': 'm2'} conf=0.9
+    pred_sense0=carry out or perform an action
+
+INPUT: Matthew dismantled the carburetor with a torque wrench.
+  confidence=0.75 speech_act=declarative
+  unknown_words=[]
+  lexicon={'name': 'oewn', 'version': '2024', 'offline': True, 'error': None}
+  token 'matthew' kind=proper_noun lemma=Matthew known=True senses=2 one of the Gospels in the New Testament; includes the Sermon on the Mo
+  token 'dismantled' kind=verb lemma=dismantle known=True senses=3 tear down so as to make flat with the ground
+  token 'the' kind=determiner lemma=the known=True senses=0 
+  token 'carburetor' kind=noun lemma=carburetor known=True senses=1 mixes air with gasoline vapor prior to explosion
+  token 'with' kind=preposition lemma=with known=True senses=0 
+  token 'a' kind=determiner lemma=a known=True senses=0 
+  token 'torque' kind=noun lemma=torque known=True senses=1 a twisting force
+  token 'wrench' kind=noun lemma=wrench known=True senses=3 a sharp strain on muscles or ligaments
+  token '.' kind=punctuation lemma=. known=True senses=0 
+  clause predicate=dismantle known=True roles={'agent': 'm1', 'patient': 'm2'} conf=0.9
+    pred_sense0=tear down so as to make flat with the ground
+
+INPUT: xqztplm frobnicates the zygohistidine.
+  confidence=0.4 speech_act=declarative
+  unknown_words=['xqztplm', 'frobnicates', 'zygohistidine']
+  lexicon={'name': 'oewn', 'version': '2024', 'offline': True, 'error': None}
+  token 'xqztplm' kind=unknown lemma=xqztplm known=False senses=0 
+  token 'frobnicates' kind=unknown lemma=frobnicates known=False senses=0 
+  token 'the' kind=determiner lemma=the known=True senses=0 
+  token 'zygohistidine' kind=unknown lemma=zygohistidine known=False senses=0 
+  token '.' kind=punctuation lemma=. known=True senses=0 
+  clause predicate=frobnicates known=False roles={'agent': 'm1', 'patient': 'm2'} conf=0.9
+    pred_sense0=

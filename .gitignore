@@ -55,3 +55,7 @@ Non-Essential Files/EXAMINE_THIS/
 
 # Voice synthesis output (generated WAVs)
 monday_audio/
+
+# Generated OEWN database (bootstrap from lexicon/oewn-2024.xml.gz)
+lexicon/wn_data/wn.db
+lexicon/wn_data/downloads/

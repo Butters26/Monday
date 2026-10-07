@@ -1,0 +1,46 @@
+LIVE PATH proof — create_core_systems → language.comprehend / process_user_input
+runtime=/tmp/monday_step2_1jkq23v7
+
+COMPREHEND: The chloroplast performs photosynthesis inside the plant cell.
+  unknown=[]
+  confidence=0.75
+  lexicon={'name': 'oewn', 'version': '2024', 'offline': True, 'error': None}
+  chloroplast: kind=noun lemma=chloroplast known=True sense0=plastid containing chlorophyll and other pigments; in plants
+  performs: kind=verb lemma=perform known=True sense0=carry out or perform an action
+  photosynthesis: kind=noun lemma=photosynthesis known=True sense0=synthesis of compounds with the aid of radiant energy (espec
+  plant: kind=noun lemma=plant known=True sense0=buildings for carrying on industrial labor
+  cell: kind=noun lemma=cell known=True sense0=any small compartment
+  clause pred=perform known=True roles={'agent': 'm1', 'patient': 'm2'}
+  process_user_input reply=''
+  last_representation has_LU=True contract=language_understanding_v1 unknown=[]
+
+COMPREHEND: Matthew dismantled the carburetor with a torque wrench.
+  unknown=[]
+  confidence=0.75
+  lexicon={'name': 'oewn', 'version': '2024', 'offline': True, 'error': None}
+  matthew: kind=proper_noun lemma=Matthew known=True sense0=one of the Gospels in the New Testament; includes the Sermon
+  dismantled: kind=verb lemma=dismantle known=True sense0=tear down so as to make flat with the ground
+  carburetor: kind=noun lemma=carburetor known=True sense0=mixes air with gasoline vapor prior to explosion
+  torque: kind=noun lemma=torque known=True sense0=a twisting force
+  wrench: kind=noun lemma=wrench known=True sense0=a sharp strain on muscles or ligaments
+  clause pred=dismantle known=True roles={'agent': 'm1', 'patient': 'm2'}
+  process_user_input reply=''
+  last_representation has_LU=True contract=language_understanding_v1 unknown=[]
+
+COMPREHEND: xqztplm frobnicates the zygohistidine.
+  unknown=['xqztplm', 'frobnicates', 'zygohistidine']
+  confidence=0.4
+  lexicon={'name': 'oewn', 'version': '2024', 'offline': True, 'error': None}
+  xqztplm: kind=unknown lemma=xqztplm known=False sense0=
+  frobnicates: kind=unknown lemma=frobnicates known=False sense0=
+  zygohistidine: kind=unknown lemma=zygohistidine known=False sense0=
+  clause pred=frobnicates known=False roles={'agent': 'm1', 'patient': 'm2'}
+  process_user_input reply=''
+  last_representation has_LU=True contract=language_understanding_v1 unknown=['xqztplm', 'frobnicates', 'zygohistidine']
+
+BAR: off-list OEWN senses + honest unknown — PASS
+BAR: live process_user_input carries language_understanding — PASS
+DEAD_THEATER phase3_thalamus.py exists=False
+DEAD_THEATER phase4_thalamus.py exists=False
+DEAD_THEATER phase4_conversation.py exists=False
+DEAD_THEATER phase4_reasoning.py exists=False

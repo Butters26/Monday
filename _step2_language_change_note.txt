@@ -1,0 +1,49 @@
+# Step 2 change note — Language meaning + grammar (offline OEWN)
+
+Date: 2026-10-07 (America/Denver)
+
+## Matthew's exact words
+- "On one condition, no shortcuts"
+- "I don’t know make a lesson follow the list and make sure you don’t do any fucking Shortcuts"
+- "Motherfucker, when I say something like that, that means fucking go do it don’t just keep saying waiting for your go"
+
+Lesson: `_lesson_pcl_no_shortcuts.md` Step 2 only.
+
+## What was done (exact)
+
+1. Offline OEWN base on disk under Monday:
+   - `lexicon/oewn-2024.xml.gz` (Open English WordNet 2024 LMF, downloaded once)
+   - `lexicon/oewn_offline.py` — points `wn` at `lexicon/wn_data/`, bootstraps `wn.db` from the local archive only (runtime network forbidden)
+   - `lexicon/README.md`
+   - `wn` added to `requirements.txt`
+   - Generated `lexicon/wn_data/wn.db` gitignored (too large for GitHub; rebuild offline from the archive)
+
+2. Replaced toy closed-set meaning source in `language_comprehension.py`:
+   - Removed `_VERBS` / `_KNOWN_NOUNS` as the open-class meaning lexicon
+   - Open vocabulary via OEWN + Morphy: unknown words marked `unknown` with empty senses
+   - Packet still `language_understanding_v1`, now with per-token `senses` (synset_id/pos/definition/lemmas), `ambiguous_words`, `speech_act`, `lexicon` metadata, clause `predicate_senses`
+
+3. Parse packet Language owns (senses, roles, structure, ambiguity, confidence) still registered into Shared Representation by `LanguageGenerator.comprehend` (unchanged SR ID path).
+
+4. Dead Phase 3/4 theater: already deleted on origin by Phase 5 native migration (`phase3_thalamus.py`, `phase4_thalamus.py`, `phase4_conversation.py`, `phase4_reasoning.py` absent). Live path is native `thalamus._resolve_representation_live` → `language.comprehend`. Confirmed absent in live proof.
+
+5. Expression: ordinary meaning still composed from grounded structures / props / usable answer, else silence (`GrammarEngine.compose_sentence`). Greeting/goodbye/check-in banks remain only for social cues (Step 1 leftover; not ripped here — Step 2 is Language meaning first, not Conversation rebuild).
+
+## Proof
+- Before: `_step2_language_before_live.txt` (toy engine: off-list → unknown soup / wrong predicates, zero senses)
+- After: `_step2_language_after.txt`, `_step2_language_after_live.txt`
+- Live: `create_core_systems` → `language.comprehend` + `thalamus.process_user_input`
+  - chloroplast/photosynthesis/dismantle/carburetor get real OEWN senses
+  - xqztplm/frobnicates/zygohistidine honest unknown
+  - `last_representation.language_understanding` present on live turns
+- Tests: `test_language_native.py` + `test_native_routing.py` — 17 passed
+
+## Remaining honesty gaps (not fake PASS for later steps)
+- Step 3 Conversation still regex-owns intent/slots — not rebuilt on packets yet
+- Greeting/goodbye/check-in banks still present for social turns
+- Sense *ranking* imperfect (first sense not always the everyday reading; ambiguity listed)
+- PP attachment still crude (e.g. "photosynthesis inside the plant cell" may glue into one patient NP)
+- First checkout must run offline bootstrap (`ensure_oewn`) once to build `wn.db` from the shipped archive (no network)
+
+## Verdict
+Step 2 Language meaning + offline lexicon on live path: PASS (with gaps above named, not hidden).
