@@ -1447,6 +1447,82 @@ class LanguageComprehensionEngine:
 
         topic_head = self._topic_head_from_roles(roles, mentions)
 
+        # Predicative complement structure for cross-turn correction (Conversation).
+        # Nominal: roles["attribute"] mention. Adjective: predicative_adjective dict.
+        # Not a cue list — grammar/roles only.
+        predicative_complement: Optional[Dict[str, Any]] = None
+        if predicative_nominal and roles.get("attribute"):
+            attr_m = next(
+                (m for m in mentions if m.mention_id == roles["attribute"]),
+                None,
+            )
+            if attr_m is not None:
+                head = (attr_m.properties or {}).get("head_lemma") or (
+                    attr_m.properties or {}
+                ).get("head")
+                predicative_complement = {
+                    "kind": "nominal",
+                    "surface": attr_m.surface,
+                    "lemma": str(head or attr_m.concept_surface or attr_m.surface or "")
+                    .strip()
+                    .lower(),
+                    "mention_id": attr_m.mention_id,
+                    "senses": list(attr_m.senses or []),
+                }
+        elif predicative_adjective and isinstance(predicative_adjective, dict):
+            predicative_complement = {
+                "kind": "adjective",
+                "surface": str(predicative_adjective.get("surface") or ""),
+                "lemma": str(
+                    predicative_adjective.get("lemma")
+                    or predicative_adjective.get("surface")
+                    or ""
+                )
+                .strip()
+                .lower(),
+                "mention_id": None,
+                "senses": list(predicative_adjective.get("senses") or []),
+            }
+
+        theme_mid = roles.get("theme") or roles.get("experiencer") or roles.get("patient")
+        theme_m = next((m for m in mentions if m.mention_id == theme_mid), None) if theme_mid else None
+        theme_is_deictic = bool(
+            theme_m is not None
+            and (theme_m.pronoun or theme_m.unresolved_reference)
+        )
+        theme_unresolved = bool(theme_m is not None and theme_m.unresolved_reference)
+        theme_concept = None
+        if theme_m is not None:
+            theme_concept = (
+                theme_m.concept_surface
+                or (None if theme_m.unresolved_reference else theme_m.surface)
+            )
+            if isinstance(theme_concept, str):
+                theme_concept = theme_concept.strip().lower() or None
+
+        # Assertion frame: prior-proposition material Conversation compares across turns.
+        # assertable when there is a predicative complement to replace (copular attrs).
+        assertion = {
+            "topic_head": topic_head,
+            "theme_mention_id": theme_mid,
+            "theme_is_deictic": theme_is_deictic,
+            "theme_unresolved": theme_unresolved,
+            "theme_concept": theme_concept,
+            "predicate_lemma": str(predicate).lower() if predicate else None,
+            "complement": predicative_complement,
+            # Clause polarity only (not/never). Fronted "No," is rejection_particle,
+            # not negation of this complement — Conversation must not treat it as retract.
+            "polarity": (
+                "negative"
+                if isinstance(contrast, dict) and contrast.get("contrastive_negation")
+                else "positive"
+            ),
+            "copular": bool(
+                copular or bool(predicative_adjective) or predicative_nominal
+            ),
+            "assertable": bool(predicative_complement is not None),
+        }
+
         clause = None
         if predicate:
             clause = {
@@ -1456,6 +1532,7 @@ class LanguageComprehensionEngine:
                 "predicate_senses": predicate_senses,
                 "predicative_adjective": bool(predicative_adjective),
                 "predicative_nominal": predicative_nominal,
+                "predicative_complement": predicative_complement,
                 "copular": copular or bool(predicative_adjective) or predicative_nominal,
                 "voice": "passive" if passive else "active",
                 "roles": dict(roles),
@@ -1464,6 +1541,7 @@ class LanguageComprehensionEngine:
                 "speech_act": speech_act,
                 "clause_type": speech_act,
                 "topic_head": topic_head,
+                "assertion": assertion,
             }
 
         overall = clause_confidence
@@ -1494,6 +1572,8 @@ class LanguageComprehensionEngine:
             "contrast": contrast,
             "affect": affect,
             "topic_head": topic_head if verb_idx is not None else None,
+            "predicative_complement": predicative_complement if verb_idx is not None else None,
+            "assertion": assertion if verb_idx is not None else None,
             "confidence": overall,
             "lexicon": {
                 "name": "oewn",

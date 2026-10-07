@@ -18,7 +18,11 @@ FAIL notes (owned):
 FAIL history continued: bd4d5fb stamped PASS on angry/furious NOT affect +
 wrong topics (anxiety/matthew) + awful terror false-positive + dirty Step4 tree.
 Fourth redo: OEWN derivation/attribute affect (surface-scoped), about-first
-topic_head, clean Step4 tree. Step 3 lesson still FAIL (correction/banks/Step4).
+topic_head, clean Step4 tree. Prior fake-correction FAILs: b8ef040 leading
+"no"; bd4d5fb/_is_correction always False (honest gap, still not real repair);
+any cue-word / frozenset discourse "correction" lists. Real correction =
+cross-turn replace of prior asserted complement/predicate on same topic
+(or anaphor to it) from Language assertion frames — not "No." theater.
 
 Language owns word/sentence meaning. Conversation places that meaning
 in the exchange. Emotion owns affect. Reasoning owns truth/grounding.
@@ -80,6 +84,10 @@ class ConversationState:
     pending_mercy_questions: List[Dict[str, Any]] = field(default_factory=list)
     last_dialogue_move: Optional[str] = None
     last_resolved_referents: List[Dict[str, Any]] = field(default_factory=list)
+    # Assertable propositions keyed by topic for cross-turn replace-compare.
+    # last_assertion is the most recent store (deictic inherit / FYI).
+    assertions_by_topic: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    last_assertion: Optional[Dict[str, Any]] = None
 
 
 class ConversationSystem:
@@ -220,6 +228,9 @@ class ConversationSystem:
 
         mentions = [m for m in (packet.get("mentions") or []) if isinstance(m, dict)]
         mention_by_id = {m.get("mention_id"): m for m in mentions if m.get("mention_id")}
+        roles = {}
+        if clause:
+            roles = clause.get("roles") if isinstance(clause.get("roles"), dict) else {}
 
         def _head_of(mention: Dict[str, Any]) -> Optional[str]:
             if mention.get("pronoun") or mention.get("unresolved_reference"):
@@ -241,9 +252,21 @@ class ConversationSystem:
                     return part
             return None
 
+        # Unresolved deictic theme ("It's copper") → inherit prior assertion / dialogue topic.
+        # Never treat predicative attribute/complement as the topic.
+        theme_mid = roles.get("theme") or roles.get("experiencer") or roles.get("patient")
+        theme_m = mention_by_id.get(theme_mid) if theme_mid else None
+        if theme_m and (
+            theme_m.get("unresolved_reference")
+            or (theme_m.get("pronoun") and not theme_m.get("concept_surface"))
+        ):
+            if self.state.last_assertion and self.state.last_assertion.get("topic_head"):
+                return str(self.state.last_assertion["topic_head"]).strip().lower()
+            if self.state.current_topic:
+                return str(self.state.current_topic).strip().lower()
+
         if clause:
-            roles = clause.get("roles") if isinstance(clause.get("roles"), dict) else {}
-            # about-NP first (same rule as Language.topic_head).
+            # about-NP first (same rule as Language.topic_head). Never "attribute".
             for role in ("about", "theme", "patient", "topic"):
                 mid = roles.get(role)
                 mention = mention_by_id.get(mid) if mid else None
@@ -254,7 +277,10 @@ class ConversationSystem:
                 head = _head_of(mention)
                 if head:
                     return head
+        attr_mid = roles.get("attribute")
         for mention in mentions:
+            if attr_mid and mention.get("mention_id") == attr_mid:
+                continue  # complement is not topic
             head = _head_of(mention)
             if head:
                 return head
@@ -291,14 +317,204 @@ class ConversationSystem:
             return "social_fragment"
         return None
 
-    def _is_correction(self, packet: Dict[str, Any]) -> bool:
-        """Correction dialogue_move is NOT claimed from leading 'no' / negation.
+    def _assertion_from_packet(self, packet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Pull Language assertion frame (topic + predicative complement)."""
+        if not isinstance(packet, dict):
+            return None
+        raw = packet.get("assertion")
+        if isinstance(raw, dict) and raw.get("assertable"):
+            return dict(raw)
+        # Fallback: rebuild from clause predicative_complement if top-level missing.
+        clause = self._primary_clause(packet)
+        if not clause:
+            return None
+        comp = clause.get("predicative_complement") or packet.get("predicative_complement")
+        if not isinstance(comp, dict):
+            return None
+        lemma = str(comp.get("lemma") or comp.get("surface") or "").strip().lower()
+        if not lemma:
+            return None
+        contrast = packet.get("contrast") if isinstance(packet.get("contrast"), dict) else {}
+        theme_mid = None
+        roles = clause.get("roles") if isinstance(clause.get("roles"), dict) else {}
+        theme_mid = roles.get("theme") or roles.get("experiencer") or roles.get("patient")
+        theme_m = None
+        for m in packet.get("mentions") or []:
+            if isinstance(m, dict) and m.get("mention_id") == theme_mid:
+                theme_m = m
+                break
+        theme_unresolved = bool(theme_m and theme_m.get("unresolved_reference"))
+        theme_is_deictic = bool(
+            theme_m
+            and (theme_m.get("pronoun") or theme_m.get("unresolved_reference"))
+        )
+        theme_concept = None
+        if theme_m:
+            theme_concept = theme_m.get("concept_surface")
+            if not theme_concept and not theme_m.get("unresolved_reference"):
+                theme_concept = theme_m.get("surface")
+            if isinstance(theme_concept, str):
+                theme_concept = theme_concept.strip().lower() or None
+        return {
+            "topic_head": packet.get("topic_head") or clause.get("topic_head"),
+            "theme_mention_id": theme_mid,
+            "theme_is_deictic": theme_is_deictic,
+            "theme_unresolved": theme_unresolved,
+            "theme_concept": theme_concept,
+            "predicate_lemma": str(clause.get("predicate_surface") or "").lower() or None,
+            "complement": {
+                "kind": comp.get("kind"),
+                "surface": comp.get("surface"),
+                "lemma": lemma,
+                "mention_id": comp.get("mention_id"),
+            },
+            "polarity": (
+                "negative" if contrast.get("contrastive_negation") else "positive"
+            ),
+            "copular": bool(clause.get("copular")),
+            "assertable": True,
+        }
 
-        FAIL (b8ef040): contrast.rejection_particle and lows[0]=='no' were treated
-        as correction. That is theater. Real repair needs cross-turn replace structure
-        Language does not yet emit. Honest gap: always False until that exists.
+    @staticmethod
+    def _complement_key(assertion: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not isinstance(assertion, dict):
+            return None
+        comp = assertion.get("complement")
+        if not isinstance(comp, dict):
+            return None
+        key = str(comp.get("lemma") or comp.get("surface") or "").strip().lower()
+        return key or None
+
+    def _assertion_topic_key(
+        self,
+        assertion: Optional[Dict[str, Any]],
+        *,
+        prior: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """Topic identity for replace-compare.
+
+        Content topic_head wins. Unresolved deictic theme (it/that) inherits
+        prior assertion topic / referent_stack topic. Bound pronouns use
+        theme_concept (user/mercy) so 'I am hungry'→'I am not hungry' can match.
         """
+        if not isinstance(assertion, dict):
+            return None
+        head = assertion.get("topic_head")
+        if isinstance(head, str) and head.strip():
+            return head.strip().lower()
+        if assertion.get("theme_unresolved") or (
+            assertion.get("theme_is_deictic") and not assertion.get("theme_concept")
+        ):
+            if isinstance(prior, dict):
+                phead = prior.get("topic_head")
+                if isinstance(phead, str) and phead.strip():
+                    return phead.strip().lower()
+            stack = list(self.state.referent_stack)
+            for rec in reversed(stack):
+                t = rec.get("topic") or rec.get("concept_surface")
+                if isinstance(t, str) and t.strip():
+                    low = t.strip().lower()
+                    # Prefer NP heads already used as topics, not attributes.
+                    if low:
+                        return low
+            return None
+        concept = assertion.get("theme_concept")
+        if isinstance(concept, str) and concept.strip():
+            return concept.strip().lower()
+        return None
+
+    def _prior_assertion_for(self, topic_key: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Prior assertable frame for this topic (not merely the chronologically last turn)."""
+        if topic_key:
+            hit = self.state.assertions_by_topic.get(topic_key.casefold())
+            if isinstance(hit, dict) and hit.get("assertable"):
+                return hit
+        # Deictic with no topic yet: fall back to most recent assertion.
+        if isinstance(self.state.last_assertion, dict) and self.state.last_assertion.get("assertable"):
+            return self.state.last_assertion
+        return None
+
+    def _is_correction(self, packet: Dict[str, Any]) -> bool:
+        """Correction = replace prior asserted content across turns.
+
+        REQUIRED: same topic (or anaphor to it) + new incompatible predicative
+        complement (or polarity retract of same complement).
+
+        FORBIDDEN shortcuts (owned FAILs): leading 'no' alone, cue words
+        (meant/actually/correct), frozenset discourse lists, stamping PASS on
+        'No, X' without replace structure. 'No, the gasket is copper' may
+        participate ONLY because copper replaces aluminum on gasket — not
+        because of 'No'.
+        """
+        current = self._assertion_from_packet(packet)
+        if not isinstance(current, dict) or not current.get("assertable"):
+            return False
+        # Resolve current topic (anaphor may inherit from last_assertion / stack).
+        curr_topic = self._assertion_topic_key(current, prior=self.state.last_assertion)
+        if not curr_topic and current.get("theme_unresolved"):
+            # Try referent_stack topic
+            curr_topic = self._assertion_topic_key(current, prior=self.state.last_assertion)
+        prior = self._prior_assertion_for(curr_topic)
+        if not isinstance(prior, dict) or not prior.get("assertable"):
+            return False
+        # Re-resolve with the matched prior (anaphor → that topic).
+        curr_topic = self._assertion_topic_key(current, prior=prior)
+        prev_topic = self._assertion_topic_key(prior)
+        if not prev_topic or not curr_topic:
+            return False
+        if prev_topic.casefold() != curr_topic.casefold():
+            return False
+        prev_comp = self._complement_key(prior)
+        curr_comp = self._complement_key(current)
+        if not prev_comp or not curr_comp:
+            return False
+        # Incompatible complement → replace.
+        if prev_comp != curr_comp:
+            return True
+        # Same complement + clause polarity retract (not fronted "No,") → correction.
+        prev_pol = str(prior.get("polarity") or "positive")
+        curr_pol = str(current.get("polarity") or "positive")
+        if prev_pol == "positive" and curr_pol == "negative":
+            return True
         return False
+
+    def _store_assertion_from_packet(
+        self,
+        packet: Dict[str, Any],
+        *,
+        speech_act: str,
+        resolved_topic: Optional[str] = None,
+    ) -> None:
+        """Remember assertable proposition for later replace-compare."""
+        if speech_act == "question":
+            return
+        assertion = self._assertion_from_packet(packet)
+        if not assertion:
+            return
+        # Only inherit dialogue/prior topic for unresolved deictic themes ("It's copper").
+        # Bound subjects (I/you) and content topics use their own identity — do NOT
+        # paste the previous dialogue topic onto a new unrelated assertion
+        # ("I am not hungry" must not become topic=gasket).
+        deictic_inherit = bool(
+            assertion.get("theme_unresolved")
+            or (
+                assertion.get("theme_is_deictic")
+                and not assertion.get("theme_concept")
+            )
+        )
+        if deictic_inherit:
+            topic = resolved_topic or self._assertion_topic_key(
+                assertion, prior=self.state.last_assertion
+            )
+        else:
+            topic = self._assertion_topic_key(assertion, prior=None)
+        if not topic:
+            return  # no comparable topic identity — do not store a half frame
+        stored = dict(assertion)
+        stored["topic_head"] = topic
+        stored["assertable"] = True
+        self.state.last_assertion = stored
+        self.state.assertions_by_topic[topic.casefold()] = stored
 
     def _is_affect_share(self, packet: Dict[str, Any]) -> bool:
         """Affect from Language OEWN affect signal — not a 'feel/feeling' list."""
@@ -654,6 +870,8 @@ class ConversationSystem:
             self.state.current_topic = topic
 
         social_move = self._social_move_from_packet(packet)
+        # Correction compares Language assertion frame to last_assertion / anaphor.
+        # Must run BEFORE storing this turn's assertion.
         is_correction = self._is_correction(packet)
         is_answer = self._answers_mercy_question(packet, speech_act)
         deictic_hooks = self._detect_deictic_hooks(packet)
@@ -738,6 +956,41 @@ class ConversationSystem:
                 if not self.state.current_topic:
                     self.state.current_topic = topic
 
+        # Store this turn's assertable proposition (resolved topic) for next-turn replace.
+        store_topic = topic or self.state.current_topic
+        if is_correction and not store_topic:
+            # Prefer topic matched for the correction replace.
+            cur_a = self._assertion_from_packet(packet)
+            store_topic = self._assertion_topic_key(
+                cur_a, prior=self.state.last_assertion
+            ) if cur_a else None
+        # Prior frame for this topic (before overwrite) — not merely chronological last.
+        prior_for_note = None
+        if store_topic:
+            prior_for_note = self._prior_assertion_for(store_topic)
+        if prior_for_note is None and self.state.last_assertion:
+            prior_for_note = dict(self.state.last_assertion)
+        else:
+            prior_for_note = dict(prior_for_note) if prior_for_note else None
+        self._store_assertion_from_packet(
+            packet, speech_act=speech_act, resolved_topic=store_topic
+        )
+        # Enrich open correction thread with replace structure (not cue words).
+        if dialogue_move == "correction" and self.state.unfinished_threads:
+            for thread in reversed(self.state.unfinished_threads):
+                if thread.get("kind") == "correction" and thread.get("thread_id", "").startswith(
+                    f"correction_{turn_index}"
+                ):
+                    thread["replaced"] = {
+                        "topic": store_topic
+                        or (prior_for_note or {}).get("topic_head"),
+                        "from_complement": self._complement_key(prior_for_note),
+                        "to_complement": self._complement_key(self.state.last_assertion),
+                        "from_polarity": (prior_for_note or {}).get("polarity"),
+                        "to_polarity": (self.state.last_assertion or {}).get("polarity"),
+                    }
+                    break
+
         intent = self._intent_compatibility(dialogue_move)
         try:
             confidence = float(packet.get("confidence") or 0.0)
@@ -786,6 +1039,10 @@ class ConversationSystem:
             "pending_mercy_questions": [dict(x) for x in self.state.pending_mercy_questions],
             "answered_mercy_question": answered_mercy,
             "deictic_hooks": list(deictic_hooks),
+            "is_correction": is_correction,
+            "last_assertion": dict(self.state.last_assertion)
+            if isinstance(self.state.last_assertion, dict)
+            else None,
             "language_understanding": packet,
         }
         return understanding

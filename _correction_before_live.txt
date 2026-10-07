@@ -1,0 +1,6 @@
+BEFORE real correction (tip df5b85f):
+conversation._is_correction always returned False (honest gap after fake leading-no FAIL).
+No cross-turn replace of prior asserted complement.
+Turn1 'The gasket is aluminum.' Turn2 'The gasket is copper.' → assertion, not correction.
+Turn2 'It's copper.' → not correction.
+Prior fake FAILs owned: b8ef040 leading 'no'; bd4d5fb always-False gap; cue-word lists.

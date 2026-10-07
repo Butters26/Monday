@@ -1,0 +1,62 @@
+Correction proofs — 2026-10-07 06:09 MDT
+Path: LanguageComprehensionEngine.analyze → ConversationSystem.understand
+Mechanism: Language assertion/predicative_complement + Conversation assertions_by_topic replace-compare
+FORBIDDEN shortcuts checked absent: leading No alone, meant/actually lists, frozenset discourse correction
+
+## replace_nominal [PASS] expect_correction=True
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'The gasket is copper.' → move=correction corr=True topic=gasket stored=gasket/copper replaced={'topic': 'gasket', 'from_complement': 'aluminum', 'to_complement': 'copper', 'from_polarity': 'positive', 'to_polarity': 'positive'}
+
+## replace_anaphor [PASS] expect_correction=True
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  "It's copper." → move=correction corr=True topic=gasket stored=gasket/copper replaced={'topic': 'gasket', 'from_complement': 'aluminum', 'to_complement': 'copper', 'from_polarity': 'positive', 'to_polarity': 'positive'}
+
+## replace_with_no_particle [PASS] expect_correction=True
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'No, the gasket is copper.' → move=correction corr=True topic=gasket stored=gasket/copper replaced={'topic': 'gasket', 'from_complement': 'aluminum', 'to_complement': 'copper', 'from_polarity': 'positive', 'to_polarity': 'positive'}
+
+## replace_adj [PASS] expect_correction=True
+  'The weather is awful.' → move=assertion corr=False topic=weather stored=weather/awful replaced=None
+  'The weather is fine.' → move=correction corr=True topic=weather stored=weather/fine replaced={'topic': 'weather', 'from_complement': 'awful', 'to_complement': 'fine', 'from_polarity': 'positive', 'to_polarity': 'positive'}
+
+## polarity_retract [PASS] expect_correction=True
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'The gasket is not aluminum.' → move=correction corr=True topic=gasket stored=gasket/aluminum replaced={'topic': 'gasket', 'from_complement': 'aluminum', 'to_complement': 'aluminum', 'from_polarity': 'positive', 'to_polarity': 'negative'}
+
+## offlist_bolt [PASS] expect_correction=True
+  'The manifold bolt is titanium.' → move=assertion corr=False topic=bolt stored=bolt/titanium replaced=None
+  'The manifold bolt is steel.' → move=correction corr=True topic=bolt stored=bolt/steel replaced={'topic': 'bolt', 'from_complement': 'titanium', 'to_complement': 'steel', 'from_polarity': 'positive', 'to_polarity': 'positive'}
+
+## interrupt_then_correct [PASS] expect_correction=True
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'I am not hungry.' → move=affect_share corr=False topic=gasket stored=user/hungry replaced=None
+  'The gasket is copper.' → move=correction corr=True topic=gasket stored=gasket/copper replaced={'topic': 'gasket', 'from_complement': 'aluminum', 'to_complement': 'copper', 'from_polarity': 'positive', 'to_polarity': 'positive'}
+
+## bound_pronoun_retract [PASS] expect_correction=True
+  'I am hungry.' → move=affect_share corr=False topic=None stored=user/hungry replaced=None
+  'I am not hungry.' → move=correction corr=True topic=None stored=user/hungry replaced={'topic': 'user', 'from_complement': 'hungry', 'to_complement': 'hungry', 'from_polarity': 'positive', 'to_polarity': 'negative'}
+
+## neg_bare_no [PASS] expect_correction=False
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'No.' → move=social_fragment corr=False topic=gasket stored=gasket/aluminum replaced=None
+
+## neg_not_hungry_no_prior [PASS] expect_correction=False
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'I am not hungry.' → move=affect_share corr=False topic=gasket stored=user/hungry replaced=None
+
+## neg_anyway_weather [PASS] expect_correction=False
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'Anyway the weather looks awful.' → move=topic_shift corr=False topic=weather stored=weather/awful replaced=None
+
+## neg_restatement [PASS] expect_correction=False
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+
+## neg_no_restatement [PASS] expect_correction=False
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'No, the gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+
+## neg_first_turn [PASS] expect_correction=False
+  'No, the gasket is copper.' → move=assertion corr=False topic=gasket stored=gasket/copper replaced=None
+
+OVERALL PROOFS: PASS

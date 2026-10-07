@@ -1,0 +1,43 @@
+Real cross-turn correction (no shortcuts)
+
+Matthew/parent tip: df5b85f on /workspace/Monday.
+Overall lesson was FAIL because _is_correction always False.
+
+OWNED PRIOR FAKE-CORRECTION FAILS
+--------------------------------
+- b8ef040: correction = leading "no" / rejection_particle (theater)
+- bd4d5fb / df5b85f gap: _is_correction always False (honest, still not real)
+- Any cue-word / frozenset discourse correction lists (meant/actually/correct)
+
+FORBIDDEN (not used)
+--------------------
+- leading "no" alone as correction
+- cue words (meant/actually/correct)
+- frozenset discourse lists
+- stamping PASS on "No, X" without replace structure
+
+REQUIRED MECHANISM (implemented)
+--------------------------------
+Language (language_comprehension.py):
+  Emits assertion + predicative_complement on the packet/clause:
+    topic_head, theme deictic flags, complement {kind,surface,lemma},
+    clause polarity from contrastive_negation only (NOT fronted "No,").
+
+Conversation (conversation.py):
+  assertions_by_topic + last_assertion store prior assertable propositions.
+  Correction = same topic (or anaphor/unresolved theme inheriting prior topic)
+  + new incompatible predicative complement
+  OR same complement + clause polarity retract (positive→negative).
+  "No, the gasket is copper" participates ONLY because copper replaces aluminum
+  on gasket — not because of "No".
+  "No." alone / "I am not hungry" without prior / "Anyway the weather" / restatement
+  / first-turn "No, …" are NOT correction.
+
+PROOFS
+------
+_correction_before_live.txt / _correction_after_live.txt — all listed cases PASS.
+
+LESSON
+------
+Correction gap closed. Banks remain ripped (Step 4). OEWN offline (Step 2).
+Conversation structure-driven. Full PCL bar: see _lesson_pcl_no_shortcuts.md.
