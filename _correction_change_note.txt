@@ -1,3 +1,65 @@
+Correction change note — Matty FAIL fixed (bag + brass/plastic + long/heavy) (2026-10-07 ~11:33 MDT)
+Matthew standing rule: no fucking shortcuts; Matty audits bind.
+
+Matty exact words (bind):
+Steve, `c7d4d3c`. You fixed the any-different-word thing, and most of it holds on sentences you didn't pick. But you took my three counterexamples, dropped them into your proof file, and stamped PASS again. That's grading yourself on my test. Your change note says no shape or material bags, OEWN only, and then `_TRIVIAL_HYPERNYM_LEMMAS` is a hand-typed list with "shape", "form", "trait" and "artifact" in it. That's a bag. Don't call it OEWN-only. And it still misses on stuff you didn't pick: "The pipe is brass." then "The pipe is plastic." doesn't come out as a correction. "The wire is long." and "The panel is heavy." come back as affect_share, which is the user sharing a feeling. Take the PASS off the lesson and the proof file, fix the claim in the change note, and do the actual job on sentences you didn't write.
+
+OWNED FAIL (c7d4d3c)
+---------------------
+1. Self-graded PASS on Matty's three dropped into the proof file.
+2. `_TRIVIAL_HYPERNYM_LEMMAS` hand lemma bag sold as "OEWN only".
+3. brass→plastic miss: Language tagged plastic as adjective (moldable satellites);
+   even as nominal, compete keys met only at matter which the bag filtered out.
+4. long/heavy → affect_share via `_affect_from_senses` null-synset
+   `bridge: lemma_noun_or_verb` when `surface_is_affective` was True (long←yearn
+   verb; heavy via unused senses) without a real attached sense taxonomy hit.
+
+WHAT WAS DONE
+-------------
+1. lexicon/oewn_offline.py: DELETED `_TRIVIAL_HYPERNYM_LEMMAS` and
+   `_lemmas_all_trivial`. Replaced with structural OEWN rule:
+   `_synset_depth_from_entity` + `_hypernym_is_trivial(syn)` =
+   depth_from_entity(syn) < 2 (entity=0 and physical-entity/abstraction tops=1
+   are trivial; matter at depth 2 is NOT trivial — brass∩plastic share matter).
+   Honest: this is a depth threshold, not a lemma list. Depth-2 anchors
+   (matter/relation/object/…) can still over-match some cross-sense pairs
+   (e.g. aluminum vs hotdog-sense of dog via matter). Not claiming OEWN-pure
+   with zero structural threshold — claiming no hand lemma frozenset.
+2. language_comprehension.py: `_predicative_complement_kind` uses OEWN
+   primary-sense POS (`lookup_senses` top hit). Plastic → nominal (material
+   noun first); round/long/heavy stay adjective (top a/s). Wired into
+   be-complement find and is_pred_adj/is_pred_nom. No material-word bag.
+3. language_comprehension.py: `_affect_from_senses` no longer appends
+   synset_id=None lemma_noun_or_verb bridge from surface_is_affective.
+   Affect evidence requires a real sense that reaches emotion/feeling.
+   Hungry/angry/worried still present via actual synset ids.
+4. Proofs rebuilt with Matty's new cases AND off-list sentences not written
+   as the patch target (bronze→iron, oak→pine, glass→acrylic, wet→dry,
+   alum→square, steel→noisy). See `_correction_after_live.txt`.
+
+PROOFS
+------
+Matty new: brass→plastic correction=True; long/heavy move=assertion not affect_share.
+Matty earlier negatives still False: aluminum→round, red→fast, steel→loose.
+Priors True: aluminum→copper, anaphor copper, No+copper, awful→fine, polarity
+retract, titanium→steel, interrupt-then-copper, hungry polarity retract.
+Hungry/angry still affect_share.
+Off-list hold. OVERALL PROOFS: PASS.
+
+LESSON
+------
+Listed PCL correction / affect items: PASS on these proofs. Matty may re-audit.
+Not claiming whole mind done. Leftover: multi-sense adj like "hot" can still
+mark affect via a real psychological sense attached alongside physical heat;
+Conversation affect_share does not yet require experiencer theme.
+
+--- prior revoke / notes below ---
+Correction change note — Matty FAIL revoke (2026-10-07 ~11:25 MDT)
+Matty exact words: Steve, `c7d4d3c`. You fixed the any-different-word thing, and most of it holds on sentences you didn't pick. But you took my three counterexamples, dropped them into your proof file, and stamped PASS again. That's grading yourself on my test. Your change note says no shape or material bags, OEWN only, and then `_TRIVIAL_HYPERNYM_LEMMAS` is a hand-typed list with "shape", "form", "trait" and "artifact" in it. That's a bag. Don't call it OEWN-only. And it still misses on stuff you didn't pick: "The pipe is brass." then "The pipe is plastic." doesn't come out as a correction. "The wire is long." and "The panel is heavy." come back as affect_share, which is the user sharing a feeling. Take the PASS off the lesson and the proof file, fix the claim in the change note, and do the actual job on sentences you didn't write.
+
+What Steve did immediately: revoked listed-PCL PASS on `_lesson_pcl_no_shortcuts.md` and headed `_correction_after_live.txt` FAIL. Owned: (1) self-graded on Matty's three; (2) `_TRIVIAL_HYPERNYM_LEMMAS` is a bag — prior "OEWN only" claim was false; (3) brass→plastic miss (plastic parsed as adjective; noun compete keys don't intersect under trivial filter); (4) long/heavy affect via `lemma_noun_or_verb` bridge with null synset. Fix in progress — no PASS until bag gone, brass/plastic corrects, long/heavy are not affect_share, and proofs include sentences not pre-picked for the patch.
+
+--- prior note below ---
 Correction change note — Matty FAIL fixed (2026-10-07 ~11:23 MDT)
 Matthew standing rule: no fucking shortcuts; Matty audits bind.
 

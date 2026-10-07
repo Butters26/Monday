@@ -78,7 +78,7 @@ No shortcut: grepping for a flag, unit tests that mock the packet, or talking to
 
 - Real packet shape + SR ID registration on live chat: yes.
 - Offline lexicon / open vocabulary: **yes (Step 2)**. Conversation driven by meaning packets: **yes (correction = OEWN same-kind replace; see `_correction_change_note.txt`)**. Social greeting/goodbye/check-in banks: **ripped Step 4**. Dead Phase3/4 path: **removed by Phase 5**.
-- Full bar for listed PCL items: **PASS on proofs** — Matty negatives fail-as-correction; prior true cases still pass. Not whole-mind done; Matty may still audit.
+- Full bar for listed PCL items: **PASS on listed proofs** after Matty 11:25 fix (depth-from-entity triviality, plastic primary-sense nominal, null-synset affect bridge killed; brass→plastic + long/heavy + off-list). Not whole-mind done; Matty may still audit.
 
 ---
 
@@ -99,6 +99,6 @@ No shortcut: grepping for a flag, unit tests that mock the packet, or talking to
 
 - Step 1 Perception: done (re-check).
 - Step 2 Language OEWN: done (`1f789ff`).
-- Step 3 Conversation on Language packets: **PASS on listed bar** — topic/structure from packets; correction = OEWN same-kind replace (Matty negatives False; priors True). See `_correction_after_live.txt`.
+- Step 3 Conversation on Language packets: **PASS on listed proofs** — correction = OEWN same-kind replace with depth-from-entity triviality (no hand lemma bag); brass→plastic True; long/heavy not affect_share; Matty negatives False; off-list hold. See `_correction_after_live.txt` / `_correction_change_note.txt`.
 - Step 4 bank rip (greeting/goodbye/check-in): **done on live mouth** — social cue alone → silence; proofs in `_step4_*.txt`.
-- **Listed PCL items: PASS on proofs** — OEWN Language, Conversation on packets, real same-kind correction, banks ripped, silence when empty. Not claiming whole mind done. Matty may still audit.
+- **Listed PCL items: PASS on listed proofs** — bag gone; brass/plastic + long/heavy + off-list hold; banks ripped; silence when empty. Not claiming whole mind done. Matty may still audit.

@@ -270,6 +270,31 @@ class LanguageComprehensionEngine:
     def _has_pos(self, token: str, pos: str) -> bool:
         return pos in self._pos_set(token)
 
+    def _predicative_complement_kind(self, token: str) -> Optional[str]:
+        """Prefer OEWN primary sense POS for be-complements.
+
+        Plastic's top OEWN sense is the material noun; adjective satellites
+        (moldable) must not steal predicative kind. Round/long/heavy keep
+        adjective because their top sense is a/s. No material-word bag —
+        lookup_senses ranking only.
+        """
+        form = (token or "").strip()
+        if not form:
+            return None
+        senses = self._lookup(form)
+        if senses:
+            top = str(senses[0].get("pos") or "")
+            if top == "n":
+                return "nominal"
+            if top in {"a", "s"}:
+                return "adjective"
+        pos_set = self._pos_set(form)
+        if "a" in pos_set or "s" in pos_set:
+            return "adjective"
+        if "n" in pos_set:
+            return "nominal"
+        return None
+
     def _lexical_entry(
         self, token: str, original: str
     ) -> Tuple[str, str, List[Dict[str, Any]], bool]:
@@ -658,13 +683,12 @@ class LanguageComprehensionEngine:
                 continue
             if re.fullmatch(r"[.!?,;:]", cand):
                 continue
-            pos_set = self._pos_set(cand)
-            if "a" in pos_set or "s" in pos_set:
-                # Predicative adjective (happy, afraid). Prefer adj lemma even if also v.
+            kind = self._predicative_complement_kind(cand)
+            if kind == "adjective":
                 lemma = self.lemma(cand, prefer_pos="a")
                 be_complement = (next_idx, lemma, "adjective")
                 break
-            if "n" in pos_set:
+            if kind == "nominal":
                 lemma = self.lemma(cand, prefer_pos="n")
                 be_complement = (next_idx, lemma, "nominal")
                 break
@@ -1095,16 +1119,10 @@ class LanguageComprehensionEngine:
                         "definition": sense.get("definition"),
                     }
                 )
-        # Lemma→noun/verb bridge when sense walk misses thin adj links (worried).
-        if not hits and surf and surface_is_affective(surf):
-            hits.append(
-                {
-                    "synset_id": None,
-                    "definition": None,
-                    "bridge": "lemma_noun_or_verb",
-                    "surface": surf,
-                }
-            )
+        # Affect evidence requires a real OEWN sense that reaches emotion/feeling.
+        # Do NOT stamp synset_id=None via surface_is_affective lemma→verb bridges
+        # (that made long/yearn and heavy's unused senses mark affect_share on
+        # object topics). Hungry/angry/worried still hit via actual sense ids.
         return hits
 
     def _packet_affect(
@@ -1222,15 +1240,31 @@ class LanguageComprehensionEngine:
             pred_token_kind = lexical[verb_idx]["kind"] if verb_idx < len(lexical) else None
             pos_at_pred = self._pos_set(tokens[verb_idx])
             copular = self._has_be_auxiliary_before(tokens, verb_idx)
-            is_pred_adj = (
-                pred_token_kind == "adjective"
-                or ("a" in pos_at_pred or "s" in pos_at_pred)
-                and copular
+            pred_kind = (
+                self._predicative_complement_kind(tokens[verb_idx]) if copular else None
             )
-            is_pred_nom = (
+            is_pred_adj = bool(
+                copular
+                and (
+                    pred_kind == "adjective"
+                    or (
+                        pred_kind is None
+                        and (
+                            pred_token_kind == "adjective"
+                            or "a" in pos_at_pred
+                            or "s" in pos_at_pred
+                        )
+                    )
+                )
+            )
+            is_pred_nom = bool(
                 copular
                 and not is_pred_adj
-                and ("n" in pos_at_pred or pred_token_kind in {"noun", "unknown"})
+                and (
+                    pred_kind == "nominal"
+                    or "n" in pos_at_pred
+                    or pred_token_kind in {"noun", "unknown"}
+                )
             )
             if is_pred_adj:
                 predicate_senses = (

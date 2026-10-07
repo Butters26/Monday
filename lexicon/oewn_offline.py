@@ -351,64 +351,66 @@ def surface_is_affective(surface: str, *, max_depth: int = 8) -> bool:
 
 # ---------------------------------------------------------------------------
 # Same-kind claim keys for cross-turn correction (Conversation).
-# No handmade material/color/shape bags — OEWN relations only.
+# OEWN graph only — no handmade lemma bags (shape/form/trait/artifact/…).
 # ---------------------------------------------------------------------------
 
-# Ultra-generic OEWN tops: sharing only these is NOT same-kind.
-_TRIVIAL_HYPERNYM_LEMMAS = frozenset(
-    {
-        "entity",
-        "physical entity",
-        "abstraction",
-        "abstract entity",
-        "object",
-        "physical object",
-        "whole",
-        "unit",
-        "thing",
-        "relation",
-        "part",
-        "portion",
-        "component part",
-        "component",
-        "constituent",
-        "attribute",
-        "property",
-        "matter",
-        "act",
-        "deed",
-        "human action",
-        "human activity",
-        "psychological feature",
-        "cognition",
-        "knowledge",
-        "noesis",
-        "state",
-        "group",
-        "grouping",
-        "possession",
-        "location",
-        "event",
-        "process",
-        "phenomenon",
-        "measure",
-        "quantity",
-        "amount",
-        "communication",
-        "artifact",
-        "artefact",
-        "trait",
-        "shape",
-        "form",
-    }
-)
+# OEWN unique taxonomy root (the noun synset with no hypernyms).
+_ENTITY_SYNSET_ID = "oewn-00001740-n"
+
+# Hypernyms shallower than this depth-from-entity are too generic to mark
+# same-kind. depth 0 = entity; depth 1 = physical entity / abstraction tops.
+# depth 2 (matter, relation, object, …) MAY anchor compete keys — required so
+# brass∩plastic (LCS=matter) counts as material replace. Honest: this is a
+# structural depth rule, not a lemma list; broad depth-2 nodes can still
+# over-match (e.g. aluminum vs hotdog-sense dog via matter).
+_TRIVIAL_MAX_ENTITY_DEPTH = 2  # trivial iff depth_from_entity < this
 
 
-def _lemmas_all_trivial(lemmas) -> bool:
-    lows = [str(x).lower() for x in (lemmas or [])]
-    if not lows:
+@lru_cache(maxsize=8192)
+def _synset_depth_from_entity(synset_id: str) -> Optional[int]:
+    """Shortest hypernym-walk distance from synset up to OEWN entity root."""
+    sid = (synset_id or "").strip()
+    if not sid:
+        return None
+    try:
+        wnet = get_wordnet()
+        syn = wnet.synset(sid)
+    except Exception:
+        return None
+    stack = [(syn, 0)]
+    seen = set()
+    best: Optional[int] = None
+    while stack:
+        node, depth = stack.pop()
+        nid = str(node.id)
+        if nid in seen:
+            continue
+        seen.add(nid)
+        if nid == _ENTITY_SYNSET_ID:
+            best = depth if best is None else min(best, depth)
+            continue
+        try:
+            for hyp in node.hypernyms():
+                stack.append((hyp, depth + 1))
+        except Exception:
+            pass
+    return best
+
+
+def _hypernym_is_trivial(synset) -> bool:
+    """True when a noun hypernym is too close to the OEWN entity root.
+
+    Structural OEWN rule: depth_from_entity < _TRIVIAL_MAX_ENTITY_DEPTH.
+    Not a handmade lemma frozenset.
+    """
+    if synset is None:
         return True
-    return all(l in _TRIVIAL_HYPERNYM_LEMMAS for l in lows)
+    if str(getattr(synset, "pos", "") or "") != "n":
+        return True
+    depth = _synset_depth_from_entity(str(synset.id))
+    if depth is None:
+        return True
+    return depth < _TRIVIAL_MAX_ENTITY_DEPTH
 
 
 def complement_compete_keys(
@@ -430,6 +432,8 @@ def complement_compete_keys(
 
     ``kind`` is Language's predicative_complement kind (nominal / adjective).
     Uses senses already on the packet when provided — does not invent banks.
+    Non-trivial hypernyms: OEWN depth-from-entity >= 2 (see _hypernym_is_trivial).
+    Not a handmade lemma bag.
     """
     form = (surface or "").strip()
     sense_list = list(senses or [])
@@ -481,7 +485,7 @@ def complement_compete_keys(
                 if nid in seen or depth > max_hyp_depth:
                     continue
                 seen.add(nid)
-                if depth > 0 and not _lemmas_all_trivial(node.lemmas()):
+                if depth > 0 and not _hypernym_is_trivial(node):
                     keys.add(f"hyp:{nid}")
                 try:
                     for hyp in node.hypernyms():
@@ -501,7 +505,7 @@ def complement_compete_keys(
                 keys.add(f"sim:{nid}")
                 try:
                     for attr in node.get_related("attribute"):
-                        if not _lemmas_all_trivial(attr.lemmas()):
+                        if not _hypernym_is_trivial(attr):
                             keys.add(f"attr:{attr.id}")
                 except Exception:
                     pass
@@ -546,7 +550,7 @@ def complement_compete_keys(
                                 if hid in hseen or hd > 1:
                                     continue
                                 hseen.add(hid)
-                                if not _lemmas_all_trivial(hn.lemmas()):
+                                if not _hypernym_is_trivial(hn):
                                     keys.add(f"der:{hid}")
                                 try:
                                     for hh in hn.hypernyms():
@@ -567,7 +571,7 @@ def complement_compete_keys(
                         continue
                     try:
                         for attr in neigh.get_related("attribute"):
-                            if not _lemmas_all_trivial(attr.lemmas()):
+                            if not _hypernym_is_trivial(attr):
                                 keys.add(f"attr:{attr.id}")
                     except Exception:
                         pass
@@ -577,11 +581,11 @@ def complement_compete_keys(
                                 dsyn = rel.synset()
                                 if str(getattr(dsyn, "pos", "")) != "n":
                                     continue
-                                if not _lemmas_all_trivial(dsyn.lemmas()):
+                                if not _hypernym_is_trivial(dsyn):
                                     keys.add(f"der:{dsyn.id}")
                                 try:
                                     for hh in dsyn.hypernyms():
-                                        if not _lemmas_all_trivial(hh.lemmas()):
+                                        if not _hypernym_is_trivial(hh):
                                             keys.add(f"der:{hh.id}")
                                 except Exception:
                                     pass
