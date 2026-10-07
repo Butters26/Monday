@@ -1,0 +1,47 @@
+=== STEP 3 CONVERSATION AFTER (Language-packet driven) ===
+time: 2026-10-07 05:22:28 MDT
+
+MECHANISM_CHECK:
+  _detect_intent present: False
+  _extract_slots present: False
+  _detect_sentiment present: False
+  keyword topic bag present: False
+  dialogue decisions from language_packet: True
+
+--- LIVE thalamus.process_user_input sequence ---
+T1_assertion text='Chloroplasts dismantle the carburetor' reply=''
+  last_move='assertion' topic='carburetor' prev=None
+  resolved=[]
+  open_q=[]
+T2_that text='Tell me about that' reply=''
+  last_move='referent_followup' topic='carburetor' prev=None
+  resolved=[{'k': 'deictic', 'ok': True, 'target': 'carburetor'}]
+  open_q=[]
+T3_last_one text='What about the last one?' reply=''
+  last_move='question' topic='carburetor' prev=None
+  resolved=[{'k': 'last_one', 'ok': True, 'target': 'carburetor'}]
+  open_q=['What about the last one?']
+T4_topic_shift text="Anyway, let's talk about hiking instead" reply=''
+  last_move='topic_shift' topic='talk about hiking instead' prev='carburetor'
+  resolved=[]
+  open_q=['What about the last one?']
+T5_answer text='I live near the trail in Boulder' reply=''
+  last_move='answer' pending_mercy_after=[]
+  open_q=['What about the last one?']
+T6_correction last_move='correction' topic='denver boulder'
+T7_affect last_move='affect_share'
+T8_hello last_move='social_open' reply='Hey there'
+T9_goodbye last_move='social_close' reply="Goodnight — I'll be here when you're back."
+
+--- ISOLATED field proof (single understand per turn, Language packets) ---
+  T1 assertion: OK
+  T2 that->carburetor: OK
+  T3 last_one question: OK
+  T4 topic_shift: OK
+  T5 answer: OK
+  T6 correction: OK
+  T7 affect: OK
+  T8 social_open: OK
+  T9 social_close: OK
+
+VERDICT_AFTER: PASS — Conversation decisions driven by Language packets on live path; regex intent/slots/sentiment ownership removed; topic/referents/corrections/answers hold.

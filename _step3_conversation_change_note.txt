@@ -1,0 +1,50 @@
+# Step 3 change note — Rebuild Conversation on Language packets
+
+Date: 2026-10-07 (America/Denver)
+
+## Matthew's exact words
+- "On one condition, no shortcuts"
+- "I don’t know make a lesson follow the list and make sure you don’t do any fucking Shortcuts"
+- "Motherfucker, when I say something like that, that means fucking go do it don’t just keep saying waiting for your go"
+
+Lesson: `_lesson_pcl_no_shortcuts.md` Step 3 only.
+
+## What was done (exact)
+
+1. Opened live Conversation path before editing:
+   - `conversation.py` (Phase4Conversation already gone — Phase 5 native)
+   - `thalamus.process_user_input` → conversation `understand` with `language_understanding`
+   - packet shape `language_understanding_v1` from `language_comprehension.py` / `LanguageGenerator.comprehend`
+
+2. Killed Conversation regex ownership of dialogue decisions:
+   - Removed `_detect_intent`, `_extract_slots`, `_extract_entities`, `_detect_sentiment`, keyword topic bag (`_detect_topic` with ai/tech/emotions lists)
+   - Removed paste-after-regex pattern (old Phase4-style attach of language IDs onto regex intent)
+
+3. Drove dialogue state from Language packets:
+   - `dialogue_move` from speech_act + packet structure + dialogue state
+   - Topic / explicit topic shift from mentions + discourse/predicate cues (anyway/instead/talk|chat|discuss) — not keyword labels
+   - Open questions + unfinished threads tracked on `ConversationState`
+   - Corrections (`No` + mean/correct + contrast) and answers to Mercy questions (`note_mercy_question` / `pending_mercy_questions`)
+   - Cross-turn referents (“that”, “the last one”) resolved via Language tokens/unresolved refs + `referent_stack`
+   - Social open/close from OEWN sense definitions inside the Language packet (“expression of greeting” / “farewell”), not a Conversation greeting regex list
+   - `slots={}`, `sentiment=None` — Conversation no longer owns those jobs
+   - Thin `intent` compatibility field derived FROM `dialogue_move` only (for Reasoning consumers)
+
+4. Did NOT redo Step 2. Did NOT start Step 4 proof theater beyond Step 3 mechanism proofs. Did NOT invent Learning/presence.
+
+## Proof
+- Before: `_step3_conversation_before_live.txt` (regex brain; packet pasted; no dialogue_move/referent resolution)
+- After: `_step3_conversation_after_live.txt`
+- Live: `create_core_systems` → `thalamus.process_user_input` + Language packets
+  - “that” / “the last one” → carburetor from prior turn
+  - topic shift, correction, answer-to-mercy, affect_share, social_open/close
+- Tests: `test_native_routing.py` + `test_language_native.py` + `test_shared_representation_native.py` — 19 passed
+
+## Remaining honesty gaps (not hidden)
+- Step 4 off-list live proof suite still open (greeting banks as mouth; full off-script bar)
+- Topic strings still inherit Language NP glue quality (“talk about hiking instead”, “denver boulder”)
+- Compat `intent` still emitted for Reasoning — derived from dialogue_move, not a second regex brain
+- `looks_like_teaching_turn` / mild-social helpers still imported for curiosity gating only (not turn classification)
+
+## Verdict
+Step 3 Conversation rebuilt on Language packets on live path: PASS (gaps above named).

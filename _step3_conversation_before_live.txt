@@ -1,0 +1,49 @@
+=== STEP 3 CONVERSATION BEFORE (regex-owned) ===
+time: 2026-10-07 05:19:17 MDT
+runtime: /tmp/step3-before-lazjlcd9
+
+MECHANISM_CHECK:
+  has _detect_intent: True
+  has _extract_slots: True
+  has _detect_sentiment: True
+  has keyword topic bag: True
+  pastes language after regex understand: True
+
+--- DIRECT understand (no Language packet forced) ---
+DIRECT[greeting] 'Hello'
+  intent='greeting' slots={'ask_kind': 'greeting'} sentiment=neutral topic=None
+  has_language_understanding=False
+  dialogue_move=None resolved_referents=None
+DIRECT[topic_shift] "Anyway, let's talk about hiking instead"
+  intent='topic_shift' slots={'ask_kind': 'topic_shift', 'new_topic': 'hiking'} sentiment=neutral topic=hiking
+  has_language_understanding=False
+  dialogue_move=None resolved_referents=None
+DIRECT[question] 'What is photosynthesis?'
+  intent='question' slots={'ask_kind': 'question'} sentiment=neutral topic=None
+  has_language_understanding=False
+  dialogue_move=None resolved_referents=None
+DIRECT[correction] 'No, I meant Boulder not Denver'
+  intent='conversation' slots={} sentiment=neutral topic=None
+  has_language_understanding=False
+  dialogue_move=None resolved_referents=None
+DIRECT[deictic] 'Tell me about that'
+  intent='question' slots={'ask_kind': 'question'} sentiment=neutral topic=None
+  has_language_understanding=False
+  dialogue_move=None resolved_referents=None
+DIRECT[last_one] 'What about the last one?'
+  intent='question' slots={'ask_kind': 'question'} sentiment=neutral topic=None
+  has_language_understanding=False
+  dialogue_move=None resolved_referents=None
+
+--- LIVE two-turn referent ---
+SEED reply=''
+SEED language mentions=['chloroplasts', 'the carburetor']
+FOLLOW reply=''
+FOLLOW intent=question topic=None topic_shifted=False
+FOLLOW pasted_language=True
+FOLLOW dialogue_move=None
+FOLLOW resolved_referents=None
+FOLLOW open_questions=None
+FOLLOW decisions_driven_by_packet=False
+
+VERDICT_BEFORE: Conversation still regex-owns intent/slots/sentiment; language packet pasted not driving dialogue. Step 3 not met.

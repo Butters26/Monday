@@ -28,7 +28,7 @@ Already locked. Do not reopen. If a change steals another lobe’s job, it fails
 | Lobe | Must kill | Status |
 |---|---|---|
 | Perception | Emotion keywords, sentiment, novelty-as-interpretation, S-V-O guess, interpretive captions | Done on disk + GitHub (`d010c9c` sense-only). Re-verify before calling Language done. |
-| Conversation | Regex turn classifier, slots, entities, sentiment ownership | **Not done.** Still in `conversation.py`. Phase4 only pastes language IDs after the fact. |
+| Conversation | Regex turn classifier, slots, entities, sentiment ownership | **Done on live path** (`_step3_conversation_change_note.txt`). Dialogue from Language packets; regex intent/slots/sentiment ownership removed. |
 | Language | Canned greeting/goodbye/check-in banks as mouth, stock fillers, Notus retrieval rescue inside Language | Stock fillers ripped (`63946c0`). **Greeting/goodbye/check-in banks still intentional.** Notus rescue / bank-as-brain still fail if present. |
 
 No shortcut: deleting a flag or wrapping a call while the old classifier still runs = fail.
@@ -77,8 +77,8 @@ No shortcut: grepping for a flag, unit tests that mock the packet, or talking to
 ## What ChatGPT’s Phase 3/4 already did (honest)
 
 - Real packet shape + SR ID registration on live chat: yes.
-- Offline lexicon / open vocabulary: **yes (Step 2)**. Conversation driven by meaning: **no (Step 3)**. Expression from meaning for ordinary grounded turns: **yes (structures/silence)**; social banks remain. Dead Phase3/4 path: **removed by Phase 5**.
-- Full bar for whole PCL lesson: **not met** until Steps 3–4. Step 2 alone: met on live path (see change note).
+- Offline lexicon / open vocabulary: **yes (Step 2)**. Conversation driven by meaning: **yes (Step 3)**. Expression from meaning for ordinary grounded turns: **yes (structures/silence)**; social banks remain. Dead Phase3/4 path: **removed by Phase 5**.
+- Full bar for whole PCL lesson: **not met** until Step 4 off-list live proof. Steps 2–3: met on live path (see change notes).
 
 ---
 
@@ -99,6 +99,7 @@ No shortcut: grepping for a flag, unit tests that mock the packet, or talking to
 
 - Step 1 Perception: done (re-check).
 - Step 1 Conversation / Language banks: still open (greeting/goodbye/check-in banks remain).
-- Step 2 Language meaning: **done on live path** (OEWN offline + open vocabulary + native thalamus; see `_step2_language_change_note.txt`). Sense ranking / PP glue still imperfect.
-- Steps 3–4: next — rebuild Conversation on Language packets, then prove off-list live turns.
+- Step 2 Language meaning: **done on live path** (see `_step2_language_change_note.txt`).
+- Step 3 Conversation on Language packets: **done on live path** (see `_step3_conversation_change_note.txt`).
+- Step 4: next — prove with off-list live turns.
 
