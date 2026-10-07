@@ -20,9 +20,11 @@ wrong topics (anxiety/matthew) + awful terror false-positive + dirty Step4 tree.
 Fourth redo: OEWN derivation/attribute affect (surface-scoped), about-first
 topic_head, clean Step4 tree. Prior fake-correction FAILs: b8ef040 leading
 "no"; bd4d5fb/_is_correction always False (honest gap, still not real repair);
-any cue-word / frozenset discourse "correction" lists. Real correction =
-cross-turn replace of prior asserted complement/predicate on same topic
-(or anaphor to it) from Language assertion frames — not "No." theater.
+any cue-word / frozenset discourse "correction" lists;
+5e7003c any-different-lemma replace (Matty: aluminum→round / red→fast /
+steel→loose counted). Real correction = same topic + polarity retract of
+SAME complement OR OEWN same-kind competing complement replace — not
+"No." theater and not any different word.
 
 Language owns word/sentence meaning. Conversation places that meaning
 in the exchange. Emotion owns affect. Reasoning owns truth/grounding.
@@ -39,6 +41,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from thalamus import get_thalamus
+from lexicon.oewn_offline import complements_compete
 from direct_response import (
     is_closing_social_turn,
     honest_curiosity_question,
@@ -367,6 +370,8 @@ class ConversationSystem:
                 "surface": comp.get("surface"),
                 "lemma": lemma,
                 "mention_id": comp.get("mention_id"),
+                "senses": list(comp.get("senses") or []),
+                "compete_keys": list(comp.get("compete_keys") or []),
             },
             "polarity": (
                 "negative" if contrast.get("contrastive_negation") else "positive"
@@ -437,14 +442,15 @@ class ConversationSystem:
     def _is_correction(self, packet: Dict[str, Any]) -> bool:
         """Correction = replace prior asserted content across turns.
 
-        REQUIRED: same topic (or anaphor to it) + new incompatible predicative
-        complement (or polarity retract of same complement).
+        REQUIRED: same topic (or anaphor to it) AND either:
+          1) polarity retract of the SAME complement, OR
+          2) new complement that OEWN marks as a competing value of the SAME
+             kind of claim (complements_compete) — e.g. aluminum↔copper,
+             awful↔fine, loose↔tight. NOT aluminum↔round, red↔fast, steel↔loose.
 
-        FORBIDDEN shortcuts (owned FAILs): leading 'no' alone, cue words
-        (meant/actually/correct), frozenset discourse lists, stamping PASS on
-        'No, X' without replace structure. 'No, the gasket is copper' may
-        participate ONLY because copper replaces aluminum on gasket — not
-        because of 'No'.
+        FORBIDDEN shortcuts (owned FAILs): leading 'no' alone; cue words;
+        frozenset discourse lists; any-different-lemma replace (5e7003c /
+        Matty); stamping PASS on 'No, X' without replace structure.
         """
         current = self._assertion_from_packet(packet)
         if not isinstance(current, dict) or not current.get("assertable"):
@@ -452,7 +458,6 @@ class ConversationSystem:
         # Resolve current topic (anaphor may inherit from last_assertion / stack).
         curr_topic = self._assertion_topic_key(current, prior=self.state.last_assertion)
         if not curr_topic and current.get("theme_unresolved"):
-            # Try referent_stack topic
             curr_topic = self._assertion_topic_key(current, prior=self.state.last_assertion)
         prior = self._prior_assertion_for(curr_topic)
         if not isinstance(prior, dict) or not prior.get("assertable"):
@@ -468,15 +473,17 @@ class ConversationSystem:
         curr_comp = self._complement_key(current)
         if not prev_comp or not curr_comp:
             return False
-        # Incompatible complement → replace.
-        if prev_comp != curr_comp:
-            return True
-        # Same complement + clause polarity retract (not fronted "No,") → correction.
         prev_pol = str(prior.get("polarity") or "positive")
         curr_pol = str(current.get("polarity") or "positive")
-        if prev_pol == "positive" and curr_pol == "negative":
-            return True
-        return False
+        # Same complement + clause polarity retract (not fronted "No,") → correction.
+        if prev_comp == curr_comp:
+            if prev_pol == "positive" and curr_pol == "negative":
+                return True
+            return False
+        # Different lemma: only if OEWN same-kind competing values.
+        prev_frame = prior.get("complement") if isinstance(prior.get("complement"), dict) else {}
+        curr_frame = current.get("complement") if isinstance(current.get("complement"), dict) else {}
+        return bool(complements_compete(prev_frame, curr_frame))
 
     def _store_assertion_from_packet(
         self,

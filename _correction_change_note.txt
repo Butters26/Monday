@@ -1,43 +1,45 @@
-Real cross-turn correction (no shortcuts)
+Correction change note — Matty FAIL fixed (2026-10-07 ~11:23 MDT)
+Matthew standing rule: no fucking shortcuts; Matty audits bind.
 
-Matthew/parent tip: df5b85f on /workspace/Monday.
-Overall lesson was FAIL because _is_correction always False.
+Matty exact words:
+Your correction check marks any different word as a correction. "Gasket is aluminum" then "gasket is round" comes out as a correction, and so do truck red then fast and bolt steel then loose. The PASS you stamped on the lesson rests on your own test pairs. Take the PASS off and do the actual job.
 
-OWNED PRIOR FAKE-CORRECTION FAILS
---------------------------------
-- b8ef040: correction = leading "no" / rejection_particle (theater)
-- bd4d5fb / df5b85f gap: _is_correction always False (honest, still not real)
-- Any cue-word / frozenset discourse correction lists (meant/actually/correct)
+OWNED FAIL
+----------
+5e7003c / prior: Conversation._is_correction after same topic did
+  if prev_comp != curr_comp: return True
+Any different lemma counted as correction. Lesson PASS rested on self-chosen
+pairs (aluminum→copper) and missed Matty counterexamples.
 
-FORBIDDEN (not used)
---------------------
-- leading "no" alone as correction
-- cue words (meant/actually/correct)
-- frozenset discourse lists
-- stamping PASS on "No, X" without replace structure
+WHAT WAS DONE
+-------------
+1. Lesson Current pointer / Full PCL set to FAIL for any-different-lemma
+   (already on disk before the fix).
+2. lexicon/oewn_offline.py: complement_compete_keys + complements_compete.
+   Same-kind via OEWN only — non-trivial hypernyms (nouns), attribute /
+   similar_to / antonym clusters, surface-scoped derivation + immediate
+   hypernym (adjectives). No material/color/shape cue bags.
+   Kind mismatch (nominal vs adjective) never competes.
+3. language_comprehension.py: predicative complements keep OEWN senses
+   (adjective heads a + satellites s when heads are thin) and emit
+   compete_keys on predicative_complement / assertion.complement.
+4. conversation.py: _is_correction requires polarity retract of the SAME
+   complement OR complements_compete(prev, curr). Stores senses/compete_keys
+   on assertion frames. Removed any-different-lemma shortcut.
 
-REQUIRED MECHANISM (implemented)
---------------------------------
-Language (language_comprehension.py):
-  Emits assertion + predicative_complement on the packet/clause:
-    topic_head, theme deictic flags, complement {kind,surface,lemma},
-    clause polarity from contrastive_negation only (NOT fronted "No,").
-
-Conversation (conversation.py):
-  assertions_by_topic + last_assertion store prior assertable propositions.
-  Correction = same topic (or anaphor/unresolved theme inheriting prior topic)
-  + new incompatible predicative complement
-  OR same complement + clause polarity retract (positive→negative).
-  "No, the gasket is copper" participates ONLY because copper replaces aluminum
-  on gasket — not because of "No".
-  "No." alone / "I am not hungry" without prior / "Anyway the weather" / restatement
-  / first-turn "No, …" are NOT correction.
-
-PROOFS
-------
-_correction_before_live.txt / _correction_after_live.txt — all listed cases PASS.
+PROOFS (_correction_after_live.txt)
+-----------------------------------
+Matty negatives expect_correction=False and PASS:
+  aluminum→round, red→fast, steel→loose.
+Prior positives still True: aluminum→copper, It's copper, No+copper,
+  awful→fine, polarity retract, titanium→steel, interrupt then copper,
+  I hungry → I not hungry.
+Prior negatives still False: bare No., not hungry without prior, anyway
+  weather, restatement, No restatement, first-turn No copper.
+OVERALL PROOFS: PASS.
 
 LESSON
 ------
-Correction gap closed. Banks remain ripped (Step 4). OEWN offline (Step 2).
-Conversation structure-driven. Full PCL bar: see _lesson_pcl_no_shortcuts.md.
+Correction same-kind replace: PASS on listed proofs.
+Full PCL lesson: listed items hold on live path — Matty may still audit.
+Not claiming whole mind done.

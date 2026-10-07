@@ -1,7 +1,19 @@
-Correction proofs — 2026-10-07 06:09 MDT
+Correction proofs — 2026-10-07 11:23 MDT
 Path: LanguageComprehensionEngine.analyze → ConversationSystem.understand
-Mechanism: Language assertion/predicative_complement + Conversation assertions_by_topic replace-compare
-FORBIDDEN shortcuts checked absent: leading No alone, meant/actually lists, frozenset discourse correction
+Mechanism: same topic + polarity retract of SAME complement OR OEWN same-kind compete (complements_compete)
+FORBIDDEN shortcuts checked absent: leading No alone, meant/actually lists, any-different-lemma replace
+
+## matty_alum_round [PASS] expect_correction=False
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None
+  'The gasket is round.' → move=assertion corr=False topic=gasket stored=gasket/round replaced=None
+
+## matty_red_fast [PASS] expect_correction=False
+  'The truck is red.' → move=assertion corr=False topic=truck stored=truck/red replaced=None
+  'The truck is fast.' → move=assertion corr=False topic=truck stored=truck/fast replaced=None
+
+## matty_steel_loose [PASS] expect_correction=False
+  'The bolt is steel.' → move=assertion corr=False topic=bolt stored=bolt/steel replaced=None
+  'The bolt is loose.' → move=assertion corr=False topic=bolt stored=bolt/loose replaced=None
 
 ## replace_nominal [PASS] expect_correction=True
   'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None

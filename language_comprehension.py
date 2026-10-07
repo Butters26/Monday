@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from lexicon.oewn_offline import (
     OfflineLexiconError,
+    complement_compete_keys,
     lemma_and_pos_candidates,
     lookup_senses,
     sense_is_affective,
@@ -189,6 +190,50 @@ class LanguageComprehensionEngine:
         except Exception:
             return []
 
+    def _lookup_adjective_senses(self, surface: str, *, max_senses: int = 4) -> List[Dict[str, Any]]:
+        """Predicative-adjective senses: OEWN heads (a) + satellites (s), capped.
+
+        pos="a" alone drops satellite readings (fine=satisfactory, awful=bad).
+        If enough head senses exist (>=2), skip satellites — obscure ones
+        (fast=impervious/immoral) pollute same-kind compete keys via quality.
+        When heads are thin (awful/fine/red), pull satellites to fill.
+        """
+        if self._lexicon_error:
+            return []
+        seen = set()
+        heads: List[Dict[str, Any]] = []
+        for sense in self._lookup(surface, pos="a"):
+            sid = str(sense.get("synset_id") or "")
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            heads.append(sense)
+            if len(heads) >= min(3, max_senses):
+                break
+        out = list(heads)
+        # Satellites only when head coverage is thin (0–1 head senses).
+        if len(heads) < 2:
+            for sense in self._lookup(surface, pos="s"):
+                if len(out) >= max_senses:
+                    break
+                sid = str(sense.get("synset_id") or "")
+                if not sid or sid in seen:
+                    continue
+                seen.add(sid)
+                out.append(sense)
+        if not out:
+            for sense in self._lookup(surface):
+                if sense.get("pos") not in {"a", "s"}:
+                    continue
+                sid = str(sense.get("synset_id") or "")
+                if not sid or sid in seen:
+                    continue
+                seen.add(sid)
+                out.append(sense)
+                if len(out) >= max_senses:
+                    break
+        return out
+
     def _lemma_candidates(self, surface: str) -> List[Dict[str, str]]:
         if self._lexicon_error:
             return []
@@ -306,8 +351,12 @@ class LanguageComprehensionEngine:
         ):
             kind = "proper_noun"
         # Filter senses to primary POS when known; keep all if ambiguous.
+        # Adjectives: keep OEWN satellites (pos "s") with heads (pos "a").
         if primary_pos:
-            filtered = [s for s in senses if s.get("pos") == primary_pos]
+            if primary_pos == "a":
+                filtered = [s for s in senses if s.get("pos") in {"a", "s"}]
+            else:
+                filtered = [s for s in senses if s.get("pos") == primary_pos]
             if filtered:
                 senses = filtered
         known = bool(senses)
@@ -1184,9 +1233,10 @@ class LanguageComprehensionEngine:
                 and ("n" in pos_at_pred or pred_token_kind in {"noun", "unknown"})
             )
             if is_pred_adj:
-                predicate_senses = self._lookup(
-                    tokens[verb_idx], pos="a"
-                ) or self._lookup(predicate, pos="a") or self._lookup(tokens[verb_idx])
+                predicate_senses = (
+                    self._lookup_adjective_senses(tokens[verb_idx])
+                    or self._lookup_adjective_senses(predicate)
+                )
                 predicative_adjective = {
                     "surface": tokens[verb_idx],
                     "lemma": predicate,
@@ -1319,8 +1369,7 @@ class LanguageComprehensionEngine:
                             link_adj = {
                                 "surface": cand,
                                 "lemma": self.lemma(cand, prefer_pos="a"),
-                                "senses": self._lookup(cand, pos="a")
-                                or self._lookup(cand),
+                                "senses": self._lookup_adjective_senses(cand),
                             }
                             predicative_adjective = link_adj
                             if subject:
@@ -1460,28 +1509,38 @@ class LanguageComprehensionEngine:
                 head = (attr_m.properties or {}).get("head_lemma") or (
                     attr_m.properties or {}
                 ).get("head")
+                lemma_n = str(head or attr_m.concept_surface or attr_m.surface or "").strip().lower()
+                senses_n = list(attr_m.senses or [])
                 predicative_complement = {
                     "kind": "nominal",
                     "surface": attr_m.surface,
-                    "lemma": str(head or attr_m.concept_surface or attr_m.surface or "")
-                    .strip()
-                    .lower(),
+                    "lemma": lemma_n,
                     "mention_id": attr_m.mention_id,
-                    "senses": list(attr_m.senses or []),
+                    "senses": senses_n,
+                    "compete_keys": complement_compete_keys(
+                        lemma_n or str(attr_m.surface or ""),
+                        senses_n,
+                        kind="nominal",
+                    ),
                 }
         elif predicative_adjective and isinstance(predicative_adjective, dict):
+            lemma_a = str(
+                predicative_adjective.get("lemma")
+                or predicative_adjective.get("surface")
+                or ""
+            ).strip().lower()
+            senses_a = list(predicative_adjective.get("senses") or [])
             predicative_complement = {
                 "kind": "adjective",
                 "surface": str(predicative_adjective.get("surface") or ""),
-                "lemma": str(
-                    predicative_adjective.get("lemma")
-                    or predicative_adjective.get("surface")
-                    or ""
-                )
-                .strip()
-                .lower(),
+                "lemma": lemma_a,
                 "mention_id": None,
-                "senses": list(predicative_adjective.get("senses") or []),
+                "senses": senses_a,
+                "compete_keys": complement_compete_keys(
+                    lemma_a or str(predicative_adjective.get("surface") or ""),
+                    senses_a,
+                    kind="adjective",
+                ),
             }
 
         theme_mid = roles.get("theme") or roles.get("experiencer") or roles.get("patient")

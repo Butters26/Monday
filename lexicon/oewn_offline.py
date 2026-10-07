@@ -349,8 +349,308 @@ def surface_is_affective(surface: str, *, max_depth: int = 8) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Same-kind claim keys for cross-turn correction (Conversation).
+# No handmade material/color/shape bags — OEWN relations only.
+# ---------------------------------------------------------------------------
+
+# Ultra-generic OEWN tops: sharing only these is NOT same-kind.
+_TRIVIAL_HYPERNYM_LEMMAS = frozenset(
+    {
+        "entity",
+        "physical entity",
+        "abstraction",
+        "abstract entity",
+        "object",
+        "physical object",
+        "whole",
+        "unit",
+        "thing",
+        "relation",
+        "part",
+        "portion",
+        "component part",
+        "component",
+        "constituent",
+        "attribute",
+        "property",
+        "matter",
+        "act",
+        "deed",
+        "human action",
+        "human activity",
+        "psychological feature",
+        "cognition",
+        "knowledge",
+        "noesis",
+        "state",
+        "group",
+        "grouping",
+        "possession",
+        "location",
+        "event",
+        "process",
+        "phenomenon",
+        "measure",
+        "quantity",
+        "amount",
+        "communication",
+        "artifact",
+        "artefact",
+        "trait",
+        "shape",
+        "form",
+    }
+)
+
+
+def _lemmas_all_trivial(lemmas) -> bool:
+    lows = [str(x).lower() for x in (lemmas or [])]
+    if not lows:
+        return True
+    return all(l in _TRIVIAL_HYPERNYM_LEMMAS for l in lows)
+
+
+def complement_compete_keys(
+    surface: str,
+    senses: Optional[List[Dict[str, Any]]] = None,
+    *,
+    kind: Optional[str] = None,
+    max_hyp_depth: int = 6,
+    max_similar_hops: int = 2,
+) -> List[str]:
+    """OEWN keys that identify the claim-dimension of a predicative complement.
+
+    Keys are stable strings Conversation can intersect across turns:
+      hyp:<synset>   non-trivial noun hypernym
+      attr:<synset>  adjective attribute noun
+      der:<synset>   surface-scoped derivation noun (+ non-trivial hypernyms)
+      sim:<synset>   similar_to / antonym cluster member
+      ant:<lemma>    antonym lemma
+
+    ``kind`` is Language's predicative_complement kind (nominal / adjective).
+    Uses senses already on the packet when provided — does not invent banks.
+    """
+    form = (surface or "").strip()
+    sense_list = list(senses or [])
+    if not sense_list and form:
+        if kind == "nominal":
+            sense_list = lookup_senses(form, pos="n", max_senses=6)
+        elif kind == "adjective":
+            seen_ids = set()
+            merged: List[Dict[str, Any]] = []
+            for pos in ("a", "s"):
+                for s in lookup_senses(form, pos=pos, max_senses=6):
+                    sid = str(s.get("synset_id") or "")
+                    if sid and sid not in seen_ids:
+                        seen_ids.add(sid)
+                        merged.append(s)
+            sense_list = merged[:8]
+        else:
+            sense_list = lookup_senses(form, max_senses=6)
+    if not sense_list:
+        return []
+
+    related = _related_lemmas(form)
+    keys: set = set()
+    try:
+        wnet = get_wordnet()
+    except Exception:
+        return []
+
+    for sense in sense_list:
+        sid = str(sense.get("synset_id") or "").strip()
+        if not sid:
+            continue
+        try:
+            syn = wnet.synset(sid)
+        except Exception:
+            continue
+        pos = str(getattr(syn, "pos", "") or sense.get("pos") or "")
+        if kind == "nominal" and pos != "n":
+            continue
+        if kind == "adjective" and pos not in {"a", "s"}:
+            continue
+
+        if pos == "n":
+            stack = [(syn, 0)]
+            seen = set()
+            while stack:
+                node, depth = stack.pop()
+                nid = str(node.id)
+                if nid in seen or depth > max_hyp_depth:
+                    continue
+                seen.add(nid)
+                if depth > 0 and not _lemmas_all_trivial(node.lemmas()):
+                    keys.add(f"hyp:{nid}")
+                try:
+                    for hyp in node.hypernyms():
+                        stack.append((hyp, depth + 1))
+                except Exception:
+                    pass
+
+        if pos in {"a", "s"}:
+            stack = [(syn, 0)]
+            seen = set()
+            while stack:
+                node, depth = stack.pop()
+                nid = str(node.id)
+                if nid in seen or depth > max_similar_hops:
+                    continue
+                seen.add(nid)
+                keys.add(f"sim:{nid}")
+                try:
+                    for attr in node.get_related("attribute"):
+                        if not _lemmas_all_trivial(attr.lemmas()):
+                            keys.add(f"attr:{attr.id}")
+                except Exception:
+                    pass
+                try:
+                    for neigh in node.get_related("similar"):
+                        stack.append((neigh, depth + 1))
+                except Exception:
+                    pass
+                try:
+                    for sense_obj in node.senses():
+                        for rel in sense_obj.get_related("antonym"):
+                            try:
+                                keys.add(f"ant:{str(rel.word().lemma()).lower()}")
+                                stack.append((rel.synset(), depth + 1))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            # Surface-scoped derivation on THIS synset only (not sister lemmas).
+            try:
+                for sense_obj in syn.senses():
+                    try:
+                        lem = str(sense_obj.word().lemma()).lower()
+                    except Exception:
+                        continue
+                    if related and lem not in related:
+                        continue
+                    try:
+                        for rel in sense_obj.get_related("derivation"):
+                            dsyn = rel.synset()
+                            if str(getattr(dsyn, "pos", "")) != "n":
+                                continue
+                            # Derived noun + immediate hypernym only.
+                            # Deeper walks (looseness→…→quality) false-match
+                            # unrelated adjectives on the evaluative scale.
+                            hstack = [(dsyn, 0)]
+                            hseen = set()
+                            while hstack:
+                                hn, hd = hstack.pop()
+                                hid = str(hn.id)
+                                if hid in hseen or hd > 1:
+                                    continue
+                                hseen.add(hid)
+                                if not _lemmas_all_trivial(hn.lemmas()):
+                                    keys.add(f"der:{hid}")
+                                try:
+                                    for hh in hn.hypernyms():
+                                        hstack.append((hh, hd + 1))
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # One-hop similar HEAD adjectives (pos=a): attributes + derivations.
+            # Bridges satellites (fine→satisfactory→quality, awful→bad→quality)
+            # without walking every sister satellite's obscure senses.
+            try:
+                for neigh in syn.get_related("similar"):
+                    if str(getattr(neigh, "pos", "")) != "a":
+                        continue
+                    try:
+                        for attr in neigh.get_related("attribute"):
+                            if not _lemmas_all_trivial(attr.lemmas()):
+                                keys.add(f"attr:{attr.id}")
+                    except Exception:
+                        pass
+                    try:
+                        for sense_obj in neigh.senses():
+                            for rel in sense_obj.get_related("derivation"):
+                                dsyn = rel.synset()
+                                if str(getattr(dsyn, "pos", "")) != "n":
+                                    continue
+                                if not _lemmas_all_trivial(dsyn.lemmas()):
+                                    keys.add(f"der:{dsyn.id}")
+                                try:
+                                    for hh in dsyn.hypernyms():
+                                        if not _lemmas_all_trivial(hh.lemmas()):
+                                            keys.add(f"der:{hh.id}")
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    return sorted(keys)
+
+
+def complements_compete(
+    prev_complement: Optional[Dict[str, Any]],
+    curr_complement: Optional[Dict[str, Any]],
+) -> bool:
+    """True when two predicative complements are competing values of one claim kind.
+
+    Same Language ``kind`` (nominal vs adjective) required. Then OEWN compete
+    keys must intersect, or one lemma is an antonym key of the other.
+    Different kinds (material noun vs shape adjective) never compete.
+    """
+    if not isinstance(prev_complement, dict) or not isinstance(curr_complement, dict):
+        return False
+    prev_kind = str(prev_complement.get("kind") or "").strip().lower() or None
+    curr_kind = str(curr_complement.get("kind") or "").strip().lower() or None
+    if prev_kind and curr_kind and prev_kind != curr_kind:
+        return False
+
+    prev_lemma = str(
+        prev_complement.get("lemma") or prev_complement.get("surface") or ""
+    ).strip().lower()
+    curr_lemma = str(
+        curr_complement.get("lemma") or curr_complement.get("surface") or ""
+    ).strip().lower()
+    if not prev_lemma or not curr_lemma or prev_lemma == curr_lemma:
+        return False
+
+    prev_keys = prev_complement.get("compete_keys")
+    if not isinstance(prev_keys, list) or not prev_keys:
+        prev_keys = complement_compete_keys(
+            prev_lemma,
+            prev_complement.get("senses")
+            if isinstance(prev_complement.get("senses"), list)
+            else None,
+            kind=prev_kind,
+        )
+    curr_keys = curr_complement.get("compete_keys")
+    if not isinstance(curr_keys, list) or not curr_keys:
+        curr_keys = complement_compete_keys(
+            curr_lemma,
+            curr_complement.get("senses")
+            if isinstance(curr_complement.get("senses"), list)
+            else None,
+            kind=curr_kind,
+        )
+
+    prev_set = {str(k) for k in prev_keys}
+    curr_set = {str(k) for k in curr_keys}
+    if prev_set & curr_set:
+        return True
+    if f"ant:{curr_lemma}" in prev_set or f"ant:{prev_lemma}" in curr_set:
+        return True
+    return False
+
+
 __all__ = [
     "OfflineLexiconError",
+    "complement_compete_keys",
+    "complements_compete",
     "ensure_oewn",
     "get_wordnet",
     "lemma_and_pos_candidates",
