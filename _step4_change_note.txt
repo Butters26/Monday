@@ -1,0 +1,51 @@
+Step 4 — RIP greeting/goodbye/check-in banks (no shortcuts)
+
+Matthew exact words:
+- "On one condition, no shortcuts"
+- "I don’t know make a lesson follow the list and make sure you don’t do any fucking Shortcuts"
+- "Motherfucker, when I say something like that, that means fucking go do it don’t just keep saying waiting for your go"
+
+Parent tip at start: f876f3e on /workspace/Monday.
+Lesson: _lesson_pcl_no_shortcuts.md Step 4.
+
+WHAT WAS DONE (real)
+--------------------
+1) Ripped canned social phrase banks from Language mouth
+   (language_generation.py GrammarEngine):
+   - _compose_greeting → "" (was random Hello/Hi there/Nice to meet you/…)
+   - _compose_check_in → "" (was “thanks for checking in” / “still here” banks)
+   - _compose_goodbye → "" (was Take care / See you later / Bye for now banks)
+   - _compose_emotional_share_continuity → "" (same bank theater; silence unless
+     usable empathic prose already grounded)
+   - _compose_social_turn: greeting/check_in/goodbye cues return None (no bank
+     speech); emotional_share only returns existing usable empathic prose
+   - compose_sentence: removed intent==greeting / goodbye bank short-circuits;
+     fall through to silence when nothing grounded
+   - Identity/introduce fixed self-lines kept (not social phrase banks)
+
+2) test_direct_core_pipeline.py
+   - test_prompted_core_path_renders_greeting_and_ungrounded_fail_closed now
+     expects silence on "hello" (banks gone), still silence on ungrounded gravity,
+     and asserts goodbye bank does not leak across turns.
+
+3) Proofs
+   - before: _step4_before_live.txt (banks firing; science Q after goodbye →
+     "Take care.")
+   - after:  _step4_after_live.txt (social → ''; OEWN off-list; affect/topics;
+     ungrounded silence; perception sense-only; referents no bank; correction
+     NOT claimed). Honest addendum on three initial false FAILs (comment-only
+     _AFFECT_DEF_MARKERS mentions; shared ConversationState topic_shift).
+
+NOT DONE / OWNED GAPS (lesson still FAIL)
+-----------------------------------------
+- dialogue_move=correction still unimplemented — do NOT claim it works.
+- Social turns are silence now (banks gone). Full meaning-based social
+  expression (compose a real greeting from meaning) was NOT invented as a
+  shortcut bank replacement.
+- of-complements and other Step 3 leftovers still open if listed in prior notes.
+
+LESSON VERDICT: FAIL
+- Step 4 bank-rip objective: met on live path.
+- Full PCL lesson bar: FAIL while correction gap remains.
+
+Daemon: restart after push so live chat reloads modules.

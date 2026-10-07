@@ -118,12 +118,19 @@ def test_prompted_core_path_keeps_user_memory_isolated(tmp_path):
 
 
 def test_prompted_core_path_renders_greeting_and_ungrounded_fail_closed(tmp_path):
-    """Greeting still speaks; ungrounded encyclopedia asks fail closed (no canned gravity)."""
+    """Social greeting banks ripped (Step 4); ungrounded asks fail closed to silence."""
     systems = _boot(tmp_path)
     try:
         greeting = systems["thalamus"].process_user_input("hello")
         gravity = systems["thalamus"].process_user_input("What is gravity?")
-        assert "hello" in greeting.lower() or "hi" in greeting.lower()
+        # Greeting/check-in/goodbye banks are gone — social cue alone → silence.
+        g_low = (greeting or "").lower()
+        assert not g_low.strip(), f"greeting bank theater still speaking: {greeting!r}"
+        for needle in (
+            "hello", "hi there", "nice to meet", "how are you",
+            "still here", "take care", "see you later",
+        ):
+            assert needle not in g_low
         low = (gravity or "").lower()
         # Provider canned encyclopedias ripped; Language Mad Libs quarantined.
         # Ungrounded → silence (no stock "enough to go on" / filler question).
@@ -133,6 +140,7 @@ def test_prompted_core_path_renders_greeting_and_ungrounded_fail_closed(tmp_path
         assert "enough grounded" not in low
         assert "what should i know" not in low
         assert "i'm thinking about that" not in low
+        assert "take care" not in low  # goodbye bank must not leak across turns
         assert not low.strip()
     finally:
         shutdown_core_systems(systems)

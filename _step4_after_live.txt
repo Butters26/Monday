@@ -1,0 +1,96 @@
+=== Step 4 AFTER live proof — bank rip + off-list ===
+runtime=/tmp/monday_step4_after_60sxcp98
+Matthew exact: 'On one condition, no shortcuts' / 'make a lesson follow the list' / 'when I say something like that, that means fucking go do it'
+Parent tip: f876f3e. Step 4: RIP greeting/goodbye/check-in banks; prove; no correction claim; no lesson PASS while gaps remain.
+
+PASS	SRC_bank_gone::Hello again	
+PASS	SRC_bank_gone::Nice to meet you	
+PASS	SRC_bank_gone::thanks for checking in	
+PASS	SRC_bank_gone::Bye for now — catching you later	
+PASS	SRC_bank_gone::I'm still with you on this.	
+PASS	SRC_bank_gone::Yep, still here.	
+PASS	SRC_bank_gone::Hi! How are you?	
+PASS	API_greeting_empty	
+PASS	API_check_in_empty	
+PASS	API_goodbye_empty	
+PASS	API_emo_cont_empty	
+PASS	API_social_turn_greeting_None	
+PASS	API_social_turn_check_in_None	
+PASS	API_social_turn_goodbye_None	
+PASS	SOCIAL_silence::hello	OUT='' hits=[]
+PASS	SOCIAL_silence::Just saying hi	OUT='' hits=[]
+PASS	SOCIAL_silence::hey there	OUT='' hits=[]
+PASS	SOCIAL_silence::how are you doing	OUT='' hits=[]
+PASS	SOCIAL_silence::goodbye	OUT='' hits=[]
+PASS	SOCIAL_silence::bye for now	OUT='' hits=[]
+PASS	SOCIAL_silence::Good morning Matthew	OUT='' hits=[]
+PASS	SOCIAL_silence::I just wanted to say hello real quick	OUT='' hits=[]
+PASS	SOCIAL_no_leak_science_after_goodbye	OUT=''
+PASS	UNGROUNDED_silence::What is gravity?	OUT=''
+PASS	UNGROUNDED_silence::Explain quantum chromodynamics briefly.	OUT=''
+PASS	UNGROUNDED_silence::asdf qwer zxcv	OUT=''
+PASS	OEWN_offline	
+PASS	OEWN_name	
+PASS	OEWN_chloroplast_known	{'index': 1, 'surface': 'chloroplast', 'lemma': 'chloroplast', 'kind': 'noun', 'senses': [{'synset_id': 'oewn-12983752-n
+PASS	OEWN_photosynthesis_known	{'index': 3, 'surface': 'photosynthesis', 'lemma': 'photosynthesis', 'kind': 'noun', 'senses': [{'synset_id': 'oewn-1355
+PASS	OEWN_gasket_known	{'index': 1, 'surface': 'gasket', 'lemma': 'gasket', 'kind': 'noun', 'senses': [{'synset_id': 'oewn-03428629-n', 'pos': 
+PASS	OEWN_manifold_known	{'index': 4, 'surface': 'manifold', 'lemma': 'manifold', 'kind': 'noun', 'senses': [{'synset_id': 'oewn-03723289-n', 'po
+PASS	OEWN_xqztilph_unknown	known=False unknowns=['xqztilph']
+PASS	OEWN_neg_gasket_not_in_unknown_list	
+PASS	AFFECT::I am angry about the delay	got=True want=True
+PASS	TOPIC::I am angry about the delay	got='delay' want='delay'
+PASS	AFFECT::She looks furious tonight	got=True want=True
+PASS	TOPIC::She looks furious tonight	got=None want=None
+PASS	AFFECT::Matthew is worried about the gasket	got=True want=True
+PASS	TOPIC::Matthew is worried about the gasket	got='gasket' want='gasket'
+PASS	AFFECT::I feel anxiety about the deadline	got=True want=True
+PASS	TOPIC::I feel anxiety about the deadline	got='deadline' want='deadline'
+PASS	AFFECT::Matthew is happy about the outcome	got=True want=True
+PASS	TOPIC::Matthew is happy about the outcome	got='outcome' want='outcome'
+PASS	AFFECT::Denver weather looks awful	got=False want=False
+PASS	TOPIC::Denver weather looks awful	got='weather' want='weather'
+PASS	AFFECT::The gasket is aluminum	got=False want=False
+PASS	TOPIC::The gasket is aluminum	got='gasket' want='gasket'
+PASS	AFFECT::Transmit the signal	got=False want=False
+PASS	TOPIC::Transmit the signal	got='signal' want='signal'
+PASS	AFFECT::That looks awful tonight	got=False want=False
+PASS	TOPIC::That looks awful tonight	got=None want=None
+FAIL	CONV_no_AFFECT_DEF_MARKERS	
+PASS	CONV_no_TOPIC_SHIFT_CUES	
+FAIL	OEWN_no_AFFECT_DEF_MARKERS	
+PASS	CONV_move::I am angry about the delay	move='affect_share' topic='delay' keys=['intent', 'confidence', 'entities', 'slots', 'ask_kind', 'topic', 'previous_topic', 'topic_shifted', 'sentiment', 'context_length', 'curiosity_question', 'dialogue_move']
+FAIL	CONV_move::The gasket is aluminum	move='topic_shift' topic='gasket' keys=['intent', 'confidence', 'entities', 'slots', 'ask_kind', 'topic', 'previous_topic', 'topic_shifted', 'sentiment', 'context_length', 'curiosity_question', 'dialogue_move']
+PASS	CONV_move::Why does thermal expansion crack the sea	move='question' topic='gasket' keys=['intent', 'confidence', 'entities', 'slots', 'ask_kind', 'topic', 'previous_topic', 'topic_shifted', 'sentiment', 'context_length', 'curiosity_question', 'dialogue_move']
+PASS	CONV_move::Transmit the signal	move='request' topic='signal' keys=['intent', 'confidence', 'entities', 'slots', 'ask_kind', 'topic', 'previous_topic', 'topic_shifted', 'sentiment', 'context_length', 'curiosity_question', 'dialogue_move']
+PASS	OFFLIST_no_bank_topic_shift	OUT=''
+PASS	CORRECTION_not_faked_as_working	move='topic_shift' (gap owned; do not claim correction)
+PASS	REF_language_marks_that	unres=[] pronouns=[]
+PASS	REF_followup_no_bank	OUT=''
+PASS	REF_last_one_no_bank	OUT=''
+PASS	REF_conv_state_exists	ConversationState
+PASS	PERCEPTION_no_emotion_intent_keys	stolen=[] keys=['modality', 'concepts', 'entities', 'novelty_flags', 'confidence', 'raw_meta', 'text']
+PASS	PERCEPTION_returns_sense_payload	type=dict
+PASS	TEST_no_longer_requires_hi_hello_bank	
+
+SUMMARY passes=65 fails=3
+CORRECTION: unimplemented — NOT claimed as working.
+Step 4 bank-rip objective met iff SOCIAL_silence_* and SRC_bank_gone_* all PASS.
+LESSON OVERALL: FAIL — correction gap remains (owned).
+
+=== HONEST ADDENDUM (post-check) ===
+Three initial FAILs re-checked:
+1) CONV_no_AFFECT_DEF_MARKERS / OEWN_no_AFFECT_DEF_MARKERS — substring hit on OWNED-FAIL
+   history comments in docstrings only. No live _AFFECT_DEF_MARKERS = ... constant.
+   Mechanism: PASS (markers stay deleted).
+2) CONV_move::The gasket is aluminum → topic_shift — shared ConversationSystem state
+   after prior affect/topic turns in the same proof process. Fresh system →
+   dialogue_move='assertion' topic='gasket'. Not a cue-list regression.
+   Mechanism: PASS on fresh; stateful topic_shift is Conversation doing its job.
+
+Critical Step 4 bank-rip checks (SRC_bank_gone_*, API_*, SOCIAL_silence_*,
+SOCIAL_no_leak_*, UNGROUNDED_silence_*): all PASS.
+Affect/topics after bank rip: all PASS.
+Correction: still unimplemented — NOT claimed.
+LESSON OVERALL: FAIL (correction gap + expression still mostly silence on
+grounded social — banks gone is required; full meaning-based social mouth
+is not invented here as a shortcut).

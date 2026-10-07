@@ -29,7 +29,7 @@ Already locked. Do not reopen. If a change steals another lobe’s job, it fails
 |---|---|---|
 | Perception | Emotion keywords, sentiment, novelty-as-interpretation, S-V-O guess, interpretive captions | Done on disk + GitHub (`d010c9c` sense-only). Re-verify before calling Language done. |
 | Conversation | Regex turn classifier, slots, entities, sentiment ownership | Regex ownership removed; dialogue from Language packets. **Step 3 LESSON still FAIL** — see `_step3_fourth_redo_change_note.txt` (Matty catches on b3d6ec6/b8ef040/bd4d5fb; correction/banks/Step4 gaps remain). |
-| Language | Canned greeting/goodbye/check-in banks as mouth, stock fillers, Notus retrieval rescue inside Language | Stock fillers ripped (`63946c0`). **Greeting/goodbye/check-in banks still intentional.** Notus rescue / bank-as-brain still fail if present. |
+| Language | Canned greeting/goodbye/check-in banks as mouth, stock fillers, Notus retrieval rescue inside Language | Stock fillers ripped (`63946c0`). **Greeting/goodbye/check-in banks ripped Step 4** (silence / meaning-only; see `_step4_change_note.txt`). Notus rescue / bank-as-brain still fail if present. |
 
 No shortcut: deleting a flag or wrapping a call while the old classifier still runs = fail.
 
@@ -77,8 +77,8 @@ No shortcut: grepping for a flag, unit tests that mock the packet, or talking to
 ## What ChatGPT’s Phase 3/4 already did (honest)
 
 - Real packet shape + SR ID registration on live chat: yes.
-- Offline lexicon / open vocabulary: **yes (Step 2)**. Conversation driven by meaning packets: **in progress (Step 3 fourth redo fixed Matty affect/topic catches; lesson still FAIL)**. Social banks remain. Dead Phase3/4 path: **removed by Phase 5**.
-- Full bar for whole PCL lesson: **not met**. Step 2 met. Step 3: Matty-three fixed, lesson FAIL until remaining gaps close + Step 4.
+- Offline lexicon / open vocabulary: **yes (Step 2)**. Conversation driven by meaning packets: **partial (Matty affect/topic catches fixed; correction still open)**. Social greeting/goodbye/check-in banks: **ripped Step 4**. Dead Phase3/4 path: **removed by Phase 5**.
+- Full bar for whole PCL lesson: **not met (FAIL)**. Step 2 met. Step 4 bank-rip met. Correction gap + remaining Step 3 holes keep overall FAIL.
 
 ---
 
@@ -99,5 +99,6 @@ No shortcut: grepping for a flag, unit tests that mock the packet, or talking to
 
 - Step 1 Perception: done (re-check).
 - Step 2 Language OEWN: done (`1f789ff`).
-- Step 3 Conversation on Language packets: **FAIL** (fourth redo fixed Matty bd4d5fb affect/topic/clean-tree; remaining gaps in change note). Do not stamp PASS.
-- Step 4: not started.
+- Step 3 Conversation on Language packets: **FAIL** (Matty catches fixed; correction still unimplemented). Do not stamp PASS.
+- Step 4 bank rip (greeting/goodbye/check-in): **done on live mouth** — social cue alone → silence; proofs in `_step4_*.txt`.
+- **Full PCL lesson: FAIL** — correction gap remains; do not stamp overall PASS.
