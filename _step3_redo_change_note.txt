@@ -1,0 +1,72 @@
+# Step 3 REDO change note — FAIL then rebuild (no cue-word shortcuts)
+
+Date: 2026-10-07 (America/Denver)
+
+## FAIL admission (Matthew / Matty catch)
+
+Prior commit `b3d6ec6` claimed Step 3 PASS while `conversation.py` still classified
+`dialogue_move` via English cue frozensets:
+
+- `_TOPIC_SHIFT_DISCOURSE` (anyway / instead / …)
+- `_TOPIC_SHIFT_PREDICATES` (talk / chat / discuss / switch / change)
+- `_CORRECTION_PREDICATES` (meant / mean / correct / …)
+- `_AFFECT_PREDICATES` (feel / feeling / felt)
+- `_LAST_ONE_MARKERS` (last / previous / …) for referent hooks
+
+Matty called it a shortcut. Matthew's rule: no fucking shortcuts.
+Verdict on `b3d6ec6` Step 3: **FAIL**. This redo replaces it.
+
+## Mechanism (real)
+
+### Language (`language_comprehension.py` + `lexicon/oewn_offline.py`)
+Emits structural fields Conversation consumes:
+
+- `speech_act` / `speech_act_features` from grammar:
+  question_mark, wh_fronted, aux_inversion (Did you… / Did the rebuild…),
+  verb_initial imperative (Tell me… / Give me…)
+- `contrast`: rejection_particle (leading "no"), polarity, contrastive_negation
+- `affect`: OEWN sense_is_affective on predicate / predicative adjective
+  (hypernym roots emotion/feeling + precise definition anchors — not a
+  Conversation "feel" list)
+- Deictics: pronoun / demonstrative / pro-form "one" (+ PP) marked
+  unresolved_reference for cross-turn bind
+- Predicative adjective clauses: "I am furious…" → predicate furious
+
+### Conversation (`conversation.py`)
+- Removed all dialogue-classifying cue frozensets
+- `dialogue_move` from packet structure only:
+  social (OEWN greeting/farewell defs) → answer → correction(contrast) →
+  speech_act → affect(packet.affect) → topic_shift(new≠old topic NP) →
+  referent_followup(Language deictic hooks + referent_stack) → assertion
+- Topic from content mentions/roles — not discourse cue words
+- Thin `intent` compat still derived from dialogue_move only
+
+## Off-list proof (must not use anyway/instead/meant/feel/talk/…)
+
+File: `_step3_redo_after_live.txt` — SCORE 11/11
+
+| Turn | Expected | Mechanism |
+|------|----------|-----------|
+| I rebuilt the carburetor yesterday. | assertion | speech_act declarative + content NP |
+| Denver weather looks awful tonight. | topic_shift | new topic ≠ prior (no anyway/instead) |
+| The gasket is aluminum. / No, the gasket is copper. | correction | contrast.rejection_particle (no meant) |
+| I am furious about the delay. | affect_share | packet.affect from OEWN (no feel) |
+| I'm anxious about tomorrow. | affect_share | predicative adj OEWN |
+| Did the rebuild hold | question | aux_inversion (no ?) |
+| Tell me more about it. | referent_followup | pronoun it → stack (not "last") |
+| The one on the shelf failed. | proform resolve | Language proform "one" → stack |
+
+## Tests
+`test_native_routing.py` + `test_language_native.py` + `test_shared_representation_native.py` — 19 passed
+
+## Remaining honest gaps (not hidden)
+- Topic NP glue still crude ("looks awful tonight", "is aluminum", "me more")
+- "Did the rebuild hold" still picks rebuild over hold as predicate
+- Copular "is copper" treats copper as predicate noun — roles weak
+- Duplicate-ish topic inheritance when affect turns lack content NPs
+- Step 4 full off-list live bar still open — not started until this holds
+- Compat `intent` still emitted for Reasoning consumers
+
+## Verdict
+Step 3 Conversation rebuilt on Language packet STRUCTURE: **PASS** (gaps named).
+Prior cue-list Step 3 (`b3d6ec6`): **FAIL** (superseded).

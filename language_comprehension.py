@@ -21,6 +21,7 @@ from lexicon.oewn_offline import (
     OfflineLexiconError,
     lemma_and_pos_candidates,
     lookup_senses,
+    sense_is_affective,
 )
 
 
@@ -71,7 +72,10 @@ _PREPOSITIONS = {
     "to", "from", "with", "at", "in", "on", "into", "onto", "for", "of", "by",
     "about", "under", "over", "inside", "outside", "across", "through", "between",
 }
-_NEGATION = {"not", "never"}
+_NEGATION = {"not", "never", "no"}
+_WH = {"who", "what", "when", "where", "why", "how", "which"}
+_DEMONSTRATIVES = {"this", "that", "these", "those"}
+_PROFORMS = {"one"}  # nominal pro-form ("the one on the shelf")
 _TIME = {
     "yesterday": {"temporal_relation": "before_now", "event_time_text": "yesterday"},
     "today": {"temporal_relation": "at_now_day", "event_time_text": "today"},
@@ -226,6 +230,8 @@ class LanguageComprehensionEngine:
 
         if re.fullmatch(r"[.!?,;:]", low):
             return "punctuation", low, [], True
+        if low in _WH:
+            return "wh", low, [], True
         if low in _MODALS:
             return "modal", low, [], True
         if low in _NEGATION:
@@ -238,7 +244,9 @@ class LanguageComprehensionEngine:
             return "preposition", low, [], True
         if low in _PRONOUNS:
             return "pronoun", low, [], True
-        if low in _NUMBER_WORDS or re.fullmatch(r"\d+(?:\.\d+)?", low):
+        # Cardinal number words — but "one" is also a nominal pro-form; mark number
+        # here and let NP builder reclassify determiner+one as pro-form.
+        if (low in _NUMBER_WORDS and low not in _PROFORMS) or re.fullmatch(r"\d+(?:\.\d+)?", low):
             return "number", low, [], True
         if low in _AUX_RAW:
             lemma = self.lemma(low, prefer_pos="v")
@@ -285,7 +293,14 @@ class LanguageComprehensionEngine:
 
         lemma = self.lemma(low, prefer_pos=primary_pos)
         kind = _POS_KIND.get(primary_pos or "", "unknown")
-        if original[:1].isupper() and original.isalpha() and kind == "noun":
+        # Capitalized open-class noun with no verb reading → proper noun.
+        # Do NOT promote verb-capable tokens (Give/Tell) to proper_noun.
+        if (
+            original[:1].isupper()
+            and original.isalpha()
+            and kind == "noun"
+            and "v" not in pos_set
+        ):
             kind = "proper_noun"
         # Filter senses to primary POS when known; keep all if ambiguous.
         if primary_pos:
@@ -336,10 +351,30 @@ class LanguageComprehensionEngine:
             quantity = self._number_value(low[0])
             raw = raw[1:]
             low = low[1:]
+        # Sole demonstrative NP (this/that/these/those) → unresolved deictic.
+        if len(low) == 1 and low[0] in _DEMONSTRATIVES:
+            dem = low[0]
+            return LinguisticMention(
+                mention_id=mention_id,
+                surface=surface,
+                concept_surface=None,
+                start=start,
+                end=end,
+                kind="demonstrative",
+                quantity=quantity,
+                pronoun=True,
+                unresolved_reference=True,
+                properties={"demonstrative": dem, "deictic": True},
+                senses=[],
+            )
+
+        stripped_det = None
         while low and low[0] in _DETERMINERS:
+            stripped_det = low[0]
             raw = raw[1:]
             low = low[1:]
         if not raw:
+            # Determiner-only residue after strip (shouldn't happen often)
             return None
 
         if len(raw) == 1 and low[0] in _PRONOUNS:
@@ -355,8 +390,58 @@ class LanguageComprehensionEngine:
                 quantity=quantity,
                 pronoun=True,
                 unresolved_reference=concept_surface is None,
-                properties={"pronoun": pronoun},
+                properties={"pronoun": pronoun, "deictic": True},
                 senses=self._lookup(pronoun),
+            )
+
+        # Determiner + pro-form "one" (+ optional modifiers / PP) → unresolved substitute.
+        # "the one" / "the one on the shelf" — head is the pro-form, not the PP noun.
+        if low and "one" in low:
+            one_idx = low.index("one")
+            after = low[one_idx + 1 :]
+            before = low[:one_idx]
+            pp_only_after = (not after) or (after and after[0] in _PREPOSITIONS)
+            if pp_only_after and all(
+                t in _PROFORMS or t in _PREPOSITIONS or True for t in after[:1]
+            ):
+                # before should be adjectives/modifiers only (no other nouns required)
+                return LinguisticMention(
+                    mention_id=mention_id,
+                    surface=surface,
+                    concept_surface=None,
+                    start=start,
+                    end=end,
+                    kind="proform",
+                    quantity=quantity,
+                    pronoun=True,
+                    unresolved_reference=True,
+                    properties={
+                        "proform": "one",
+                        "deictic": True,
+                        "determiner": stripped_det,
+                        "modifiers": before,
+                        "pp": after,
+                    },
+                    senses=self._lookup("one", pos="n") or self._lookup("one"),
+                )
+        if low and low[-1] in _PROFORMS:
+            return LinguisticMention(
+                mention_id=mention_id,
+                surface=surface,
+                concept_surface=None,
+                start=start,
+                end=end,
+                kind="proform",
+                quantity=quantity,
+                pronoun=True,
+                unresolved_reference=True,
+                properties={
+                    "proform": low[-1],
+                    "deictic": True,
+                    "determiner": stripped_det,
+                    "modifiers": low[:-1],
+                },
+                senses=self._lookup(low[-1], pos="n") or self._lookup(low[-1]),
             )
 
         # Head lemma from OEWN when available (last content token).
@@ -401,7 +486,8 @@ class LanguageComprehensionEngine:
             score += 3
         elif low.endswith(("s", "es")) and len(low) > 3 and not low.endswith("ss"):
             score += 1
-        # Subject slot: first open-class content word — nouny verb readings lose.
+        # Subject slot: first open-class content word — nouny verb readings lose,
+        # EXCEPT verb-initial imperatives ("Tell me…", "Give the dog…").
         content_before = [
             t
             for t in tokens[:idx]
@@ -412,8 +498,24 @@ class LanguageComprehensionEngine:
             and t.lower() not in _NEGATION
             and t.lower() not in _PREPOSITIONS
             and t.lower() not in _TIME
+            and t.lower() not in _WH
         ]
-        if "n" in pos_set and not content_before:
+        raw_before = [
+            t
+            for t in tokens[:idx]
+            if not re.fullmatch(r"[.!?,;:]", t)
+        ]
+        has_subject_material = any(
+            t.lower() in _DETERMINERS
+            or t.lower() in _PRONOUNS
+            or t.lower() in _WH
+            for t in raw_before
+        )
+        if not content_before and "v" in pos_set and not has_subject_material:
+            # True verb-initial imperative ("Tell me…", "Give the dog…").
+            score += 4
+        elif "n" in pos_set and not content_before:
+            # Subject slot under a determiner/pronoun — nouny verb readings lose.
             score -= 6
         return score
 
@@ -464,6 +566,32 @@ class LanguageComprehensionEngine:
             clear = [c for c in known_candidates if c[2] >= 5]
             known = (clear[0] if clear else known_candidates[0])
 
+        # Predicative adjective after be-auxiliary: "I am furious" / "She is afraid".
+        # Emit adjective index as predicate slot with lemma; caller marks predicative.
+        be_adj = None
+        for idx, token in enumerate(lows):
+            if token not in _AUX_RAW or self.lemma(token, prefer_pos="v") != "be":
+                continue
+            next_idx = idx + 1
+            while next_idx < len(tokens) and lows[next_idx] in _NEGATION:
+                next_idx += 1
+            if next_idx >= len(tokens):
+                continue
+            # Skip pronouns/determiners between be and complement? "is she ready" handled by inversion.
+            cand = tokens[next_idx]
+            cand_low = cand.lower()
+            if cand_low in _PRONOUNS or cand_low in _DETERMINERS or cand_low in _PREPOSITIONS:
+                continue
+            pos_set = self._pos_set(cand)
+            if ("a" in pos_set or "s" in pos_set) and "v" not in pos_set:
+                lemma = self.lemma(cand, prefer_pos="a")
+                be_adj = (next_idx, lemma, True)  # third flag reused as "predicative_adj" marker via known False path
+                break
+            if ("a" in pos_set or "s" in pos_set) and not known:
+                lemma = self.lemma(cand, prefer_pos="a")
+                be_adj = (next_idx, lemma, True)
+                break
+
         # Unknown open-class token in verb position (between subject and object).
         unknown = None
         content = [i for i, t in enumerate(tokens) if not re.fullmatch(r"[.!?,;:]", t)]
@@ -487,10 +615,33 @@ class LanguageComprehensionEngine:
                 unknown = (idx, low)
                 break
 
+        def _after_preposition(idx: int) -> bool:
+            for i in range(idx - 1, -1, -1):
+                low = tokens[i].lower()
+                if low in _PREPOSITIONS:
+                    return True
+                if low in _AUX_RAW or low in _MODALS or low in _NEGATION:
+                    continue
+                if re.fullmatch(r"[.!?,;:]", tokens[i]):
+                    continue
+                break
+            return False
+
+        # Prefer predicative adjective over a later verb/noun reading inside a PP
+        # ("I am furious about the delay" — delay must not steal the predicate).
+        if be_adj is not None and (
+            known is None
+            or known[0] > be_adj[0]
+            or _after_preposition(known[0])
+        ):
+            return be_adj[0], be_adj[1], False, True
+        # Unknown earlier than known (Steve florbed the dog) wins.
         if unknown is not None and (known is None or unknown[0] < known[0]):
             return unknown[0], unknown[1], False, False
         if known is not None:
             return known[0], known[1], False, True
+        if unknown is not None:
+            return unknown[0], unknown[1], False, False
 
         # Last resort: second content token.
         if len(content) >= 2:
@@ -502,7 +653,15 @@ class LanguageComprehensionEngine:
 
     def _subject_end(self, tokens: Sequence[str], verb_idx: int) -> int:
         end = verb_idx
-        for idx in range(verb_idx):
+        # Skip utterance-initial rejection particle "no" (+ following punct) so
+        # "No, the gasket is copper" still yields subject "the gasket".
+        start = 0
+        lows = [t.lower() for t in tokens]
+        if lows and lows[0] == "no":
+            start = 1
+            while start < verb_idx and re.fullmatch(r"[.!?,;:]", tokens[start]):
+                start += 1
+        for idx in range(start, verb_idx):
             low = tokens[idx].lower()
             if low in _MODALS or low in _AUX_RAW or low in _NEGATION:
                 end = min(end, idx)
@@ -548,28 +707,198 @@ class LanguageComprehensionEngine:
                 break
         return q
 
+    def _content_tokens(self, tokens: Sequence[str]) -> List[str]:
+        return [t for t in tokens if not re.fullmatch(r"[.!?,;:]", t)]
+
+    def _speech_act_features(self, original: str, tokens: Sequence[str]) -> Dict[str, Any]:
+        """Morphosyntax / punctuation features for clause type — not cue-word bags."""
+        text = (original or "").strip()
+        content = self._content_tokens(tokens)
+        lows = [t.lower() for t in content]
+        features: Dict[str, Any] = {
+            "question_mark": bool(text.endswith("?")),
+            "wh_fronted": bool(lows and lows[0] in _WH),
+            "aux_inversion": False,
+            "verb_initial": False,
+            "has_subject_before_verb": False,
+        }
+        if not lows:
+            return features
+
+        first = lows[0]
+        # Aux/modal inversion: Did you… / Are the bolts… / Can Mercy…
+        if first in _AUX_RAW or first in _MODALS:
+            if len(lows) >= 2 and lows[1] in _PRONOUNS:
+                features["aux_inversion"] = True
+            elif len(lows) >= 2 and lows[1] in _DETERMINERS:
+                # Aux + NP subject + later lexical verb → inverted question.
+                later_verb = False
+                for tok in content[2:]:
+                    low = tok.lower()
+                    if low in _AUX_RAW or low in _MODALS or low in _NEGATION:
+                        continue
+                    if self._has_pos(tok, "v") and self.lemma(tok, prefer_pos="v") not in _AUX_LEMMAS:
+                        later_verb = True
+                        break
+                features["aux_inversion"] = later_verb
+            elif len(lows) >= 2 and self._has_pos(content[1], "n"):
+                # Are carburetors noisy — aux + bare plural subject
+                features["aux_inversion"] = True
+
+        # Verb-initial (imperative candidate): lexical verb first, not aux/modal/pronoun.
+        if (
+            first not in _AUX_RAW
+            and first not in _MODALS
+            and first not in _PRONOUNS
+            and first not in _WH
+            and first not in _NEGATION
+            and self._has_pos(content[0], "v")
+        ):
+            features["verb_initial"] = True
+
+        # Subject before main verb?
+        verb_idx, _, _, _ = self._find_main_verb(tokens)
+        if verb_idx is not None:
+            for i in range(verb_idx):
+                low = tokens[i].lower()
+                if low in _PRONOUNS or low in _DETERMINERS or (
+                    low not in _AUX_RAW
+                    and low not in _MODALS
+                    and low not in _NEGATION
+                    and low not in _PREPOSITIONS
+                    and low not in _WH
+                    and not re.fullmatch(r"[.!?,;:]", tokens[i])
+                ):
+                    features["has_subject_before_verb"] = True
+                    break
+        return features
+
     def _speech_act(self, original: str, tokens: Sequence[str]) -> str:
         text = (original or "").strip()
         if not text:
             return "none"
-        if text.endswith("?"):
+        features = self._speech_act_features(original, tokens)
+        if features["question_mark"] or features["wh_fronted"] or features["aux_inversion"]:
             return "question"
-        lows = [t.lower() for t in tokens]
-        content = [t for t in lows if not re.fullmatch(r"[.!?,;:]", t)]
-        if content and content[0] in {
-            "who", "what", "when", "where", "why", "how", "which",
-        }:
-            return "question"
-        # Imperative: bare verb at start, no subject pronoun/noun before it.
-        if content and self._has_pos(content[0], "v") and content[0] not in _AUX_RAW:
-            if content[0] not in _PRONOUNS and content[0] not in _DETERMINERS:
-                # "Give the dog a ball" — verb-initial.
-                if not (len(content) > 1 and content[0] in _PRONOUNS):
-                    # Conservative: only if first token is verb and not a known noun-only.
-                    pos = self._pos_set(content[0])
-                    if "v" in pos and "n" not in pos:
-                        return "imperative"
+        if features["verb_initial"] and not features["has_subject_before_verb"]:
+            return "imperative"
+        # Conservative imperative: verb-initial with v reading even if also n
+        if features["verb_initial"]:
+            content = self._content_tokens(tokens)
+            if content and self._has_pos(content[0], "v"):
+                # "Tell me…" has object pronoun after verb — imperative
+                lows = [t.lower() for t in content]
+                if len(lows) > 1 and (lows[1] in _PRONOUNS or lows[1] in _DETERMINERS):
+                    return "imperative"
         return "declarative"
+
+    def _contrast_features(self, tokens: Sequence[str], lexical: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        """Structural contrast / rejection from polarity + particle position."""
+        content = self._content_tokens(tokens)
+        lows = [t.lower() for t in content]
+        kinds = []
+        for entry in lexical:
+            if entry.get("kind") == "punctuation":
+                continue
+            kinds.append(entry.get("kind"))
+        rejection_particle = bool(lows and lows[0] == "no")
+        # "no" as leading rejection even if OEWN noun-tagged before closed-class fix
+        if not rejection_particle and lexical:
+            first_kind = None
+            first_surf = None
+            for entry in lexical:
+                if entry.get("kind") == "punctuation":
+                    continue
+                first_kind = entry.get("kind")
+                first_surf = str(entry.get("surface") or "").lower()
+                break
+            if first_surf == "no":
+                rejection_particle = True
+        has_negation = any(t in _NEGATION for t in lows)
+        # Contrastive negation between content spans: "... not ..." with material both sides
+        contrastive_negation = False
+        if "not" in lows:
+            idx = lows.index("not")
+            left = [t for t in lows[:idx] if t not in _NEGATION and t != "no"]
+            right = [t for t in lows[idx + 1 :] if t not in _NEGATION]
+            contrastive_negation = bool(left and right)
+        return {
+            "rejection_particle": rejection_particle,
+            "polarity": "negative" if has_negation or rejection_particle else "positive",
+            "contrastive_negation": contrastive_negation,
+        }
+
+    def _affect_from_senses(self, senses: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        hits: List[Dict[str, Any]] = []
+        for sense in senses or []:
+            if not isinstance(sense, dict):
+                continue
+            if sense_is_affective(str(sense.get("synset_id") or ""), str(sense.get("definition") or "")):
+                hits.append(
+                    {
+                        "synset_id": sense.get("synset_id"),
+                        "definition": sense.get("definition"),
+                    }
+                )
+        return hits
+
+    def _packet_affect(
+        self,
+        *,
+        predicate_senses: Sequence[Dict[str, Any]],
+        mentions: Sequence[LinguisticMention],
+        lexical: Sequence[Dict[str, Any]],
+        predicative_adjective: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        evidence: List[Dict[str, Any]] = []
+        for hit in self._affect_from_senses(predicate_senses):
+            evidence.append({"source": "predicate_sense", **hit})
+        if predicative_adjective:
+            for hit in self._affect_from_senses(predicative_adjective.get("senses") or []):
+                evidence.append(
+                    {
+                        "source": "predicative_adjective",
+                        "surface": predicative_adjective.get("surface"),
+                        **hit,
+                    }
+                )
+        # Mentions: only adjectival / affect-bearing heads (not every noun sense).
+        for mention in mentions:
+            head = (mention.properties or {}).get("head") or mention.surface
+            # Skip plain nominals unless senses clearly affective
+            hits = self._affect_from_senses(mention.senses)
+            if hits and mention.kind in {"nominal", "proper_noun", "proform"}:
+                # Require definition-level affect (already filtered) — keep
+                for hit in hits:
+                    evidence.append(
+                        {
+                            "source": "mention_sense",
+                            "surface": mention.surface,
+                            **hit,
+                        }
+                    )
+        # Adjective / adverb tokens only (predicative or modifiers) — not bare verbs/nouns
+        for entry in lexical:
+            if entry.get("kind") not in {"adjective", "adverb"}:
+                continue
+            for hit in self._affect_from_senses(entry.get("senses") or []):
+                evidence.append(
+                    {
+                        "source": "token_sense",
+                        "surface": entry.get("surface"),
+                        **hit,
+                    }
+                )
+        # Dedup by synset
+        seen = set()
+        deduped = []
+        for item in evidence:
+            key = (item.get("synset_id"), item.get("source"), item.get("surface"))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return {"present": bool(deduped), "evidence": deduped[:8]}
 
     def analyze(self, text: str) -> Dict[str, Any]:
         original = str(text or "").strip()
@@ -612,9 +941,23 @@ class LanguageComprehensionEngine:
         unresolved_references: List[Dict[str, Any]] = []
         clause_confidence = 0.0
         predicate_senses: List[Dict[str, Any]] = []
+        predicative_adjective: Optional[Dict[str, Any]] = None
 
         if verb_idx is not None and predicate:
-            if predicate_known:
+            pred_token_kind = lexical[verb_idx]["kind"] if verb_idx < len(lexical) else None
+            if pred_token_kind == "adjective" or (
+                verb_idx < len(lexical)
+                and lexical[verb_idx].get("kind") in {"adjective"}
+            ):
+                predicate_senses = self._lookup(
+                    tokens[verb_idx], pos="a"
+                ) or self._lookup(predicate, pos="a") or self._lookup(tokens[verb_idx])
+                predicative_adjective = {
+                    "surface": tokens[verb_idx],
+                    "lemma": predicate,
+                    "senses": predicate_senses,
+                }
+            elif predicate_known:
                 predicate_senses = self._lookup(
                     tokens[verb_idx], pos="v"
                 ) or self._lookup(predicate, pos="v")
@@ -734,6 +1077,28 @@ class LanguageComprehensionEngine:
             if predicate.isalpha():
                 unknown_words.append(predicate)
 
+        # Standalone unresolved pronouns/demonstratives/proforms not captured as roles.
+        for entry in lexical:
+            kind = entry.get("kind")
+            surf = str(entry.get("surface") or "").lower()
+            if kind == "pronoun" and surf in _PRONOUNS and _DEICTIC.get(surf) is None:
+                if not any(u.get("surface", "").lower() == surf for u in unresolved_references):
+                    # Only add if a mention already tracks it; else light hook.
+                    pass
+            if kind == "determiner" and surf in _DEMONSTRATIVES:
+                # Demonstrative determiner alone is handled in NP builder when sole.
+                pass
+
+        speech_features = self._speech_act_features(original, tokens)
+        speech_act = self._speech_act(original, tokens)
+        contrast = self._contrast_features(tokens, lexical)
+        affect = self._packet_affect(
+            predicate_senses=predicate_senses,
+            mentions=mentions,
+            lexical=lexical,
+            predicative_adjective=predicative_adjective,
+        )
+
         clause = None
         if predicate:
             clause = {
@@ -741,11 +1106,13 @@ class LanguageComprehensionEngine:
                 "predicate_surface": predicate,
                 "predicate_known": predicate_known,
                 "predicate_senses": predicate_senses,
+                "predicative_adjective": bool(predicative_adjective),
                 "voice": "passive" if passive else "active",
                 "roles": dict(roles),
                 "qualifiers": qualifiers,
                 "confidence": clause_confidence,
-                "speech_act": self._speech_act(original, tokens),
+                "speech_act": speech_act,
+                "clause_type": speech_act,
             }
 
         overall = clause_confidence
@@ -755,6 +1122,8 @@ class LanguageComprehensionEngine:
             overall = min(overall or 0.4, 0.40)
         if ambiguous_words:
             overall = min(overall or 0.7, 0.75)
+        if speech_act in {"question", "imperative"}:
+            overall = max(overall or 0.0, 0.7)
         if self._lexicon_error:
             overall = 0.0
 
@@ -768,7 +1137,11 @@ class LanguageComprehensionEngine:
             "unknown_words": unknown_words,
             "unresolved_references": unresolved_references,
             "ambiguous_words": ambiguous_words,
-            "speech_act": self._speech_act(original, tokens),
+            "speech_act": speech_act,
+            "speech_act_features": speech_features,
+            "clause_type": speech_act,
+            "contrast": contrast,
+            "affect": affect,
             "confidence": overall,
             "lexicon": {
                 "name": "oewn",

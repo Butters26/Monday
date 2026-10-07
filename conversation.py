@@ -6,8 +6,13 @@ Dialogue state across turns — topic, shifts, follow-ups, corrections,
 answers to her questions, open threads, and cross-turn referents.
 
 Owns: dialogue continuity from Language meaning packets.
-Does not: regex turn classification, keyword slots/entities/sentiment,
-write final prose, invent facts, or ground answers in memory.
+Does not: regex turn classification, cue-word dialogue_move lists,
+keyword slots/entities/sentiment, write final prose, invent facts,
+or ground answers in memory.
+
+FAIL note (b3d6ec6): prior Step 3 used frozenset cue lists
+(_TOPIC_SHIFT_DISCOURSE / _CORRECTION_PREDICATES / _AFFECT_PREDICATES).
+Matty caught it; Matthew: no shortcuts. This redo removes those lists.
 
 Language owns word/sentence meaning. Conversation places that meaning
 in the exchange. Emotion owns affect. Reasoning owns truth/grounding.
@@ -32,110 +37,23 @@ from direct_response import (
 )
 
 
-# Deictic surfaces Language may leave unresolved or omit as mentions.
-_DEICTIC_TOKENS = frozenset(
+# Step 3 REDO: Conversation does NOT classify dialogue_move via English cue
+# frozensets (anyway/instead/meant/feel/talk/…). Dialogue state comes from
+# Language packet structure: speech_act / clause_type, roles, mentions,
+# contrast, affect, unresolved deictics. Closed-class token *kinds* from the
+# packet are used only to reject junk topic anchors — not to name moves.
+_CLOSED_TOKEN_KINDS = frozenset(
     {
-        "that",
-        "this",
-        "those",
-        "these",
-        "it",
-        "them",
-        "they",
-        "one",  # "the last one" / "that one"
-    }
-)
-_LAST_ONE_MARKERS = frozenset({"last", "previous", "earlier", "prior"})
-_TOPIC_SHIFT_DISCOURSE = frozenset(
-    {
-        "anyway",
-        "anyways",
-        "instead",
-        "meanwhile",
-        "however",
-    }
-)
-_TOPIC_SHIFT_PREDICATES = frozenset(
-    {
-        "talk",
-        "chat",
-        "discuss",
-        "switch",
-        "change",
-    }
-)
-_CORRECTION_PREDICATES = frozenset(
-    {
-        "mean",
-        "meant",
-        "correct",
-        "clarify",
-        "rephrase",
-    }
-)
-_AFFECT_PREDICATES = frozenset(
-    {
-        "feel",
-        "feeling",
-        "felt",
-    }
-)
-_FUNCTION_SURFACES = frozenset(
-    {
-        "a",
-        "an",
-        "the",
-        "and",
-        "or",
-        "but",
-        "to",
-        "of",
-        "in",
-        "on",
-        "for",
-        "with",
-        "at",
-        "by",
-        "from",
-        "as",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "am",
-        "do",
-        "does",
-        "did",
-        "have",
-        "has",
-        "had",
-        "i",
-        "me",
-        "you",
-        "he",
-        "she",
-        "we",
-        "they",
-        "my",
-        "your",
-        "his",
-        "her",
-        "our",
-        "their",
-        "no",
-        "not",
-        "never",
-        "just",
-        "about",
-        "what",
-        "who",
-        "where",
-        "when",
-        "why",
-        "how",
-        "which",
+        "determiner",
+        "preposition",
+        "pronoun",
+        "auxiliary",
+        "modal",
+        "negation",
+        "punctuation",
+        "wh",
+        "number",
+        "temporal",
     }
 )
 
@@ -216,7 +134,7 @@ class ConversationSystem:
         return None
 
     # ------------------------------------------------------------------
-    # Meaning → dialogue features
+    # Meaning → dialogue features (Language packet structure only)
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -232,15 +150,8 @@ class ConversationSystem:
         return surfaces
 
     @staticmethod
-    def _token_lemmas(packet: Dict[str, Any]) -> List[str]:
-        lemmas: List[str] = []
-        for tok in packet.get("tokens") or []:
-            if not isinstance(tok, dict):
-                continue
-            lemma = str(tok.get("lemma") or tok.get("surface") or "").strip().lower()
-            if lemma:
-                lemmas.append(lemma)
-        return lemmas
+    def _token_entries(packet: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return [t for t in (packet.get("tokens") or []) if isinstance(t, dict)]
 
     @staticmethod
     def _primary_clause(packet: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -250,12 +161,47 @@ class ConversationSystem:
                 return clause
         return None
 
+    def _closed_surface(self, packet: Dict[str, Any], surface: str) -> bool:
+        """True when Language tagged this surface as closed-class (not a topic)."""
+        low = str(surface or "").strip().lower()
+        if not low:
+            return True
+        for tok in self._token_entries(packet):
+            if str(tok.get("surface") or "").strip().lower() != low:
+                continue
+            if tok.get("kind") in _CLOSED_TOKEN_KINDS:
+                return True
+        # Multiword: junk if every alpha part is closed-class in the packet
+        parts = [p for p in low.split() if p.isalpha()]
+        if not parts:
+            return True
+        kind_by_surf = {
+            str(t.get("surface") or "").lower(): t.get("kind")
+            for t in self._token_entries(packet)
+        }
+        if parts and all(kind_by_surf.get(p) in _CLOSED_TOKEN_KINDS for p in parts):
+            return True
+        return False
+
+    def _junk_topic(self, packet: Dict[str, Any], concept: str) -> bool:
+        """Reject closed-class / deictic / unresolved scraps as topic anchors."""
+        low = " ".join(str(concept or "").lower().split())
+        if not low:
+            return True
+        if self._closed_surface(packet, low):
+            return True
+        # WH shells from Language kind=wh
+        parts = low.split()
+        if parts:
+            for tok in self._token_entries(packet):
+                if str(tok.get("surface") or "").lower() == parts[0] and tok.get("kind") == "wh":
+                    return True
+        return False
+
     def _topic_from_packet(self, packet: Dict[str, Any]) -> Optional[str]:
-        """Topic anchor from Language mentions / predicate — not a keyword bag."""
+        """Topic anchor from Language content NPs / senses — not cue-word bags."""
         clause = self._primary_clause(packet)
-        mentions = [
-            m for m in (packet.get("mentions") or []) if isinstance(m, dict)
-        ]
+        mentions = [m for m in (packet.get("mentions") or []) if isinstance(m, dict)]
         mention_by_id = {m.get("mention_id"): m for m in mentions if m.get("mention_id")}
 
         def _clean(surface: Optional[str]) -> Optional[str]:
@@ -264,10 +210,7 @@ class ConversationSystem:
             text = " ".join(str(surface).strip().split())
             if not text:
                 return None
-            low = text.lower()
-            if low in _FUNCTION_SURFACES or low in _DEICTIC_TOKENS:
-                return None
-            if low in _TOPIC_SHIFT_DISCOURSE:
+            if self._junk_topic(packet, text):
                 return None
             return text
 
@@ -276,53 +219,25 @@ class ConversationSystem:
             for role in ("theme", "patient", "topic", "recipient"):
                 mid = roles.get(role)
                 mention = mention_by_id.get(mid) if mid else None
-                if mention:
-                    concept = _clean(mention.get("concept_surface")) or _clean(
-                        mention.get("surface")
-                    )
-                    if concept and not mention.get("pronoun"):
-                        return concept.lower()
-            # talk/discuss about X — patient/theme often holds the new subject
-            pred = str(clause.get("predicate_surface") or "").lower()
-            if pred in _TOPIC_SHIFT_PREDICATES:
-                for mention in mentions:
-                    if mention.get("pronoun"):
-                        continue
-                    concept = _clean(mention.get("concept_surface")) or _clean(
-                        mention.get("surface")
-                    )
-                    if concept and concept.lower() not in _TOPIC_SHIFT_DISCOURSE:
-                        # Prefer the non-agent content mention
-                        mid = mention.get("mention_id")
-                        if mid and mid == roles.get("agent"):
-                            continue
-                        return concept.lower()
-            for role in ("agent",):
-                mid = roles.get(role)
-                mention = mention_by_id.get(mid) if mid else None
-                if mention and not mention.get("pronoun"):
+                if mention and not mention.get("pronoun") and not mention.get("unresolved_reference"):
                     concept = _clean(mention.get("concept_surface")) or _clean(
                         mention.get("surface")
                     )
                     if concept:
-                        # Prefer object-ish topics; agent alone is weak
-                        pass
-            pred_clean = _clean(clause.get("predicate_surface"))
-            # Prefer mention topics over bare predicate when available
+                        return concept.lower()
             for mention in mentions:
                 if mention.get("pronoun") or mention.get("unresolved_reference"):
                     continue
                 concept = _clean(mention.get("concept_surface")) or _clean(
                     mention.get("surface")
                 )
-                if concept and not self._junk_topic(concept):
+                if concept:
                     return concept.lower()
-            if (
-                pred_clean
-                and pred_clean.lower() not in _TOPIC_SHIFT_PREDICATES
-                and not self._junk_topic(pred_clean)
-            ):
+            pred_clean = _clean(clause.get("predicate_surface"))
+            if pred_clean and not clause.get("predicative_adjective"):
                 return pred_clean.lower()
+            # Predicative adjective clauses: prefer patient/theme mention already tried;
+            # fall through to mentions below.
 
         for mention in mentions:
             if mention.get("pronoun") or mention.get("unresolved_reference"):
@@ -330,65 +245,21 @@ class ConversationSystem:
             concept = _clean(mention.get("concept_surface")) or _clean(
                 mention.get("surface")
             )
-            if concept and not self._junk_topic(concept):
+            if concept:
                 return concept.lower()
         return None
 
-
-    @staticmethod
-    def _junk_topic(concept: str) -> bool:
-        """Reject WH shells / discourse scraps as topic anchors."""
-        low = " ".join(str(concept or "").lower().split())
-        if not low:
-            return True
-        if low in _FUNCTION_SURFACES or low in _DEICTIC_TOKENS:
-            return True
-        if low in _TOPIC_SHIFT_DISCOURSE:
-            return True
-        wh = {"what", "who", "where", "when", "why", "how", "which"}
-        parts = low.split()
-        if parts and parts[0] in wh:
-            return True
-        if low.startswith("what about") or low.startswith("how about"):
-            return True
-        if low in {"no i", "no", "yes", "anyway"}:
-            return True
-        # Deictic ordinal scraps ("last", "previous one") are not topics.
-        if low in _LAST_ONE_MARKERS or low in {"one", "last one", "previous one"}:
-            return True
-        return False
-
     def _social_move_from_packet(self, packet: Dict[str, Any]) -> Optional[str]:
         """social_open / social_close from OEWN sense defs in the Language packet."""
-        clauses = packet.get("clauses") or []
-        tokens = [t for t in (packet.get("tokens") or []) if isinstance(t, dict)]
-        if clauses:
-            # "Just saying hi" has a clause — still social if patient/theme sense is greeting
-            greeting_hit = False
-            farewell_hit = False
-            for tok in tokens:
-                for sense in tok.get("senses") or []:
-                    if not isinstance(sense, dict):
-                        continue
-                    definition = str(sense.get("definition") or "").lower()
-                    if "expression of greeting" in definition or definition == "an expression of greeting":
-                        greeting_hit = True
-                    if "farewell" in definition:
-                        farewell_hit = True
-            if farewell_hit and not greeting_hit:
-                return "social_close"
-            if greeting_hit:
-                return "social_open"
-            return None
+        tokens = self._token_entries(packet)
         if not tokens:
             return None
-        # Fragment with no clause: inspect sense definitions
         greeting_hit = False
         farewell_hit = False
         content_tokens = 0
         for tok in tokens:
-            surface = str(tok.get("surface") or "").lower()
-            if surface in _FUNCTION_SURFACES:
+            kind = tok.get("kind")
+            if kind in _CLOSED_TOKEN_KINDS:
                 continue
             content_tokens += 1
             for sense in tok.get("senses") or []:
@@ -399,55 +270,34 @@ class ConversationSystem:
                     greeting_hit = True
                 if "farewell" in definition:
                     farewell_hit = True
-        if content_tokens == 0:
-            return None
         if farewell_hit and not greeting_hit:
             return "social_close"
         if greeting_hit:
             return "social_open"
-        # Short no-clause fragment with no open predicate — social_fragment
-        if content_tokens <= 3 and float(packet.get("confidence") or 0.0) <= 0.35:
+        clauses = packet.get("clauses") or []
+        if not clauses and content_tokens <= 3 and float(packet.get("confidence") or 0.0) <= 0.35:
             return "social_fragment"
         return None
 
     def _is_correction(self, packet: Dict[str, Any]) -> bool:
-        """Correction = reject/replace prior content, not every 'mean' predicate."""
-        surfaces = self._token_surfaces(packet)
-        lemmas = self._token_lemmas(packet)
-        clause = self._primary_clause(packet)
-        pred = str((clause or {}).get("predicate_surface") or "").lower()
-        leading_no = bool(lemmas and lemmas[0] == "no")
-        has_contrast_not = "not" in surfaces
-        if leading_no and (
-            pred in _CORRECTION_PREDICATES
-            or any(lemma in _CORRECTION_PREDICATES for lemma in lemmas)
-            or has_contrast_not
-        ):
+        """Correction from Language contrast structure — not a 'meant/correct' list."""
+        contrast = packet.get("contrast") if isinstance(packet.get("contrast"), dict) else {}
+        if contrast.get("rejection_particle"):
             return True
-        # "X not Y" contrast with a correction predicate
-        if pred in _CORRECTION_PREDICATES and (leading_no or has_contrast_not):
+        if contrast.get("contrastive_negation"):
+            # "... not ..." with material on both sides — structural replace/reject
             return True
         return False
 
     def _is_affect_share(self, packet: Dict[str, Any]) -> bool:
-        clause = self._primary_clause(packet)
-        if not clause:
-            return False
-        pred = str(clause.get("predicate_surface") or "").lower()
-        if pred in _AFFECT_PREDICATES:
-            return True
-        for sense in clause.get("predicate_senses") or []:
-            if not isinstance(sense, dict):
-                continue
-            definition = str(sense.get("definition") or "").lower()
-            if "emotion" in definition or "feeling" in definition or "feel" in definition:
-                return True
-        return False
+        """Affect from Language OEWN affect signal — not a 'feel/feeling' list."""
+        affect = packet.get("affect") if isinstance(packet.get("affect"), dict) else {}
+        return bool(affect.get("present"))
 
     def _detect_deictic_hooks(
         self, packet: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Find cross-turn referent hooks from Language tokens/unresolved refs."""
+        """Cross-turn hooks from Language unresolved refs / pronoun / proform / demonstrative."""
         hooks: List[Dict[str, Any]] = []
         seen = set()
 
@@ -457,76 +307,53 @@ class ConversationSystem:
             surface = str(item.get("surface") or "").strip().lower()
             if not surface:
                 continue
-            kind = "last_one" if "last" in surface or surface.endswith(" one") else "deictic"
-            key = (kind, surface)
-            if key not in seen:
-                seen.add(key)
-                hooks.append(
-                    {
-                        "kind": kind,
-                        "surface": surface,
-                        "mention_id": item.get("mention_id"),
-                        "source": "language_unresolved_reference",
-                    }
-                )
+            key = ("surface", surface)
+            if key in seen:
+                continue
+            seen.add(key)
+            hooks.append(
+                {
+                    "kind": "deictic",
+                    "surface": surface,
+                    "mention_id": item.get("mention_id"),
+                    "source": "language_unresolved_reference",
+                }
+            )
 
         for mention in packet.get("mentions") or []:
             if not isinstance(mention, dict):
                 continue
-            if not (mention.get("pronoun") or mention.get("unresolved_reference")):
+            kind = str(mention.get("kind") or "")
+            is_deictic = bool(
+                mention.get("pronoun")
+                or mention.get("unresolved_reference")
+                or kind in {"pronoun", "demonstrative", "proform"}
+                or (mention.get("properties") or {}).get("deictic")
+            )
+            if not is_deictic:
+                continue
+            # Bound deictics (I/you/me → user/mercy) are not cross-turn hooks
+            if mention.get("concept_surface") and not mention.get("unresolved_reference"):
                 continue
             surface = str(mention.get("surface") or "").strip().lower()
-            if surface not in _DEICTIC_TOKENS and not mention.get("unresolved_reference"):
+            key = ("surface", surface)
+            if key in seen:
                 continue
-            key = ("deictic", surface)
-            if key not in seen:
-                seen.add(key)
-                hooks.append(
-                    {
-                        "kind": "deictic",
-                        "surface": surface,
-                        "mention_id": mention.get("mention_id"),
-                        "source": "language_mention",
-                    }
-                )
-
-        surfaces = self._token_surfaces(packet)
-        # "the last one" / "the previous one"
-        for idx, surface in enumerate(surfaces):
-            if surface in _LAST_ONE_MARKERS:
-                window = surfaces[idx : idx + 3]
-                if "one" in window or (
-                    idx + 1 < len(surfaces) and surfaces[idx + 1] == "one"
-                ):
-                    key = ("last_one", "the last one")
-                    if key not in seen:
-                        seen.add(key)
-                        hooks.append(
-                            {
-                                "kind": "last_one",
-                                "surface": " ".join(window[:3]),
-                                "mention_id": None,
-                                "source": "language_tokens",
-                            }
-                        )
-            if surface in _DEICTIC_TOKENS and surface != "one":
-                key = ("deictic", surface)
-                if key not in seen:
-                    seen.add(key)
-                    hooks.append(
-                        {
-                            "kind": "deictic",
-                            "surface": surface,
-                            "mention_id": None,
-                            "source": "language_tokens",
-                        }
-                    )
+            seen.add(key)
+            hooks.append(
+                {
+                    "kind": "deictic" if kind != "proform" else "proform",
+                    "surface": surface,
+                    "mention_id": mention.get("mention_id"),
+                    "source": "language_mention",
+                }
+            )
         return hooks
 
     def _resolve_referents(
         self, hooks: Sequence[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Bind deictics to prior-turn mentions on the dialogue referent stack."""
+        """Bind Language deictics/proforms to prior-turn content on the referent stack."""
         resolved: List[Dict[str, Any]] = []
         stack = list(self.state.referent_stack)
         if not stack:
@@ -542,15 +369,11 @@ class ConversationSystem:
             return resolved
 
         for hook in hooks:
-            kind = hook.get("kind")
-            if kind == "last_one":
-                target = stack[-1]
-            else:
-                # Prefer most recent non-matching-pronoun content referent
-                target = stack[-1]
+            # Most recent content referent — grammar already marked the hook as deictic/proform.
+            target = stack[-1]
             resolved.append(
                 {
-                    "kind": kind,
+                    "kind": hook.get("kind"),
                     "surface": hook.get("surface"),
                     "source": hook.get("source"),
                     "resolved": True,
@@ -589,7 +412,7 @@ class ConversationSystem:
             concept = str(mention.get("concept_surface") or surface).strip()
             if not surface:
                 continue
-            if self._junk_topic(surface) or self._junk_topic(concept):
+            if self._junk_topic(packet, surface) or self._junk_topic(packet, concept):
                 continue
             record = {
                 "surface": surface,
@@ -608,21 +431,13 @@ class ConversationSystem:
         new_topic: Optional[str],
         previous_topic: Optional[str],
     ) -> bool:
-        """Explicit topic shift only — discourse/predicate cues, not every new noun."""
-        surfaces = set(self._token_surfaces(packet))
-        lemmas = set(self._token_lemmas(packet))
-        discourse = bool(surfaces & _TOPIC_SHIFT_DISCOURSE) or bool(
-            lemmas & _TOPIC_SHIFT_DISCOURSE
-        )
-        clause = self._primary_clause(packet)
-        pred = str((clause or {}).get("predicate_surface") or "").lower()
-        predicate_shift = pred in _TOPIC_SHIFT_PREDICATES
-        if not (discourse or predicate_shift):
+        """Topic shift = content NP/topic from packet differs from prior turn topic.
+
+        No discourse cue list (anyway/instead/…). First topic set is not a shift.
+        """
+        if not new_topic or not previous_topic:
             return False
-        if new_topic and previous_topic and new_topic.lower() == previous_topic.lower():
-            return False
-        # Discourse/predicate cue present and topic is new or first set
-        return bool(new_topic) or discourse or predicate_shift
+        return new_topic.casefold() != previous_topic.casefold()
 
     def _answers_mercy_question(self, packet: Dict[str, Any], speech_act: str) -> bool:
         if not self.state.pending_mercy_questions:
@@ -649,9 +464,8 @@ class ConversationSystem:
         social_move: Optional[str],
         deictic_hooks: Sequence[Dict[str, Any]],
     ) -> str:
-        # Priority: social → answer/correction → speech-act → affect → explicit
-        # topic shift → referent follow-up → assertion. Soft topic change alone
-        # must not steal questions or affect shares.
+        # Priority from structure: social → answer/correction → speech_act →
+        # affect (Language OEWN) → topic change → deictic follow-up → assertion.
         if social_move == "social_close":
             return "social_close"
         if social_move == "social_open":
@@ -663,7 +477,6 @@ class ConversationSystem:
         if speech_act == "question":
             return "question"
         if speech_act == "imperative":
-            # Deictic imperatives ("tell me about that") are referent follow-ups
             if deictic_hooks:
                 return "referent_followup"
             return "request"
@@ -707,7 +520,7 @@ class ConversationSystem:
             if mention.get("pronoun") or mention.get("unresolved_reference"):
                 continue
             surface = str(mention.get("concept_surface") or mention.get("surface") or "").strip()
-            if not surface or self._junk_topic(surface):
+            if not surface or self._junk_topic(packet, surface):
                 continue
             if surface not in entities:
                 entities.append(surface)
