@@ -1,0 +1,65 @@
+=== Step 3 FOURTH REDO proof (Matty catch on bd4d5fb) ===
+OWNED FAIL bd4d5fb: stamped PASS on angry/furious NOT affect; topics anxiety/matthew;
+  Denver weather → topic awful + false terror-affect; dirty Step4 tree while claiming not started.
+
+PASS	A0_no_AFFECT_DEF_MARKERS_constant
+PASS	A_surface_pos::angry
+PASS	A_surface_pos::furious
+PASS	A_surface_pos::irate
+PASS	A_surface_pos::worried
+PASS	A_surface_pos::anxious
+PASS	A_surface_pos::anxiety
+PASS	A_surface_pos::happy
+PASS	A_surface_pos::afraid
+PASS	A_surface_pos::terror
+PASS	A_surface_pos::joy
+PASS	A_surface_neg::transmit
+PASS	A_surface_neg::aluminum
+PASS	A_surface_neg::awful
+PASS	A_surface_neg::matthew
+PASS	A_surface_neg::deadline
+PASS	A_surface_neg::gasket
+PASS	A_surface_neg::weather
+PASS	A_surface_neg::signal
+PASS	A_sent::I am angry about the delay	present=True want=True
+PASS	A_sent::She looks furious tonight	present=True want=True
+PASS	A_sent::I am furious	present=True want=True
+PASS	A_sent::Matthew is worried about the gasket	present=True want=True
+PASS	A_sent::I feel anxious	present=True want=True
+PASS	A_sent::I feel anxiety about the deadline	present=True want=True
+PASS	A_sent::Matthew is happy about the outcome	present=True want=True
+PASS	A_sent::Denver weather looks awful	present=False want=False
+PASS	A_sent::That looks awful tonight	present=False want=False
+PASS	A_sent::The gasket is aluminum	present=False want=False
+PASS	A_sent::Transmit the signal	present=False want=False
+PASS	A_sent::Aluminum transmits heat	present=False want=False
+PASS	B_topic::I feel anxiety about the deadline	got='deadline' want='deadline'
+PASS	B_topic::Matthew is angry about the gasket	got='gasket' want='gasket'
+PASS	B_topic::Matthew is happy about the outcome	got='outcome' want='outcome'
+PASS	B_topic::Matthew is worried about the gasket	got='gasket' want='gasket'
+PASS	B_topic::Denver weather looks awful	got='weather' want='weather'
+PASS	B_topic::The gasket is aluminum	got='gasket' want='gasket'
+PASS	B_topic::Transmit the signal	got='signal' want='signal'
+PASS	B_topic::That looks awful tonight	got=None want=None
+PASS	B_topic::I am furious	got=None want=None
+
+--- Conversation.understand (fresh system each case; Language packet in context) ---
+PASS	C_conv::I am angry about the delay	move='affect_share' topic='delay'
+PASS	C_conv::I feel anxiety about the deadline	move='affect_share' topic='deadline'
+PASS	C_conv::She looks furious tonight	move='affect_share' topic=None
+PASS	C_conv::Denver weather looks awful	move='assertion' topic='weather'
+PASS	C_conv::Matthew is happy about the outcome	move='affect_share' topic='outcome'
+PASS	C_conv::The gasket is aluminum	move='assertion' topic='gasket'
+PASS	C_conv::Transmit the signal	move='request' topic='signal'
+
+C_clean_tree: language_generation.py + direct_reasoning.py reverted;
+  untracked incomplete _step4_before_live.txt / _step4_after_live.txt removed.
+
+SUMMARY passes=47 fails=0
+HONEST GAPS — Step 3 LESSON still FAIL (not stamped PASS):
+- dialogue_move=correction still unimplemented (owned).
+- of-complements (afraid of X) not about-roles yet.
+- greeting/goodbye/check-in banks still intentional.
+- Step 4 off-list live proof NOT started.
+OVERALL: Matty's three bd4d5fb catches FIXED on Language+Conversation path.
+  Step 3 LESSON STATUS: FAIL (remaining gaps above).

@@ -168,52 +168,184 @@ _AFFECT_ROOT_IDS = frozenset(
 )
 
 
-def sense_is_affective(synset_id: str = "", definition: str = "", *, max_depth: int = 8) -> bool:
-    """True when an OEWN sense reaches emotion/feeling via taxonomy only.
+def _related_lemmas(surface: str) -> set:
+    """Surface + Morphy/wn lemma candidates (angry→angry, worried→worry)."""
+    form = (surface or "").strip().lower()
+    out = {form} if form else set()
+    if not form:
+        return out
+    try:
+        for cand in lemma_and_pos_candidates(form):
+            lem = str(cand.get("lemma") or "").strip().lower()
+            if lem:
+                out.add(lem)
+    except Exception:
+        pass
+    return out
 
-    Walk:
-      - nouns/verbs: hypernyms
-      - adjectives (a/s): similar-to cluster, then attribute → noun, then hypernyms
 
-    The ``definition`` argument is ignored (kept for call-site compatibility).
-    No definition substring matching. No handmade angry/furious word lists.
-    FAIL history: b8ef040 used _AFFECT_DEF_MARKERS; Matty caught it.
+def _noun_reaches_emotion(synset, *, max_depth: int = 8) -> bool:
+    stack = [(synset, 0)]
+    seen = set()
+    while stack:
+        node, depth = stack.pop()
+        nid = str(node.id)
+        if nid in seen or depth > max_depth:
+            continue
+        seen.add(nid)
+        if nid in _AFFECT_ROOT_IDS:
+            return True
+        try:
+            for hyp in node.hypernyms():
+                stack.append((hyp, depth + 1))
+        except Exception:
+            pass
+    return False
+
+
+def sense_is_affective(
+    synset_id: str = "",
+    definition: str = "",
+    *,
+    surface: str = "",
+    max_depth: int = 8,
+) -> bool:
+    """True when an OEWN sense reaches emotion/feeling via real relations.
+
+    Walk (no gloss substring lists, no handmade angry/furious bags):
+      - nouns: hypernyms to emotion/feeling
+      - verbs: hypernyms + sense-level derivation → noun → hypernyms
+      - adjectives (a/s):
+          * direct attribute → noun → hypernyms
+          * sense-level derivation for THIS surface lemma only
+            (skip sister lemmas on the same synset — dread on awful.s)
+          * one-hop similar neighbor: that neighbor's own derivations
+            (irate → angry → anger.n). Neighbor attributes alone do NOT
+            transfer (blocks awful≈terror via alarming.attribute).
+
+    Optional ``surface`` scopes derivation to the word being judged.
+    The ``definition`` argument is ignored (call-site compatibility).
+
+    FAIL history:
+      - b8ef040: _AFFECT_DEF_MARKERS gloss substrings
+      - bd4d5fb: stamped PASS on angry/furious NOT counting as affect
     """
-    del definition  # taxonomy only — never read gloss text for this decision
+    del definition  # taxonomy/relations only — never read gloss text
     sid = (synset_id or "").strip()
     if not sid:
         return False
+    related = _related_lemmas(surface)
     try:
         wnet = get_wordnet()
         try:
             syn = wnet.synset(sid)
         except Exception:
             return False
-        stack = [(syn, 0)]
+        # origin: "self" = starting synset / attribute targets;
+        #         "neighbor" = one-hop similar (derivation only, no attribute inherit)
+        stack = [(syn, 0, "self")]
         seen = set()
         while stack:
-            node, depth = stack.pop()
+            node, depth, origin = stack.pop()
             nid = str(node.id)
-            if nid in seen or depth > max_depth:
+            key = (nid, origin)
+            if key in seen or depth > max_depth:
                 continue
-            seen.add(nid)
+            seen.add(key)
             if nid in _AFFECT_ROOT_IDS:
                 return True
             try:
                 for hyp in node.hypernyms():
-                    stack.append((hyp, depth + 1))
+                    stack.append((hyp, depth + 1, origin))
             except Exception:
                 pass
             pos = str(getattr(node, "pos", "") or "")
             if pos in {"a", "s"}:
-                for rel in ("similar", "attribute"):
+                if origin == "self":
                     try:
-                        for related in node.get_related(rel):
-                            stack.append((related, depth + 1))
+                        for related_syn in node.get_related("attribute"):
+                            stack.append((related_syn, depth + 1, "self"))
                     except Exception:
                         pass
+                try:
+                    for sense in node.senses():
+                        try:
+                            lem = str(sense.word().lemma()).lower()
+                        except Exception:
+                            continue
+                        # Self synset: only this surface's lemmas (not dread on awful).
+                        # Similar neighbor: any lemma of that neighbor adjective.
+                        if origin == "self" and related and lem not in related:
+                            continue
+                        try:
+                            for derived in sense.get_related("derivation"):
+                                stack.append((derived.synset(), depth + 1, "self"))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                if origin == "self":
+                    try:
+                        for neigh in node.get_related("similar"):
+                            stack.append((neigh, depth + 1, "neighbor"))
+                    except Exception:
+                        pass
+            elif pos == "v":
+                try:
+                    for sense in node.senses():
+                        try:
+                            lem = str(sense.word().lemma()).lower()
+                        except Exception:
+                            continue
+                        if related and lem not in related:
+                            continue
+                        try:
+                            for derived in sense.get_related("derivation"):
+                                stack.append((derived.synset(), depth + 1, "self"))
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
     except Exception:
         return False
+    return False
+
+
+def surface_is_affective(surface: str, *, max_depth: int = 8) -> bool:
+    """Affect for a surface form via OEWN senses + lemma→noun/verb bridges.
+
+    Bridge (when adj links are thin, e.g. worried): Morphy/wn lemma candidates
+    → noun synsets (hypernyms) or verb synsets (derivation) reaching emotion.
+    Not a word list.
+    """
+    form = (surface or "").strip()
+    if not form or not any(ch.isalpha() for ch in form):
+        return False
+    for sense in lookup_senses(form):
+        if sense_is_affective(
+            str(sense.get("synset_id") or ""),
+            str(sense.get("definition") or ""),
+            surface=form,
+            max_depth=max_depth,
+        ):
+            return True
+    try:
+        wnet = get_wordnet()
+    except Exception:
+        return False
+    for lem in _related_lemmas(form):
+        try:
+            for syn in wnet.synsets(lem, pos="n"):
+                if _noun_reaches_emotion(syn, max_depth=max_depth):
+                    return True
+        except Exception:
+            pass
+        try:
+            for syn in wnet.synsets(lem, pos="v"):
+                if sense_is_affective(str(syn.id), surface=lem, max_depth=max_depth):
+                    return True
+        except Exception:
+            pass
     return False
 
 
@@ -225,4 +357,5 @@ __all__ = [
     "lexicon_paths",
     "lookup_senses",
     "sense_is_affective",
+    "surface_is_affective",
 ]

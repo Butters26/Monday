@@ -1,0 +1,50 @@
+Step 3 FOURTH REDO — no shortcuts (Matty fourth catch on bd4d5fb)
+
+Matthew: no shortcuts. Repo /workspace/Monday.
+
+OWNED FAIL — bd4d5fb (and prior)
+- b3d6ec6: regex → cue-word frozensets. Matty caught.
+- b8ef040: _AFFECT_DEF_MARKERS gloss substrings; correction=leading "no";
+  garbage topics. Matty caught.
+- bd4d5fb: stamped PASS on angry/furious/irate/worried/anxious NOT counting
+  as affect (celebrated OEWN miss as success); topics still wrong
+  (anxiety / matthew); "Denver weather looks awful" → topic awful + false
+  affect via awful≈terror sister-lemma dread; uncommitted dirty Step 4 tree
+  (language_generation.py, direct_reasoning.py, _step4_*.txt) while claiming
+  Step 4 not started. Matty caught. FOURTH FAIL.
+
+WHAT CHANGED (real)
+
+A) Affect — OEWN relations, not word lists
+- sense_is_affective now walks: hypernyms; adjective attribute; sense-level
+  derivation scoped to the SURFACE lemma (skip sister lemmas like dread on
+  the awful synset); one-hop similar neighbor contributes that neighbor's
+  OWN derivations only (irate→angry→anger.n). Neighbor attributes alone do
+  NOT transfer (blocks awful≈terror via alarming.attribute).
+- surface_is_affective adds lemma→noun/verb Morphy bridge (worried→worry.n
+  feeling) when adj links are thin — still OEWN, not a marker list.
+- _AFFECT_DEF_MARKERS stays deleted.
+- Prove: angry/furious/irate/worried/anxious ARE affect; transmit/aluminum/
+  awful are NOT. Live sentences match.
+
+B) topic_head
+- Priority: about-NP > theme/patient content; never emotion-noun topic when
+  about exists; never proper-name subject-as-topic (matthew); never attribute
+  / predicative adjective (awful, aluminum).
+- Verb finder: highest score wins; mid-subject nouny uninflected forms
+  penalized (weather); pure adjectives never unknown-verbs (awful).
+- Prove caught sentences: anxiety-about-deadline→deadline; matthew-angry-
+  about-gasket→gasket; Denver weather looks awful→weather, affect=False.
+
+C) Clean tree
+- git checkout -- language_generation.py direct_reasoning.py
+- removed incomplete untracked _step4_before_live.txt / _step4_after_live.txt
+- No Step 4 PASS run.
+
+D) Honesty
+- This note admits bd4d5fb FAIL and Matty catch.
+- Matty's three issues: FIXED (see _step3_fourth_redo_after_live.txt).
+- Step 3 LESSON STATUS: FAIL — remaining gaps: correction unimplemented;
+  of-complements; greeting banks; Step 4 not started. NOT stamped PASS.
+
+E) Push when Matty's three are fixed. No Step 4 PASS.

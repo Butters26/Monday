@@ -15,7 +15,10 @@ FAIL notes (owned):
   _AFFECT_PREDICATES). Matty caught it.
 - b8ef040: _AFFECT_DEF_MARKERS definition substrings + correction = leading "no"
   + garbage topics ("is aluminum", "me more"). Matty caught it again.
-This redo: taxonomy-only affect, no fake correction move, Language topic_head.
+FAIL history continued: bd4d5fb stamped PASS on angry/furious NOT affect +
+wrong topics (anxiety/matthew) + awful terror false-positive + dirty Step4 tree.
+Fourth redo: OEWN derivation/attribute affect (surface-scoped), about-first
+topic_head, clean Step4 tree. Step 3 lesson still FAIL (correction/banks/Step4).
 
 Language owns word/sentence meaning. Conversation places that meaning
 in the exchange. Emotion owns affect. Reasoning owns truth/grounding.
@@ -240,10 +243,13 @@ class ConversationSystem:
 
         if clause:
             roles = clause.get("roles") if isinstance(clause.get("roles"), dict) else {}
-            for role in ("theme", "patient", "about", "topic"):
+            # about-NP first (same rule as Language.topic_head).
+            for role in ("about", "theme", "patient", "topic"):
                 mid = roles.get(role)
                 mention = mention_by_id.get(mid) if mid else None
                 if not mention:
+                    continue
+                if role != "about" and mention.get("kind") == "proper_noun":
                     continue
                 head = _head_of(mention)
                 if head:

@@ -22,6 +22,7 @@ from lexicon.oewn_offline import (
     lemma_and_pos_candidates,
     lookup_senses,
     sense_is_affective,
+    surface_is_affective,
 )
 
 
@@ -528,6 +529,15 @@ class LanguageComprehensionEngine:
             # Subject slot under a determiner — nouny verb readings lose
             # ("The dog barked" — dog must not win as verb).
             score -= 6
+        elif (
+            "n" in pos_set
+            and content_before
+            and not low.endswith(("ed", "ing", "s", "es"))
+        ):
+            # Mid-subject nouny verb reading ("Denver weather looks…"):
+            # weather also has a verb sense — penalize uninflected nouny
+            # forms only. Inflected "looks" keeps its score.
+            score -= 3
         return score
 
     def _find_main_verb(
@@ -574,8 +584,12 @@ class LanguageComprehensionEngine:
 
         known = None
         if known_candidates:
+            # Highest verb score wins (looks=4 beats weather=3 in
+            # "Denver weather looks awful"). Tie-break: later token
+            # (predicate after compound subject), then earlier.
             clear = [c for c in known_candidates if c[2] >= 5]
-            known = (clear[0] if clear else known_candidates[0])
+            pool = clear if clear else known_candidates
+            known = max(pool, key=lambda c: (c[2], c[0]))
 
         # Copula: be-AUX + complement (adjective OR nominal).
         # "Matthew is happy" / "The gasket is aluminum" / "No, the gasket is steel".
@@ -615,6 +629,11 @@ class LanguageComprehensionEngine:
                 continue
             if self._has_pos(tokens[idx], "v"):
                 continue
+            pos_here = self._pos_set(tokens[idx])
+            # Never treat pure adjectives/adverbs as unknown verbs
+            # ("… looks awful" — awful is predicative adj, not the verb).
+            if pos_here and pos_here <= {"a", "s", "r"}:
+                continue
             left_open = [
                 i
                 for i in content
@@ -623,9 +642,7 @@ class LanguageComprehensionEngine:
             if not left_open:
                 continue
             # Prefer unknown with verb-like morphology, else any non-noun-only gap.
-            if low.endswith(("ed", "ing", "s", "es")) or "n" not in self._pos_set(
-                tokens[idx]
-            ):
+            if low.endswith(("ed", "ing", "s", "es")) or "n" not in pos_here:
                 unknown = (idx, low)
                 break
 
@@ -766,11 +783,62 @@ class LanguageComprehensionEngine:
         roles: Dict[str, str],
         mentions: Sequence[LinguisticMention],
     ) -> Optional[str]:
-        """Content NP head for topic: about / theme / patient — never glue or time words."""
-        by_id = {m.mention_id: m for m in mentions}
+        """Content NP head for topic.
 
-        def _head_of(mention: LinguisticMention) -> Optional[str]:
+        Priority (Matty catch on bd4d5fb):
+          1. about-NP (about the deadline → deadline)
+          2. theme/patient content noun
+          Never: emotion-noun as topic when about-complement exists;
+          never proper-name experiencer/subject alone (matthew);
+          never predicative adjective / attribute (awful, aluminum).
+        """
+        by_id = {m.mention_id: m for m in mentions}
+        has_about = bool(roles.get("about"))
+
+        def _is_emotion_noun_mention(mention: LinguisticMention) -> bool:
+            head = (mention.properties or {}).get("head_lemma") or (
+                mention.properties or {}
+            ).get("head")
+            surf = str(head or mention.concept_surface or mention.surface or "").strip()
+            if not surf:
+                return False
+            # Prefer noun senses on the mention; fall back to surface bridge.
+            for sense in mention.senses or []:
+                if not isinstance(sense, dict):
+                    continue
+                if str(sense.get("pos") or "") != "n":
+                    continue
+                if sense_is_affective(
+                    str(sense.get("synset_id") or ""),
+                    str(sense.get("definition") or ""),
+                    surface=surf.split()[-1] if surf else "",
+                ):
+                    return True
+            return surface_is_affective(surf.split()[-1] if surf else surf)
+
+        def _is_proper_experiencer(mention: LinguisticMention) -> bool:
+            if mention.kind == "proper_noun":
+                return True
+            head = (mention.properties or {}).get("head_lemma") or (
+                mention.properties or {}
+            ).get("head")
+            if head and str(head)[:1].isupper() and str(head).isalpha():
+                return True
+            # Single-token capitalized surface (Matthew) kept lowercased in tokens —
+            # treat known proper-noun OEWN hits / kind.
+            return False
+
+        def _head_of(
+            mention: LinguisticMention,
+            *,
+            allow_emotion: bool = True,
+            allow_proper: bool = True,
+        ) -> Optional[str]:
             if mention.pronoun or mention.unresolved_reference:
+                return None
+            if not allow_proper and _is_proper_experiencer(mention):
+                return None
+            if not allow_emotion and _is_emotion_noun_mention(mention):
                 return None
             head = (mention.properties or {}).get("head_lemma") or (
                 mention.properties or {}
@@ -779,23 +847,43 @@ class LanguageComprehensionEngine:
                 h = str(head).lower()
                 if h in _TIME or h in self._DEGREE_ADVERBS:
                     return None
+                if not allow_emotion and surface_is_affective(h):
+                    return None
                 return h
             concept = (mention.concept_surface or mention.surface or "").strip()
             parts = [p for p in concept.lower().split() if p.isalpha()]
             parts = [p for p in parts if p not in _TIME and p not in self._DEGREE_ADVERBS]
             if parts:
-                return parts[-1]
+                # NP head = last content token ("denver weather" → weather;
+                # "the aluminum gasket" → gasket). Never first proper alone.
+                h = parts[-1]
+                if not allow_emotion and surface_is_affective(h):
+                    return None
+                return h
             return None
 
-        # Prefer about-complement, then theme/patient content (copula subject = gasket).
-        for role in ("theme", "patient", "about", "topic"):
+        # 1) about-complement always wins when present.
+        about_mid = roles.get("about")
+        if about_mid and about_mid in by_id:
+            head = _head_of(by_id[about_mid], allow_emotion=True, allow_proper=True)
+            if head:
+                return head
+
+        # 2) theme / patient content — skip emotion nouns when about existed
+        #    (about already preferred); skip proper-name subjects-as-topic.
+        for role in ("theme", "patient", "topic"):
             mid = roles.get(role)
             mention = by_id.get(mid) if mid else None
             if not mention:
                 continue
-            head = _head_of(mention)
+            head = _head_of(
+                mention,
+                allow_emotion=not has_about,
+                allow_proper=False,
+            )
             if head:
                 return head
+        # Attribute / predicative adjective are NEVER topic (aluminum, awful).
         return None
 
     def _qualifiers(self, tokens: Sequence[str]) -> Dict[str, Any]:
@@ -936,18 +1024,38 @@ class LanguageComprehensionEngine:
             "contrastive_negation": contrastive_negation,
         }
 
-    def _affect_from_senses(self, senses: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _affect_from_senses(
+        self,
+        senses: Sequence[Dict[str, Any]],
+        *,
+        surface: str = "",
+    ) -> List[Dict[str, Any]]:
         hits: List[Dict[str, Any]] = []
+        surf = (surface or "").strip()
         for sense in senses or []:
             if not isinstance(sense, dict):
                 continue
-            if sense_is_affective(str(sense.get("synset_id") or ""), str(sense.get("definition") or "")):
+            if sense_is_affective(
+                str(sense.get("synset_id") or ""),
+                str(sense.get("definition") or ""),
+                surface=surf,
+            ):
                 hits.append(
                     {
                         "synset_id": sense.get("synset_id"),
                         "definition": sense.get("definition"),
                     }
                 )
+        # Lemma→noun/verb bridge when sense walk misses thin adj links (worried).
+        if not hits and surf and surface_is_affective(surf):
+            hits.append(
+                {
+                    "synset_id": None,
+                    "definition": None,
+                    "bridge": "lemma_noun_or_verb",
+                    "surface": surf,
+                }
+            )
         return hits
 
     def _packet_affect(
@@ -957,26 +1065,32 @@ class LanguageComprehensionEngine:
         mentions: Sequence[LinguisticMention],
         lexical: Sequence[Dict[str, Any]],
         predicative_adjective: Optional[Dict[str, Any]] = None,
+        predicate_surface: str = "",
     ) -> Dict[str, Any]:
         evidence: List[Dict[str, Any]] = []
-        for hit in self._affect_from_senses(predicate_senses):
+        pred_surf = (predicate_surface or "").strip()
+        for hit in self._affect_from_senses(predicate_senses, surface=pred_surf):
             evidence.append({"source": "predicate_sense", **hit})
         if predicative_adjective:
-            for hit in self._affect_from_senses(predicative_adjective.get("senses") or []):
+            adj_surf = str(predicative_adjective.get("surface") or predicative_adjective.get("lemma") or "")
+            for hit in self._affect_from_senses(
+                predicative_adjective.get("senses") or [], surface=adj_surf
+            ):
                 evidence.append(
                     {
                         "source": "predicative_adjective",
-                        "surface": predicative_adjective.get("surface"),
+                        "surface": adj_surf,
                         **hit,
                     }
                 )
-        # Mentions: only adjectival / affect-bearing heads (not every noun sense).
+        # Mentions: affect-bearing heads (anxiety/fear/joy…), surface-scoped.
         for mention in mentions:
-            head = (mention.properties or {}).get("head") or mention.surface
-            # Skip plain nominals unless senses clearly affective
-            hits = self._affect_from_senses(mention.senses)
+            head = (mention.properties or {}).get("head_lemma") or (
+                mention.properties or {}
+            ).get("head") or mention.surface
+            head_surf = str(head or "").strip()
+            hits = self._affect_from_senses(mention.senses, surface=head_surf.split()[-1] if head_surf else "")
             if hits and mention.kind in {"nominal", "proper_noun", "proform"}:
-                # Require definition-level affect (already filtered) — keep
                 for hit in hits:
                     evidence.append(
                         {
@@ -989,11 +1103,12 @@ class LanguageComprehensionEngine:
         for entry in lexical:
             if entry.get("kind") not in {"adjective", "adverb"}:
                 continue
-            for hit in self._affect_from_senses(entry.get("senses") or []):
+            tok_surf = str(entry.get("surface") or entry.get("lemma") or "")
+            for hit in self._affect_from_senses(entry.get("senses") or [], surface=tok_surf):
                 evidence.append(
                     {
                         "source": "token_sense",
-                        "surface": entry.get("surface"),
+                        "surface": tok_surf,
                         **hit,
                     }
                 )
@@ -1301,6 +1416,7 @@ class LanguageComprehensionEngine:
             mentions=mentions,
             lexical=lexical,
             predicative_adjective=predicative_adjective,
+            predicate_surface=str(predicate or ""),
         )
         # Experiencer + affective theme noun (anxiety/fear/joy…) also marks affect.
         if not affect.get("present"):
@@ -1311,7 +1427,14 @@ class LanguageComprehensionEngine:
                 for mention in mentions:
                     if mention.mention_id != mid:
                         continue
-                    hits = self._affect_from_senses(mention.senses)
+                    head = (mention.properties or {}).get("head_lemma") or (
+                        mention.properties or {}
+                    ).get("head") or mention.surface
+                    head_surf = str(head or "").strip()
+                    hits = self._affect_from_senses(
+                        mention.senses,
+                        surface=head_surf.split()[-1] if head_surf else "",
+                    )
                     if hits:
                         affect = {
                             "present": True,

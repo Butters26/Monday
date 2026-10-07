@@ -1,0 +1,6 @@
+Before fourth redo (bd4d5fb FAIL state Matty caught):
+- angry/furious/irate/worried/anxious: sense_is_affective False (celebrated as PASS)
+- I feel anxiety about the deadline → topic_head=anxiety
+- Matthew is happy about the outcome → topic=matthew
+- Denver weather looks awful → pred=weather, topic=awful, affect=True via terror sister lemma
+- Dirty tree: language_generation.py / direct_reasoning.py modified; _step4_*.txt untracked
