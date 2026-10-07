@@ -119,7 +119,14 @@ def lookup_senses(
         # Prefer senses whose lemmas match the surface casefold, and common
         # (lowercase lemma) readings over Proper-name OEWN entries.
         lemma_hit = any(str(x).casefold() == form_cf for x in lemmas)
-        properish = any(str(x)[:1].isupper() and str(x).casefold() != form_cf for x in lemmas)
+        # Demote Proper-name OEWN entries when the query surface is lowercase
+        # (wobbly≠Wobbly IWW; green≠Green the person). Casefold-equal Proper
+        # lemmas still count as properish — that was missing and made Wobbly win.
+        surface_lower = bool(form) and form[:1].islower()
+        properish = any(
+            str(x)[:1].isupper() and (surface_lower or str(x).casefold() != form_cf)
+            for x in lemmas
+        )
         score = (
             0 if lemma_hit else 1,
             1 if properish else 0,
@@ -167,6 +174,30 @@ _AFFECT_ROOT_IDS = frozenset(
     }
 )
 
+# OEWN chromatic adjective head — ontology anchor for predicative color (not a lemma bag).
+_CHROMATIC_ADJ_ID = "oewn-00367771-a"
+
+
+def sense_is_chromatic_adjective(synset_id: str) -> bool:
+    """True when synset is the chromatic head or OEWN-similar to it."""
+    sid = (synset_id or "").strip()
+    if not sid:
+        return False
+    if sid == _CHROMATIC_ADJ_ID:
+        return True
+    try:
+        wnet = get_wordnet()
+        syn = wnet.synset(sid)
+    except Exception:
+        return False
+    try:
+        for neigh in syn.get_related("similar"):
+            if str(neigh.id) == _CHROMATIC_ADJ_ID:
+                return True
+    except Exception:
+        pass
+    return False
+
 
 def _related_lemmas(surface: str) -> set:
     """Surface + Morphy/wn lemma candidates (angry→angry, worried→worry)."""
@@ -203,6 +234,19 @@ def _noun_reaches_emotion(synset, *, max_depth: int = 8) -> bool:
     return False
 
 
+# Feeling-hyponyms that are NOT emotion-class for neighbor-derived walks.
+# Self-origin may still reach feeling via desire (hungry→longing→desire).
+# Neighbor der through these caused hard→ambition, cold→apathy, hot→sex.
+_NEIGHBOR_DER_BLOCK_IDS = frozenset(
+    {
+        "oewn-07499405-n",  # desire
+        "oewn-07498762-n",  # apathy
+        "oewn-07502835-n",  # sex / sexual urge
+        "oewn-07495496-n",  # thing (illogical desire/aversion)
+    }
+)
+
+
 def sense_is_affective(
     synset_id: str = "",
     definition: str = "",
@@ -219,9 +263,12 @@ def sense_is_affective(
           * direct attribute → noun → hypernyms
           * sense-level derivation for THIS surface lemma only
             (skip sister lemmas on the same synset — dread on awful.s)
-          * one-hop similar neighbor: that neighbor's own derivations
-            (irate → angry → anger.n). Neighbor attributes alone do NOT
-            transfer (blocks awful≈terror via alarming.attribute).
+          * similar neighbor: neighbor attribute (scared→afraid→fear) +
+            neighbor derivation tagged neighbor_der (irate→angry→anger).
+            neighbor_der hypernym walks skip desire/apathy/sex bridges so
+            hard≠ambition, cold≠apathy, hot≠sexy while shame/pride still hit.
+          * one extra similar hop from neighbor (upset→troubled→anxious→
+            anxiety) — still neighbor_der blocked on desire/apathy/sex.
 
     Optional ``surface`` scopes derivation to the word being judged.
     The ``definition`` argument is ignored (call-site compatibility).
@@ -229,6 +276,7 @@ def sense_is_affective(
     FAIL history:
       - b8ef040: _AFFECT_DEF_MARKERS gloss substrings
       - bd4d5fb: stamped PASS on angry/furious NOT counting as affect
+      - experiencer subject whitelist (Matty): gating I/you/we — removed
     """
     del definition  # taxonomy/relations only — never read gloss text
     sid = (synset_id or "").strip()
@@ -241,8 +289,7 @@ def sense_is_affective(
             syn = wnet.synset(sid)
         except Exception:
             return False
-        # origin: "self" = starting synset / attribute targets;
-        #         "neighbor" = one-hop similar (derivation only, no attribute inherit)
+        # origin: "self" | "neighbor" | "neighbor2" | "neighbor_der"
         stack = [(syn, 0, "self")]
         seen = set()
         while stack:
@@ -252,6 +299,8 @@ def sense_is_affective(
             if key in seen or depth > max_depth:
                 continue
             seen.add(key)
+            if origin == "neighbor_der" and nid in _NEIGHBOR_DER_BLOCK_IDS:
+                continue
             if nid in _AFFECT_ROOT_IDS:
                 return True
             try:
@@ -267,27 +316,53 @@ def sense_is_affective(
                             stack.append((related_syn, depth + 1, "self"))
                     except Exception:
                         pass
-                try:
-                    for sense in node.senses():
-                        try:
-                            lem = str(sense.word().lemma()).lower()
-                        except Exception:
-                            continue
-                        # Self synset: only this surface's lemmas (not dread on awful).
-                        # Similar neighbor: any lemma of that neighbor adjective.
-                        if origin == "self" and related and lem not in related:
-                            continue
-                        try:
-                            for derived in sense.get_related("derivation"):
-                                stack.append((derived.synset(), depth + 1, "self"))
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                if origin != "neighbor_der":
+                    try:
+                        for sense in node.senses():
+                            try:
+                                lem = str(sense.word().lemma()).lower()
+                            except Exception:
+                                continue
+                            # Self synset: only this surface's lemmas (not dread on awful).
+                            # Similar neighbor: any lemma of that neighbor adjective.
+                            if origin == "self" and related and lem not in related:
+                                continue
+                            try:
+                                for derived in sense.get_related("derivation"):
+                                    if origin in {"neighbor", "neighbor2"}:
+                                        stack.append(
+                                            (derived.synset(), depth + 1, "neighbor_der")
+                                        )
+                                    else:
+                                        stack.append(
+                                            (derived.synset(), depth + 1, "self")
+                                        )
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
                 if origin == "self":
                     try:
                         for neigh in node.get_related("similar"):
                             stack.append((neigh, depth + 1, "neighbor"))
+                    except Exception:
+                        pass
+                elif origin == "neighbor":
+                    try:
+                        for related_syn in node.get_related("attribute"):
+                            stack.append((related_syn, depth + 1, "self"))
+                    except Exception:
+                        pass
+                    # Second similar hop: upset → troubled → anxious → anxiety.
+                    try:
+                        for neigh in node.get_related("similar"):
+                            stack.append((neigh, depth + 1, "neighbor2"))
+                    except Exception:
+                        pass
+                elif origin == "neighbor2":
+                    try:
+                        for related_syn in node.get_related("attribute"):
+                            stack.append((related_syn, depth + 1, "self"))
                     except Exception:
                         pass
             elif pos == "v":
@@ -349,6 +424,101 @@ def surface_is_affective(surface: str, *, max_depth: int = 8) -> bool:
     return False
 
 
+def predicative_senses_are_affective(
+    senses: list,
+    *,
+    surface: str = "",
+    max_depth: int = 8,
+) -> bool:
+    """Affect for a predicative adjective using the clause's selected sense.
+
+    Not "any sense in the bag is affective" and not a subject whitelist:
+      1. Top-ranked a/s sense affective → True (angry/scared/sad).
+      2. Else if top sense has OEWN attribute that does NOT reach emotion/
+         feeling (temperature/weight/length/difficulty/hardness) → False
+         (room cold, motor hot, job hard, wire long, panel heavy) — demotes
+         lower psych-extension senses.
+      3. Else any a/s sense affective → True (hungry: top physiological has
+         no attribute; desirous satellite still counts).
+
+    Evidence list still comes from senses that pass sense_is_affective under
+    the same selection (Language builds evidence from selected hits only).
+    """
+    form = (surface or "").strip()
+    bag = [s for s in (senses or []) if isinstance(s, dict)]
+    ranked = [s for s in bag if str(s.get("pos") or "") in {"a", "s"}]
+    if not ranked:
+        ranked = list(bag)
+    if not ranked:
+        # Fall back to OEWN lookup when packet carried no senses.
+        ranked = list(lookup_senses(form, max_senses=8)) if form else []
+        ranked = [s for s in ranked if str(s.get("pos") or "") in {"a", "s"}] or ranked
+    if not ranked:
+        return False
+
+    def _aff(sense: dict) -> bool:
+        return sense_is_affective(
+            str(sense.get("synset_id") or ""),
+            str(sense.get("definition") or ""),
+            surface=form,
+            max_depth=max_depth,
+        )
+
+    top = ranked[0]
+    if _aff(top):
+        return True
+    # Physical/difficulty primary attribute → ignore lower psych senses.
+    try:
+        wnet = get_wordnet()
+        top_syn = wnet.synset(str(top.get("synset_id") or ""))
+        attrs = list(top_syn.get_related("attribute"))
+        if attrs and not any(
+            _noun_reaches_emotion(attr, max_depth=max_depth) for attr in attrs
+        ):
+            return False
+    except Exception:
+        pass
+    return any(_aff(s) for s in ranked)
+
+
+def selected_affective_senses(
+    senses: list,
+    *,
+    surface: str = "",
+    max_depth: int = 8,
+) -> list:
+    """Sense dicts that count as affect evidence under predicative selection."""
+    form = (surface or "").strip()
+    bag = [s for s in (senses or []) if isinstance(s, dict)]
+    ranked = [s for s in bag if str(s.get("pos") or "") in {"a", "s"}]
+    if not ranked:
+        ranked = list(bag)
+    if not ranked:
+        return []
+    if not predicative_senses_are_affective(ranked, surface=form, max_depth=max_depth):
+        return []
+    top = ranked[0]
+    top_aff = sense_is_affective(
+        str(top.get("synset_id") or ""),
+        str(top.get("definition") or ""),
+        surface=form,
+        max_depth=max_depth,
+    )
+    if top_aff:
+        return [top]
+    # Hungry-style: top non-affective without blocking attrs — return later hits.
+    out = []
+    for sense in ranked:
+        if sense_is_affective(
+            str(sense.get("synset_id") or ""),
+            str(sense.get("definition") or ""),
+            surface=form,
+            max_depth=max_depth,
+        ):
+            out.append(sense)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Same-kind claim keys for cross-turn correction (Conversation).
 # OEWN graph only — no handmade lemma bags (shape/form/trait/artifact/…).
@@ -359,11 +529,34 @@ _ENTITY_SYNSET_ID = "oewn-00001740-n"
 
 # Hypernyms shallower than this depth-from-entity are too generic to mark
 # same-kind. depth 0 = entity; depth 1 = physical entity / abstraction tops.
-# depth 2 (matter, relation, object, …) MAY anchor compete keys — required so
-# brass∩plastic (LCS=matter) counts as material replace. Honest: this is a
-# structural depth rule, not a lemma list; broad depth-2 nodes can still
-# over-match (e.g. aluminum vs hotdog-sense dog via matter).
+# depth 2 matter MAY anchor compete keys — required so brass∩plastic
+# (LCS=matter) counts as material replace. Other depth-2/near tops that are
+# too promiscuous (object, causal agent, relation, …) are denylisted below
+# as OEWN ontology anchors — not lemma bags.
 _TRIVIAL_MAX_ENTITY_DEPTH = 2  # trivial iff depth_from_entity < this
+
+# Broad OEWN taxonomy nodes that false-match across claim kinds
+# (steel↔bent via object; oak↔Wobbly via causal agent; ceramic↔empty via
+# artifact/instrumentality). matter is intentionally NOT listed.
+_BROAD_COMPETE_HYP_IDS = frozenset(
+    {
+        "oewn-00002684-n",  # object / physical object
+        "oewn-00003553-n",  # whole / unit
+        "oewn-00007347-n",  # causal agent
+        "oewn-00007846-n",  # person
+        "oewn-00022119-n",  # artifact
+        "oewn-00032220-n",  # relation
+        "oewn-03580409-n",  # instrumentality
+        "oewn-09786620-n",  # actor / doer / worker
+    }
+)
+
+# Adjective derivation to this noun is too generic (white↔dry via condition).
+_BROAD_DER_NOUN_IDS = frozenset(
+    {
+        "oewn-13943868-n",  # condition / status
+    }
+)
 
 
 @lru_cache(maxsize=8192)
@@ -398,16 +591,21 @@ def _synset_depth_from_entity(synset_id: str) -> Optional[int]:
 
 
 def _hypernym_is_trivial(synset) -> bool:
-    """True when a noun hypernym is too close to the OEWN entity root.
+    """True when a noun hypernym is too generic for same-kind compete.
 
-    Structural OEWN rule: depth_from_entity < _TRIVIAL_MAX_ENTITY_DEPTH.
-    Not a handmade lemma frozenset.
+    Structural OEWN rules (not lemma bags):
+      - depth_from_entity < _TRIVIAL_MAX_ENTITY_DEPTH, OR
+      - synset id in _BROAD_COMPETE_HYP_IDS (object/artifact/person/…).
+    matter (depth 2) stays usable for brass↔plastic.
     """
     if synset is None:
         return True
     if str(getattr(synset, "pos", "") or "") != "n":
         return True
-    depth = _synset_depth_from_entity(str(synset.id))
+    sid = str(synset.id)
+    if sid in _BROAD_COMPETE_HYP_IDS:
+        return True
+    depth = _synset_depth_from_entity(sid)
     if depth is None:
         return True
     return depth < _TRIVIAL_MAX_ENTITY_DEPTH
@@ -477,6 +675,14 @@ def complement_compete_keys(
             continue
 
         if pos == "n":
+            # Skip Proper-name-only noun synsets (Wobbly, Green the person).
+            # Their hypernyms (causal agent / person) false-match materials.
+            try:
+                n_lemmas = [str(x) for x in syn.lemmas()]
+            except Exception:
+                n_lemmas = []
+            if n_lemmas and all(str(x)[:1].isupper() for x in n_lemmas):
+                continue
             stack = [(syn, 0)]
             seen = set()
             while stack:
@@ -594,7 +800,36 @@ def complement_compete_keys(
             except Exception:
                 pass
 
+    # Drop derivation-to-condition (and any broad der nouns).
+    keys = {
+        k
+        for k in keys
+        if not (
+            str(k).startswith("der:")
+            and str(k)[4:] in _BROAD_DER_NOUN_IDS
+        )
+    }
     return sorted(keys)
+
+
+def _lemma_has_compete_pos(lemma: str, kind: str) -> bool:
+    """True when OEWN has usable senses for this compete kind (Proper nouns skipped)."""
+    form = (lemma or "").strip()
+    if not form:
+        return False
+    if kind == "nominal":
+        for sense in lookup_senses(form, pos="n", max_senses=6):
+            lemmas = sense.get("lemmas") or []
+            if lemmas and all(str(x)[:1].isupper() for x in lemmas):
+                continue
+            return True
+        return False
+    if kind == "adjective":
+        for pos in ("a", "s"):
+            if lookup_senses(form, pos=pos, max_senses=1):
+                return True
+        return False
+    return False
 
 
 def complements_compete(
@@ -603,16 +838,15 @@ def complements_compete(
 ) -> bool:
     """True when two predicative complements are competing values of one claim kind.
 
-    Same Language ``kind`` (nominal vs adjective) required. Then OEWN compete
-    keys must intersect, or one lemma is an antonym key of the other.
-    Different kinds (material noun vs shape adjective) never compete.
+    Same Language ``kind`` preferred. When kinds differ (blue pigment noun vs
+    green chromatic adj; wood noun vs metal adj), re-check via OEWN same-POS
+    pairings both lemmas actually support — no material/color lemma bags.
+    Keys must intersect, or one lemma is an antonym key of the other.
     """
     if not isinstance(prev_complement, dict) or not isinstance(curr_complement, dict):
         return False
     prev_kind = str(prev_complement.get("kind") or "").strip().lower() or None
     curr_kind = str(curr_complement.get("kind") or "").strip().lower() or None
-    if prev_kind and curr_kind and prev_kind != curr_kind:
-        return False
 
     prev_lemma = str(
         prev_complement.get("lemma") or prev_complement.get("surface") or ""
@@ -623,31 +857,52 @@ def complements_compete(
     if not prev_lemma or not curr_lemma or prev_lemma == curr_lemma:
         return False
 
-    prev_keys = prev_complement.get("compete_keys")
-    if not isinstance(prev_keys, list) or not prev_keys:
-        prev_keys = complement_compete_keys(
-            prev_lemma,
-            prev_complement.get("senses")
-            if isinstance(prev_complement.get("senses"), list)
-            else None,
-            kind=prev_kind,
-        )
-    curr_keys = curr_complement.get("compete_keys")
-    if not isinstance(curr_keys, list) or not curr_keys:
-        curr_keys = complement_compete_keys(
-            curr_lemma,
-            curr_complement.get("senses")
-            if isinstance(curr_complement.get("senses"), list)
-            else None,
-            kind=curr_kind,
-        )
+    def _keys_for(
+        lemma: str,
+        kind: Optional[str],
+        complement: Dict[str, Any],
+        *,
+        use_packet_senses: bool,
+    ) -> set:
+        senses = None
+        if use_packet_senses and isinstance(complement.get("senses"), list):
+            senses = complement.get("senses")
+        stored = complement.get("compete_keys") if use_packet_senses else None
+        if (
+            use_packet_senses
+            and kind
+            and kind == str(complement.get("kind") or "").strip().lower()
+            and isinstance(stored, list)
+            and stored
+        ):
+            return {str(k) for k in stored}
+        return {str(k) for k in complement_compete_keys(lemma, senses, kind=kind)}
 
-    prev_set = {str(k) for k in prev_keys}
-    curr_set = {str(k) for k in curr_keys}
-    if prev_set & curr_set:
-        return True
-    if f"ant:{curr_lemma}" in prev_set or f"ant:{prev_lemma}" in curr_set:
-        return True
+    # 1) Labeled same-kind (or one kind missing): use packet keys when present.
+    if not (prev_kind and curr_kind and prev_kind != curr_kind):
+        use_kind = prev_kind or curr_kind
+        prev_set = _keys_for(prev_lemma, use_kind, prev_complement, use_packet_senses=True)
+        curr_set = _keys_for(curr_lemma, use_kind, curr_complement, use_packet_senses=True)
+        if prev_set & curr_set:
+            return True
+        if f"ant:{curr_lemma}" in prev_set or f"ant:{prev_lemma}" in curr_set:
+            return True
+
+    # 2) Kind mismatch or no intersect: OEWN same-POS pairings both support.
+    #    blue(nominal pigment)↔green(adjective) → both-as-nominal color hyps;
+    #    wood↔metal → both-as-nominal substance; oak↔wobbly Proper-skipped.
+    for try_kind in ("nominal", "adjective"):
+        if not (
+            _lemma_has_compete_pos(prev_lemma, try_kind)
+            and _lemma_has_compete_pos(curr_lemma, try_kind)
+        ):
+            continue
+        prev_set = _keys_for(prev_lemma, try_kind, prev_complement, use_packet_senses=False)
+        curr_set = _keys_for(curr_lemma, try_kind, curr_complement, use_packet_senses=False)
+        if prev_set & curr_set:
+            return True
+        if f"ant:{curr_lemma}" in prev_set or f"ant:{prev_lemma}" in curr_set:
+            return True
     return False
 
 
@@ -660,6 +915,9 @@ __all__ = [
     "lemma_and_pos_candidates",
     "lexicon_paths",
     "lookup_senses",
+    "predicative_senses_are_affective",
+    "selected_affective_senses",
     "sense_is_affective",
+    "sense_is_chromatic_adjective",
     "surface_is_affective",
 ]

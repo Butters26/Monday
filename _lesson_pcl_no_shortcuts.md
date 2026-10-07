@@ -99,6 +99,6 @@ No shortcut: grepping for a flag, unit tests that mock the packet, or talking to
 
 - Step 1 Perception: done (re-check).
 - Step 2 Language OEWN: done (`1f789ff`).
-- Step 3 Conversation on Language packets: **FAIL — listed proofs** — correction = OEWN same-kind replace with depth-from-entity triviality (no hand lemma bag); brass→plastic True; long/heavy not affect_share; Matty negatives False; off-list hold. See `_correction_after_live.txt` / `_correction_change_note.txt`.
+- Step 3 Conversation on Language packets: **FAIL — listed proofs** — experiencer subject gate removed; affect = OEWN selected predicative sense (hard/cold/hot/long/heavy not affect; scared/boss angry/dog sad/we upset/hungry are); correction bars hold on Matty cases. Awaiting Matty check. See `_correction_after_live.txt` / `_correction_change_note.txt`.
 - Step 4 bank rip (greeting/goodbye/check-in): **done on live mouth** — social cue alone → silence; proofs in `_step4_*.txt`.
-- **Listed PCL items: FAIL — listed proofs** — bag gone; brass/plastic + long/heavy + off-list hold; banks ripped; silence when empty. Not claiming whole mind done. Matty may still audit.
+- **Listed PCL items: FAIL — listed proofs** — no PASS stamp; Matty must audit. Not claiming whole mind done.

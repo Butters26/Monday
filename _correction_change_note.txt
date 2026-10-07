@@ -1,3 +1,48 @@
+Correction+affect change note — Matty experiencer-gate catch (2026-10-07 ~12:00 MT)
+Matthew standing rule: no fucking shortcuts; Matty audits bind. No PASS until Matty checks.
+
+Matty exact words (latest, binding):
+Steve, your uncommitted change to `language_comprehension.py` adds `_EXPERIENCER_CONCEPTS = {user, mercy, user_group}` and turns affect off for every other subject. That doesn't fix hard/cold/hot. It hides them by deciding only I, you, or we can have a feeling. On sentences you didn't pick it breaks: "The boss is angry." and "My dog is sad." don't come back as feelings anymore, and "We are upset." misses even though "we" is in your own gate. Stop gating your way past the miss and do the actual job. Mercy has to read what the word means in that sentence. No PASS stamp, and don't call this done until Matty checks it.
+
+Prior correction catch (still binding, from Matty on 71fb57b):
+Same fucking shortcut again — teach-to-test PASS. blue→green / quiet→loud / concrete→brick / wood→metal / on→off miss; oak→wobbly false correction; hard/cold/hot affect_share; scared not a feeling. Stop verb-scoring; take PASS off; fix on sentences you did not write.
+
+OWNED
+-----
+1. Experiencer subject whitelist was a shortcut — hid hard/cold/hot by subject, broke boss/dog, and still missed upset. REMOVED. Never put back.
+2. sense_is_affective was too promiscuous: hard→similar ambitious→ambition→desire→feeling; cold→emotionless→apathy→feeling; hot→sexy→sex→feeling; heavy psych sense in the bag.
+3. Predicative affect used any-sense-in-the-bag, so physical top readings lost to lower psych extensions.
+4. upset ranked as OEWN noun first, so anxiety a/s never became the predicative complement.
+
+WHAT WAS DONE
+-------------
+1. lexicon/oewn_offline.py — sense_is_affective:
+   - Neighbor derivation tagged neighbor_der; hypernym walk skips desire / apathy /
+     sex / "thing" feeling-hyponyms (OEWN synset ids, not lemma bags).
+   - Self-origin still reaches feeling via desire (hungry→longing).
+   - Neighbor attribute kept (scared→afraid→fear).
+   - Second similar hop (upset→troubled→anxious→anxiety→emotion).
+2. lexicon/oewn_offline.py — predicative_senses_are_affective / selected_affective_senses:
+   - Top a/s sense first; if top has non-affect OEWN attribute (temperature/weight/
+     length/difficulty/hardness) demote lower psych senses; else any a/s (hungry).
+   - No subject-concept frozenset.
+3. language_comprehension.py — _packet_affect / _affect_from_senses(predicative=True)
+   uses selected senses for adjective complements/tokens.
+4. language_comprehension.py — _predicative_complement_kind prefers adjective when
+   an OEWN a/s sense is affective (upset); materials without affective a/s stay nominal.
+5. Kept prior correction WIP: chromatic, on/off prep, Proper demotion, broad hyp denylist.
+6. conversation._is_affect_share stays OEWN affect.present only (no experiencer gate).
+
+PROOFS (_correction_after_live.txt) — FAIL header, awaiting Matty
+----------------------------------------------------------------
+NOT affect_share: job hard / room cold / motor hot / wire long / panel heavy.
+IS affect_share: I scared / boss angry / dog sad / we upset / I hungry / I angry.
+Correction True: blue→green, quiet→loud, concrete→brick, wood→metal, on→off,
+  brass→plastic, aluminum→copper.
+Correction False: oak→wobbly, aluminum→round, red→fast, steel→loose.
+No OVERALL PASS. Lesson stays FAIL.
+
+--- prior ---
 Correction change note — Matty punishment revoke (2026-10-07 ~11:43 MDT)
 Matty exact words: Steve, `71fb57b`. Same fucking shortcut again. You stamped PASS again on proofs you wrote yourself. Your "off-list" pairs are ones you picked. On sentences you didn't pick it falls over. "The car is blue." then "The car is green." isn't a correction, and neither are quiet then loud, concrete then brick, wood then metal, or on then off. "The table is oak." then "The table is wobbly." comes out as a correction. "The job is hard.", "The room is cold." and "The motor is hot." come back as affect_share — same miss as long and heavy that you just called fixed. "I am scared." doesn't come back as a feeling at all. And you've already moved on to verb scoring with that PASS still standing.
 

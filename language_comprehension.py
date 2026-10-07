@@ -22,6 +22,7 @@ from lexicon.oewn_offline import (
     complement_compete_keys,
     lemma_and_pos_candidates,
     lookup_senses,
+    selected_affective_senses,
     sense_is_affective,
     surface_is_affective,
 )
@@ -211,16 +212,28 @@ class LanguageComprehensionEngine:
             if len(heads) >= min(3, max_senses):
                 break
         out = list(heads)
-        # Satellites only when head coverage is thin (0–1 head senses).
-        if len(heads) < 2:
-            for sense in self._lookup(surface, pos="s"):
-                if len(out) >= max_senses:
-                    break
-                sid = str(sense.get("synset_id") or "")
-                if not sid or sid in seen:
-                    continue
-                seen.add(sid)
-                out.append(sense)
+        # Satellites when heads are thin (0–1), OR chromatic color satellites
+        # even when heads are thick (green has political+unripe heads that would
+        # otherwise hide the chromatic satellite needed for blue↔green).
+        try:
+            from lexicon.oewn_offline import sense_is_chromatic_adjective
+        except Exception:
+            sense_is_chromatic_adjective = lambda _sid: False  # type: ignore
+        pull_sats = len(heads) < 2
+        for sense in self._lookup(surface, pos="s"):
+            sid = str(sense.get("synset_id") or "")
+            if not sid or sid in seen:
+                continue
+            chromatic = bool(sense_is_chromatic_adjective(sid))
+            if not pull_sats and not chromatic:
+                continue
+            if len(out) >= max_senses and not chromatic:
+                continue
+            # Chromatic may extend past max_senses by one slot when heads filled it.
+            if len(out) >= max_senses + (1 if chromatic else 0):
+                break
+            seen.add(sid)
+            out.append(sense)
         if not out:
             for sense in self._lookup(surface):
                 if sense.get("pos") not in {"a", "s"}:
@@ -275,12 +288,23 @@ class LanguageComprehensionEngine:
 
         Plastic's top OEWN sense is the material noun; adjective satellites
         (moldable) must not steal predicative kind. Round/long/heavy keep
-        adjective because their top sense is a/s. No material-word bag —
-        lookup_senses ranking only.
+        adjective because their top sense is a/s. Chromatic color: if OEWN
+        has a satellite/head similar_to chromatic, prefer adjective so
+        blue↔green compete as color (pigment noun alone would kind-mismatch
+        green's adj). No material/color lemma bags — OEWN chromatic node only.
         """
         form = (token or "").strip()
         if not form:
             return None
+        # Chromatic predicative reading (blue/green/red…): OEWN similar_to chromatic.
+        if self._has_chromatic_adjective_sense(form):
+            return "adjective"
+        # Affective adjective reading (upset): OEWN may rank noun first
+        # (disturbance/tool) while a/s anxiety senses are the be-complement.
+        # OEWN sense_is_affective on a/s only — not a subject whitelist; materials
+        # (plastic/brass) have no affective a/s and stay nominal.
+        if self._has_affective_adjective_sense(form):
+            return "adjective"
         senses = self._lookup(form)
         if senses:
             top = str(senses[0].get("pos") or "")
@@ -294,6 +318,37 @@ class LanguageComprehensionEngine:
         if "n" in pos_set:
             return "nominal"
         return None
+
+    def _has_chromatic_adjective_sense(self, surface: str) -> bool:
+        """True when an a/s sense is OEWN-similar to the chromatic adjective head."""
+        if self._lexicon_error:
+            return False
+        try:
+            from lexicon.oewn_offline import sense_is_chromatic_adjective
+        except Exception:
+            return False
+        for pos in ("a", "s"):
+            for sense in self._lookup(surface, pos=pos):
+                if sense_is_chromatic_adjective(str(sense.get("synset_id") or "")):
+                    return True
+        return False
+
+    def _has_affective_adjective_sense(self, surface: str) -> bool:
+        """True when an OEWN a/s sense reaches emotion/feeling (upset, not plastic)."""
+        if self._lexicon_error:
+            return False
+        form = (surface or "").strip()
+        if not form:
+            return False
+        for pos in ("a", "s"):
+            for sense in self._lookup(form, pos=pos):
+                if sense_is_affective(
+                    str(sense.get("synset_id") or ""),
+                    str(sense.get("definition") or ""),
+                    surface=form,
+                ):
+                    return True
+        return False
 
     def _lexical_entry(
         self, token: str, original: str
@@ -679,8 +734,13 @@ class LanguageComprehensionEngine:
                 continue
             cand = tokens[next_idx]
             cand_low = cand.lower()
-            if cand_low in _PRONOUNS or cand_low in _DETERMINERS or cand_low in _PREPOSITIONS:
+            if cand_low in _PRONOUNS or cand_low in _DETERMINERS:
                 continue
+            if cand_low in _PREPOSITIONS:
+                # "The switch is on/off": OEWN a/s operational reading beats prep.
+                prep_senses = self._lookup(cand_low)
+                if not any(str(s.get("pos") or "") in {"a", "s"} for s in prep_senses):
+                    continue
             if re.fullmatch(r"[.!?,;:]", cand):
                 continue
             kind = self._predicative_complement_kind(cand)
@@ -1102,12 +1162,23 @@ class LanguageComprehensionEngine:
         senses: Sequence[Dict[str, Any]],
         *,
         surface: str = "",
+        predicative: bool = False,
     ) -> List[Dict[str, Any]]:
         hits: List[Dict[str, Any]] = []
         surf = (surface or "").strip()
-        for sense in senses or []:
-            if not isinstance(sense, dict):
-                continue
+        bag = [s for s in (senses or []) if isinstance(s, dict)]
+        if predicative:
+            # Selected sense for the clause — not any-sense-in-the-bag.
+            # No subject whitelist: top a/s + physical-attribute demotion.
+            for sense in selected_affective_senses(bag, surface=surf):
+                hits.append(
+                    {
+                        "synset_id": sense.get("synset_id"),
+                        "definition": sense.get("definition"),
+                    }
+                )
+            return hits
+        for sense in bag:
             if sense_is_affective(
                 str(sense.get("synset_id") or ""),
                 str(sense.get("definition") or ""),
@@ -1141,7 +1212,9 @@ class LanguageComprehensionEngine:
         if predicative_adjective:
             adj_surf = str(predicative_adjective.get("surface") or predicative_adjective.get("lemma") or "")
             for hit in self._affect_from_senses(
-                predicative_adjective.get("senses") or [], surface=adj_surf
+                predicative_adjective.get("senses") or [],
+                surface=adj_surf,
+                predicative=True,
             ):
                 evidence.append(
                     {
@@ -1166,12 +1239,18 @@ class LanguageComprehensionEngine:
                             **hit,
                         }
                     )
-        # Adjective / adverb tokens only (predicative or modifiers) — not bare verbs/nouns
+        # Adjective / adverb tokens only (predicative or modifiers) — not bare verbs/nouns.
+        # Adjectives use predicative sense selection so heavy/cold psych senses do not
+        # override a physical top reading when the token is the clause complement.
         for entry in lexical:
             if entry.get("kind") not in {"adjective", "adverb"}:
                 continue
             tok_surf = str(entry.get("surface") or entry.get("lemma") or "")
-            for hit in self._affect_from_senses(entry.get("senses") or [], surface=tok_surf):
+            for hit in self._affect_from_senses(
+                entry.get("senses") or [],
+                surface=tok_surf,
+                predicative=(entry.get("kind") == "adjective"),
+            ):
                 evidence.append(
                     {
                         "source": "token_sense",

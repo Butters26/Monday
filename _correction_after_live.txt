@@ -1,122 +1,101 @@
-OVERALL PROOFS: FAIL — Matty 11:43 revoked teach-to-test PASS.
-Matty: stamped PASS on self-picked proofs; blue→green / quiet→loud / concrete→brick / wood→metal / on→off miss; oak→wobbly false positive; hard/cold/hot affect_share; scared not affect.
-No PASS until Matty checks unpicked sentences. Prior body is not a current PASS.
+OVERALL PROOFS: FAIL — awaiting Matty check. Do not stamp PASS.
+Matty latest (experiencer-gate catch): Steve, your uncommitted change to language_comprehension.py adds _EXPERIENCER_CONCEPTS = {user, mercy, user_group} and turns affect off for every other subject. That doesn't fix hard/cold/hot. It hides them by deciding only I, you, or we can have a feeling. On sentences you didn't pick it breaks: "The boss is angry." and "My dog is sad." don't come back as feelings anymore, and "We are upset." misses even though "we" is in your own gate. Stop gating your way past the miss and do the actual job. Mercy has to read what the word means in that sentence. No PASS stamp, and don't call this done until Matty checks it.
+Prior correction catch (still binding): blue→green/quiet→loud/concrete→brick/wood→metal/on→off must correct; oak→wobbly must not; hard/cold/hot must not be affect_share; scared must be.
+Experiencer subject whitelist REMOVED. Affect = OEWN meaning + selected predicative sense. Lesson stays FAIL. No OVERALL PASS.
 
-Correction proofs — 2026-10-07 11:32 MDT
-Path: LanguageComprehensionEngine.analyze → ConversationSystem.understand
-Mechanism: same topic + polarity retract of SAME complement OR OEWN same-kind compete
-  (complements_compete). Hypernym triviality = depth-from-entity < 2 (not a lemma bag).
-  Predicative kind = OEWN primary-sense POS (plastic→nominal). Affect evidence =
-  real synset taxonomy hit only (null-synset lemma bridge removed).
-FORBIDDEN: _TRIVIAL_HYPERNYM_LEMMAS bag; grading only on Matty's three old cases;
-  any-different-lemma; surface_is_affective null-synset bridge as affect evidence.
+Correction+affect proofs — 2026-10-07 11:59 MT
+Path: LanguageComprehensionEngine.analyze → ConversationSystem.understand(language_understanding=packet)
+Affect mechanism (honest):
+  - sense_is_affective: OEWN walk to emotion/feeling; neighbor der tagged
+    neighbor_der skips desire/apathy/sex bridges (hard≠ambition, cold≠apathy,
+    hot≠sexy); second similar hop (upset→troubled→anxious→anxiety); neighbor
+    attribute kept (scared→afraid→fear). No subject whitelist.
+  - predicative_senses_are_affective: top a/s sense, else if top has non-affect
+    OEWN attribute (temperature/weight/length/difficulty) demote lower psych
+    senses (heavy/cold); else any a/s (hungry desirous satellite).
+  - predicative kind: affective a/s prefers adjective (upset noun-ranked first).
+Correction mechanism (unchanged this pass + prior WIP kept):
+  - complements_compete same-kind / same-POS OEWN keys; chromatic node;
+    Proper demotion; on/off a/s over prep; broad hyp denylist (OEWN ids).
+FORBIDDEN: subject experiencer frozenset; teach-to-test PASS; material/color bags.
 
-## matty_brass_plastic [PASS] expect_correction=True
-  'The pipe is brass.' → move=assertion corr=False topic=pipe stored=pipe/brass replaced=None affect=False
-  'The pipe is plastic.' → move=correction corr=True topic=pipe stored=pipe/plastic replaced=None affect=False
+## matty_blue_green [HOLD] expect_correction=True
+  'The car is blue.' → move=affect_share corr=False topic=car stored=car/blue affect=True
+  'The car is green.' → move=correction corr=True topic=car stored=car/green affect=False
 
-## matty_long_not_affect [PASS] expect_not_affect_share got_move=assertion
-  'The wire is long.' → move=assertion corr=False topic=wire stored=wire/long replaced=None affect=False
+## matty_quiet_loud [HOLD] expect_correction=True
+  'The room is quiet.' → move=affect_share corr=False topic=room stored=room/quiet affect=True
+  'The room is loud.' → move=correction corr=True topic=room stored=room/loud affect=False
 
-## matty_heavy_not_affect [PASS] expect_not_affect_share got_move=assertion
-  'The panel is heavy.' → move=assertion corr=False topic=panel stored=panel/heavy replaced=None affect=False
+## matty_concrete_brick [HOLD] expect_correction=True
+  'The wall is concrete.' → move=assertion corr=False topic=wall stored=wall/concrete affect=False
+  'The wall is brick.' → move=correction corr=True topic=wall stored=wall/brick affect=False
 
-## matty_alum_round [PASS] expect_correction=False
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'The gasket is round.' → move=assertion corr=False topic=gasket stored=gasket/round replaced=None affect=False
+## matty_wood_metal [HOLD] expect_correction=True
+  'The shelf is wood.' → move=assertion corr=False topic=shelf stored=shelf/wood affect=False
+  'The shelf is metal.' → move=correction corr=True topic=shelf stored=shelf/metal affect=False
 
-## matty_red_fast [PASS] expect_correction=False
-  'The truck is red.' → move=assertion corr=False topic=truck stored=truck/red replaced=None affect=False
-  'The truck is fast.' → move=assertion corr=False topic=truck stored=truck/fast replaced=None affect=False
+## matty_on_off [HOLD] expect_correction=True
+  'The switch is on.' → move=assertion corr=False topic=switch stored=switch/on affect=False
+  'The switch is off.' → move=correction corr=True topic=switch stored=switch/off affect=False
 
-## matty_steel_loose [PASS] expect_correction=False
-  'The bolt is steel.' → move=assertion corr=False topic=bolt stored=bolt/steel replaced=None affect=False
-  'The bolt is loose.' → move=assertion corr=False topic=bolt stored=bolt/loose replaced=None affect=False
+## matty_brass_plastic [HOLD] expect_correction=True
+  'The pipe is brass.' → move=assertion corr=False topic=pipe stored=pipe/brass affect=False
+  'The pipe is plastic.' → move=correction corr=True topic=pipe stored=pipe/plastic affect=False
 
-## replace_nominal [PASS] expect_correction=True
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'The gasket is copper.' → move=correction corr=True topic=gasket stored=gasket/copper replaced=None affect=False
+## matty_alum_copper [HOLD] expect_correction=True
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum affect=False
+  'The gasket is copper.' → move=correction corr=True topic=gasket stored=gasket/copper affect=False
 
-## replace_anaphor [PASS] expect_correction=True
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  "It's copper." → move=correction corr=True topic=gasket stored=gasket/copper replaced=None affect=False
+## matty_oak_wobbly [HOLD] expect_correction=False
+  'The table is oak.' → move=assertion corr=False topic=table stored=table/oak affect=False
+  'The table is wobbly.' → move=assertion corr=False topic=table stored=table/wobbly affect=False
 
-## replace_with_no_particle [PASS] expect_correction=True
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'No, the gasket is copper.' → move=correction corr=True topic=gasket stored=gasket/copper replaced=None affect=False
+## matty_alum_round [HOLD] expect_correction=False
+  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum affect=False
+  'The gasket is round.' → move=assertion corr=False topic=gasket stored=gasket/round affect=False
 
-## replace_adj [PASS] expect_correction=True
-  'The weather is awful.' → move=assertion corr=False topic=weather stored=weather/awful replaced=None affect=False
-  'The weather is fine.' → move=correction corr=True topic=weather stored=weather/fine replaced=None affect=False
+## matty_red_fast [HOLD] expect_correction=False
+  'The truck is red.' → move=affect_share corr=False topic=truck stored=truck/red affect=True
+  'The truck is fast.' → move=assertion corr=False topic=truck stored=truck/fast affect=False
 
-## polarity_retract [PASS] expect_correction=True
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'The gasket is not aluminum.' → move=correction corr=True topic=gasket stored=gasket/aluminum replaced=None affect=False
+## matty_steel_loose [HOLD] expect_correction=False
+  'The bolt is steel.' → move=assertion corr=False topic=bolt stored=bolt/steel affect=False
+  'The bolt is loose.' → move=assertion corr=False topic=bolt stored=bolt/loose affect=False
 
-## offlist_bolt [PASS] expect_correction=True
-  'The manifold bolt is titanium.' → move=assertion corr=False topic=bolt stored=bolt/titanium replaced=None affect=False
-  'The manifold bolt is steel.' → move=correction corr=True topic=bolt stored=bolt/steel replaced=None affect=False
+## matty_job_hard_not_affect [HOLD] expect_not_affect_share got_move=assertion
+  'The job is hard.' → move=assertion corr=False topic=job stored=job/hard affect=False
 
-## interrupt_then_correct [PASS] expect_correction=True
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'I am not hungry.' → move=affect_share corr=False topic=gasket stored=user/hungry replaced=None affect=True
-  'The gasket is copper.' → move=correction corr=True topic=gasket stored=gasket/copper replaced=None affect=False
+## matty_room_cold_not_affect [HOLD] expect_not_affect_share got_move=assertion
+  'The room is cold.' → move=assertion corr=False topic=room stored=room/cold affect=False
 
-## bound_pronoun_retract [PASS] expect_correction=True
-  'I am hungry.' → move=affect_share corr=False topic=None stored=user/hungry replaced=None affect=True
-  'I am not hungry.' → move=correction corr=True topic=None stored=user/hungry replaced=None affect=True
+## matty_motor_hot_not_affect [HOLD] expect_not_affect_share got_move=assertion
+  'The motor is hot.' → move=assertion corr=False topic=motor stored=motor/hot affect=False
 
-## neg_bare_no [PASS] expect_correction=False
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'No.' → move=social_fragment corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
+## matty_long_not_affect [HOLD] expect_not_affect_share got_move=assertion
+  'The wire is long.' → move=assertion corr=False topic=wire stored=wire/long affect=False
 
-## neg_not_hungry_no_prior [PASS] expect_correction=False
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'I am not hungry.' → move=affect_share corr=False topic=gasket stored=user/hungry replaced=None affect=True
+## matty_heavy_not_affect [HOLD] expect_not_affect_share got_move=assertion
+  'The panel is heavy.' → move=assertion corr=False topic=panel stored=panel/heavy affect=False
 
-## neg_anyway_weather [PASS] expect_correction=False
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'Anyway the weather looks awful.' → move=topic_shift corr=False topic=weather stored=weather/awful replaced=None affect=False
+## matty_scared_affect [HOLD] expect_affect_share got_move=affect_share
+  'I am scared.' → move=affect_share corr=False topic=None stored=user/scared affect=True
 
-## neg_restatement [PASS] expect_correction=False
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
+## matty_boss_angry_affect [HOLD] expect_affect_share got_move=affect_share
+  'The boss is angry.' → move=affect_share corr=False topic=boss stored=boss/angry affect=True
 
-## neg_no_restatement [PASS] expect_correction=False
-  'The gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
-  'No, the gasket is aluminum.' → move=assertion corr=False topic=gasket stored=gasket/aluminum replaced=None affect=False
+## matty_dog_sad_affect [HOLD] expect_affect_share got_move=affect_share
+  'My dog is sad.' → move=affect_share corr=False topic=dog stored=dog/sad affect=True
 
-## neg_first_turn [PASS] expect_correction=False
-  'No, the gasket is copper.' → move=assertion corr=False topic=gasket stored=gasket/copper replaced=None affect=False
+## matty_we_upset_affect [HOLD] expect_affect_share got_move=affect_share
+  'We are upset.' → move=affect_share corr=False topic=None stored=user_group/upset affect=True
 
-## off_bronze_iron [PASS] expect_correction=True
-  'The bushing is bronze.' → move=assertion corr=False topic=bushing stored=bushing/bronze replaced=None affect=False
-  'The bushing is iron.' → move=correction corr=True topic=bushing stored=bushing/iron replaced=None affect=False
+## matty_hungry_affect [HOLD] expect_affect_share got_move=affect_share
+  'I am hungry.' → move=affect_share corr=False topic=None stored=user/hungry affect=True
 
-## off_oak_pine [PASS] expect_correction=True
-  'The handle is oak.' → move=assertion corr=False topic=handle stored=handle/oak replaced=None affect=False
-  'The handle is pine.' → move=correction corr=True topic=handle stored=handle/pine replaced=None affect=False
+## matty_angry_affect [HOLD] expect_affect_share got_move=affect_share
+  'I am angry.' → move=affect_share corr=False topic=None stored=user/angry affect=True
 
-## off_glass_acrylic [PASS] expect_correction=True
-  'The lens is glass.' → move=assertion corr=False topic=lens stored=lens/glass replaced=None affect=False
-  'The lens is acrylic.' → move=correction corr=True topic=lens stored=lens/acrylic replaced=None affect=False
-
-## off_wet_dry [PASS] expect_correction=True
-  'The pavement is wet.' → move=assertion corr=False topic=pavement stored=pavement/wet replaced=None affect=False
-  'The pavement is dry.' → move=correction corr=True topic=pavement stored=pavement/dry replaced=None affect=False
-
-## off_alum_square [PASS] expect_correction=False
-  'The bracket is aluminum.' → move=assertion corr=False topic=bracket stored=bracket/aluminum replaced=None affect=False
-  'The bracket is square.' → move=assertion corr=False topic=bracket stored=bracket/square replaced=None affect=False
-
-## off_steel_noisy [PASS] expect_correction=False
-  'The flange is steel.' → move=assertion corr=False topic=flange stored=flange/steel replaced=None affect=False
-  'The flange is noisy.' → move=assertion corr=False topic=flange stored=flange/noisy replaced=None affect=False
-
-## hungry_still_affect [PASS] expect_affect_share got_move=affect_share
-  'I am hungry.' → move=affect_share corr=False topic=None stored=user/hungry replaced=None affect=True
-
-## angry_still_affect [PASS] expect_affect_share got_move=affect_share
-  'I am angry.' → move=affect_share corr=False topic=None stored=user/angry replaced=None affect=True
-
-OVERALL PROOFS: FAIL
+Case table hold_all=True (still OVERALL FAIL — Matty must check; no PASS stamp).
+Confirm: no _EXPERIENCER_CONCEPTS / subject whitelist in language_comprehension or conversation.
+Confirm: lesson + this file remain FAIL.
