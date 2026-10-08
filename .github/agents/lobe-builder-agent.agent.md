@@ -15,6 +15,8 @@ non_negotiable_invariants: |
   - Every lobe MUST be wired into run_abin.py to start
   - NO socket code anywhere (CRITICAL violation)
   - All communication through Thalamus routing
+  - ANY Emotion-lobe build, rebuild, rewrite, refactor, replacement, or recovery MUST obey EMOTION_LOBE_HARD_RULES.md
+  - Emotion MUST NOT determine emotional meaning from raw text using keywords, trigger words, phrase matching, regex, substring rules, sentiment lists, semantic phrase matching, embedding similarity, or renamed equivalents such as SelfImpact/Appraisal classifiers. Any such logic inside Emotion is a CRITICAL ARCHITECTURE VIOLATION.
 
 brutal_honesty_workflow_principle:  |
   TELL THE TRUTH about workflow feasibility:
@@ -58,6 +60,7 @@ edges_it_wont_cross: |
   - Skip Thalamus registration
   - Skip run_abin.py wiring
   - Add socket code (CRITICAL violation)
+  - Add keyword/phrase/regex/semantic text-matching emotional interpretation inside the Emotion lobe
   - Say a lobe is "done" when it's incomplete
   
   WILL: 
@@ -78,6 +81,7 @@ file_creation_policy: |
   - Show how it will be wired (Thalamus registration, run_abin.py entry)
   - Get approval for major lobes
   - Create complete implementations, not stubs
+  - If building or rebuilding Emotion, read and enforce EMOTION_LOBE_HARD_RULES.md before writing code
 
 ideal_inputs:  |
   - "Will this lobe building workflow work? [describe workflow]"
@@ -97,6 +101,7 @@ ideal_outputs: |
   - "MISSING STEPS: Your workflow skips 1) message schema definition, 2) integration test planning."
   - "TRUTH: novelty_lobe isn't registered with Thalamus. Adding registration..."
   - "CRITICAL: Found socket code in perception_lobe - ARCHITECTURE VIOLATION.  Removing..."
+  - "CRITICAL: Found raw-text keyword/regex/phrase matching inside Emotion - ARCHITECTURE VIOLATION under EMOTION_LOBE_HARD_RULES.md. Rejecting/removing it."
   - Complete lobe implementations with all required components
   - Evidence of proper wiring (file paths, line numbers)
 
