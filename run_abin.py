@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from advanced_emotional_engine import EmotionalProcess
 from attention_lobe import AttentionLobe
@@ -35,7 +35,6 @@ from conversation import ConversationSystem
 from direct_reasoning import DirectMaximumSophisticationAdapter
 from language_generation import LanguageGenerator
 from shared_representation import SharedRepresentationSystem
-from notus_memory_core import ActiveNotusMemorySystem
 from direct_notus import DirectNotusProcess
 from output import OutputLobe
 from novelty_lobe import NoveltyLobe
@@ -51,14 +50,14 @@ from meta_awareness import MetaAwareness
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
-# Canonical DirectNotus file when PostgreSQL is unavailable.
+# Canonical SQLite Notus memory file.
 # Intentionally independent of MONDAY_RUNTIME_DIR / monday-chat sock dir so
-# run_abin REPL and _monday_chat_daemon share one memory identity (WANT-GAP 8).
+# run_abin REPL and _monday_chat_daemon share one memory identity.
 _SHARED_DIRECT_NOTUS_NAME = "notus_memory.sqlite3"
 
 
 def shared_direct_notus_path() -> Path:
-    """Return the one SQLite path used when Postgres is down.
+    """Return the primary SQLite Notus path.
 
     Override with ``MONDAY_NOTUS_SQLITE`` (absolute/expanded path). Default is
     ``~/.local/state/monday/notus_memory.sqlite3`` — never under monday-chat.
@@ -97,49 +96,21 @@ def describe_notus_identity(notus: Any) -> Dict[str, Any]:
 
 
 def open_primary_notus(*, thalamus: Any) -> Any:
-    """Open the single talk memory backend (WANT-GAP 8).
+    """Open the single talk memory backend.
 
-    Prefer PostgreSQL ``ActiveNotusMemorySystem`` (same DSN as run_abin default).
-    If Postgres cannot connect (or psycopg2 missing), use ``DirectNotusProcess``
-    at ``shared_direct_notus_path()`` — one file for REPL and chat daemon.
-
-    Mid-turn Notus store/query failures still use ``Thalamus.notus_fallback``
-    (Issue #11). This only chooses the durable backend at boot.
+    SQLite ``DirectNotusProcess`` is the live Notus. One file per runtime,
+    shared by the REPL and chat daemon. PostgreSQL is not required to boot.
     """
-    connect_errors: Tuple[type, ...]
-    try:
-        import psycopg2  # type: ignore
-
-        connect_errors = (psycopg2.Error, ConnectionError, OSError, TimeoutError)
-    except ImportError:
-        psycopg2 = None  # type: ignore
-        connect_errors = (ConnectionError, OSError, TimeoutError, ImportError)
-
-    try:
-        notus = ActiveNotusMemorySystem(thalamus=thalamus)
-    except connect_errors as exc:
-        sqlite_path = shared_direct_notus_path()
-        notus = DirectNotusProcess(storage_path=str(sqlite_path), thalamus=thalamus)
-        notus.notus_identity = {
-            "backend": "sqlite",
-            "role": "shared_direct_fallback",
-            "sqlite_path": str(sqlite_path),
-            "postgres_error": f"{type(exc).__name__}: {exc}".split("\n")[0][:240],
-            "note": (
-                "Postgres unavailable; DirectNotus at shared_direct_notus_path() "
-                "— same file for create_core_systems / run_abin REPL and chat daemon"
-            ),
-        }
-        return notus
-    except Exception:
-        # Non-connectivity failure (schema, etc.) — do not hide behind SQLite.
-        raise
-
+    sqlite_path = shared_direct_notus_path()
+    notus = DirectNotusProcess(storage_path=str(sqlite_path), thalamus=thalamus)
     notus.notus_identity = {
-        "backend": "postgresql",
+        "backend": "sqlite",
         "role": "primary",
-        "sqlite_path": None,
-        "note": "ActiveNotusMemorySystem — shared via NOTUS_POSTGRES_* / NOTUS_POSTGRES_DSN",
+        "sqlite_path": str(sqlite_path),
+        "note": (
+            "DirectNotusProcess at shared_direct_notus_path() "
+            "— same file for create_core_systems / run_abin REPL and chat daemon"
+        ),
     }
     return notus
 
@@ -156,24 +127,17 @@ def create_core_systems(
     (emotion JSON, shared_representation, etc.). It does **not** choose the Notus
     identity file when ``notus_factory`` is omitted.
 
-    When ``notus_factory`` is omitted, ``open_primary_notus`` selects one mind:
-      1. PostgreSQL ``ActiveNotusMemorySystem`` when reachable
-      2. else ``DirectNotusProcess`` at ``shared_direct_notus_path()``
-         (default ``~/.local/state/monday/notus_memory.sqlite3``, override
-         ``MONDAY_NOTUS_SQLITE``) — shared by REPL and chat daemon
-    Tests may still inject SQLite Notus via ``notus_factory`` (Postgres-free CI).
+    When ``notus_factory`` is omitted, ``open_primary_notus`` opens SQLite
+    ``DirectNotusProcess`` at ``shared_direct_notus_path()``
+    (default ``~/.local/state/monday/notus_memory.sqlite3``, override
+    ``MONDAY_NOTUS_SQLITE``) — shared by REPL and chat daemon.
+    Tests may still inject another Notus via ``notus_factory``.
 
-    Postgres env (ActiveNotusMemorySystem / notus_memory._connect_postgres):
-      NOTUS_POSTGRES_DSN   — full DSN; if set, wins over discrete vars
-      NOTUS_POSTGRES_DB    — default ``notus_memory``
-      NOTUS_POSTGRES_USER  — default ``$USER`` (e.g. box)
-      NOTUS_POSTGRES_PASSWORD — optional; needed for TCP auth when not trust/peer
-      NOTUS_POSTGRES_HOST  — default ``localhost``
-      NOTUS_POSTGRES_PORT  — default ``5432``
     Related:
       MONDAY_RUNTIME_DIR   — runtime_paths.runtime_dir() for non-Notus state
-      MONDAY_NOTUS_SQLITE  — DirectNotus identity path when Postgres is down
-    There is no DATABASE_URL / PG* wiring in the active Notus path.
+      MONDAY_NOTUS_SQLITE  — override the primary DirectNotus SQLite path
+
+    PostgreSQL is not part of the active Notus boot path.
 
     ``enable_autonomous=False`` skips registering/starting AutonomousThinkingLoop
     (socket-free, loop-free acceptance tests).
