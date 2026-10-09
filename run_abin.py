@@ -144,7 +144,7 @@ def create_core_systems(
     """
     directory = Path(runtime_directory) if runtime_directory else runtime_dir()
     directory.mkdir(parents=True, exist_ok=True)
-    thalamus = Thalamus()
+    thalamus = Thalamus(runtime_directory=str(directory))
     if notus_factory is None:
         notus = open_primary_notus(thalamus=thalamus)
     else:

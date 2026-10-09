@@ -14,6 +14,7 @@ or finished lobes.
 from __future__ import annotations
 
 import time
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 
@@ -56,6 +57,33 @@ _INTENT_TO_GOAL = {
     "conversation": "open_explore",
 }
 
+_COMMUNICATION_TYPES = frozenset(
+    {
+        "none",
+        "inquire",
+        "share_insight",
+        "request_feedback",
+        "report_discovery",
+        "express_feeling",
+        "social_initiation",
+    }
+)
+
+
+@dataclass
+class CommunicationIntent:
+    """Executive-owned proposal for whether cognition should become communication."""
+
+    type: str = "none"
+    source: str = ""
+    reason: str = ""
+    priority: float = 0.0
+    requires_user: bool = False
+    novelty: float = 0.0
+    goal_id: Optional[str] = None
+    epistemic_status: str = "unspecified"
+    thought_id: Optional[str] = None
+
 
 class ExecutiveControlLobe:
     """Hold goal/priority, inhibit off-goal actions, steer Attention."""
@@ -75,6 +103,65 @@ class ExecutiveControlLobe:
         # Legacy task queue kept for message compatibility (not live-path control).
         self.task_list: List[Any] = []
         self.inhibition_state: bool = False
+        self.last_communication_decision: Optional[Dict[str, Any]] = None
+
+    def evaluate_communication_intent(self, proposal: Dict[str, Any]) -> Dict[str, Any]:
+        """Approve, reject, or request user input for a proposed communication."""
+        proposal = proposal if isinstance(proposal, dict) else {}
+        intent_type = str(proposal.get("type") or "none").strip().lower()
+        if intent_type not in _COMMUNICATION_TYPES:
+            return {"status": "error", "message": f"Unsupported communication intent: {intent_type}"}
+        if intent_type == "none":
+            return {
+                "status": "success",
+                "decision": "rejected",
+                "intent": None,
+                "reason": "no_communication_proposed",
+            }
+        try:
+            priority = max(0.0, min(1.0, float(proposal.get("priority", 0.0))))
+            novelty = max(0.0, min(1.0, float(proposal.get("novelty", 0.0))))
+        except (TypeError, ValueError):
+            priority, novelty = 0.0, 0.0
+        intent = CommunicationIntent(
+            type=intent_type,
+            source=str(proposal.get("source") or "autonomous_thinking"),
+            reason=str(proposal.get("reason") or ""),
+            priority=priority,
+            requires_user=bool(
+                proposal.get("requires_user", intent_type in ("inquire", "request_feedback"))
+            ),
+            novelty=novelty,
+            goal_id=str(proposal.get("goal_id") or self.current_goal or "") or None,
+            epistemic_status=str(proposal.get("epistemic_status") or "unspecified"),
+            thought_id=str(proposal.get("thought_id") or "") or None,
+        )
+        decision, reason = "approved", "executive_approved"
+        if proposal.get("force_private"):
+            decision, reason = "rejected", "executive_kept_private"
+        elif priority < 0.25:
+            decision, reason = "rejected", "priority_too_low"
+        elif novelty < 0.05:
+            decision, reason = "rejected", "not_novel"
+        elif (
+            (self.current_goal or "").strip().lower() in _FACT_ANSWER_GOALS
+            and not intent.requires_user
+        ):
+            decision, reason = "rejected", "held_goal_requires_focus"
+        elif intent.requires_user:
+            decision, reason = "request_user_input", "intent_requires_user"
+        elif (self.current_goal or "").strip().lower() in {"social", "open_explore"} and priority > 0.6:
+            intent.priority = 0.6
+            decision, reason = "lowered", "goal_priority_brake"
+        result = {
+            "status": "success",
+            "decision": decision,
+            "approved": decision in ("approved", "lowered", "request_user_input"),
+            "reason": reason,
+            "intent": asdict(intent) if decision in ("approved", "lowered", "request_user_input") else None,
+        }
+        self.last_communication_decision = dict(result)
+        return result
 
     # --- goal --------------------------------------------------------------
 
@@ -459,6 +546,10 @@ class ExecutiveControlLobe:
                 detail=str(content.get("detail") or content.get("user_input") or ""),
             )
             return {"status": "success", "content": record, **record}
+
+        if msg_type in ("evaluate_communication_intent", "communication_intent"):
+            result = self.evaluate_communication_intent(content.get("intent") or content)
+            return {"status": result.get("status", "success"), "content": result, **result}
 
         if msg_type in ("set_goal_from_turn", "derive_goal", "update_from_turn"):
             record = self.set_goal_from_turn(

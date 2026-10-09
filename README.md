@@ -13,10 +13,17 @@ Monday stores mutable data outside the repository. By default, the directory is
 directory. This includes learned memory, emotional state, snapshots, logs, and
 local recovery files. Do not add runtime data to Git.
 
+Thalamus appends each inter-lobe dispatch packet and its outcome to
+`thalamus_routes.jsonl` in that runtime directory. Entries can contain
+conversation-derived content; treat the trace as private runtime data.
+
 ## Direct-call core
 
-All socket code has been removed. Lobes communicate through direct function
-calls via Thalamus.
+Core lobes communicate through direct function calls via Thalamus. The optional
+standalone `language_lobe.py` adapter provides a separate Unix-socket endpoint
+at `~/.local/state/monday-chat/language.sock` (or under `MONDAY_RUNTIME_DIR`).
+It uses length-prefixed JSON frames and is not currently part of Thalamus's
+in-process LanguageGenerator route.
 
 `run_abin.create_core_systems()` creates the prompted path:
 conversation → Notus → emotion → reasoning → language → output

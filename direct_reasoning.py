@@ -661,6 +661,25 @@ class DirectReasoningAdapter:
 
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        if message.get("type") == "imagine_what_if":
+            payload = message.get("content", {})
+            payload = payload if isinstance(payload, dict) else {}
+            simulation = self.imagine_what_if(
+                payload.get("scenario") or payload,
+                anchor_memory_id=payload.get("anchor_memory_id"),
+                source_topic=payload.get("source_topic"),
+                user_id=str(payload.get("user_id") or "default"),
+                simulation_type=str(payload.get("simulation_type") or "counterfactual"),
+                max_branches=payload.get("max_branches", 3),
+                max_depth=payload.get("max_depth", 2),
+            )
+            if simulation.get("status") == "error":
+                return {"status": "error", "message": simulation.get("message")}
+            return {
+                "status": "success",
+                "content": simulation,
+                "simulation": simulation,
+            }
         if message.get("type") == "health":
             return {"status": "success", "content": {"healthy": self.running}}
         if message.get("type") == "attention_focus":
@@ -876,6 +895,24 @@ class DirectReasoningAdapter:
                 "native_semantics_finalized": True,
             },
             "native_semantics_finalized": True,
+        }
+
+    def imagine_what_if(self, scenario: Any, **context: Any) -> Dict[str, Any]:
+        """Expose Reasoning's existing simulation through the live direct adapter."""
+        payload = dict(scenario) if isinstance(scenario, dict) else {"scenario": scenario}
+        payload.update(context)
+        response = self.reasoner.process_message({
+            "type": "imagine_what_if",
+            "content": payload,
+        })
+        if not isinstance(response, dict) or response.get("status") != "success":
+            return {"status": "error", "message": "Reasoning imagination route failed"}
+        simulation = response.get("simulation")
+        if not isinstance(simulation, dict):
+            body = response.get("content") if isinstance(response.get("content"), dict) else {}
+            simulation = body.get("simulation") or body
+        return simulation if isinstance(simulation, dict) else {
+            "status": "error", "message": "Reasoning returned an invalid simulation"
         }
 
     def shutdown(self) -> None:

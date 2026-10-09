@@ -22,6 +22,7 @@ class SpeechDecision:
     reason: str
     timing: str  # "now", "wait", "never"
     priority: float  # 0-1
+    intent_type: str = "none"
 
 
 class AutonomousSpeechSystem:
@@ -134,17 +135,45 @@ class AutonomousSpeechSystem:
     
     def _evaluate_thought(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Evaluate whether a thought should be spoken.
-        This is the social awareness filter.
+        Evaluate delivery timing for an Executive-approved communication intent.
         """
         thought = message.get('thought', {})
+        thought = thought if isinstance(thought, dict) else {}
         content = thought.get('content', '')
         thought_type = thought.get('thought_type', '')
-        intensity = thought.get('intensity', 0.5)
         thought_id = thought.get('id', '')
+        intent = thought.get("communication_intent")
+        if not isinstance(intent, dict) or intent.get("type") in (None, "", "none"):
+            decision = SpeechDecision(
+                thought_id=thought_id,
+                content=content,
+                should_speak=False,
+                reason="No approved communication intent",
+                timing="never",
+                priority=0.0,
+                intent_type="none",
+            )
+            payload = asdict(decision)
+            self.last_decision = dict(payload)
+            return {'status': 'success', 'decision': payload}
+        try:
+            priority = max(0.0, min(1.0, float(intent.get("priority", 0.0))))
+        except (TypeError, ValueError):
+            priority = 0.0
+        intent_type = str(intent.get("type") or "none")
+        requires_user = bool(
+            intent.get(
+                "requires_user",
+                intent_type in ("inquire", "request_feedback", "social_initiation"),
+            )
+        )
 
         # Check social context
-        can_speak, reason = self._check_social_context(intensity)
+        can_speak, reason = self._check_social_context(
+            priority,
+            requires_user=requires_user,
+            social_context=message.get("social_context") or thought.get("social_context"),
+        )
 
         if not can_speak:
             decision = SpeechDecision(
@@ -152,8 +181,9 @@ class AutonomousSpeechSystem:
                 content=content,
                 should_speak=False,
                 reason=reason,
-                timing='never',
-                priority=intensity,
+                timing='wait',
+                priority=priority,
+                intent_type=intent_type,
             )
             payload = asdict(decision)
             self.last_decision = dict(payload)
@@ -171,14 +201,28 @@ class AutonomousSpeechSystem:
                 should_speak=False,
                 reason=content_reason,
                 timing='never',
-                priority=intensity,
+                priority=priority,
+                intent_type=intent_type,
             )
             payload = asdict(decision)
             self.last_decision = dict(payload)
             return {'status': 'success', 'decision': payload}
 
         # Decide timing
-        timing = self._decide_timing(intensity)
+        timing = self._decide_timing(priority)
+        if timing == "wait":
+            decision = SpeechDecision(
+                thought_id=thought_id,
+                content=content,
+                should_speak=False,
+                reason="Communication is approved; waiting for a suitable pause",
+                timing="wait",
+                priority=priority,
+                intent_type=intent_type,
+            )
+            payload = asdict(decision)
+            self.last_decision = dict(payload)
+            return {'status': 'success', 'decision': payload}
 
         decision = SpeechDecision(
             thought_id=thought_id,
@@ -186,7 +230,8 @@ class AutonomousSpeechSystem:
             should_speak=True,
             reason="Passed all filters",
             timing=timing,
-            priority=intensity,
+            priority=priority,
+            intent_type=intent_type,
         )
 
         # Decision-only: Thalamus delivers allowed asides; no pending queue.
@@ -195,28 +240,34 @@ class AutonomousSpeechSystem:
         self.last_decision = dict(payload)
         return {'status': 'success', 'decision': payload}
     
-    def _check_social_context(self, intensity: float) -> tuple:
+    def _check_social_context(
+        self, priority: float, *, requires_user: bool = False,
+        social_context: Optional[Dict[str, Any]] = None,
+    ) -> tuple:
         """Check if social context allows speaking"""
-        
-        # User is typing - don't interrupt unless very important
-        if self.user_is_typing:
-            if intensity < self.interruption_threshold:
-                return False, "User is typing"
-        
-        # User is busy - don't interrupt
-        if self.user_is_busy:
-            if intensity < 0.9:  # Only critical thoughts
-                return False, "User is busy"
+        context = social_context if isinstance(social_context, dict) else {}
+        typing = bool(context.get("user_is_typing", self.user_is_typing))
+        busy = bool(context.get("user_is_busy", self.user_is_busy))
+        speaking = bool(context.get("mercy_is_speaking", False))
+        user_present = bool(context.get("user_present", self.user_present))
+        if requires_user and not user_present:
+            return False, "Waiting for the user to return"
+        if speaking and priority < 0.98:
+            return False, "Mercy is already speaking"
+        if typing and priority < self.interruption_threshold:
+            return False, "User is typing"
+        if busy and priority < 0.95:
+            return False, "User is busy"
         
         # Spoke too recently
         time_since_speech = time.time() - self.last_speech_time
         if time_since_speech < self.min_speech_interval:
-            if intensity < 0.7:
+            if priority < 0.98:
                 return False, f"Spoke {time_since_speech:.0f}s ago, waiting"
         
         # In active conversation - let user lead
         if self.conversation_active:
-            if intensity < 0.6:
+            if priority < 0.9:
                 return False, "Conversation active, letting user lead"
         
         return True, "Social context allows"
@@ -240,14 +291,12 @@ class AutonomousSpeechSystem:
         
         return True, "Content appropriate"
     
-    def _decide_timing(self, intensity: float) -> str:
+    def _decide_timing(self, priority: float) -> str:
         """Decide when to speak"""
-        if intensity > 0.8:
+        if priority >= 0.85:
             return 'now'
-        elif intensity > 0.5:
-            return 'wait'  # Wait for a natural pause
         else:
-            return 'never'  # Keep internal
+            return 'wait'
     
     def start(self):
         """Start the speech system (legacy CLI loop)."""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from pathlib import Path
 
 from conversation import ConversationSystem
@@ -33,6 +34,60 @@ def _stack(tmp_path):
 def test_thalamus_is_native_router_not_wrapper():
     assert Thalamus.__module__ == "thalamus"
     assert Thalamus.__bases__ == (object,)
+
+
+def test_route_trace_is_written_before_dispatch_and_records_result(tmp_path):
+    thalamus = Thalamus(runtime_directory=str(tmp_path))
+
+    class TraceCheckingLobe:
+        def process_message(self, message):
+            records = [
+                json.loads(line)
+                for line in thalamus.route_trace_path.read_text(encoding="utf-8").splitlines()
+            ]
+            assert records[0]["event"] == "dispatch"
+            assert records[0]["envelope"] == message
+            return {"status": "success", "content": {"received": True}}
+
+    thalamus.register_lobe("language", TraceCheckingLobe())
+    response = thalamus.send_message(
+        "language",
+        "generate",
+        {"content": "A grounded sentence.", "intent": "share_insight"},
+        source="reasoning",
+    )
+
+    records = [
+        json.loads(line)
+        for line in thalamus.route_trace_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert response["status"] == "success"
+    assert [record["event"] for record in records] == ["dispatch", "result"]
+    assert records[0]["destination"] == "language"
+    assert records[0]["envelope"]["content"]["content"] == "A grounded sentence."
+    assert records[0]["message_id"] == records[1]["message_id"]
+    assert records[1]["response"] == response
+
+
+def test_route_trace_records_unknown_destinations_and_rejected_content(tmp_path):
+    thalamus = Thalamus(runtime_directory=str(tmp_path))
+    unknown = thalamus.send_message("missing", "generate", {"content": "raw"})
+    rejected = thalamus.send_message("language", "generate", ["not", "a", "dict"])
+
+    records = [
+        json.loads(line)
+        for line in thalamus.route_trace_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert unknown["status"] == "error"
+    assert rejected["status"] == "error"
+    assert [record["event"] for record in records] == [
+        "dispatch",
+        "result",
+        "rejected",
+    ]
+    assert records[0]["destination"] == "missing"
+    assert records[1]["response"]["message"] == "Unknown destination: missing"
+    assert records[2]["reason"] == "Message content must be a dictionary"
 
 
 def test_language_first_then_sr_ids(tmp_path):

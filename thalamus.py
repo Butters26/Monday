@@ -12,23 +12,38 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
+import json
+import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from notus_outage_fallback import NotusOutageFallback
+from runtime_paths import runtime_dir
+
+
+logger = logging.getLogger(__name__)
 
 
 class Thalamus:
     """Synchronous router/coordinator for Mercy's direct-call lobe graph."""
 
-    def __init__(self) -> None:
+    def __init__(self, runtime_directory: Optional[str] = None) -> None:
         self.running = True
         self.lobe_handlers: Dict[str, Any] = {}
         self.lobe_handlers_lock = threading.RLock()
         self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=200)
+        self.runtime_directory = (
+            Path(runtime_directory).expanduser()
+            if runtime_directory
+            else runtime_dir()
+        )
+        self.runtime_directory.mkdir(parents=True, exist_ok=True)
+        self.route_trace_path = self.runtime_directory / "thalamus_routes.jsonl"
+        self._route_trace_lock = threading.Lock()
 
         self.last_output_envelope: Optional[Dict[str, Any]] = None
         self.last_grounded_structures: Optional[List[Dict[str, Any]]] = None
@@ -47,6 +62,30 @@ class Thalamus:
         self._force_curiosity_follow_up = False
 
         self.notus_fallback = NotusOutageFallback()
+
+    def _record_route_trace(self, event: Dict[str, Any]) -> None:
+        """Persist route packets and outcomes outside the source checkout."""
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **event,
+        }
+        try:
+            serialized = json.dumps(record, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            serialized = json.dumps(
+                {
+                    "timestamp": record["timestamp"],
+                    "event": event.get("event", "unknown"),
+                    "trace_error": f"Could not serialize route record: {exc}",
+                }
+            )
+        try:
+            with self._route_trace_lock:
+                with self.route_trace_path.open("a", encoding="utf-8") as trace:
+                    trace.write(serialized + "\n")
+                    trace.flush()
+        except OSError:
+            logger.exception("Could not write Thalamus route trace")
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -76,27 +115,56 @@ class Thalamus:
         source: str = "thalamus",
     ) -> Dict[str, Any]:
         """Route one envelope unchanged except for transport metadata."""
+        message_id = str(uuid.uuid4())
         if content is None:
             content = {}
         if not isinstance(content, dict):
+            self._record_route_trace(
+                {
+                    "event": "rejected",
+                    "message_id": message_id,
+                    "source": source,
+                    "destination": destination,
+                    "type": msg_type,
+                    "content": content,
+                    "reason": "Message content must be a dictionary",
+                }
+            )
             return {"status": "error", "message": "Message content must be a dictionary", "content": {}}
-
-        with self.lobe_handlers_lock:
-            lobe = self.lobe_handlers.get(destination)
-        if lobe is None:
-            self.lobe_status[destination] = "offline"
-            return {
-                "status": "error",
-                "message": f"Unknown destination: {destination}",
-                "content": {},
-            }
 
         envelope = {
             "type": msg_type,
             "content": dict(content),
             "source": source,
-            "message_id": str(uuid.uuid4()),
+            "message_id": message_id,
         }
+        self._record_route_trace(
+            {
+                "event": "dispatch",
+                "message_id": message_id,
+                "destination": destination,
+                "envelope": envelope,
+            }
+        )
+
+        with self.lobe_handlers_lock:
+            lobe = self.lobe_handlers.get(destination)
+        if lobe is None:
+            self.lobe_status[destination] = "offline"
+            response = {
+                "status": "error",
+                "message": f"Unknown destination: {destination}",
+                "content": {},
+            }
+            self._record_route_trace(
+                {
+                    "event": "result",
+                    "message_id": message_id,
+                    "destination": destination,
+                    "response": response,
+                }
+            )
+            return response
         try:
             handler = getattr(lobe, "process_message", None) or getattr(
                 lobe, "process_message_safe", None
@@ -120,6 +188,14 @@ class Thalamus:
                 "content": {},
             }
 
+        self._record_route_trace(
+            {
+                "event": "result",
+                "message_id": message_id,
+                "destination": destination,
+                "response": response,
+            }
+        )
         self.message_routes.append(
             {
                 "from": source,
@@ -661,6 +737,110 @@ class Thalamus:
             self.send_message(
                 "speech", "user_spoke", {"user_id": user_id}, source="thalamus"
             )
+
+    def deliver_unprompted_speech(self, user_id: str = "default") -> Dict[str, Any]:
+        """Deliver one Executive-approved intent when Speech says the timing is right."""
+        pending = self.send_and_wait(
+            "autonomous", "peek_communication_intent", {}, source="thalamus"
+        )
+        pending_body = self._content(pending)
+        thought = pending_body.get("thought") or pending.get("thought")
+        if pending.get("status") != "success" or not isinstance(thought, dict):
+            return {"status": "success", "spoke": False, "reason": "no_pending_intent"}
+        intent = thought.get("communication_intent")
+        if not isinstance(intent, dict):
+            return {"status": "success", "spoke": False, "reason": "no_approved_intent"}
+
+        evaluation = self.send_and_wait(
+            "speech",
+            "evaluate_thought",
+            {"thought": thought, "social_context": thought.get("social_context") or {}},
+            source="thalamus",
+        )
+        decision_body = self._content(evaluation)
+        decision = decision_body.get("decision") or evaluation.get("decision")
+        if evaluation.get("status") != "success" or not isinstance(decision, dict):
+            return {"status": "error", "spoke": False, "reason": "speech_evaluation_failed"}
+        if not decision.get("should_speak") or decision.get("timing") != "now":
+            return {
+                "status": "success",
+                "spoke": False,
+                "reason": decision.get("reason") or "waiting_for_social_pause",
+                "decision": decision,
+                "intent_pending": True,
+            }
+
+        language = self.send_and_wait(
+            "language",
+            "generate",
+            {
+                "semantic_input": {
+                    "intent": intent.get("type"),
+                    "answer": thought.get("content", ""),
+                    "certainty": 0.5,
+                    "epistemic_status": intent.get("epistemic_status"),
+                },
+                "is_main_response": False,
+            },
+            source="thalamus",
+        )
+        sentence = self._content(language).get("sentence") or language.get("sentence") or language.get("response")
+        if language.get("status") != "success" or not isinstance(sentence, str) or not sentence.strip():
+            return {
+                "status": "success",
+                "spoke": False,
+                "reason": "language_did_not_realize_intent",
+                "intent_pending": True,
+                "decision": decision,
+            }
+
+        emotion_state = self.send_and_wait("emotion", "get_state", {}, source="thalamus")
+        affect = self._content(emotion_state)
+        output = self.send_and_wait(
+            "output",
+            "generate_output",
+            {
+                "text": sentence,
+                "emotion": affect.get("emotion", "neutral"),
+                "intensity": affect.get("intensity", 0.5),
+                "user_input": "",
+                "user_id": user_id,
+                "preserve_text": True,
+                "communication_intent": intent,
+            },
+            source="thalamus",
+        )
+        if output.get("status") != "success":
+            return {"status": "error", "spoke": False, "reason": "output_delivery_failed",
+                    "intent_pending": True}
+        output_body = self._content(output)
+        envelope = output_body.get("envelope") or output.get("envelope")
+        self.last_output_envelope = envelope if isinstance(envelope, dict) else {
+            "text": output_body.get("text") or sentence
+        }
+        self._voice_speak_for_output(
+            str(self.last_output_envelope.get("text") or sentence),
+            user_id=user_id,
+            emotion=str(affect.get("emotion") or "neutral"),
+            intensity=float(affect.get("intensity", 0.5) or 0.5),
+            voice_prosody=affect.get("voice_prosody") or {},
+        )
+        self.send_message(
+            "autonomous",
+            "consume_communication_intent",
+            {"thought_id": thought.get("id")},
+            source="thalamus",
+        )
+        self.send_message("speech", "speech_delivered", {}, source="thalamus")
+        text = str(self.last_output_envelope.get("text") or sentence)
+        return {
+            "status": "success",
+            "spoke": True,
+            "text": text,
+            "intent": intent,
+            "decision": decision,
+            "output": self.last_output_envelope,
+        }
 
     def _voice_speak_for_output(
         self,
@@ -1245,6 +1425,11 @@ class Thalamus:
                 "content": {"response": response},
                 "response": response,
             }
+        if msg_type == "deliver_unprompted_speech":
+            result = self.deliver_unprompted_speech(
+                user_id=str(payload.get("user_id") or "default")
+            )
+            return {"status": result.get("status", "success"), "content": result, **result}
         if msg_type == "health":
             return {
                 "status": "success",
