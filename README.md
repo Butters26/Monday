@@ -13,6 +13,10 @@ Monday stores mutable data outside the repository. By default, the directory is
 directory. This includes learned memory, emotional state, snapshots, logs, and
 local recovery files. Do not add runtime data to Git.
 
+Thalamus appends each inter-lobe dispatch packet and its outcome to
+`thalamus_routes.jsonl` in that runtime directory. Entries can contain
+conversation-derived content; treat the trace as private runtime data.
+
 ## Direct-call core
 
 Core lobes communicate through direct function calls via Thalamus. The optional
