@@ -662,6 +662,110 @@ class Thalamus:
                 "speech", "user_spoke", {"user_id": user_id}, source="thalamus"
             )
 
+    def deliver_unprompted_speech(self, user_id: str = "default") -> Dict[str, Any]:
+        """Deliver one Executive-approved intent when Speech says the timing is right."""
+        pending = self.send_and_wait(
+            "autonomous", "peek_communication_intent", {}, source="thalamus"
+        )
+        pending_body = self._content(pending)
+        thought = pending_body.get("thought") or pending.get("thought")
+        if pending.get("status") != "success" or not isinstance(thought, dict):
+            return {"status": "success", "spoke": False, "reason": "no_pending_intent"}
+        intent = thought.get("communication_intent")
+        if not isinstance(intent, dict):
+            return {"status": "success", "spoke": False, "reason": "no_approved_intent"}
+
+        evaluation = self.send_and_wait(
+            "speech",
+            "evaluate_thought",
+            {"thought": thought, "social_context": thought.get("social_context") or {}},
+            source="thalamus",
+        )
+        decision_body = self._content(evaluation)
+        decision = decision_body.get("decision") or evaluation.get("decision")
+        if evaluation.get("status") != "success" or not isinstance(decision, dict):
+            return {"status": "error", "spoke": False, "reason": "speech_evaluation_failed"}
+        if not decision.get("should_speak") or decision.get("timing") != "now":
+            return {
+                "status": "success",
+                "spoke": False,
+                "reason": decision.get("reason") or "waiting_for_social_pause",
+                "decision": decision,
+                "intent_pending": True,
+            }
+
+        language = self.send_and_wait(
+            "language",
+            "generate",
+            {
+                "semantic_input": {
+                    "intent": intent.get("type"),
+                    "answer": thought.get("content", ""),
+                    "certainty": 0.5,
+                    "epistemic_status": intent.get("epistemic_status"),
+                },
+                "is_main_response": False,
+            },
+            source="thalamus",
+        )
+        sentence = self._content(language).get("sentence") or language.get("sentence") or language.get("response")
+        if language.get("status") != "success" or not isinstance(sentence, str) or not sentence.strip():
+            return {
+                "status": "success",
+                "spoke": False,
+                "reason": "language_did_not_realize_intent",
+                "intent_pending": True,
+                "decision": decision,
+            }
+
+        emotion_state = self.send_and_wait("emotion", "get_state", {}, source="thalamus")
+        affect = self._content(emotion_state)
+        output = self.send_and_wait(
+            "output",
+            "generate_output",
+            {
+                "text": sentence,
+                "emotion": affect.get("emotion", "neutral"),
+                "intensity": affect.get("intensity", 0.5),
+                "user_input": "",
+                "user_id": user_id,
+                "preserve_text": True,
+                "communication_intent": intent,
+            },
+            source="thalamus",
+        )
+        if output.get("status") != "success":
+            return {"status": "error", "spoke": False, "reason": "output_delivery_failed",
+                    "intent_pending": True}
+        output_body = self._content(output)
+        envelope = output_body.get("envelope") or output.get("envelope")
+        self.last_output_envelope = envelope if isinstance(envelope, dict) else {
+            "text": output_body.get("text") or sentence
+        }
+        self._voice_speak_for_output(
+            str(self.last_output_envelope.get("text") or sentence),
+            user_id=user_id,
+            emotion=str(affect.get("emotion") or "neutral"),
+            intensity=float(affect.get("intensity", 0.5) or 0.5),
+            voice_prosody=affect.get("voice_prosody") or {},
+        )
+        self.send_message(
+            "autonomous",
+            "consume_communication_intent",
+            {"thought_id": thought.get("id")},
+            source="thalamus",
+        )
+        self.send_message("speech", "speech_delivered", {}, source="thalamus")
+        text = str(self.last_output_envelope.get("text") or sentence)
+        return {
+            "status": "success",
+            "spoke": True,
+            "text": text,
+            "intent": intent,
+            "decision": decision,
+            "output": self.last_output_envelope,
+        }
+
     def _voice_speak_for_output(
         self,
         text: str,
@@ -1245,6 +1349,11 @@ class Thalamus:
                 "content": {"response": response},
                 "response": response,
             }
+        if msg_type == "deliver_unprompted_speech":
+            result = self.deliver_unprompted_speech(
+                user_id=str(payload.get("user_id") or "default")
+            )
+            return {"status": result.get("status", "success"), "content": result, **result}
         if msg_type == "health":
             return {
                 "status": "success",

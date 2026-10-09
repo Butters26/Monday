@@ -24,6 +24,7 @@ THOUGHT_MODES = (
     "emotional_reaction",
     "interpretation",
     "cause_effect",
+    "imagination",
     "uncertainty",
     "connection",
     "self_state",
@@ -66,6 +67,7 @@ class AutonomousSelectionMixin:
                         continue
                     if hasattr(th, "speak_worthy"):
                         th.speak_worthy = False
+                        th.communication_intent = None
                         try:
                             th.relevance_gate_reason = "demoted_on_light_turn"
                         except Exception:
@@ -412,6 +414,7 @@ class AutonomousSelectionMixin:
             return "goal_need"
         ladder = [
             "replay_recall", "emotional_reaction", "interpretation", "cause_effect",
+            "imagination",
             "uncertainty", "connection", "self_state", "goal_need", "next_action", "letting_go",
         ]
         if topic_key in self._topic_resolved_at or self._resolution_factor(
@@ -473,6 +476,7 @@ class AutonomousSelectionMixin:
             "next_action": "reflection",
             "letting_go": "feeling",
             "spontaneous": "observation",
+            "imagination": "reflection",
         }.get(mode, "reflection")
 
         if mode == "spontaneous":
@@ -496,6 +500,51 @@ class AutonomousSelectionMixin:
                 f"goal_{vname}",
                 thought_type,
             )
+        if mode == "imagination":
+            memory = candidate.get("memory") if isinstance(candidate.get("memory"), dict) else {}
+            snippet = self._memory_snippet(memory) if memory else ""
+            scenario = (
+                "What if Matthew stayed?"
+                if "matthew" in snippet.casefold() and "left" in snippet.casefold()
+                else f"What if {snippet} had gone differently?"
+                if snippet
+                else f"What if I felt differently about {self.current_conversation_topic or 'this'}?"
+            )
+            self._last_imagination_result = None
+            try:
+                response = self.thalamus.send_and_wait(
+                    "reasoning",
+                    "imagine_what_if",
+                    {
+                        "scenario": scenario,
+                        "anchor_memory_id": (
+                            memory.get("id") or memory.get("memory_id") if memory else None
+                        ),
+                        "source_topic": candidate.get("topic_key"),
+                        "user_id": self.current_user_id,
+                        "simulation_type": "counterfactual",
+                        "max_branches": 3,
+                        "max_depth": 2,
+                    },
+                    source="autonomous",
+                )
+                body = response.get("content") if isinstance(response.get("content"), dict) else {}
+                simulation = body.get("simulation") or response.get("simulation")
+                if isinstance(simulation, dict):
+                    self._last_imagination_result = simulation
+                    consequence = next(iter(simulation.get("consequences") or []), None)
+                    summary = (
+                        f"One possibility is {consequence}."
+                        if consequence else "I can imagine that alternative, but its consequences are uncertain."
+                    )
+                    return (
+                        f"Counterfactual: {scenario} {summary}",
+                        "reasoning_imagination",
+                        thought_type,
+                    )
+            except Exception:
+                pass
+            return None, None, thought_type
 
         s = snippet or (f"that {event}" if event else "what just happened")
         quoted = f'"{s}"' if mem and s and not s.startswith("that ") else s
@@ -623,7 +672,9 @@ class AutonomousSelectionMixin:
         content = str(data.get("content") or "")
         topic_key = str(data.get("topic_key") or "")
         user_text = self.last_user_text if user_text is None else user_text
-        emotional_state = emotional_state or self._get_emotional_state()
+        intent = data.get("communication_intent")
+        if not isinstance(intent, dict):
+            return False, "no_executive_communication_intent"
 
         if topic_key:
             if self._speak_sat(topic_key) >= 0.45:
@@ -640,7 +691,15 @@ class AutonomousSelectionMixin:
                 if not reactivated:
                     return False, "speak_recently_surfaced"
 
-        urgent = self._topic_still_urgent(topic_key, emotional_state, None)
+        try:
+            priority = float(intent.get("priority", 0.0) or 0.0)
+            novelty = float(intent.get("novelty", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return False, "invalid_communication_intent"
+        if data.get("stale"):
+            return False, "stale_intent"
+        if data.get("duplicate"):
+            return False, "duplicate_intent"
         light = bool(user_text and _LIGHT_TURN_RE.search(user_text))
         overlaps = self._content_overlaps_turn(content, user_text or "", topic_key)
         topic_overlap = False
@@ -650,78 +709,105 @@ class AutonomousSelectionMixin:
             )
 
         if light and not overlaps:
-            try:
-                intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
-            except (TypeError, ValueError):
-                intensity = 0.5
-            if urgent and intensity >= 0.55:
-                return True, "light_turn_but_still_urgent"
+            if priority >= 0.9 and novelty >= 0.5:
+                return True, "light_turn_but_high_value"
             return False, "light_turn_unrelated_not_urgent"
 
         if user_text and not overlaps and not topic_overlap:
-            if not urgent:
-                return False, "unrelated_to_turn_not_urgent"
             if self._topic_select_count.get(topic_key, 0) >= 4 and not (
                 topic_key in self._topic_reactivated_at
                 and time.time() - self._topic_reactivated_at[topic_key] < 120
             ):
                 return False, "unrelated_turn_topic_overplayed"
-            return True, "unrelated_turn_but_urgent"
+            if priority >= 0.72 and novelty >= 0.45:
+                return True, "unrelated_turn_but_relevant_intent"
+            return False, "unrelated_turn_low_relevance"
 
         if overlaps or topic_overlap:
             return True, "overlaps_current_turn"
 
         if not user_text:
-            if urgent:
-                return True, "no_turn_but_urgent"
-            try:
-                intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
-            except (TypeError, ValueError):
-                intensity = 0.5
-            if intensity >= 0.7:
-                return True, "no_turn_high_intensity"
-            return False, "no_turn_not_urgent_keep_internal"
+            if priority >= 0.35 and novelty >= 0.15:
+                return True, "no_turn_valid_communication_intent"
+            return False, "no_turn_low_relevance_keep_internal"
 
         return True, "default_allow"
 
     def _evaluate_speak_worthy(self, thought_type, mode, topic_key, content,
-                               emotional_state, candidate, user_text):
+                               emotional_state, candidate, user_text,
+                               thought_id=None, simulation=None):
         try:
             intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
         except (TypeError, ValueError):
             intensity = 0.5
-        unresolved = emotional_state.get("unresolved_appraisals") or []
-        max_sev = 0.0
-        if unresolved:
-            try:
-                max_sev = max(float(u.get("severity", 0.0) or 0.0) for u in unresolved)
-            except Exception:
-                max_sev = 0.55
-        eligible = False
-        if unresolved and (intensity >= 0.55 or max_sev >= 0.6) and candidate.get("kind") in (
-            "appraisal", "memory"
-        ):
-            eligible = True
-        elif intensity > 0.72 and thought_type in ("feeling", "reflection", "memory"):
-            eligible = True
-        elif thought_type == "question" and intensity > 0.65:
-            eligible = True
-        if mode == "spontaneous" and intensity < 0.7:
-            eligible = False
-        if self._speak_sat(topic_key) >= 0.5:
-            eligible = False
-        if not eligible:
-            return False, "not_eligible_intensity_or_type"
+        if mode == "imagination":
+            intent_type, reason, priority = "share_insight", "counterfactual_result", 0.52
+            epistemic_status = str((simulation or {}).get("epistemic_status") or "hypothetical")
+        elif thought_type == "question" or content.rstrip().endswith("?"):
+            intent_type, reason, priority = "inquire", "open_question", 0.48
+            epistemic_status = "question"
+        elif thought_type == "feeling" and intensity >= 0.7:
+            intent_type, reason, priority = "express_feeling", "strong_affect_proposal", intensity
+            epistemic_status = "subjective"
+        elif thought_type in ("reflection", "memory") and mode != "spontaneous":
+            intent_type, reason, priority = "share_insight", "grounded_reflection", 0.48
+            epistemic_status = "grounded"
+        else:
+            return False, "no_communication_reason", None
+
+        speak_sat = self._speak_sat(topic_key)
+        try:
+            selection_weight = float(candidate.get("weight", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            selection_weight = 0.0
+        novelty = max(0.0, min(1.0, selection_weight))
+        proposal = {
+            "type": intent_type,
+            "source": "autonomous_thinking",
+            "reason": reason,
+            "priority": priority,
+            "requires_user": intent_type in ("inquire", "request_feedback"),
+            "novelty": novelty,
+            "epistemic_status": epistemic_status,
+            "thought_id": thought_id,
+            "topic_key": topic_key,
+            "satiation_score": speak_sat,
+            "force_private": mode == "spontaneous" or speak_sat >= 0.5,
+        }
+        try:
+            executive = self.thalamus.send_and_wait(
+                "executive_control",
+                "evaluate_communication_intent",
+                {"intent": proposal},
+                source="autonomous",
+            )
+        except Exception:
+            executive = {}
+        body = executive.get("content") if isinstance(executive.get("content"), dict) else executive
+        intent = body.get("intent") if body.get("approved") else None
+        if not isinstance(intent, dict):
+            return False, str(body.get("reason") or "executive_rejected"), None
         aside = {
             "content": content,
             "topic_key": topic_key,
-            "source_appraisal": (candidate.get("appraisal") or {}).get("event_type")
-            if isinstance(candidate.get("appraisal"), dict) else None,
             "intensity": intensity,
+            "communication_intent": intent,
         }
-        return self.aside_passes_relevance_gate(
+        allowed, gate_reason = self.aside_passes_relevance_gate(
             aside, user_text=user_text, emotional_state=emotional_state
         )
+        if not allowed:
+            try:
+                self.thalamus.send_and_wait(
+                    "executive_control",
+                    "evaluate_communication_intent",
+                    {"intent": {**proposal, "force_private": True, "reason": gate_reason}},
+                    source="autonomous",
+                )
+            except Exception:
+                pass
+            return False, gate_reason, None
+        return True, "executive_approved:" + gate_reason, intent
 
     def _write_trace(self, trace):
         path = getattr(self, "trace_log_path", None)
