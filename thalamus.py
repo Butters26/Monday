@@ -141,6 +141,7 @@ class Thalamus:
         self._record_route_trace(
             {
                 "event": "dispatch",
+                "message_id": message_id,
                 "destination": destination,
                 "envelope": envelope,
             }
