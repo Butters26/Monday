@@ -31,6 +31,7 @@ THOUGHT_MODES = (
     "next_action",
     "letting_go",
     "spontaneous",
+    "imagination",
 )
 
 
@@ -410,6 +411,8 @@ class AutonomousSelectionMixin:
             return "self_state"
         if kind == "goal":
             return "goal_need"
+        if kind == "memory" and sel_n >= 1 and "imagination" not in recent[-3:]:
+            return "imagination"
         ladder = [
             "replay_recall", "emotional_reaction", "interpretation", "cause_effect",
             "uncertainty", "connection", "self_state", "goal_need", "next_action", "letting_go",
@@ -462,6 +465,7 @@ class AutonomousSelectionMixin:
             snippet = f"that {event}"
 
         thought_type = {
+            "imagination": "reflection",
             "replay_recall": "memory",
             "emotional_reaction": "feeling",
             "interpretation": "reflection",
@@ -474,6 +478,17 @@ class AutonomousSelectionMixin:
             "letting_go": "feeling",
             "spontaneous": "observation",
         }.get(mode, "reflection")
+
+        if mode == "imagination":
+            simulation = candidate.get("simulation") if isinstance(candidate, dict) else {}
+            scenario = str((simulation or {}).get("scenario") or candidate.get("scenario") or "")
+            branch = next(iter((simulation or {}).get("branches") or []), {})
+            outcome = str(branch.get("label") or "the consequences remain uncertain")
+            return (
+                f"I considered the hypothetical: {scenario}. One possible branch is: {outcome}",
+                "counterfactual_simulation",
+                thought_type,
+            )
 
         if mode == "spontaneous":
             return (
@@ -640,7 +655,11 @@ class AutonomousSelectionMixin:
                 if not reactivated:
                     return False, "speak_recently_surfaced"
 
-        urgent = self._topic_still_urgent(topic_key, emotional_state, None)
+        intent = data.get("communication_intent")
+        try:
+            priority = float(intent.get("priority", 0.0)) if isinstance(intent, dict) else 0.0
+        except (TypeError, ValueError):
+            priority = 0.0
         light = bool(user_text and _LIGHT_TURN_RE.search(user_text))
         overlaps = self._content_overlaps_turn(content, user_text or "", topic_key)
         topic_overlap = False
@@ -650,37 +669,27 @@ class AutonomousSelectionMixin:
             )
 
         if light and not overlaps:
-            try:
-                intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
-            except (TypeError, ValueError):
-                intensity = 0.5
-            if urgent and intensity >= 0.55:
-                return True, "light_turn_but_still_urgent"
-            return False, "light_turn_unrelated_not_urgent"
+            if priority >= 0.9:
+                return True, "light_turn_high_priority"
+            return False, "light_turn_unrelated_low_priority"
 
         if user_text and not overlaps and not topic_overlap:
-            if not urgent:
-                return False, "unrelated_to_turn_not_urgent"
+            if priority < 0.9:
+                return False, "unrelated_to_turn_low_priority"
             if self._topic_select_count.get(topic_key, 0) >= 4 and not (
                 topic_key in self._topic_reactivated_at
                 and time.time() - self._topic_reactivated_at[topic_key] < 120
             ):
                 return False, "unrelated_turn_topic_overplayed"
-            return True, "unrelated_turn_but_urgent"
+            return True, "unrelated_turn_high_priority"
 
         if overlaps or topic_overlap:
             return True, "overlaps_current_turn"
 
         if not user_text:
-            if urgent:
-                return True, "no_turn_but_urgent"
-            try:
-                intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
-            except (TypeError, ValueError):
-                intensity = 0.5
-            if intensity >= 0.7:
-                return True, "no_turn_high_intensity"
-            return False, "no_turn_not_urgent_keep_internal"
+            if priority >= 0.35:
+                return True, "approved_intent_without_active_turn"
+            return False, "no_valid_communication_intent"
 
         return True, "default_allow"
 
@@ -690,38 +699,80 @@ class AutonomousSelectionMixin:
             intensity = float(emotional_state.get("intensity", 0.5) or 0.5)
         except (TypeError, ValueError):
             intensity = 0.5
-        unresolved = emotional_state.get("unresolved_appraisals") or []
-        max_sev = 0.0
-        if unresolved:
-            try:
-                max_sev = max(float(u.get("severity", 0.0) or 0.0) for u in unresolved)
-            except Exception:
-                max_sev = 0.55
-        eligible = False
-        if unresolved and (intensity >= 0.55 or max_sev >= 0.6) and candidate.get("kind") in (
-            "appraisal", "memory"
-        ):
-            eligible = True
-        elif intensity > 0.72 and thought_type in ("feeling", "reflection", "memory"):
-            eligible = True
-        elif thought_type == "question" and intensity > 0.65:
-            eligible = True
-        if mode == "spontaneous" and intensity < 0.7:
-            eligible = False
-        if self._speak_sat(topic_key) >= 0.5:
-            eligible = False
-        if not eligible:
-            return False, "not_eligible_intensity_or_type"
-        aside = {
-            "content": content,
-            "topic_key": topic_key,
-            "source_appraisal": (candidate.get("appraisal") or {}).get("event_type")
-            if isinstance(candidate.get("appraisal"), dict) else None,
-            "intensity": intensity,
-        }
-        return self.aside_passes_relevance_gate(
-            aside, user_text=user_text, emotional_state=emotional_state
+        self._last_communication_intent = None
+        if mode in ("spontaneous", "self_state"):
+            intent_type, reason, base_priority = "none", "private_internal_thought", 0.0
+        elif thought_type == "question" or mode == "uncertainty":
+            intent_type, reason, base_priority = "inquire", "unresolved_question", 0.55
+        elif thought_type == "feeling" or mode in ("emotional_reaction", "letting_go"):
+            intent_type, reason, base_priority = "express_feeling", "emotional_expression", 0.5
+        elif mode == "imagination":
+            intent_type, reason, base_priority = "share_insight", "hypothetical_result", 0.58
+        elif mode in ("connection", "interpretation", "cause_effect", "next_action", "goal_need"):
+            intent_type, reason, base_priority = "share_insight", "grounded_cognitive_result", 0.55
+        elif candidate.get("kind") in ("memory", "appraisal", "goal"):
+            intent_type, reason, base_priority = "report_discovery", "grounded_internal_result", 0.5
+        else:
+            intent_type, reason, base_priority = "none", "no_communication_reason", 0.0
+        if intent_type == "express_feeling":
+            base_priority = max(base_priority, min(1.0, 0.35 + intensity * 0.55))
+        elif candidate.get("kind") == "appraisal":
+            base_priority = max(base_priority, float((candidate.get("appraisal") or {}).get("severity", 0.0) or 0.0))
+        executive = None
+        try:
+            with self.thalamus.lobe_handlers_lock:
+                executive = self.thalamus.lobe_handlers.get("executive_control")
+        except Exception:
+            pass
+        goal_id = getattr(executive, "current_goal", None)
+        thought_id = str(candidate.get("thought_id") or f"thought_{int(time.time() * 1000)}")
+        candidate["thought_id"] = thought_id
+        relevant = self._content_overlaps_turn(content, user_text or "", topic_key)
+        topic_overlap = bool(
+            self.current_conversation_topic
+            and self._content_overlaps_turn(
+                content, self.current_conversation_topic, topic_key
+            )
         )
+        proposal = {
+            "type": intent_type,
+            "source": "autonomous_thinking",
+            "reason": reason,
+            "priority": base_priority,
+            "requires_user": True,
+            "novelty": float(candidate.get("weight", 0.0) or 0.0),
+            "goal_id": goal_id,
+            "epistemic_status": (
+                "hypothetical" if mode == "imagination" else "known"
+            ),
+            "thought_id": thought_id,
+            "content": content,
+            "duplicate": self._speak_sat(topic_key) >= 0.5,
+            "stale": bool(candidate.get("stale")),
+            "unrelated_to_turn": bool(user_text and not relevant and not topic_overlap),
+            "socially_inappropriate": bool(
+                user_text
+                and _LIGHT_TURN_RE.search(user_text)
+                and not relevant
+                and not topic_overlap
+            ),
+        }
+        try:
+            response = self.thalamus.send_and_wait(
+                "executive_control",
+                "evaluate_communication_intent",
+                proposal,
+                source="autonomous_thinking",
+            )
+            body = response.get("content") if isinstance(response.get("content"), dict) else response
+            intent = body.get("communication_intent") if isinstance(body, dict) else None
+            if not isinstance(intent, dict):
+                return False, str(body.get("reason") or "executive_rejected")
+        except Exception:
+            return False, "executive_unavailable"
+        self._last_communication_intent = intent
+        body = response.get("content") if isinstance(response.get("content"), dict) else response
+        return True, str(body.get("reason") or "executive_approved")
 
     def _write_trace(self, trace):
         path = getattr(self, "trace_log_path", None)

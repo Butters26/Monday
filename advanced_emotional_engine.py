@@ -1476,6 +1476,38 @@ class EmotionalProcess:
                     'autonomy_level': snap['autonomy_level'],
                     'user_affect': snap.get('user_affect'),
                 }
+
+            elif msg_type == 'probe_affect':
+                scenario = str(message.get('scenario') or '').strip()
+                core = self.engine.core_affect
+                delta = self.engine._self_impact.evaluate_internal(
+                    scenario, relevance=0.5
+                )
+                valence = max(-1.0, min(1.0, float(core.valence) + delta.dv))
+                arousal = max(-1.0, min(1.0, float(core.arousal) + delta.da))
+                projection = {
+                    'status': 'success',
+                    'epistemic_status': 'hypothetical',
+                    'simulation_type': message.get('simulation_type') or 'counterfactual',
+                    'current': {
+                        'valence': float(core.valence),
+                        'arousal': float(core.arousal),
+                        'emotion': core.label(),
+                        'intensity': core.intensity(),
+                    },
+                    'projected': {
+                        'valence': valence,
+                        'arousal': arousal,
+                        'emotion': label_from_va(valence, arousal),
+                    },
+                    'basis': delta.reason,
+                    'state_mutated': False,
+                }
+                return {
+                    'status': 'success',
+                    'projection': projection,
+                    'content': projection,
+                }
             
             elif msg_type == 'get_emotional_state':
                 # Return standardized emotional state output for other lobes

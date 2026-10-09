@@ -788,6 +788,128 @@ class Thalamus:
         except Exception:
             pass
 
+    def deliver_autonomous_thought(
+        self, thought: Dict[str, Any], user_id: str = "default"
+    ) -> Dict[str, Any]:
+        """Deliver an Executive-approved internal result through Speech, Language, Output."""
+        if not isinstance(thought, dict):
+            return {"status": "error", "reason": "invalid_thought"}
+        intent = thought.get("communication_intent")
+        if not isinstance(intent, dict) or intent.get("type") in (None, "", "none"):
+            return {"status": "success", "delivered": False, "reason": "no_communication_intent"}
+        proposal = dict(intent)
+        proposal["content"] = str(thought.get("content") or "")
+        executive = self.send_and_wait(
+            "executive_control",
+            "evaluate_communication_intent",
+            proposal,
+            source="thalamus",
+        )
+        executive_body = self._content(executive)
+        approved_intent = executive_body.get("communication_intent")
+        if executive.get("status") != "success" or not isinstance(approved_intent, dict):
+            return {
+                "status": "success",
+                "delivered": False,
+                "reason": executive_body.get("reason") or "executive_rejected",
+            }
+        thought = {**thought, "communication_intent": approved_intent}
+        speech = self.send_and_wait(
+            "speech",
+            "evaluate_thought",
+            {"thought": thought, "communication_intent": approved_intent},
+            source="thalamus",
+        )
+        decision = self._content(speech).get("decision")
+        if speech.get("status") != "success" or not isinstance(decision, dict):
+            return {"status": "error", "reason": "speech_decision_failed"}
+        self.last_speech_decision = dict(decision)
+        if not decision.get("should_speak") or decision.get("timing") == "never":
+            return {"status": "success", "delivered": False, "decision": decision}
+        if decision.get("timing") == "wait":
+            return {"status": "success", "delivered": False, "pending": True, "decision": decision}
+
+        content = str(thought.get("content") or "").strip()
+        language = self.send_and_wait(
+            "language",
+            "generate",
+            {
+                "semantic_input": {
+                    "answer": content,
+                    "intent": approved_intent.get("type"),
+                    "certainty": 0.5,
+                    "epistemic_status": approved_intent.get("epistemic_status", "known"),
+                    "communication_intent": approved_intent,
+                }
+            },
+            source="autonomous_speech",
+        )
+        if language.get("status") != "success":
+            return {"status": "error", "reason": "language_failed"}
+        sentence = str(self._content(language).get("sentence") or "")
+        if not sentence.strip():
+            return {"status": "success", "delivered": False, "reason": "language_returned_silence"}
+        emotional_state = self._content(
+            self.send_and_wait("emotion", "get_state", {}, source="thalamus")
+        )
+        output = self.send_and_wait(
+            "output",
+            "generate_output",
+            {
+                "text": sentence,
+                "emotion": emotional_state.get("emotion", "neutral"),
+                "intensity": emotional_state.get("intensity", 0.5),
+                "voice_prosody": emotional_state.get("voice_prosody") or {},
+                "preserve_text": True,
+                "user_id": user_id,
+                "communication_intent": approved_intent,
+            },
+            source="autonomous_speech",
+        )
+        if output.get("status") != "success":
+            return {"status": "error", "reason": "output_failed"}
+        output_body = self._content(output)
+        envelope = output_body.get("envelope") or output.get("envelope")
+        if isinstance(envelope, dict):
+            self.last_output_envelope = envelope
+        else:
+            self.last_output_envelope = {"text": sentence}
+        self.last_language_sentence = sentence
+        self.send_and_wait("speech", "speech_delivered", {}, source="thalamus")
+        self._voice_speak_for_output(
+            sentence,
+            user_id=user_id,
+            emotion=str(emotional_state.get("emotion") or "neutral"),
+            intensity=float(emotional_state.get("intensity", 0.5) or 0.5),
+            voice_prosody=emotional_state.get("voice_prosody") or {},
+        )
+        return {
+            "status": "success",
+            "delivered": True,
+            "text": sentence,
+            "decision": decision,
+            "communication_intent": approved_intent,
+        }
+
+    def deliver_pending_autonomous_intents(self, user_id: str = "default") -> List[Dict[str, Any]]:
+        pending = self.send_and_wait(
+            "speech", "get_pending_intents", {}, source="thalamus"
+        )
+        items = self._content(pending).get("intents") or []
+        results = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            thought = {
+                "id": item.get("thought_id"),
+                "content": item.get("content"),
+                "thought_type": item.get("thought_type"),
+                "timestamp": item.get("timestamp"),
+                "communication_intent": item,
+            }
+            results.append(self.deliver_autonomous_thought(thought, user_id=user_id))
+        return results
+
     def process_user_input(
         self,
         user_input: str,
@@ -1263,6 +1385,21 @@ class Thalamus:
                 "content": {"aside": aside, "thought": aside},
                 "aside": aside,
                 "thought": aside,
+            }
+        if msg_type == "deliver_autonomous_thought":
+            thought = payload.get("thought")
+            return self.deliver_autonomous_thought(
+                thought if isinstance(thought, dict) else {},
+                user_id=str(payload.get("user_id") or "default"),
+            )
+        if msg_type == "deliver_pending_autonomous_intents":
+            results = self.deliver_pending_autonomous_intents(
+                user_id=str(payload.get("user_id") or "default")
+            )
+            return {
+                "status": "success",
+                "content": {"results": results},
+                "results": results,
             }
         return {
             "status": "error",

@@ -14,6 +14,7 @@ or finished lobes.
 from __future__ import annotations
 
 import time
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 
@@ -56,6 +57,34 @@ _INTENT_TO_GOAL = {
     "conversation": "open_explore",
 }
 
+_COMMUNICATION_TYPES = frozenset(
+    {
+        "none",
+        "inquire",
+        "share_insight",
+        "request_feedback",
+        "report_discovery",
+        "express_feeling",
+        "social_initiation",
+    }
+)
+
+
+@dataclass
+class CommunicationIntent:
+    type: str
+    source: str
+    reason: str
+    priority: float
+    requires_user: bool
+    novelty: float
+    goal_id: Optional[str]
+    epistemic_status: str
+    thought_id: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
 
 class ExecutiveControlLobe:
     """Hold goal/priority, inhibit off-goal actions, steer Attention."""
@@ -75,6 +104,7 @@ class ExecutiveControlLobe:
         # Legacy task queue kept for message compatibility (not live-path control).
         self.task_list: List[Any] = []
         self.inhibition_state: bool = False
+        self.last_communication_intent: Optional[Dict[str, Any]] = None
 
     # --- goal --------------------------------------------------------------
 
@@ -237,6 +267,59 @@ class ExecutiveControlLobe:
         }
         self.last_inhibition = dict(result)
         return result
+
+    def evaluate_communication_intent(self, proposal: Dict[str, Any]) -> Dict[str, Any]:
+        """Approve or reject a proposal to communicate; emotion is not a gate."""
+        proposal = proposal if isinstance(proposal, dict) else {}
+        intent_type = str(proposal.get("type") or "none").strip().lower()
+        if intent_type not in _COMMUNICATION_TYPES:
+            intent_type = "none"
+        try:
+            priority = max(0.0, min(1.0, float(proposal.get("priority", 0.0))))
+        except (TypeError, ValueError):
+            priority = 0.0
+        try:
+            novelty = max(0.0, min(1.0, float(proposal.get("novelty", 0.0))))
+        except (TypeError, ValueError):
+            novelty = 0.0
+        rejection = str(proposal.get("rejection_reason") or "")
+        content = str(proposal.get("content") or "").strip()
+        if proposal.get("force_private") or intent_type == "none":
+            rejection = rejection or "executive_kept_private"
+        elif proposal.get("stale"):
+            rejection = "stale_result"
+        elif proposal.get("duplicate"):
+            rejection = "duplicate_result"
+        elif proposal.get("socially_inappropriate"):
+            rejection = "socially_inappropriate"
+        elif proposal.get("unrelated_to_turn") and priority < 0.9:
+            rejection = "unrelated_low_priority"
+        elif len(content) < 5:
+            rejection = "insufficient_content"
+        elif self.should_inhibit("speak_worthy_aside").get("inhibited"):
+            rejection = "off_goal"
+        elif priority < 0.35:
+            rejection = "priority_too_low"
+
+        intent = None
+        if not rejection:
+            intent = CommunicationIntent(
+                type=intent_type,
+                source=str(proposal.get("source") or "autonomous_thinking"),
+                reason=str(proposal.get("reason") or "cognitive_result"),
+                priority=priority,
+                requires_user=bool(proposal.get("requires_user", True)),
+                novelty=novelty,
+                goal_id=str(proposal.get("goal_id") or self.current_goal or "") or None,
+                epistemic_status=str(proposal.get("epistemic_status") or "known"),
+                thought_id=str(proposal.get("thought_id") or ""),
+            ).to_dict()
+        self.last_communication_intent = intent
+        return {
+            "approved": intent is not None,
+            "communication_intent": intent,
+            "reason": rejection or "executive_approved",
+        }
 
     # --- attention steer ---------------------------------------------------
 
@@ -480,6 +563,9 @@ class ExecutiveControlLobe:
         if msg_type in ("should_inhibit", "inhibit_check", "check_inhibition"):
             body = self.should_inhibit(str(content.get("action") or ""))
             return {"status": "success", "content": body, **body}
+        if msg_type == "evaluate_communication_intent":
+            result = self.evaluate_communication_intent(content)
+            return {"status": "success", "content": result, **result}
 
         if msg_type in ("steer_attention", "steer"):
             body = self.steer_attention()

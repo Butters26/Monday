@@ -11,7 +11,7 @@ import re
 import hashlib
 import json
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from thalamus import get_thalamus
 from autonomous_selection import AutonomousSelectionMixin, _LIGHT_TURN_RE
 
@@ -38,6 +38,8 @@ class AutonomousThought:
     intensity_after: float = 0.0
     relevance_gate_reason: str = ""
     selection_weight: float = 0.0
+    communication_intent: Dict[str, Any] = field(default_factory=dict)
+    simulation_result: Dict[str, Any] = field(default_factory=dict)
 
 
 class AutonomousThinkingLoop(AutonomousSelectionMixin):
@@ -87,6 +89,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         self._topic_reactivated_at = {}
         self.thought_traces = []
         self.trace_log_path = None
+        self._last_communication_intent: Optional[Dict[str, Any]] = None
 
         # Satiation / gate tunables
         self._THINK_SAT_STEP = 0.28
@@ -156,6 +159,52 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         elif msg_type == 'set_focus':
             self.current_focus = message.get('focus')
             return {'status': 'success'}
+
+        elif msg_type == 'imagine_what_if':
+            payload = message.get('content') if isinstance(message.get('content'), dict) else message
+            simulation = self._request_imagination(payload)
+            if simulation.get("status") != "success":
+                return {"status": "error", "simulation": simulation, "content": simulation}
+            emotional_state = self._get_emotional_state()
+            scenario = str(simulation.get("scenario") or "")
+            thought_id = f"thought_{int(time.time() * 1000)}"
+            topic_key = f"imagination:{hashlib.sha256(scenario.casefold().encode()).hexdigest()[:16]}"
+            content = (
+                f"I considered the hypothetical: {scenario}. "
+                f"{(simulation.get('branches') or [{}])[0].get('label', 'The outcome is uncertain.')}"
+            )
+            candidate = {
+                "kind": "imagination",
+                "topic_key": topic_key,
+                "simulation": simulation,
+                "thought_id": thought_id,
+            }
+            speak_worthy, gate_reason = self._evaluate_speak_worthy(
+                "reflection", "imagination", topic_key, content,
+                emotional_state, candidate, self.last_user_text,
+            )
+            thought = AutonomousThought(
+                id=thought_id,
+                content=content,
+                thought_type="reflection",
+                trigger="counterfactual_simulation",
+                intensity=float(emotional_state.get("intensity", 0.5) or 0.5),
+                speak_worthy=speak_worthy,
+                timestamp=time.time(),
+                mode="imagination",
+                topic_key=topic_key,
+                relevance_gate_reason=gate_reason,
+                communication_intent=dict(self._last_communication_intent or {}),
+                simulation_result=simulation,
+            )
+            self._accept_thought(thought)
+            return {
+                "status": "success",
+                "simulation": simulation,
+                "thought": asdict(thought),
+                "continuation_options": ["branch", "compare", "abandon"],
+                "content": {"simulation": simulation, "thought": asdict(thought)},
+            }
         
         elif msg_type == 'get_pending_thoughts':
             return self._get_pending_thoughts()
@@ -231,6 +280,29 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             return None
 
         mode = self._select_mode_for_candidate(candidate, emotional_state)
+        simulation_result = {}
+        if mode == "imagination":
+            memory = candidate.get("memory") if isinstance(candidate.get("memory"), dict) else {}
+            anchor = str(memory.get("id") or memory.get("memory_id") or "") or None
+            snippet = self._memory_snippet(memory) if memory else str(self.current_focus or "")
+            scenario = str(candidate.get("scenario") or "").strip()
+            if not scenario:
+                scenario = f"What if {snippet} had happened differently?" if snippet else ""
+            if scenario:
+                simulation_result = self._request_imagination(
+                    {
+                        "scenario": scenario,
+                        "anchor_memory_id": anchor,
+                        "source_topic": candidate.get("topic_key"),
+                        "user_id": self.current_user_id,
+                        "simulation_type": "counterfactual",
+                        "max_branches": 3,
+                        "max_depth": 2,
+                    }
+                )
+                if simulation_result.get("status") != "success":
+                    return None
+                candidate = {**candidate, "simulation": simulation_result}
         content, trigger, thought_type = self._generate_mode_content(
             mode, candidate, emotional_state, recent_memories, current_values
         )
@@ -241,6 +313,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         think_sat = self._think_sat(topic_key) if topic_key else 0.0
         speak_sat = self._speak_sat(topic_key) if topic_key else 0.0
 
+        candidate["thought_id"] = f"thought_{int(time.time() * 1000)}"
         speak_worthy, gate_reason = self._evaluate_speak_worthy(
             thought_type=thought_type,
             mode=mode,
@@ -270,7 +343,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         source_app = str(appraisal.get("event_type") or "") or None if appraisal else None
 
         return AutonomousThought(
-            id=f"thought_{int(time.time() * 1000)}",
+            id=str(candidate.get("thought_id") or f"thought_{int(time.time() * 1000)}"),
             content=content,
             thought_type=thought_type,
             trigger=trigger,
@@ -287,7 +360,26 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             intensity_before=intensity_before,
             relevance_gate_reason=gate_reason,
             selection_weight=float(candidate.get("weight", 0.0) or 0.0),
+            communication_intent=dict(self._last_communication_intent or {}),
+            simulation_result=simulation_result,
         )
+
+    def _request_imagination(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Route simulation requests through Thalamus to Reasoning's existing engine."""
+        if not isinstance(context, dict):
+            context = {"scenario": str(context or "")}
+        try:
+            response = self.thalamus.send_and_wait(
+                "reasoning",
+                "imagine_what_if",
+                context,
+                source="autonomous_thinking",
+            )
+        except Exception as exc:
+            return {"status": "error", "message": f"reasoning_unavailable:{exc}"}
+        body = response.get("content") if isinstance(response.get("content"), dict) else {}
+        simulation = response.get("simulation") or body.get("simulation") or body
+        return simulation if isinstance(simulation, dict) else {"status": "error"}
     
     def _get_emotional_state(self) -> Dict[str, Any]:
         """Get current emotional state from Emotion lobe.
@@ -914,12 +1006,38 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             
             if not self.running:
                 break
+
+            pending_delivery = getattr(
+                self.thalamus, "deliver_pending_autonomous_intents", None
+            )
+            if callable(pending_delivery):
+                try:
+                    pending_delivery(user_id=self.current_user_id)
+                except Exception:
+                    pass
             
             # Generate a thought
             thought = self._generate_thought()
             
             if thought:
                 self._accept_thought(thought)
+                if thought.speak_worthy:
+                    deliver = getattr(self.thalamus, "deliver_autonomous_thought", None)
+                    if callable(deliver):
+                        try:
+                            delivery = deliver(
+                                asdict(thought), user_id=self.current_user_id
+                            )
+                            if isinstance(delivery, dict) and (
+                                delivery.get("delivered") or delivery.get("pending")
+                            ):
+                                with self.lock:
+                                    self.thought_queue = [
+                                        item for item in self.thought_queue
+                                        if item.id != thought.id
+                                    ]
+                        except Exception:
+                            pass
                 
                 # Log thought
                 speak_marker = "💬" if thought.speak_worthy else "💭"
@@ -1034,7 +1152,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         content = (thought.content or "").lower()
 
         # Pure self-weather / idle quiet: ZERO impact (the calm→melancholic re-spike case).
-        if mode in ("self_state", "spontaneous") or topic in ("self:state", "spontaneous"):
+        if mode in ("self_state", "spontaneous", "imagination") or topic in ("self:state", "spontaneous"):
             return 0.0
         if trigger in ("self_state", "spontaneous"):
             return 0.0

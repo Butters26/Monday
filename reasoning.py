@@ -22,6 +22,7 @@ import time
 import random
 import sys
 import threading
+import uuid
 from typing import Dict, Any, List, Set, Optional, Tuple
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -224,6 +225,8 @@ class ReasoningLobe:
         
         # STEP 7: Counterfactual Reasoning
         self.what_if_scenarios: List[Dict] = []
+        self._simulation_cache: Dict[str, Dict[str, Any]] = {}
+        self._simulation_turns: Dict[str, int] = {}
         self.alternative_paths: List[str] = []
         
         # STEP 8: Social Self-Model
@@ -1451,57 +1454,285 @@ class ReasoningLobe:
     # COUNTERFACTUAL REASONING (Step 7)
     # ========================================================================
     
-    def imagine_what_if(self, scenario: str) -> Dict[str, Any]:
-        """Imagine alternative scenario and reason about it"""
-        
-        # Create hypothetical world
-        hypothetical = {
-            'scenario': scenario,
-            'consequences': [],
-            'how_it_would_feel': '',
-            'compared_to_reality': ''
-        }
-        
-        # Query Notus for similar past scenarios
+    def imagine_what_if(self, scenario: Any) -> Dict[str, Any]:
+        """Return a bounded hypothetical simulation without recording it as fact."""
+        context = scenario if isinstance(scenario, dict) else {"scenario": scenario}
+        text = str(context.get("scenario") or "").strip()
+        if not text:
+            return {"status": "error", "message": "scenario is required"}
+
+        simulation_type = str(context.get("simulation_type") or "counterfactual")
+        user_id = str(context.get("user_id") or "default")
         try:
-            notus_similar = self._query_memory('search', {'query': scenario, 'similar_scenarios': True, 'limit': 5})
-            if notus_similar and notus_similar.get('status') == 'success':
-                similar = notus_similar.get('memories', [])
-                if similar:
-                    hypothetical['compared_to_reality'] = f"Similar to: {similar[0].get('content', '') if isinstance(similar[0], dict) else str(similar[0])}"
+            max_branches = min(4, max(1, int(context.get("max_branches", 3) or 3)))
+        except (TypeError, ValueError):
+            max_branches = 3
+        try:
+            max_depth = min(4, max(1, int(context.get("max_depth", 2) or 2)))
+        except (TypeError, ValueError):
+            max_depth = 2
+        scenario_key = (
+            f"{user_id}:{context.get('anchor_memory_id') or ''}:"
+            f"{' '.join(text.casefold().split())}"
+        )
+        cached = self._simulation_cache.get(scenario_key)
+        if cached and time.time() - float(cached.get("created_at", 0.0)) < 120.0:
+            return {**cached, "repetition_suppressed": True}
+        if cached:
+            self._simulation_cache.pop(scenario_key, None)
+        simulation_turn = self._simulation_turns.get(user_id, 0) + 1
+        self._simulation_turns[user_id] = simulation_turn
+
+        consequences: List[str] = []
+        condition = text.casefold()
+        if "if" in condition:
+            condition = condition.split("if", 1)[1].strip()
+        tokens = set(re.findall(r"[a-z0-9]{3,}", condition))
+        for link in self.causal_links:
+            cause = link.get("cause", "") if isinstance(link, dict) else getattr(link, "cause", "")
+            effect = link.get("effect", "") if isinstance(link, dict) else getattr(link, "effect", "")
+            cause_tokens = set(re.findall(r"[a-z0-9]{3,}", str(cause).casefold()))
+            if effect and tokens and tokens.intersection(cause_tokens):
+                consequences.append(str(effect).strip())
+            if len(consequences) >= max_branches:
+                break
+
+        context_signals: Dict[str, Any] = {
+            "semantic_relationships": [],
+            "patterns": [],
+            "novelty": {},
+            "lexical_fallback": {},
+        }
+        context_signals["lexical_fallback"] = {
+            token: self._get_word_meaning(token)
+            for token in sorted(tokens)
+            if self._get_word_meaning(token)
+        }
+        try:
+            pattern_response = self._query_lobe(
+                "pattern",
+                {"type": "get_significant_patterns", "user_id": user_id},
+            )
+            if isinstance(pattern_response, dict) and pattern_response.get("status") == "success":
+                pattern_body = pattern_response.get("content") or {}
+                context_signals["patterns"] = (
+                    pattern_body.get("significant_patterns")
+                    or pattern_response.get("significant_patterns")
+                    or []
+                )
         except Exception:
             pass
-        
-        # Reason about consequences
-        # Extract what's different
-        if 'if' in scenario.lower():
-            parts = scenario.lower().split('if')
-            if len(parts) > 1:
-                condition = parts[1].strip()
-                
-                # Look for causal links from this condition
-                for link in self.causal_links:
-                    if isinstance(link, dict):
-                        cause = link.get('cause', '')
-                        effect = link.get('effect', '')
-                    else:
-                        cause = getattr(link, 'cause', '')
-                        effect = getattr(link, 'effect', '')
-                    if condition in cause.lower():
-                        hypothetical['consequences'].append(effect)
-        
-        # How would it feel?
-        concepts = scenario.lower().split()
-        for concept in concepts:
-            if concept in self.qualia_map:
-                qualia = self.qualia_map[concept]
-                hypothetical['how_it_would_feel'] = qualia.feels_like
-                break
-        
-        # Store counterfactual
-        self.what_if_scenarios.append(hypothetical)
-        
-        return hypothetical
+        try:
+            novelty_response = self._query_lobe(
+                "novelty",
+                {
+                    "type": "assess_experience",
+                    "text": text,
+                    "source": "counterfactual_simulation",
+                    "commit": False,
+                },
+            )
+            if isinstance(novelty_response, dict) and novelty_response.get("status") == "success":
+                context_signals["novelty"] = (
+                    novelty_response.get("content")
+                    or {key: value for key, value in novelty_response.items() if key != "status"}
+                )
+        except Exception:
+            pass
+        try:
+            for token in sorted(tokens)[:5]:
+                candidates_response = self._query_lobe(
+                    "shared_representation",
+                    {"type": "get_candidate_concepts", "term": token},
+                )
+                candidates_body = (
+                    candidates_response.get("content")
+                    if isinstance(candidates_response, dict)
+                    else {}
+                )
+                for concept in (candidates_body.get("candidate_concepts") or [])[:2]:
+                    concept_id = str(concept.get("concept_id") or "")
+                    if not concept_id:
+                        continue
+                    relationships_response = self._query_lobe(
+                        "shared_representation",
+                        {"type": "get_relationships", "concept_id": concept_id, "user_id": user_id},
+                    )
+                    relationships_body = (
+                        relationships_response.get("content")
+                        if isinstance(relationships_response, dict)
+                        else {}
+                    )
+                    for relationship in (relationships_body.get("relationships") or []):
+                        if relationship.get("rel_type") not in {"causes", "associated_with", "similar_to"}:
+                            continue
+                        context_signals["semantic_relationships"].append(
+                            {
+                                "concept": concept.get("canonical_name"),
+                                "target_id": relationship.get("target_id"),
+                                "rel_type": relationship.get("rel_type"),
+                                "strength": relationship.get("strength"),
+                            }
+                        )
+        except Exception:
+            pass
+        if not consequences:
+            consequences = [
+                f"The scenario assumes: {text}. What follows from that change is uncertain."
+            ]
+
+        branches = [
+            {
+                "branch_id": f"branch_{index + 1}",
+                "label": consequence,
+                "consequences": [consequence],
+                "uncertainties": ["No supporting causal link was available."]
+                if consequence.startswith("The scenario assumes:")
+                else [],
+                "depth": 1,
+            }
+            for index, consequence in enumerate(consequences[:max_branches])
+        ]
+        similar_context = ""
+        try:
+            similar = self._query_memory(
+                "query",
+                {"query": text, "similar_scenarios": True, "limit": 5, "user_id": user_id},
+            )
+            similar_body = (
+                similar.get("content")
+                if isinstance(similar, dict) and isinstance(similar.get("content"), dict)
+                else similar if isinstance(similar, dict) else {}
+            )
+            memories = (
+                similar_body.get("memories") or similar_body.get("results") or []
+            )
+            if similar and similar.get("status") == "success" and memories:
+                first = memories[0]
+                similar_context = str(first.get("content") or "") if isinstance(first, dict) else str(first)
+        except Exception:
+            pass
+
+        affect_projection: Dict[str, Any] = {"status": "unavailable", "epistemic_status": "hypothetical"}
+        try:
+            probe = self._query_lobe(
+                "emotion",
+                {
+                    "type": "probe_affect",
+                    "scenario": text,
+                    "simulation_type": simulation_type,
+                    "user_id": user_id,
+                },
+            )
+            if isinstance(probe, dict) and probe.get("status") == "success":
+                affect_projection = probe.get("projection") or probe.get("content") or {}
+        except Exception:
+            pass
+
+        proposition_ids: List[str] = []
+        if self.thalamus:
+            self._query_lobe(
+                "shared_representation",
+                {
+                    "type": "expire_turn",
+                    "current_turn": simulation_turn,
+                    "user_id": user_id,
+                },
+            )
+            terms = ["hypothetical outcome", text] + [branch["label"] for branch in branches]
+            concepts_response = self._query_lobe(
+                "shared_representation",
+                {"type": "resolve", "terms": terms, "activate": False, "user_id": user_id},
+            )
+            concept_body = (
+                concepts_response.get("content")
+                if isinstance(concepts_response, dict)
+                else {}
+            )
+            concept_map = {
+                re.sub(
+                    r"\s+",
+                    " ",
+                    re.sub(r"[^\w\s\-']", "", str(item.get("canonical_name") or "").casefold()),
+                ).strip(): str(item.get("concept_id") or "")
+                for item in (concept_body.get("resolved") or [])
+                if isinstance(item, dict)
+            }
+            predicate_id = concept_map.get("hypothetical outcome")
+            scenario_term_key = re.sub(
+                r"\s+", " ", re.sub(r"[^\w\s\-']", "", text.casefold())
+            ).strip()
+            scenario_id = concept_map.get(scenario_term_key)
+            if predicate_id and scenario_id:
+                for branch in branches:
+                    outcome_key = re.sub(
+                        r"\s+",
+                        " ",
+                        re.sub(r"[^\w\s\-']", "", branch["label"].casefold()),
+                    ).strip()
+                    outcome_id = concept_map.get(outcome_key)
+                    if not outcome_id:
+                        continue
+                    registered = self._query_lobe(
+                        "shared_representation",
+                        {
+                            "type": "register_proposition",
+                            "predicate_id": predicate_id,
+                            "roles": {"scenario": scenario_id, "outcome": outcome_id},
+                            "qualifiers": {
+                                "epistemic_status": "hypothetical",
+                                "hypothetical": True,
+                                "counterfactual": simulation_type == "counterfactual",
+                                "simulation_type": simulation_type,
+                                "depth": min(max_depth, branch["depth"]),
+                                "scenario": text,
+                            },
+                            "provenance": {
+                                "producer_lobe": "reasoning",
+                                "source_type": "counterfactual_simulation",
+                                "confidence": 0.5,
+                            },
+                            "user_id": user_id,
+                            "activation": 0.5,
+                            "expires_after_turn": simulation_turn + 1,
+                        },
+                    )
+                    proposition = (
+                        registered.get("proposition") or registered.get("content") or {}
+                        if isinstance(registered, dict)
+                        else {}
+                    )
+                    proposition_id = proposition.get("proposition_id") or proposition.get("id")
+                    if proposition_id:
+                        proposition_ids.append(str(proposition_id))
+
+        result = {
+            "status": "success",
+            "simulation_id": f"sim_{uuid.uuid4().hex}",
+            "created_at": time.time(),
+            "simulation_type": simulation_type,
+            "epistemic_status": "hypothetical",
+            "scenario": text,
+            "anchor_memory_id": context.get("anchor_memory_id"),
+            "source_topic": context.get("source_topic"),
+            "user_id": user_id,
+            "branches": branches,
+            "consequences": [item for branch in branches for item in branch["consequences"]],
+            "uncertainties": [item for branch in branches for item in branch["uncertainties"]],
+            "affect_projection": affect_projection,
+            "context_signals": context_signals,
+            "proposition_ids": proposition_ids,
+            "compared_to_reality": f"Similar to: {similar_context}" if similar_context else "",
+            "branch_limit": max_branches,
+            "depth_limit": max_depth,
+            "repetition_suppressed": False,
+        }
+        self.what_if_scenarios.append(result)
+        self.what_if_scenarios = self.what_if_scenarios[-32:]
+        self._simulation_cache[scenario_key] = result
+        if len(self._simulation_cache) > 64:
+            self._simulation_cache.pop(next(iter(self._simulation_cache)))
+        return result
     
     def _imagine_what_if(self):
         """Generate and explore what-if scenarios"""
@@ -2970,6 +3201,12 @@ class ReasoningLobe:
         # FIX: add health probe
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
+
+        if msg_type == "imagine_what_if":
+            content = message.get("content", message)
+            context = content if isinstance(content, dict) else {"scenario": content}
+            result = self.imagine_what_if(context)
+            return {"status": result.get("status", "success"), "simulation": result, "content": result}
         
         # AUTOMATIC UPDATE from Notus - no query needed, it just pushes
         if msg_type == 'notus_automatic_update':
