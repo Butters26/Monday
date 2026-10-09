@@ -15,8 +15,11 @@ local recovery files. Do not add runtime data to Git.
 
 ## Direct-call core
 
-All socket code has been removed. Lobes communicate through direct function
-calls via Thalamus.
+Core lobes communicate through direct function calls via Thalamus. The optional
+standalone `language_lobe.py` adapter provides a separate Unix-socket endpoint
+at `~/.local/state/monday-chat/language.sock` (or under `MONDAY_RUNTIME_DIR`).
+It uses length-prefixed JSON frames and is not currently part of Thalamus's
+in-process LanguageGenerator route.
 
 `run_abin.create_core_systems()` creates the prompted path:
 conversation → Notus → emotion → reasoning → language → output
