@@ -6,9 +6,12 @@ import json
 import errno
 import logging
 import math
+import os
 import socket
 import stat
+import struct
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -19,11 +22,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger("MondayLanguageLobe")
 
+_FRAME_HEADER = struct.Struct("!I")
+_MAX_PACKET_BYTES = 65536
+_CONNECTION_TIMEOUT = 5.0
+_DEFAULT_SOCKET_PATH = os.path.join(
+    os.environ.get("MONDAY_RUNTIME_DIR", "~/.local/state/monday-chat"),
+    "language.sock",
+)
+
+
+def _recv_exact(conn: socket.socket, size: int) -> bytes:
+    chunks = []
+    remaining = size
+    while remaining:
+        chunk = conn.recv(remaining)
+        if not chunk:
+            raise EOFError("connection closed before the complete frame arrived")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _recv_frame(conn: socket.socket) -> bytes:
+    (size,) = _FRAME_HEADER.unpack(_recv_exact(conn, _FRAME_HEADER.size))
+    if size > _MAX_PACKET_BYTES:
+        raise ValueError("Packet too large")
+    return _recv_exact(conn, size)
+
+
+def _send_frame(conn: socket.socket, payload: bytes) -> None:
+    if len(payload) > _MAX_PACKET_BYTES:
+        raise ValueError("Packet too large")
+    conn.sendall(_FRAME_HEADER.pack(len(payload)) + payload)
+
 
 class LanguageClient:
     """Send one semantic packet to a LanguageLobe Unix-domain socket."""
 
-    def __init__(self, socket_path: str = "~/.local/state/monday-chat/chat.sock"):
+    def __init__(self, socket_path: str = _DEFAULT_SOCKET_PATH):
         self.socket_path = Path(socket_path).expanduser()
 
     def send_packet(
@@ -34,25 +70,21 @@ class LanguageClient:
             "content": content,
             "hesitation_level": hesitation_level,
         }
+        payload = json.dumps(packet).encode("utf-8")
+        if len(payload) > _MAX_PACKET_BYTES:
+            raise ValueError("Language packet exceeds maximum size")
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(str(self.socket_path))
-            client.sendall(json.dumps(packet).encode("utf-8"))
-            client.shutdown(socket.SHUT_WR)
-            chunks = []
-            while True:
-                chunk = client.recv(4096)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            return b"".join(chunks).decode("utf-8")
+            _send_frame(client, payload)
+            return _recv_frame(client).decode("utf-8")
 
 
 class LanguageLobe:
     """Realize supplied semantic packet content and serve it over a Unix socket."""
 
-    _MAX_PACKET_BYTES = 65536
+    _MAX_PACKET_BYTES = _MAX_PACKET_BYTES
 
-    def __init__(self, socket_path: str = "~/.local/state/monday-chat/chat.sock"):
+    def __init__(self, socket_path: str = _DEFAULT_SOCKET_PATH):
         self.socket_path = Path(socket_path).expanduser()
         self._server: Optional[socket.socket] = None
         self._running = False
@@ -118,6 +150,7 @@ class LanguageLobe:
         server.settimeout(0.2)
         self._server = server
         bound_identity = None
+        connections = ThreadPoolExecutor(max_workers=8)
         try:
             server.bind(str(self.socket_path))
             bound_stat = self.socket_path.lstat()
@@ -134,11 +167,11 @@ class LanguageLobe:
                     if self._running:
                         raise
                     break
-                with conn:
-                    self._handle_connection(conn)
+                connections.submit(self._serve_connection, conn)
         finally:
             self._running = False
             server.close()
+            connections.shutdown(wait=True)
             self._server = None
             try:
                 current = self.socket_path.lstat()
@@ -147,28 +180,28 @@ class LanguageLobe:
             except FileNotFoundError:
                 pass
 
+    def _serve_connection(self, conn: socket.socket) -> None:
+        with conn:
+            conn.settimeout(_CONNECTION_TIMEOUT)
+            self._handle_connection(conn)
+
     def _handle_connection(self, conn: socket.socket) -> None:
-        chunks = []
-        total = 0
-        while True:
-            chunk = conn.recv(4096)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > self._MAX_PACKET_BYTES:
-                conn.sendall(b"Packet too large")
-                return
-            chunks.append(chunk)
         try:
-            packet = json.loads(b"".join(chunks).decode("utf-8"))
+            packet = json.loads(_recv_frame(conn).decode("utf-8"))
             response = self.format_realization(packet)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             logger.error("Invalid language packet: %s", exc)
             response = "Invalid language packet"
+        except EOFError as exc:
+            logger.error("Incomplete language packet: %s", exc)
+            response = "Invalid language packet"
         except Exception:
             logger.exception("Error handling language packet")
             response = "Language realization failed"
-        conn.sendall(response.encode("utf-8"))
+        try:
+            _send_frame(conn, response.encode("utf-8"))
+        except (OSError, ValueError):
+            logger.exception("Failed to send language response")
 
     def shutdown(self) -> None:
         """Ask the accept loop to stop and release its socket."""

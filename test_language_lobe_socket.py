@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import socket
+import struct
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -23,6 +25,21 @@ def _serve(lobe):
     raise AssertionError("LanguageLobe did not create its socket")
 
 
+def _read_exact(conn, size):
+    parts = []
+    while size:
+        part = conn.recv(size)
+        assert part
+        parts.append(part)
+        size -= len(part)
+    return b"".join(parts)
+
+
+def _read_frame(conn):
+    (size,) = struct.unpack("!I", _read_exact(conn, 4))
+    return _read_exact(conn, size)
+
+
 def test_language_client_round_trips_hesitation_prefixes(tmp_path):
     path = str(tmp_path / "nested" / "language.sock")
     lobe = LanguageLobe(path)
@@ -38,11 +55,57 @@ def test_language_client_round_trips_hesitation_prefixes(tmp_path):
         assert client.send_packet("statement", "All set.", 0.4) == "All set."
         long_content = "language " * 600
         assert client.send_packet("statement", long_content) == long_content
+        with ThreadPoolExecutor(max_workers=8) as clients:
+            results = list(
+                clients.map(
+                    lambda index: client.send_packet(
+                        "statement", f"Message {index}"
+                    ),
+                    range(8),
+                )
+            )
+        assert results == [f"Message {index}" for index in range(8)]
+        with pytest.raises(ValueError, match="maximum size"):
+            client.send_packet("statement", "x" * 70000)
     finally:
         lobe.shutdown()
         thread.join(timeout=2.0)
     assert not thread.is_alive()
     assert not lobe.socket_path.exists()
+
+
+def test_server_reads_fragmented_length_prefixed_packet(tmp_path):
+    path = str(tmp_path / "fragmented.sock")
+    lobe = LanguageLobe(path)
+    thread = _serve(lobe)
+    try:
+        payload = b'{"intent":"statement","content":"Fragmented safely."}'
+        frame = struct.pack("!I", len(payload)) + payload
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(path)
+            for offset in range(0, len(frame), 3):
+                client.sendall(frame[offset : offset + 3])
+            response = _read_frame(client)
+        assert response == b"Fragmented safely."
+    finally:
+        lobe.shutdown()
+        thread.join(timeout=2.0)
+    assert not thread.is_alive()
+
+
+def test_server_rejects_oversized_frame_header(tmp_path):
+    path = str(tmp_path / "oversized.sock")
+    lobe = LanguageLobe(path)
+    thread = _serve(lobe)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(path)
+            client.sendall(struct.pack("!I", 65537))
+            assert _read_frame(client) == b"Invalid language packet"
+    finally:
+        lobe.shutdown()
+        thread.join(timeout=2.0)
+    assert not thread.is_alive()
 
 
 def test_startup_removes_stale_socket_and_rebinds(tmp_path):
