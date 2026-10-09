@@ -528,6 +528,24 @@ class AdvancedEmotionalEngine:
             f"dv={delta.dv:.3f} da={delta.da:.3f} → {self.current_emotion.value}"
         )
 
+    def project_hypothetical_affect(self, content: str, relevance: float = 0.5) -> Dict[str, Any]:
+        """Project hypothetical affect with Emotion's own model without changing live state."""
+        before = self.core_affect.to_dict()
+        delta = self._self_impact.evaluate_internal(content, relevance=relevance)
+        projected = MondayCoreAffect.from_dict(before)
+        projected.apply_delta(delta.dv, delta.da, delta.reason)
+        return {
+            "status": "success",
+            "epistemic_status": "hypothetical",
+            "emotion": projected.label(),
+            "intensity": projected.intensity(),
+            "valence": projected.valence,
+            "arousal": projected.arousal,
+            "delta": {"valence": delta.dv, "arousal": delta.da, "reason": delta.reason},
+            "state_before": before,
+            "state_after": self.core_affect.to_dict(),
+        }
+
     def get_emotional_summary(self) -> str:
         recent = [m.emotion.value for m in self.emotional_memories[-10:]]
         counts: Dict[str, int] = {}
@@ -1437,6 +1455,20 @@ class EmotionalProcess:
                     'trigger': trigger,
                 }
                 
+            elif msg_type == 'project_hypothetical':
+                scenario = message.get('scenario') or message.get('text') or ''
+                if not isinstance(scenario, str) or not scenario.strip():
+                    return {'status': 'error', 'message': 'scenario must be a non-empty string'}
+                projection = self.engine.project_hypothetical_affect(
+                    scenario, relevance=message.get('relevance', 0.5)
+                )
+                return {
+                    'status': 'success',
+                    'content': projection,
+                    'projection': projection,
+                    'simulation_id': message.get('simulation_id'),
+                }
+
             elif msg_type == 'get_state':
                 # Top-level emotion/intensity (not nested under 'state') so lobes
                 # reading get_state see real affect. Full affect contract for live path.

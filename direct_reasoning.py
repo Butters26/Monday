@@ -661,6 +661,16 @@ class DirectReasoningAdapter:
 
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        if message.get("type") == "imagine_what_if":
+            payload = message.get("content", {})
+            payload = payload if isinstance(payload, dict) else {}
+            result = self.reasoner.process_message({
+                "type": "imagine_what_if",
+                "content": payload,
+            })
+            return result if isinstance(result, dict) else {
+                "status": "error", "message": "Reasoning returned an invalid simulation"
+            }
         if message.get("type") == "health":
             return {"status": "success", "content": {"healthy": self.running}}
         if message.get("type") == "attention_focus":

@@ -22,6 +22,7 @@ import time
 import random
 import sys
 import threading
+import uuid
 from typing import Dict, Any, List, Set, Optional, Tuple
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -224,6 +225,7 @@ class ReasoningLobe:
         
         # STEP 7: Counterfactual Reasoning
         self.what_if_scenarios: List[Dict] = []
+        self._imagination_seen: Dict[str, float] = {}
         self.alternative_paths: List[str] = []
         
         # STEP 8: Social Self-Model
@@ -1451,57 +1453,196 @@ class ReasoningLobe:
     # COUNTERFACTUAL REASONING (Step 7)
     # ========================================================================
     
-    def imagine_what_if(self, scenario: str) -> Dict[str, Any]:
-        """Imagine alternative scenario and reason about it"""
-        
-        # Create hypothetical world
-        hypothetical = {
-            'scenario': scenario,
-            'consequences': [],
-            'how_it_would_feel': '',
-            'compared_to_reality': ''
-        }
-        
-        # Query Notus for similar past scenarios
+    def imagine_what_if(
+        self,
+        scenario: Any,
+        *,
+        anchor_memory_id: Optional[str] = None,
+        source_topic: Optional[str] = None,
+        user_id: str = "default",
+        simulation_type: str = "counterfactual",
+        max_branches: int = 3,
+        max_depth: int = 2,
+    ) -> Dict[str, Any]:
+        """Simulate a bounded hypothetical without promoting it to memory or fact."""
+        context = scenario if isinstance(scenario, dict) else {}
+        scenario_text = str(context.get("scenario") or scenario or "").strip()
+        anchor_memory_id = anchor_memory_id or context.get("anchor_memory_id")
+        source_topic = source_topic or context.get("source_topic")
+        user_id = str(context.get("user_id") or user_id or "default")
+        simulation_type = str(context.get("simulation_type") or simulation_type or "counterfactual")
         try:
-            notus_similar = self._query_memory('search', {'query': scenario, 'similar_scenarios': True, 'limit': 5})
-            if notus_similar and notus_similar.get('status') == 'success':
-                similar = notus_similar.get('memories', [])
-                if similar:
-                    hypothetical['compared_to_reality'] = f"Similar to: {similar[0].get('content', '') if isinstance(similar[0], dict) else str(similar[0])}"
+            branch_limit = max(1, min(5, int(context.get("max_branches", max_branches))))
+            depth_limit = max(1, min(3, int(context.get("max_depth", max_depth))))
+        except (TypeError, ValueError):
+            branch_limit, depth_limit = 3, 2
+        if not scenario_text:
+            return {"status": "error", "message": "scenario must be non-empty"}
+
+        scenario_key = " ".join(scenario_text.casefold().split())
+        now = time.time()
+        self._imagination_seen = {
+            key: ts for key, ts in self._imagination_seen.items() if now - ts < 900
+        }
+        if scenario_key in self._imagination_seen:
+            return {
+                "status": "success",
+                "simulation": {
+                    "simulation_id": f"simulation_{uuid.uuid4().hex}",
+                    "simulation_type": simulation_type,
+                    "epistemic_status": "hypothetical",
+                    "scenario": scenario_text,
+                    "branches": [],
+                    "consequences": [],
+                    "uncertainties": ["Repeated scenario suppressed by imagination satiation."],
+                    "affect_projection": None,
+                    "proposition_ids": [],
+                    "status": "suppressed",
+                },
+            }
+        self._imagination_seen[scenario_key] = now
+
+        simulation_id = f"simulation_{uuid.uuid4().hex}"
+        branches = [{
+            "branch_id": f"{simulation_id}:branch:1",
+            "depth": 1,
+            "premise": scenario_text,
+            "consequences": [],
+            "epistemic_status": "hypothetical",
+        }]
+        condition = scenario_text
+        for link in self.causal_links:
+            if isinstance(link, dict):
+                cause, effect = str(link.get("cause") or ""), str(link.get("effect") or "")
+            else:
+                cause = str(getattr(link, "cause", "") or "")
+                effect = str(getattr(link, "effect", "") or "")
+            if not effect:
+                continue
+            words = set(re.findall(r"[a-z0-9]+", cause.casefold()))
+            scenario_words = set(re.findall(r"[a-z0-9]+", condition.casefold()))
+            if words and words.intersection(scenario_words):
+                branches[0]["consequences"].append(effect)
+                if len(branches) < branch_limit and depth_limit > 1:
+                    branches.append({
+                        "branch_id": f"{simulation_id}:branch:{len(branches) + 1}",
+                        "depth": 2,
+                        "premise": scenario_text,
+                        "consequences": [effect],
+                        "epistemic_status": "hypothetical",
+                    })
+                if len(branches) >= branch_limit:
+                    break
+
+        similar = []
+        try:
+            notus_similar = self._query_memory(
+                "search", {"query": scenario_text, "similar_scenarios": True, "limit": 5,
+                           "user_id": user_id}
+            )
+            if isinstance(notus_similar, dict) and notus_similar.get("status") == "success":
+                similar = list(notus_similar.get("memories") or [])
         except Exception:
             pass
-        
-        # Reason about consequences
-        # Extract what's different
-        if 'if' in scenario.lower():
-            parts = scenario.lower().split('if')
-            if len(parts) > 1:
-                condition = parts[1].strip()
-                
-                # Look for causal links from this condition
-                for link in self.causal_links:
-                    if isinstance(link, dict):
-                        cause = link.get('cause', '')
-                        effect = link.get('effect', '')
-                    else:
-                        cause = getattr(link, 'cause', '')
-                        effect = getattr(link, 'effect', '')
-                    if condition in cause.lower():
-                        hypothetical['consequences'].append(effect)
-        
-        # How would it feel?
-        concepts = scenario.lower().split()
-        for concept in concepts:
-            if concept in self.qualia_map:
-                qualia = self.qualia_map[concept]
-                hypothetical['how_it_would_feel'] = qualia.feels_like
-                break
-        
-        # Store counterfactual
-        self.what_if_scenarios.append(hypothetical)
-        
-        return hypothetical
+        uncertainties = ["Consequences are conditional and are not observed events."]
+        if not branches[0]["consequences"]:
+            uncertainties.append("No sufficiently supported causal consequence was found.")
+        if anchor_memory_id and not any(
+            str(item.get("id") or item.get("memory_id") or "") == str(anchor_memory_id)
+            for item in similar if isinstance(item, dict)
+        ):
+            uncertainties.append("The supplied memory anchor was not independently verified.")
+        elif similar:
+            uncertainties.append("Related memories provide context, not confirmation of this scenario.")
+
+        affect_projection = None
+        try:
+            probe = self.thalamus.send_and_wait(
+                "emotion", "project_hypothetical",
+                {"scenario": scenario_text, "user_id": user_id, "simulation_id": simulation_id},
+                source="reasoning",
+            )
+            if probe.get("status") == "success":
+                affect_projection = probe.get("content") or probe.get("projection")
+        except Exception:
+            pass
+
+        proposition_ids = self._publish_hypothetical_propositions(
+            scenario_text, branches, simulation_id, user_id
+        )
+        simulation = {
+            "simulation_id": simulation_id,
+            "simulation_type": simulation_type,
+            "epistemic_status": "counterfactual" if simulation_type == "counterfactual" else "hypothetical",
+            "scenario": scenario_text,
+            "anchor_memory_id": str(anchor_memory_id) if anchor_memory_id else None,
+            "source_topic": str(source_topic) if source_topic else None,
+            "branches": branches,
+            "consequences": list(dict.fromkeys(
+                consequence for branch in branches for consequence in branch["consequences"]
+            )),
+            "uncertainties": uncertainties,
+            "affect_projection": affect_projection,
+            "proposition_ids": proposition_ids,
+            "branch_limit": branch_limit,
+            "depth_limit": depth_limit,
+            "related_memory_count": len(similar),
+            "status": "complete",
+        }
+        self.what_if_scenarios.append(simulation)
+        self.what_if_scenarios = self.what_if_scenarios[-50:]
+        return {"status": "success", "simulation": simulation}
+
+    def _publish_hypothetical_propositions(
+        self, scenario: str, branches: List[Dict[str, Any]], simulation_id: str, user_id: str
+    ) -> List[str]:
+        """Give Shared Representation Reasoning-owned temporary hypothetical frames."""
+        if self.thalamus is None:
+            return []
+        proposition_ids = []
+        for branch in branches:
+            premise = str(branch.get("premise") or scenario)
+            try:
+                resolved = self.thalamus.send_and_wait(
+                    "shared_representation", "resolve_terms",
+                    {"terms": ["counterfactual", premise], "activate": False, "user_id": user_id},
+                    source="reasoning",
+                )
+                body = resolved.get("content") if isinstance(resolved.get("content"), dict) else {}
+                concept_ids = body.get("concept_ids") or resolved.get("concept_ids") or []
+                predicate_id = concept_ids[0] if concept_ids else None
+                premise_id = concept_ids[1] if len(concept_ids) > 1 else None
+                if not predicate_id or not premise_id:
+                    continue
+                registered = self.thalamus.send_and_wait(
+                    "shared_representation", "register_proposition",
+                    {
+                        "predicate_id": predicate_id,
+                        "roles": {"subject": premise_id},
+                        "qualifiers": {
+                            "simulation_id": simulation_id,
+                            "epistemic_status": "counterfactual",
+                            "hypothetical": True,
+                            "observed": False,
+                        },
+                        "provenance": {
+                            "producer_lobe": "reasoning",
+                            "source_type": "counterfactual",
+                            "confidence": 0.0,
+                        },
+                        "user_id": user_id,
+                        "activation": 0.0,
+                    },
+                    source="reasoning",
+                )
+                pub = registered.get("content") if isinstance(registered.get("content"), dict) else {}
+                proposition = pub.get("proposition") or registered.get("proposition") or pub
+                proposition_id = proposition.get("proposition_id") or proposition.get("id")
+                if proposition_id:
+                    proposition_ids.append(str(proposition_id))
+            except Exception:
+                continue
+        return proposition_ids
     
     def _imagine_what_if(self):
         """Generate and explore what-if scenarios"""
@@ -3015,6 +3156,26 @@ class ReasoningLobe:
             result = self.think_about(input_data)
             print(f"🧠 Reasoning: think_about completed, response: {result.get('composed_response', 'None')[:50] if result.get('composed_response') else 'None'}")
             return {'status': 'success', 'thinking': result}
+
+        elif msg_type == 'imagine_what_if':
+            payload = message.get('content', {})
+            payload = payload if isinstance(payload, dict) else {}
+            scenario = payload.get('scenario') or payload
+            result = self.imagine_what_if(
+                scenario,
+                anchor_memory_id=payload.get('anchor_memory_id'),
+                source_topic=payload.get('source_topic'),
+                user_id=str(payload.get('user_id') or 'default'),
+                simulation_type=str(payload.get('simulation_type') or 'counterfactual'),
+                max_branches=payload.get('max_branches', 3),
+                max_depth=payload.get('max_depth', 2),
+            )
+            return {
+                'status': result.get('status', 'success'),
+                'content': result.get('simulation', result),
+                'simulation': result.get('simulation', result),
+                **({'message': result['message']} if result.get('message') else {}),
+            }
         
         elif msg_type == 'get_autonomous_actions':
             return self.get_autonomous_actions()
