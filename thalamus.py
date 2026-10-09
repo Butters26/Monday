@@ -12,23 +12,38 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime, timezone
+import json
+import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from notus_outage_fallback import NotusOutageFallback
+from runtime_paths import runtime_dir
+
+
+logger = logging.getLogger(__name__)
 
 
 class Thalamus:
     """Synchronous router/coordinator for Mercy's direct-call lobe graph."""
 
-    def __init__(self) -> None:
+    def __init__(self, runtime_directory: Optional[str] = None) -> None:
         self.running = True
         self.lobe_handlers: Dict[str, Any] = {}
         self.lobe_handlers_lock = threading.RLock()
         self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=200)
+        self.runtime_directory = (
+            Path(runtime_directory).expanduser()
+            if runtime_directory
+            else runtime_dir()
+        )
+        self.runtime_directory.mkdir(parents=True, exist_ok=True)
+        self.route_trace_path = self.runtime_directory / "thalamus_routes.jsonl"
+        self._route_trace_lock = threading.Lock()
 
         self.last_output_envelope: Optional[Dict[str, Any]] = None
         self.last_grounded_structures: Optional[List[Dict[str, Any]]] = None
@@ -47,6 +62,30 @@ class Thalamus:
         self._force_curiosity_follow_up = False
 
         self.notus_fallback = NotusOutageFallback()
+
+    def _record_route_trace(self, event: Dict[str, Any]) -> None:
+        """Persist route packets and outcomes outside the source checkout."""
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **event,
+        }
+        try:
+            serialized = json.dumps(record, ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            serialized = json.dumps(
+                {
+                    "timestamp": record["timestamp"],
+                    "event": event.get("event", "unknown"),
+                    "trace_error": f"Could not serialize route record: {exc}",
+                }
+            )
+        try:
+            with self._route_trace_lock:
+                with self.route_trace_path.open("a", encoding="utf-8") as trace:
+                    trace.write(serialized + "\n")
+                    trace.flush()
+        except OSError:
+            logger.exception("Could not write Thalamus route trace")
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -76,27 +115,55 @@ class Thalamus:
         source: str = "thalamus",
     ) -> Dict[str, Any]:
         """Route one envelope unchanged except for transport metadata."""
+        message_id = str(uuid.uuid4())
         if content is None:
             content = {}
         if not isinstance(content, dict):
+            self._record_route_trace(
+                {
+                    "event": "rejected",
+                    "message_id": message_id,
+                    "source": source,
+                    "destination": destination,
+                    "type": msg_type,
+                    "content": content,
+                    "reason": "Message content must be a dictionary",
+                }
+            )
             return {"status": "error", "message": "Message content must be a dictionary", "content": {}}
-
-        with self.lobe_handlers_lock:
-            lobe = self.lobe_handlers.get(destination)
-        if lobe is None:
-            self.lobe_status[destination] = "offline"
-            return {
-                "status": "error",
-                "message": f"Unknown destination: {destination}",
-                "content": {},
-            }
 
         envelope = {
             "type": msg_type,
             "content": dict(content),
             "source": source,
-            "message_id": str(uuid.uuid4()),
+            "message_id": message_id,
         }
+        self._record_route_trace(
+            {
+                "event": "dispatch",
+                "destination": destination,
+                "envelope": envelope,
+            }
+        )
+
+        with self.lobe_handlers_lock:
+            lobe = self.lobe_handlers.get(destination)
+        if lobe is None:
+            self.lobe_status[destination] = "offline"
+            response = {
+                "status": "error",
+                "message": f"Unknown destination: {destination}",
+                "content": {},
+            }
+            self._record_route_trace(
+                {
+                    "event": "result",
+                    "message_id": message_id,
+                    "destination": destination,
+                    "response": response,
+                }
+            )
+            return response
         try:
             handler = getattr(lobe, "process_message", None) or getattr(
                 lobe, "process_message_safe", None
@@ -120,6 +187,14 @@ class Thalamus:
                 "content": {},
             }
 
+        self._record_route_trace(
+            {
+                "event": "result",
+                "message_id": message_id,
+                "destination": destination,
+                "response": response,
+            }
+        )
         self.message_routes.append(
             {
                 "from": source,
