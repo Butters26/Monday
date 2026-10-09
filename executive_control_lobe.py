@@ -150,12 +150,15 @@ class ExecutiveControlLobe:
             decision, reason = "rejected", "held_goal_requires_focus"
         elif intent.requires_user:
             decision, reason = "request_user_input", "intent_requires_user"
+        elif (self.current_goal or "").strip().lower() in {"social", "open_explore"} and priority > 0.6:
+            intent.priority = 0.6
+            decision, reason = "lowered", "goal_priority_brake"
         result = {
             "status": "success",
             "decision": decision,
-            "approved": decision in ("approved", "request_user_input"),
+            "approved": decision in ("approved", "lowered", "request_user_input"),
             "reason": reason,
-            "intent": asdict(intent) if decision in ("approved", "request_user_input") else None,
+            "intent": asdict(intent) if decision in ("approved", "lowered", "request_user_input") else None,
         }
         self.last_communication_decision = dict(result)
         return result

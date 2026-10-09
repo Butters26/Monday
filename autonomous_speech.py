@@ -22,6 +22,7 @@ class SpeechDecision:
     reason: str
     timing: str  # "now", "wait", "never"
     priority: float  # 0-1
+    intent_type: str = "none"
 
 
 class AutonomousSpeechSystem:
@@ -150,6 +151,7 @@ class AutonomousSpeechSystem:
                 reason="No approved communication intent",
                 timing="never",
                 priority=0.0,
+                intent_type="none",
             )
             payload = asdict(decision)
             self.last_decision = dict(payload)
@@ -158,12 +160,19 @@ class AutonomousSpeechSystem:
             priority = max(0.0, min(1.0, float(intent.get("priority", 0.0))))
         except (TypeError, ValueError):
             priority = 0.0
+        intent_type = str(intent.get("type") or "none")
+        requires_user = bool(
+            intent.get(
+                "requires_user",
+                intent_type in ("inquire", "request_feedback", "social_initiation"),
+            )
+        )
 
         # Check social context
         can_speak, reason = self._check_social_context(
             priority,
-            requires_user=bool(intent.get("requires_user", False)),
-            social_context=thought.get("social_context"),
+            requires_user=requires_user,
+            social_context=message.get("social_context") or thought.get("social_context"),
         )
 
         if not can_speak:
@@ -174,6 +183,7 @@ class AutonomousSpeechSystem:
                 reason=reason,
                 timing='wait',
                 priority=priority,
+                intent_type=intent_type,
             )
             payload = asdict(decision)
             self.last_decision = dict(payload)
@@ -192,6 +202,7 @@ class AutonomousSpeechSystem:
                 reason=content_reason,
                 timing='never',
                 priority=priority,
+                intent_type=intent_type,
             )
             payload = asdict(decision)
             self.last_decision = dict(payload)
@@ -207,6 +218,7 @@ class AutonomousSpeechSystem:
                 reason="Communication is approved; waiting for a suitable pause",
                 timing="wait",
                 priority=priority,
+                intent_type=intent_type,
             )
             payload = asdict(decision)
             self.last_decision = dict(payload)
@@ -219,6 +231,7 @@ class AutonomousSpeechSystem:
             reason="Passed all filters",
             timing=timing,
             priority=priority,
+            intent_type=intent_type,
         )
 
         # Decision-only: Thalamus delivers allowed asides; no pending queue.

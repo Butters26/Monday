@@ -532,6 +532,8 @@ class AutonomousSelectionMixin:
                 simulation = body.get("simulation") or response.get("simulation")
                 if isinstance(simulation, dict):
                     self._last_imagination_result = simulation
+                    if simulation.get("status") == "suppressed":
+                        return None, None, thought_type
                     consequence = next(iter(simulation.get("consequences") or []), None)
                     summary = (
                         f"One possibility is {consequence}."

@@ -41,6 +41,14 @@ class AutonomousThought:
     communication_intent: Optional[Dict[str, Any]] = None
     simulation_result: Optional[Dict[str, Any]] = None
 
+    def __post_init__(self) -> None:
+        intent = self.communication_intent
+        self.speak_worthy = bool(
+            isinstance(intent, dict)
+            and intent.get("type") not in (None, "", "none")
+            and intent.get("priority") is not None
+        )
+
 
 class AutonomousThinkingLoop(AutonomousSelectionMixin):
     """
@@ -209,7 +217,11 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             simulation = body.get("simulation") or response.get("simulation")
             if response.get("status") != "success" or not isinstance(simulation, dict):
                 return {"status": "error", "message": "Reasoning imagination route failed"}
-            thought = self._thought_from_simulation(simulation)
+            thought = (
+                self._thought_from_simulation(simulation)
+                if simulation.get("status") != "suppressed"
+                else None
+            )
             if thought is not None:
                 self._accept_thought(thought)
             return {"status": "success", "simulation": simulation,
@@ -952,40 +964,18 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         ])
         return random.choice(options), f"feeling_{emotion}"
 
-    def _is_speak_worthy(self, thought_type: str, emotional_state: Dict[str, Any]) -> bool:
-        """Determine if a thought should be spoken out loud.
-
-        Still not every-turn spam, but when intensity is high or unresolved
-        appraisals exist, bias strongly toward a speak-worthy beat so her own
-        feelings can actually surface.
-        """
-        intensity = float(emotional_state.get('intensity', 0.5) or 0.5)
-        unresolved = emotional_state.get('unresolved_appraisals') or []
-        max_sev = 0.0
-        if unresolved:
-            try:
-                max_sev = max(float(u.get('severity', 0.0) or 0.0) for u in unresolved)
-            except Exception:
-                max_sev = 0.55
-
-        # Sitting with something real: often wants a spoken beat (cooldown still rare-ifies).
-        if unresolved and (intensity >= 0.5 or max_sev >= 0.55):
-            return random.random() < 0.75
-        if unresolved:
-            return random.random() < 0.45
-
-        if intensity > 0.7:
-            return random.random() < 0.72
-        if intensity > 0.6:
-            return random.random() < 0.5
-
-        if thought_type == 'question':
-            return random.random() < 0.4
-
-        if thought_type == 'feeling':
-            return random.random() < 0.35
-
-        return random.random() < 0.1
+    def _is_speak_worthy(
+        self,
+        thought_type: str,
+        emotional_state: Dict[str, Any],
+        communication_intent: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Compatibility mirror; Executive-approved intent is the sole source."""
+        return bool(
+            isinstance(communication_intent, dict)
+            and communication_intent.get("type") not in (None, "", "none")
+            and communication_intent.get("priority") is not None
+        )
 
     def _thinking_loop(self):
         """Main thinking loop - runs in background"""
@@ -1007,6 +997,13 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             
             if thought:
                 self._accept_thought(thought)
+                if thought.communication_intent:
+                    deliver = getattr(self.thalamus, "deliver_unprompted_speech", None)
+                    if callable(deliver):
+                        try:
+                            deliver(user_id=self.current_user_id)
+                        except Exception:
+                            pass
                 
                 # Log thought
                 speak_marker = "💬" if thought.speak_worthy else "💭"
