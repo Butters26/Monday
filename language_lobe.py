@@ -38,8 +38,13 @@ class LanguageClient:
             client.connect(str(self.socket_path))
             client.sendall(json.dumps(packet).encode("utf-8"))
             client.shutdown(socket.SHUT_WR)
-            response = client.recv(4096)
-            return response.decode("utf-8")
+            chunks = []
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks).decode("utf-8")
 
 
 class LanguageLobe:
@@ -57,10 +62,10 @@ class LanguageLobe:
         """Create the socket directory and remove only a genuinely stale socket."""
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            mode = self.socket_path.lstat().st_mode
+            existing = self.socket_path.lstat()
         except FileNotFoundError:
             return
-        if not stat.S_ISSOCK(mode):
+        if not stat.S_ISSOCK(existing.st_mode):
             raise OSError(f"Refusing to replace non-socket path: {self.socket_path}")
 
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -69,8 +74,16 @@ class LanguageLobe:
         except OSError as exc:
             if exc.errno not in (errno.ECONNREFUSED, errno.ENOENT):
                 raise
-            self.socket_path.unlink(missing_ok=True)
-            logger.info("Removed stale socket file at %s", self.socket_path)
+            try:
+                current = self.socket_path.lstat()
+            except FileNotFoundError:
+                return
+            if (
+                (current.st_dev, current.st_ino) == (existing.st_dev, existing.st_ino)
+                and stat.S_ISSOCK(current.st_mode)
+            ):
+                self.socket_path.unlink(missing_ok=True)
+                logger.info("Removed stale socket file at %s", self.socket_path)
         else:
             raise OSError(f"Language socket is already accepting connections: {self.socket_path}")
         finally:

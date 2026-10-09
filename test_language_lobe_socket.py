@@ -36,6 +36,8 @@ def test_language_client_round_trips_hesitation_prefixes(tmp_path):
             "Well... Could you clarify?"
         )
         assert client.send_packet("statement", "All set.", 0.4) == "All set."
+        long_content = "language " * 600
+        assert client.send_packet("statement", long_content) == long_content
     finally:
         lobe.shutdown()
         thread.join(timeout=2.0)
