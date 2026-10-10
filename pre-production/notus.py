@@ -5120,7 +5120,7 @@ class DirectNotusProcess:
     def retrieve_memories(self, query: str = "", user_id: str = "default", limit: int = 15):
         terms = [term.lower() for term in query.split() if len(term) > 2]
         sql = (
-            "SELECT role, content, user_id, memory_type, created_at FROM memories "
+            "SELECT id, role, content, user_id, memory_type, created_at FROM memories "
             "WHERE user_id = ?"
         )
         params = [user_id]
@@ -5133,13 +5133,14 @@ class DirectNotusProcess:
             rows = self._connection.execute(sql, params).fetchall()
         return [
             {
+                "id": row_id,
                 "role": role,
                 "content": content,
                 "user_id": stored_user,
                 "memory_type": memory_type,
                 "timestamp": created_at,
             }
-            for role, content, stored_user, memory_type, created_at in rows
+            for row_id, role, content, stored_user, memory_type, created_at in rows
         ]
 
     def _store(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -5148,7 +5149,7 @@ class DirectNotusProcess:
             return {"status": "error", "message": "Memory content must be a non-empty string"}
         user_id = payload.get("user_id", "default")
         with self._conn_lock:
-            self._connection.execute(
+            cursor = self._connection.execute(
                 "INSERT INTO memories(role, content, user_id, memory_type, created_at) VALUES (?, ?, ?, ?, ?)",
                 (
                     payload.get("role", "system"),
@@ -5159,7 +5160,11 @@ class DirectNotusProcess:
                 ),
             )
             self._connection.commit()
-        return {"status": "success", "content": {"stored": True, "content": content}}
+            memory_id = cursor.lastrowid
+        return {
+            "status": "success",
+            "content": {"stored": True, "id": memory_id, "content": content},
+        }
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
