@@ -159,6 +159,141 @@ class Experience:
 # REASONING LOBE (symbolic / rule + memory path)
 # ============================================================================
 
+class PropositionGroundingGuard:
+    """Validate proposition metadata against caller-supplied Notus records.
+
+    A record ID traces provenance only; it does not establish truth. The caller
+    must supply stance and entity metadata before evaluation.
+    """
+
+    def __init__(self, confidence_floor: float = 0.6):
+        if isinstance(confidence_floor, bool):
+            raise ValueError("confidence_floor must be between 0 and 1")
+        try:
+            floor = float(confidence_floor)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("confidence_floor must be between 0 and 1") from exc
+        if not 0.0 <= floor <= 1.0:
+            raise ValueError("confidence_floor must be between 0 and 1")
+        self.confidence_floor = floor
+
+    @staticmethod
+    def _entity_set(value: Any) -> Optional[Set[str]]:
+        if not isinstance(value, list):
+            return None
+        entities = set()
+        for entity in value:
+            if not isinstance(entity, str) or not entity.strip():
+                return None
+            entities.add(entity.strip().casefold())
+        return entities
+
+    def evaluate_proposition(
+        self,
+        proposition: Dict[str, Any],
+        evidence_records: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Fail closed unless cited records and evidence classifications agree."""
+        rejected = {"status": "REJECTED", "reason": "invalid_or_missing_provenance", "output": None}
+        if not isinstance(proposition, dict):
+            return rejected
+
+        content = proposition.get("content")
+        provenance_ids = proposition.get("provenance_ids")
+        if (
+            not isinstance(content, str)
+            or not content.strip()
+            or not isinstance(provenance_ids, list)
+            or not provenance_ids
+            or any(not isinstance(record_id, str) or not record_id.strip() for record_id in provenance_ids)
+        ):
+            return rejected
+
+        records_by_id = {}
+        if isinstance(evidence_records, list):
+            for record in evidence_records:
+                if not isinstance(record, dict):
+                    continue
+                record_id = record.get("id")
+                if isinstance(record_id, str) and record_id.strip():
+                    records_by_id.setdefault(record_id.strip(), record)
+
+        cited_ids = {record_id.strip() for record_id in provenance_ids}
+        if not cited_ids or not cited_ids.issubset(records_by_id):
+            return rejected
+
+        cited_records = [records_by_id[record_id] for record_id in cited_ids]
+        supporting = [record for record in cited_records if record.get("stance") == "supports"]
+        contradicting = [record for record in cited_records if record.get("stance") == "contradicts"]
+        total_evidence = len(supporting) + len(contradicting)
+        if total_evidence == 0:
+            return {
+                "status": "REJECTED",
+                "reason": "no_classified_evidence",
+                "output": None,
+            }
+
+        proposition_entities = self._entity_set(proposition.get("entities", []))
+        if proposition_entities is None:
+            return {
+                "status": "REJECTED",
+                "reason": "invalid_entity_metadata",
+                "output": None,
+            }
+        allowed_entities = set()
+        for record in cited_records:
+            entities = self._entity_set(record.get("entities", []))
+            if entities is None:
+                return {
+                    "status": "REJECTED",
+                    "reason": "invalid_evidence_entity_metadata",
+                    "output": None,
+                }
+            allowed_entities.update(entities)
+        if not proposition_entities.issubset(allowed_entities):
+            return {
+                "status": "REJECTED",
+                "reason": "unsupported_entities",
+                "output": None,
+            }
+
+        confidence = len(supporting) / total_evidence
+        if confidence < self.confidence_floor:
+            return {
+                "status": "NEUTRAL_DEADLOCK",
+                "reason": "evidence_below_floor",
+                "confidence": confidence,
+                "allowed_entities": sorted(allowed_entities),
+                "output": None,
+            }
+
+        return {
+            "status": "GROUNDED",
+            "reason": None,
+            "confidence": confidence,
+            "allowed_entities": sorted(allowed_entities),
+            "output": content.strip(),
+        }
+
+    @staticmethod
+    def validate_realized_entities(
+        evaluation: Dict[str, Any],
+        realized_entities: List[str],
+    ) -> bool:
+        """Reject realization metadata that adds entities absent from evidence."""
+        if not isinstance(evaluation, dict) or evaluation.get("status") != "GROUNDED":
+            return False
+        allowed_entities = PropositionGroundingGuard._entity_set(
+            evaluation.get("allowed_entities")
+        )
+        realized = PropositionGroundingGuard._entity_set(realized_entities)
+        return (
+            allowed_entities is not None
+            and realized is not None
+            and realized.issubset(allowed_entities)
+        )
+
+
 class ReasoningLobe:
     """Symbolic reasoning over facts, patterns, and durable beliefs.
 
@@ -170,6 +305,7 @@ class ReasoningLobe:
     
     def __init__(self, thalamus=None):
         self.running = True
+        self.grounding_guard = PropositionGroundingGuard()
         # Direct reference to Thalamus (NO SOCKETS)
         self.thalamus = thalamus or get_thalamus()
         
@@ -706,6 +842,14 @@ class ReasoningLobe:
             print(f"⚠️ User information query failed: {e}")
             return {'status': 'error', 'message': str(e)}
     
+    def evaluate_proposition(
+        self,
+        proposition: Dict[str, Any],
+        evidence_records: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Check a proposed assertion before a caller sends it for realization."""
+        return self.grounding_guard.evaluate_proposition(proposition, evidence_records)
+
     def _generate_language(self, semantic_input: Dict[str, Any], user_input: str, is_main_response: bool = False) -> Optional[str]:
         """Send semantic input to Language Generation lobe through Thalamus. NO TEMPLATES - only generation.
         
