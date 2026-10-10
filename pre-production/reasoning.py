@@ -188,6 +188,15 @@ class PropositionGroundingGuard:
             entities.add(entity.strip().casefold())
         return entities
 
+    @staticmethod
+    def _record_id(value: Any) -> Optional[str]:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (str, int)):
+            normalized = str(value).strip()
+            return normalized or None
+        return None
+
     def evaluate_proposition(
         self,
         proposition: Dict[str, Any],
@@ -205,7 +214,7 @@ class PropositionGroundingGuard:
             or not content.strip()
             or not isinstance(provenance_ids, list)
             or not provenance_ids
-            or any(not isinstance(record_id, str) or not record_id.strip() for record_id in provenance_ids)
+            or any(self._record_id(record_id) is None for record_id in provenance_ids)
         ):
             return rejected
 
@@ -214,11 +223,11 @@ class PropositionGroundingGuard:
             for record in evidence_records:
                 if not isinstance(record, dict):
                     continue
-                record_id = record.get("id")
-                if isinstance(record_id, str) and record_id.strip():
-                    records_by_id.setdefault(record_id.strip(), record)
+                record_id = self._record_id(record.get("id"))
+                if record_id is not None:
+                    records_by_id.setdefault(record_id, record)
 
-        cited_ids = {record_id.strip() for record_id in provenance_ids}
+        cited_ids = {self._record_id(record_id) for record_id in provenance_ids}
         if not cited_ids or not cited_ids.issubset(records_by_id):
             return rejected
 

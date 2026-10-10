@@ -5,12 +5,16 @@ modified or routed through this directory.
 
 - `reasoning.py` contains a provenance/evidence guard API for callers to run
   before realization.
-- `notus.py` is an unchanged copy of the current durable-memory module.
-- `test_grounding_guard.py` exercises the guard without importing the live
-  Thalamus.
+- `notus.py` is an isolated copy of the durable-memory module. Its SQLite
+  adapter returns persistent memory IDs on store and recall.
+- `test_grounding_guard.py` runs an isolated SQLite Notus → reasoning guard →
+  realization-entity-check flow without importing live Thalamus or routing
+  anything through Mercy/Monday.
 
-The guard requires callers to provide Notus records with IDs, evidence stances,
-and entity metadata. It checks that metadata contract; it cannot independently
-verify that a record is true, that stance labels are correct, or that a language
-realizer extracted every entity correctly. It therefore reports `GROUNDED`,
-not `VERIFIED`.
+The harness supplies evidence stances and entity metadata explicitly because
+Notus stores memories; it does not determine whether a memory supports or
+contradicts a proposition. The guard checks that supplied metadata contract;
+it cannot independently verify that a record is true, that stance labels are
+correct, or that a language realizer extracted every entity correctly. It
+therefore reports `GROUNDED`, not `VERIFIED`. Realization is represented only
+by an entity-list check, not a running language model.
