@@ -19,7 +19,7 @@ users so Monday can speak without a user turn. Speech stays decision-only;
 delivery is Thalamus→Output (+ this pending/poll push).
 
 Notus identity (WANT-GAP 8): same path as create_core_systems / run_abin —
-PostgreSQL ActiveNotus when reachable; otherwise one shared DirectNotus file
+one shared DirectNotus SQLite file
 at shared_direct_notus_path() (default ~/.local/state/monday/notus_memory.sqlite3,
 override MONDAY_NOTUS_SQLITE). Sock/pid stay under MONDAY_RUNTIME_DIR
 (default ~/.local/state/monday-chat); memory is NOT a separate chat DB.
@@ -71,8 +71,6 @@ def main() -> int:
         f"sqlite_path={identity.get('sqlite_path')}",
         flush=True,
     )
-    if identity.get("postgres_error"):
-        print(f"Notus Postgres probe: {identity['postgres_error']}", flush=True)
     PID_PATH.write_text(str(os.getpid()))
 
     pending_lock = threading.Lock()

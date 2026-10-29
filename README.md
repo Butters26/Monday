@@ -59,8 +59,8 @@ path.
 - **One memory store:** unless a custom `notus_factory` is passed,
   `open_primary_notus()` opens a SQLite `DirectNotusProcess` at
   `shared_direct_notus_path()`. The REPL and chat daemon use the same file.
-  PostgreSQL is **not** part of the boot path; `postgresql_schema.sql` and
-  `migrate_sqlite_to_postgresql.py` are legacy.
+  There is no PostgreSQL memory; it was removed. Fact extraction and
+  matching helpers live in `notus_fact_text.py`.
 - **Outage fallback:** if a Notus store/query errors or raises (caught by
   `Thalamus.send_message`), the prompted path keeps going using a bounded
   per-user in-memory queue (`notus_outage_fallback.py`, max 64 records per user,

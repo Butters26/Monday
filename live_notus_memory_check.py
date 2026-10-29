@@ -3,7 +3,7 @@
 
 This is intentionally not a mocked unit test. It boots the actual direct core,
 stores memory through Thalamus, shuts the core down, boots a new core against
-the same PostgreSQL database, and asks the new process to remember what the
+the same SQLite memory file, and asks the new process to remember what the
 old process was told.
 """
 
@@ -30,8 +30,8 @@ def main() -> int:
     thalamus = systems["thalamus"]
     try:
         health = content(thalamus.send_and_wait("notus", "health", {}))
-        assert health.get("backend") == "postgresql", health
-        assert health.get("ready") is True, health
+        assert health.get("backend") == "sqlite", health
+        assert health.get("healthy") is True, health
 
         stored = content(
             thalamus.send_and_wait(
@@ -95,19 +95,10 @@ def main() -> int:
             )
         )
 
-        associations = content(
-            thalamus.send_and_wait(
-                "notus",
-                "query_associations",
-                {"memory_id": memory_id, "limit": 10, "user_id": user_id},
-                source="live_check",
-            )
-        )
-        print(f"Before restart: {associations['count']} associated memories")
     finally:
         shutdown_core_systems(systems)
 
-    # New objects, same PostgreSQL database. This is the persistence test.
+    # New objects, same SQLite memory file. This is the persistence test.
     systems = create_core_systems()
     thalamus = systems["thalamus"]
     try:
@@ -141,7 +132,7 @@ def main() -> int:
                 source="live_check",
             )
         )
-        fact_text = "\n".join(str(item.get("text", "")) for item in facts.get("facts", []))
+        fact_text = "\n".join(str(item.get("text") or item.get("content") or "") for item in facts.get("facts", []))
         assert "Atlas Copco GA11" in fact_text, facts
 
         episodes = content(
@@ -161,7 +152,7 @@ def main() -> int:
                 str(item.get(key, "") or "")
                 for key in ("actor", "action", "object", "place", "note")
             )
-            for item in episodes.get("episodes", [])
+            for item in (episodes.get("episodes") or episodes.get("events") or [])
         )
         assert "Copper" in episode_text, episodes
 

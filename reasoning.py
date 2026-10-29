@@ -533,8 +533,7 @@ class ReasoningLobe:
     def _save_persistent_state_to_memory(self):
         """Persist beliefs/self to Notus via save_abin_persistent_state.
 
-        Same open_primary_notus store as talk (Postgres ActiveNotus or shared
-        DirectNotus SQLite). Failures are silent — in-process beliefs stay.
+        Same open_primary_notus store as talk (shared DirectNotus SQLite). Failures are silent — in-process beliefs stay.
         """
         try:
             changes = self.how_i_have_changed if isinstance(self.how_i_have_changed, list) else []
