@@ -225,6 +225,10 @@ def create_core_systems(
             raise RuntimeError(f"Could not register autonomous: {result.get('message')}")
         systems["autonomous"] = autonomous
         autonomous.start_background()
+    if os.environ.get("MONDAY_TRACE"):
+        # Live tracer (trace_monitor.py): records every message, turn, and error.
+        from trace_monitor import install as install_trace
+        systems["trace_path"] = install_trace(systems)
     return systems
 
 

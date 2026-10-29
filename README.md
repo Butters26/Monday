@@ -91,6 +91,15 @@ leans toward better records, and records persist per learner. Reach it with
 `LanguageGenerator.express()` / `express_feedback()` or the `express` /
 `express_feedback` messages. It is **not** wired into her live replies yet.
 
+## Live tracing
+
+Set `MONDAY_TRACE=1` (or a file path) before starting her (`run_abin.py` or the
+chat daemon) and `trace_monitor.py` records, while she is actually being used:
+every Thalamus message with its real sender and what the receiver did with it,
+every turn with her reply and why a reply was blank, lobe-reported events,
+uncaught errors in any thread, and printed warnings. It does not change her
+behavior. `python trace_report.py [trace.jsonl]` summarizes it.
+
 ## Tests
 
 Tests inject a SQLite `DirectNotusProcess` via `notus_factory=` and pass
