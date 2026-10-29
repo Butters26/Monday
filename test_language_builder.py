@@ -1,14 +1,26 @@
-"""Sentence builder: grammar from meaning, learning from feedback, persistence."""
+"""Sentence builder: grammar from meaning, learning from feedback, persistence.
+
+No option is favored up front, so grammar tests accept any valid choice and the
+learning test checks that feedback, not a built-in default, decides the output.
+"""
 
 import random
+import re
 
 import pytest
 
-from language_builder import Built, SentenceBuilder, indefinite_article, regular_past, third_person_s
+from language_builder import Built, Lexicon, SentenceBuilder, indefinite_article, regular_past, third_person_s
 
 
 def N(name):
     return {"name": name}
+
+
+class NoSynonyms(Lexicon):
+    """Real dictionary forms, but no synonym swaps, so grammar is tested alone."""
+
+    def synonyms(self, lemma, pos):
+        return []
 
 
 @pytest.fixture
@@ -17,12 +29,16 @@ def runtime(tmp_path, monkeypatch):
     return tmp_path
 
 
-def steady(learner="t"):
-    return SentenceBuilder(learner=learner, rng=random.Random(0), explore_rate=0.0)
+def steady(learner="t", seed=0, explore=0.0):
+    return SentenceBuilder(learner=learner, rng=random.Random(seed), explore_rate=explore,
+                           lexicon=NoSynonyms())
 
 
 def say(meaning, learner="t"):
     return steady(learner).build(meaning).sentence
+
+
+GREETING = re.compile(r"^(Hello|Hullo|Hi|Howdy|How-do-you-do)(, Matthew)?!$")
 
 
 def test_morphology_rules():
@@ -37,11 +53,12 @@ def test_morphology_rules():
 
 def test_statements(runtime):
     assert say({"subject": N("Ariana"), "verb": "be", "complement": {"noun": "wife", "of": N("Matthew")}}) \
-        == "Ariana is Matthew's wife."
+        in {"Ariana is Matthew's wife.", "Ariana is the wife of Matthew."}
     assert say({"subject": N("Malrik"), "verb": "devour", "modal": "can",
                 "object": {"noun": "fire", "count": "mass"}}) == "Malrik can devour fire."
     assert say({"subject": N("The Black Witch"), "verb": "give", "tense": "past",
-                "object": N("Jester"), "recipient": N("Matthew")}) == "The Black Witch gave Jester to Matthew."
+                "object": N("Jester"), "recipient": N("Matthew")}) \
+        in {"The Black Witch gave Jester to Matthew.", "The Black Witch gave Matthew Jester."}
     assert say({"subject": N("Gehrman"), "verb": "carry",
                 "object": {"noun": "claymore", "adjectives": ["enormous"]}}) == "Gehrman carries an enormous claymore."
     assert say({"subject": N("Cleo"), "verb": "have",
@@ -52,14 +69,14 @@ def test_statements(runtime):
 
 def test_negation_questions_greeting(runtime):
     assert say({"subject": N("Malrik"), "verb": "fear", "negated": True, "object": N("Matthew")}) \
-        == "Malrik does not fear Matthew."
+        in {"Malrik does not fear Matthew.", "Malrik doesn't fear Matthew."}
     assert say({"act": "ask", "subject": N("Malrik"), "verb": "devour", "modal": "can",
                 "object": {"noun": "fire", "count": "mass"}}) == "Can Malrik devour fire?"
     assert say({"act": "ask", "subject": {"ref": "addressee"}, "verb": "be",
                 "complement": {"adjectives": ["stressed"]}}) == "Are you stressed?"
     assert say({"act": "ask", "ask_about": "object", "subject": N("Malrik"), "verb": "devour",
                 "modal": "can", "object": {"noun": "fire", "count": "mass"}}) == "What can Malrik devour?"
-    assert say({"act": "greet", "addressee": N("Matthew")}) == "Hello, Matthew!"
+    assert GREETING.match(say({"act": "greet", "addressee": N("Matthew")}))
 
 
 def test_joining_same_subject(runtime):
@@ -67,22 +84,19 @@ def test_joining_same_subject(runtime):
         {"subject": N("Cleo"), "verb": "have", "object": {"noun": "hair", "count": "mass", "adjectives": ["white"]}},
         {"subject": N("Cleo"), "verb": "use", "object": {"noun": "magic", "count": "mass", "adjectives": ["gravity"]}},
     ])
-    assert built.sentence == "Cleo has white hair and uses gravity magic."
+    assert built.sentence in {"Cleo has white hair and uses gravity magic.",
+                              "Cleo has white hair. Cleo uses gravity magic."}
 
 
-def test_feedback_changes_choice_and_persists(runtime):
+def test_feedback_decides_and_persists(runtime):
     meaning = {"act": "greet", "addressee": N("Matthew")}
-    builder = steady("learner_a")
-    first = builder.build(meaning)
-    assert first.sentence == "Hello, Matthew!"
-    for _ in range(4):
-        builder.feedback(builder.build(meaning), good=False, reason="too formal")
-    changed = builder.build(meaning).sentence
-    assert changed != "Hello, Matthew!"
-    # A brand-new builder for the same learner reads the learned scores from disk.
-    assert steady("learner_a").build(meaning).sentence != "Hello, Matthew!"
-    # Another learner is unaffected.
-    assert steady("learner_b").build(meaning).sentence == "Hello, Matthew!"
+    learner = steady("learner_a", seed=1, explore=0.5)
+    for _ in range(80):
+        built = learner.build(meaning)
+        learner.feedback(built, good=(built.sentence == "Howdy, Matthew!"))
+    assert steady("learner_a", seed=2).build(meaning).sentence == "Howdy, Matthew!"
+    # A different learner has learned nothing and keeps no scores.
+    assert steady("learner_b").memory._scores() == {}
 
 
 def test_record_round_trip_and_language_lobe(runtime):

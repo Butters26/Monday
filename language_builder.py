@@ -7,12 +7,14 @@ Monday is telling, asking, or greeting) and builds the sentence itself:
   types, irregular forms) -- never from canned replies or copied user sentences;
 - grammar is general rules: word order, verb agreement and tense, modals,
   negation, questions, articles, plurals, pronouns, possessives, joining facts;
-- every place where more than one correct option exists is a *choice*. Each
-  choice has a learned score in Language's own learning store
-  (learning/lobe_learning_store.py, lobe "language"). The builder prefers
-  higher-scoring options and sometimes tries others, and feedback() raises or
-  lowers the score of every choice that went into a sentence. Scores persist
-  across restarts and are kept per learner, so game contestants learn apart.
+- every place where more than one correct option exists is a *choice*. No
+  option is given a head start and there are no example lists: every option
+  starts equal (0.5), and greeting words come from the dictionary sense for
+  greeting. Each option keeps a success record in Language's own learning store
+  (learning/lobe_learning_store.py, lobe "language"): how often it was used and
+  how often its sentence was judged good. The builder prefers options with a
+  better record and sometimes tries others. Records persist across restarts and
+  are kept per learner, so game contestants learn apart.
 
 Not wired into Monday's live replies yet; LanguageGenerator.express() and the
 "express" / "express_feedback" messages expose it.
@@ -52,10 +54,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 LEARNING_LOBE = "language"
 KEY_PREFIX = "speak:"
 EXPLORE_RATE = 0.1
-REWARD_DELTA = 0.08
-PENALTY = 0.12
-DEFAULT_PREFERRED = 0.6   # the option the meaning itself names
-DEFAULT_OTHER = 0.45      # other valid options
+START_SCORE = 0.5   # every option starts equal; nothing is preferred until learned
+# OEWN sense "an expression of greeting" (hello, hullo, hi, howdy, how-do-you-do).
+GREETING_SENSE = "oewn-06645018-n"
 
 _MODALS = {"can", "could", "will", "would", "shall", "should", "may", "might", "must"}
 _BE_PRESENT = {("1", "sg"): "am", ("2", "sg"): "are", ("3", "sg"): "is",
@@ -104,6 +105,16 @@ class Lexicon:
             if str(word.lemma()).casefold() == lemma.casefold():
                 return [f for f in word.forms() if f.casefold() != lemma.casefold()]
         return []
+
+    def sense_words(self, synset_id: str) -> List[str]:
+        """All single-token words the dictionary lists for one sense."""
+        if not self._wn:
+            return []
+        try:
+            synset = self._wn.synset(synset_id)
+        except Exception:
+            return []
+        return [str(x) for x in synset.lemmas() if re.fullmatch(r"[a-z]+(?:-[a-z]+)*", str(x))]
 
     def synonyms(self, lemma: str, pos: str) -> List[str]:
         """Single-word synonyms from the word's most common sense."""
@@ -201,7 +212,14 @@ class Built:
 
 
 class ChoiceMemory:
-    """Scores for every choice option, stored in Language's learning store."""
+    """Success record for every choice option, kept in Language's learning store.
+
+    Each option counts how often it was used and how often the sentence it was
+    in was judged good. Its score is that success rate, smoothed so an untried
+    option starts at 0.5 (equal to everything else). A good choice that shares
+    a sentence with a bad one still rises over many sentences, because it shows
+    up in the good ones too.
+    """
 
     def __init__(self, learner: str, store: Any = None) -> None:
         self.learner = learner
@@ -216,41 +234,55 @@ class ChoiceMemory:
         safe = re.sub(r"[^a-z0-9_-]+", "_", option.lower()).strip("_") or "x"
         return f"{KEY_PREFIX}{point}:{safe}"
 
+    @staticmethod
+    def rate(wins: int, tries: int) -> float:
+        return (wins + 1.0) / (tries + 2.0)
+
     def _scores(self) -> Dict[str, float]:
         if self._cache is None:
-            result = self.store.recall({"user_id": self.learner, "key_prefix": KEY_PREFIX,
-                                        "include_deprecated": True, "limit": 100})
-            memories = (result.get("content") or {}).get("memories") or []
-            self._cache = {m["key"]: float(m["confidence"]) for m in memories}
-            if len(memories) >= 100:  # recall caps at 100; read the rest directly
-                data = self.store._load()  # noqa: SLF001 - same lobe's own store
-                facts = data.get("users", {}).get(self.learner, {}).get("facts", {})
-                for key, record in facts.items():
-                    if key.startswith(KEY_PREFIX):
-                        self._cache[key] = float(record.get("confidence", 0.0))
+            data = self.store._load()  # noqa: SLF001 - Language's own store
+            facts = data.get("users", {}).get(self.learner, {}).get("facts", {})
+            self._cache = {
+                key: float(record.get("confidence", START_SCORE))
+                for key, record in facts.items()
+                if key.startswith(KEY_PREFIX) and isinstance(record, dict)
+            }
         return self._cache
 
     def score(self, point: str, option: str, default: float) -> float:
         return self._scores().get(self.key(point, option), default)
 
-    def adjust(self, point: str, option: str, good: bool, default: float, reason: str) -> float:
-        key = self.key(point, option)
+    def record(self, choices: Sequence[Tuple[str, str, float]], good: bool, reason: str) -> List[Dict[str, Any]]:
+        """Count one judged sentence against every choice that went into it."""
         scores = self._scores()
-        if key not in scores:
-            self.store.learn({"user_id": self.learner, "key": key, "confidence": default,
-                              "fact": f"speaking choice {point} = {option}",
-                              "source": "language_builder"})
-            scores[key] = default
-        payload = {"user_id": self.learner, "key": key}
-        if good:
-            payload["delta"] = REWARD_DELTA
-            result = self.store.adjust(payload, "reinforce")
-        else:
-            payload["penalty"] = PENALTY
-            result = self.store.adjust(payload, "contradict")
-        new = float((result.get("content") or {}).get("confidence", scores[key]))
-        scores[key] = new
-        return new
+        changes: List[Dict[str, Any]] = []
+        store = self.store
+        with store._lock:  # noqa: SLF001
+            data = store._load()  # noqa: SLF001
+            facts = store._user_facts(data, self.learner)  # noqa: SLF001
+            now = store._now()  # noqa: SLF001
+            for point, option, _start in choices:
+                key = self.key(point, option)
+                rec = facts.get(key)
+                if not isinstance(rec, dict):
+                    rec = {"key": key, "fact": f"speaking choice {point} = {option}",
+                           "status": "active", "source": "language_builder",
+                           "wins": 0, "tries": 0, "evidence_count": 0, "contradiction_count": 0,
+                           "use_count": 0, "last_applied_at": None, "created_at": now}
+                rec["tries"] = int(rec.get("tries", 0)) + 1
+                rec["wins"] = int(rec.get("wins", 0)) + (1 if good else 0)
+                rec["evidence_count"] = rec["wins"]
+                rec["contradiction_count"] = rec["tries"] - rec["wins"]
+                rec["confidence"] = self.rate(rec["wins"], rec["tries"])
+                if reason:
+                    rec["last_reason"] = reason[:200]
+                rec["updated_at"] = now
+                facts[key] = rec
+                scores[key] = rec["confidence"]
+                changes.append({"choice": point, "option": option, "score": round(rec["confidence"], 3),
+                                "wins": rec["wins"], "tries": rec["tries"]})
+            store._save(data)  # noqa: SLF001
+        return changes
 
 
 # --------------------------------------------------------------------------
@@ -269,29 +301,26 @@ class SentenceBuilder:
 
     # ---- choosing ---------------------------------------------------------
 
-    def _choose(self, built: Built, point: str, options: Sequence[str],
-                preferred: Optional[str] = None) -> str:
+    def _choose(self, built: Built, point: str, options: Sequence[str]) -> str:
+        """Pick among valid options by learned score. No option is favored up front."""
         options = list(dict.fromkeys(o for o in options if o))
         if not options:
             return ""
         if len(options) == 1:
             return options[0]
-        preferred = preferred if preferred in options else options[0]
-        def start(o: str) -> float:
-            return DEFAULT_PREFERRED if o == preferred else DEFAULT_OTHER
-        scored = [(self.memory.score(point, o, start(o)), o) for o in options]
+        scored = [(self.memory.score(point, o, START_SCORE), o) for o in options]
         if self.rng.random() < self.explore_rate:
             pick = self.rng.choice(options)
         else:
             best = max(s for s, _ in scored)
             pick = self.rng.choice([o for s, o in scored if s == best])
-        built.choices.append((point, pick, start(pick)))
+        built.choices.append((point, pick, START_SCORE))
         return pick
 
     def _word(self, built: Built, lemma: str, pos: str) -> str:
         """Pick a word for a meaning: the given word or a dictionary synonym."""
         options = [lemma] + self.lexicon.synonyms(lemma, pos)
-        return self._choose(built, f"word_{pos}_{lemma.lower()}", options, preferred=lemma)
+        return self._choose(built, f"word_{pos}_{lemma.lower()}", options)
 
     # ---- noun phrases ------------------------------------------------------
 
@@ -366,7 +395,7 @@ class SentenceBuilder:
         return past, participle
 
     def _negate(self, built: Built, aux: str) -> str:
-        style = self._choose(built, "negation_style", ["full", "contracted"], preferred="full")
+        style = self._choose(built, "negation_style", ["full", "contracted"])
         if style == "full":
             return "cannot" if aux == "can" else f"{aux} not"
         special = {"can": "can't", "will": "won't", "shall": "shan't", "am": "am not"}
@@ -418,7 +447,7 @@ class SentenceBuilder:
             owner = comp.get("of")
             pre = " ".join(adjectives)
             if owner:
-                style = self._choose(built, "relation_style", ["possessive", "of"], preferred="possessive")
+                style = self._choose(built, "relation_style", ["possessive", "of"])
                 if style == "possessive" and comp.get("definite", True):
                     return f"{self.possessive(built, owner)} {pre + ' ' if pre else ''}{noun}"
                 owner_np = self.noun_phrase(built, owner, "object")
@@ -440,8 +469,7 @@ class SentenceBuilder:
         obj = meaning.get("object")
         recipient = meaning.get("recipient")
         if recipient and obj:
-            order = self._choose(built, "recipient_order", ["to_phrase", "double_object"],
-                                 preferred="to_phrase")
+            order = self._choose(built, "recipient_order", ["to_phrase", "double_object"])
             o = self.noun_phrase(built, obj, "object")
             r = self.noun_phrase(built, recipient, "object")
             parts.append(f"{o} to {r}" if order == "to_phrase" else f"{r} {o}")
@@ -484,10 +512,14 @@ class SentenceBuilder:
         return " ".join(p for p in (finite, subj, rest, tail) if p)
 
     def _greeting(self, built: Built, meaning: Dict[str, Any]) -> str:
-        word = self._choose(built, "greeting_word", ["hi", "hello", "hey"], preferred="hello")
+        words = self.lexicon.sense_words(GREETING_SENSE)
+        if not words:
+            built.problems.append("no greeting words: dictionary unavailable")
+            return ""
+        word = self._choose(built, "greeting_word", words)
         addressee = meaning.get("addressee")
         if addressee and addressee.get("name"):
-            use_name = self._choose(built, "greeting_use_name", ["yes", "no"], preferred="yes")
+            use_name = self._choose(built, "greeting_use_name", ["yes", "no"])
             if use_name == "yes":
                 return f"{word}, {addressee['name']}"
         return word
@@ -523,8 +555,7 @@ class SentenceBuilder:
                    and meanings[j].get("subject") == first.get("subject")):
                 j += 1
             group = meanings[i:j]
-            if len(group) > 1 and self._choose(combined, "join_same_subject", ["join", "separate"],
-                                               preferred="join") == "join":
+            if len(group) > 1 and self._choose(combined, "join_same_subject", ["join", "separate"]) == "join":
                 head = self.build(group[0])
                 tails = []
                 for m in group[1:]:
@@ -553,8 +584,5 @@ class SentenceBuilder:
 
     def feedback(self, built: Built, good: bool, reason: str = "") -> Dict[str, Any]:
         """Learn from a judgment of a built sentence: adjust every choice it used."""
-        changes = []
-        for point, option, start in built.choices:
-            new = self.memory.adjust(point, option, good, start, reason)
-            changes.append({"choice": point, "option": option, "score": round(new, 3)})
+        changes = self.memory.record(built.choices, bool(good), reason)
         return {"good": good, "reason": reason, "learner": self.learner, "changes": changes}
