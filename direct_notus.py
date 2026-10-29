@@ -673,9 +673,9 @@ class DirectNotusProcess:
         learned: List[Dict[str, Any]] = []
         if role == "user":
             try:
-                from notus_memory import NotusMemorySystem
+                from notus_fact_text import FactText
 
-                triples = NotusMemorySystem.extract_personal_fact_triples(content.strip())
+                triples = FactText.extract_personal_fact_triples(content.strip())
             except Exception:
                 triples = []
             for subject, predicate, obj, value in triples:
@@ -693,9 +693,9 @@ class DirectNotusProcess:
                 if not isinstance(fact, dict):
                     continue
                 try:
-                    from notus_memory import NotusMemorySystem
+                    from notus_fact_text import FactText
 
-                    readable = NotusMemorySystem.format_personal_fact(
+                    readable = FactText.format_personal_fact(
                         str(fact.get("subject") or ""),
                         str(fact.get("predicate") or ""),
                         str(fact.get("object") or ""),
@@ -936,19 +936,19 @@ class DirectNotusProcess:
     ) -> List[Dict[str, Any]]:
         """Recall durable facts for a user by content overlap (empty means empty).
 
-        Uses the same content-token / alias scoring as NotusMemorySystem so
+        Uses the same content-token / alias scoring as FactText (notus_fact_text.py) so
         paraphrases like "What's my dog called?" hit dog_name facts. FTS AND
         alone misses those because query fillers are not in the triple.
         """
         if not isinstance(user_id, str) or not user_id:
             return []
-        from notus_memory import NotusMemorySystem
+        from notus_fact_text import FactText
 
         normalized_limit = self._normalise_limit(limit, 10)
-        query = NotusMemorySystem._augment_identity_query((query or "").strip())
+        query = FactText._augment_identity_query((query or "").strip())
         if not query:
             return []
-        query_tokens = NotusMemorySystem._content_tokens(query)
+        query_tokens = FactText._content_tokens(query)
         if not query_tokens:
             return []
 
@@ -976,36 +976,36 @@ class DirectNotusProcess:
                     f" = {value}" if value else ""
                 )
                 try:
-                    readable = NotusMemorySystem.format_personal_fact(
+                    readable = FactText.format_personal_fact(
                         subject, predicate, obj
                     )
                 except Exception:
                     readable = fact_text
                 blob = f"{fact_text} {readable}".replace("_", " ")
-                overlap = NotusMemorySystem._overlap_score(query_tokens, blob)
-                if overlap < NotusMemorySystem._MIN_RELEVANCE:
+                overlap = FactText._overlap_score(query_tokens, blob)
+                if overlap < FactText._MIN_RELEVANCE:
                     continue
-                blob_tokens = NotusMemorySystem._content_tokens(blob)
-                blob_exp = NotusMemorySystem._expand_tokens(blob_tokens)
+                blob_tokens = FactText._content_tokens(blob)
+                blob_exp = FactText._expand_tokens(blob_tokens)
                 if not any(
-                    NotusMemorySystem._alias_set(qt) & blob_exp for qt in query_tokens
+                    FactText._alias_set(qt) & blob_exp for qt in query_tokens
                 ):
                     continue
-                significant = NotusMemorySystem._significant_tokens(query_tokens)
+                significant = FactText._significant_tokens(query_tokens)
                 if len(query_tokens) >= 2 and significant:
                     sig_covered = all(
-                        NotusMemorySystem._alias_set(t) & blob_exp for t in significant
+                        FactText._alias_set(t) & blob_exp for t in significant
                     )
                     if len(significant) >= 2 and not sig_covered and overlap < 0.75:
                         continue
-                    if overlap < max(NotusMemorySystem._MIN_RELEVANCE, 0.5) and not sig_covered:
+                    if overlap < max(FactText._MIN_RELEVANCE, 0.5) and not sig_covered:
                         continue
                 and_bonus = 0.0
                 if significant and all(
-                    NotusMemorySystem._alias_set(t) & blob_exp for t in significant
+                    FactText._alias_set(t) & blob_exp for t in significant
                 ):
                     and_bonus = 0.14 if len(significant) >= 2 else 0.10
-                phrase = NotusMemorySystem._phrase_bonus(query, blob)
+                phrase = FactText._phrase_bonus(query, blob)
                 conf = float(row["confidence"] or 0.0)
                 score = overlap + and_bonus + phrase + (0.05 * conf)
                 # Prefer exact predicate name over *_name on bare identity asks.
@@ -1014,7 +1014,7 @@ class DirectNotusProcess:
                     score += 0.2
                 elif pred_l.endswith("_name"):
                     noun = pred_l[: -len("_name")].replace("_", " ")
-                    noun_toks = NotusMemorySystem._content_tokens(noun)
+                    noun_toks = FactText._content_tokens(noun)
                     if noun_toks & query_tokens:
                         score += 0.12
                 recency = str(row["last_reinforced"] or row["created_at"] or "")
@@ -1842,9 +1842,9 @@ class DirectNotusProcess:
                 item["role"] = "fact"
                 if not item.get("content"):
                     try:
-                        from notus_memory import NotusMemorySystem
+                        from notus_fact_text import FactText
 
-                        item["content"] = NotusMemorySystem.format_personal_fact(
+                        item["content"] = FactText.format_personal_fact(
                             str(item.get("subject") or ""),
                             str(item.get("predicate") or ""),
                             str(item.get("object") or ""),
