@@ -638,6 +638,36 @@ class LanguageGenerator:
         # Cache for emotional state (avoid repeated queries)
         self.current_emotional_state = None
         self.emotion_cache_time = 0
+        # Sentence builder (meaning -> sentence, always learning); one per learner.
+        self._builders: Dict[str, Any] = {}
+
+    def _builder(self, learner: str = "monday"):
+        from language_builder import SentenceBuilder
+
+        learner = (learner or "monday").strip() or "monday"
+        if learner not in self._builders:
+            self._builders[learner] = SentenceBuilder(learner=learner)
+        return self._builders[learner]
+
+    def express(self, meaning: Any, learner: str = "monday") -> Dict[str, Any]:
+        """Build a sentence from a meaning (one dict, or a list of facts).
+
+        Not used by the live reply path yet. Returns the sentence plus the
+        record of choices that feedback needs.
+        """
+        builder = self._builder(learner)
+        if isinstance(meaning, list):
+            built = builder.build_many([m for m in meaning if isinstance(m, dict)])
+        else:
+            built = builder.build(meaning if isinstance(meaning, dict) else {})
+        return built.to_dict()
+
+    def express_feedback(self, record: Dict[str, Any], good: bool, reason: str = "") -> Dict[str, Any]:
+        """Learn from a judgment of a sentence that express() built."""
+        from language_builder import Built
+
+        built = Built.from_dict(record if isinstance(record, dict) else {})
+        return self._builder(built.learner).feedback(built, bool(good), str(reason or ""))
     
     def _send_shared(self, msg_type: str, content: Dict[str, Any]) -> Dict[str, Any]:
         if self.thalamus is None:
@@ -1213,6 +1243,17 @@ class LanguageGenerator:
                 turn_id=str(turn_id) if turn_id else None,
             )
             return {'status': 'success', 'content': result, **result}
+
+        if msg_type == 'express':
+            learner = str(payload.get('learner') or 'monday')
+            result = self.express(payload.get('meaning'), learner=learner)
+            return {'status': 'success', 'content': result}
+
+        if msg_type == 'express_feedback':
+            result = self.express_feedback(
+                payload.get('record') or {}, payload.get('good', False), payload.get('reason', '')
+            )
+            return {'status': 'success', 'content': result}
 
         if msg_type in {'generate', 'generate_grounded'}:
             semantic_input = payload.get('semantic_input', payload)

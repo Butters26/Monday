@@ -79,6 +79,17 @@ path.
 
 Lobe-local learning is separate from Notus conversation memory.
 
+### Sentence builder (Language, not yet live)
+
+`language_builder.py` is Language's expression half: it takes a meaning (who,
+what, to whom; telling, asking, or greeting) and builds the sentence with
+general grammar rules and words from the offline dictionary — no canned replies.
+Every point where more than one correct option exists is a learned choice
+scored in Language's learning store; `feedback()` raises or lowers the scores
+of the choices behind a sentence, and scores persist per learner. Reach it with
+`LanguageGenerator.express()` / `express_feedback()` or the `express` /
+`express_feedback` messages. It is **not** wired into her live replies yet.
+
 ## Tests
 
 Tests inject a SQLite `DirectNotusProcess` via `notus_factory=` and pass
