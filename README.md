@@ -1,70 +1,99 @@
 # Monday
 
-This repository currently contains two separate systems built with traditional
+This repository contains two separate systems built with traditional
 programming rather than AI/ML frameworks:
 
-- a direct-call brain/reasoning system
-- a standalone procedural 3D model generator
+- **Monday** — a direct-call brain/reasoning system
+- a standalone procedural 3D model generator (unrelated to the brain)
+
+## Running Monday
+
+Requires Python 3.11. Install dependencies with `pip install -r requirements.txt`.
+
+- `python run_abin.py` — interactive REPL
+- `python _monday_chat_daemon.py` — persistent chat daemon (keeps Monday running
+  between messages and lets her speak unprompted)
+- `python _monday_say.py "<message>"` — send one message to the daemon and print
+  the reply; `--poll` collects anything she said unprompted
+- `python _monday_web_chat.py` — local web chat UI at http://127.0.0.1:8765
+  (talks to the daemon)
+
+The REPL and the daemon share the same memory.
 
 ## Runtime data
 
-Monday stores mutable data outside the repository. By default, the directory is
-`~/.local/state/monday`; set `MONDAY_RUNTIME_DIR` to use another private
-directory. This includes learned memory, emotional state, snapshots, logs, and
-local recovery files. Do not add runtime data to Git.
+Monday stores mutable data outside the repository. Do not add runtime data to Git.
 
-## Direct-call core
+| Variable | Default | Holds |
+| --- | --- | --- |
+| `MONDAY_RUNTIME_DIR` | `~/.local/state/monday` (`~/.local/state/monday-chat` for the daemon's socket/pid) | emotional state, shared representation, lobe learning, snapshots, logs |
+| `MONDAY_NOTUS_SQLITE` | `~/.local/state/monday/notus_memory.sqlite3` | Notus conversation memory |
 
-All socket code has been removed. Lobes communicate through direct function
-calls via Thalamus.
+## Architecture
 
-`run_abin.create_core_systems()` creates the prompted path:
+Lobes communicate through direct function calls via `thalamus.py`. There is no
+socket code between lobes. (The chat daemon uses a Unix socket only as the
+transport between client and daemon.)
+
+`run_abin.create_core_systems()` builds the live system. The prompted path is:
+
 conversation → Notus → emotion → reasoning → language → output
-(plus live Attention/Executive/Pattern/Social/Motor/Voice/MetaAwareness/
-SharedRepresentation and related lobes registered on current main). Each lobe
-receives `{"type", "content", "source", "message_id"}` and `content` holds the
-message payload.
+
+Also registered on the live system: perception, sensory integration, attention,
+novelty, pattern recognition, meta-cognition, executive control, social context,
+motor action, voice, autonomous speech, meta-awareness, and shared
+representation. When `enable_autonomous=True` (the default), an
+`AutonomousThinkingLoop` runs in the background.
+
+Each lobe receives `{"type", "content", "source", "message_id"}`; `content`
+holds the message payload.
+
+**Not wired into the live system:** `continuous_thought_generator.py` and
+`controlled_thinking.py` (mock/toy modules) and `dual_stream_thinking.py`
+(standalone demo). Legacy launcher, GUI (`monday_interface/`), and socket
+integrations remain in the tree for compatibility work but are not the live
+path.
 
 ### Notus memory
 
-- **One talk identity:** when `create_core_systems()` is called without a custom
-  `notus_factory`, `open_primary_notus()` picks one backend for both
-  `run_abin` REPL and `_monday_chat_daemon.py`:
-  1. PostgreSQL `ActiveNotusMemorySystem` when reachable (`NOTUS_POSTGRES_*`)
-  2. else shared SQLite `DirectNotusProcess` at `shared_direct_notus_path()`
-     (default `~/.local/state/monday/notus_memory.sqlite3`; override
-     `MONDAY_NOTUS_SQLITE`). Chat sock/pid may live under
-     `~/.local/state/monday-chat`; memory is **not** a separate chat DB.
-- **Outage fallback (Issue #11):** if a Notus store/query returns an error or
-  raises (caught by `Thalamus.send_message`), the prompted path continues using
-  a bounded per-user in-memory queue (`notus_outage_fallback.py`, max 64
-  records/user, FIFO eviction). Queued records carry stable per-event
-  `event_id`s. Recovery is strict FIFO (stop on first sync failure).
-  `Thalamus.retry_unsaved_notus_records()` uses event_ids so a double retry
-  does not intentionally re-store the same queued event. This does **not**
-  restore legacy `monday_memory` / `retrieve_relevant_memory` /
-  `sync_memory_to_notus` APIs.
-- **Tests:** inject SQLite `DirectNotusProcess` via `notus_factory=` and set
-  `enable_autonomous=False` for Postgres-free, loop-free acceptance runs of
-  `test_direct_core_pipeline.py` and `test_notus_integration.py`.
+- **One memory store:** unless a custom `notus_factory` is passed,
+  `open_primary_notus()` opens a SQLite `DirectNotusProcess` at
+  `shared_direct_notus_path()`. The REPL and chat daemon use the same file.
+  PostgreSQL is **not** part of the boot path; `postgresql_schema.sql` and
+  `migrate_sqlite_to_postgresql.py` are legacy.
+- **Outage fallback:** if a Notus store/query errors or raises (caught by
+  `Thalamus.send_message`), the prompted path keeps going using a bounded
+  per-user in-memory queue (`notus_outage_fallback.py`, max 64 records per user,
+  oldest dropped first). Queued records carry stable `event_id`s. Recovery is
+  strict FIFO and stops on the first sync failure.
+  `Thalamus.retry_unsaved_notus_records()` uses the event_ids so a double retry
+  doesn't re-store the same event.
 
-Legacy/experimental launcher, GUI, and socket integrations remain in the tree
-for compatibility work but are not the live prompted path.
+### Learning
 
-## Learning system (easy to find)
+- `learning/api.py` — entry points: `teach_monday`, `learning_overview`,
+  `teach_lobe_skill`, `list_lobe_skills`
+- `learning/lobe_learning_store.py` — per-lobe persistence (one file per lobe
+  under runtime data)
+- `thalamus.py` — routes learning requests to lobes
 
-- `learning/api.py` — simple entry points (`teach_monday`, `learning_overview`,
-  `teach_lobe_skill`, `list_lobe_skills`)
-- `learning/__init__.py` — exports the learning API helpers
-- `learning/lobe_learning_store.py` — per-lobe adaptive persistence (one file per
-  lobe under runtime data)
-- `thalamus.py` — learning router and global `teach_monday`/`learning_overview`
-  handlers
-- `direct_notus.py` — SQLite conversation memory adapter (injectable for tests;
-  separate from lobe-local learning state)
-- `notus_outage_fallback.py` — bounded per-user Notus outage queue
-- `test_direct_core_pipeline.py` / `test_notus_integration.py` — direct-core +
-  Notus fallback acceptance
+Lobe-local learning is separate from Notus conversation memory.
+
+## Tests
+
+Tests inject a SQLite `DirectNotusProcess` via `notus_factory=` and pass
+`enable_autonomous=False` so they run without a background loop.
+
+```
+python -m pytest -q test_direct_core_pipeline.py test_notus_integration.py
+python -m pytest -q test_shared_representation_semantics.py test_shared_representation_native.py test_language_native.py test_native_routing.py
+python live_notus_memory_check.py
+```
+
+CI (`.github/workflows/direct-core.yml`) runs these on Python 3.11.
+
+`_prove_*.py` scripts and the `_*_before.txt` / `_*_after.txt` files are
+proof runs and logs from lobe-by-lobe development work.
 
 ## 3D model generator
 
