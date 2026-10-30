@@ -2085,7 +2085,7 @@ class ReasoningLobe:
         elif thinking.get('theories'):
             # Extract from theory explanation
             theory = thinking['theories'][0]
-            explanation = theory.get('explanation', '')
+            explanation = theory.get('explanation') or ''  # may be None
             # Simple extraction - get meaningful words
             words = [w for w in explanation.split() if len(w) > 4 and w.lower() not in ['that', 'this', 'what', 'which']]
             concepts = words[:3]

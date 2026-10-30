@@ -139,7 +139,8 @@ def test_reasoning_native_finalizes_semantics_and_publishes_to_sr(tmp_path):
 
 
 def test_language_does_not_select_memory_evidence():
-    source = inspect.getsource(LanguageGenerator._salvage_grounded_answer)
+    # The old salvage step was moved to legacy/; check all of live Language.
+    source = inspect.getsource(LanguageGenerator)
     for forbidden in (
         "structures_from_grounded_memories",
         "answer_from_grounded_memories",
