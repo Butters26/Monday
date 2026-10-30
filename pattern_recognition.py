@@ -2238,7 +2238,7 @@ class AdvancedPatternRecognition:
         """Query a lobe through Thalamus - DIRECT FUNCTION CALL"""
         try:
             msg_type = message.get('type', 'query')
-            return self.thalamus.send_message(lobe_name, msg_type, message)
+            return self.thalamus.send_message(lobe_name, msg_type, message, source='pattern')
         except Exception:
             return None
     

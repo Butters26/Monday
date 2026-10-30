@@ -16,8 +16,9 @@ Monday is telling, asking, or greeting) and builds the sentence itself:
   better record and sometimes tries others. Records persist across restarts and
   are kept per learner, so game contestants learn apart.
 
-Not wired into Monday's live replies yet; LanguageGenerator.express() and the
-"express" / "express_feedback" messages expose it.
+Used live: LanguageGenerator.respond() composes a meaning from the pieces in
+front of her and builds it here. LanguageGenerator.express() and the
+"express" / "express_feedback" messages expose it directly.
 
 Meaning format (all keys optional except what the act needs):
 

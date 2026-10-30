@@ -89,7 +89,7 @@ def _outcome(known: bool, response: Any, destination: str) -> str:
         return "HANDLED"
     status = response.get("status")
     message = str(response.get("message") or "").lower()
-    if status == "success":
+    if status in ("success", "received", "ok", "acknowledged"):
         content = response.get("content")
         empty = not content or (isinstance(content, dict) and not any(
             v not in (None, "", [], {}) for v in content.values()))

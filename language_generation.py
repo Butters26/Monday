@@ -1434,12 +1434,12 @@ class LanguageGenerator:
                 destination = message.get('destination')
                 route_msg_type = message.get('msg_type')
                 content = message.get('content', {})
-                return self.thalamus.send_message(destination, route_msg_type, content)
+                return self.thalamus.send_message(destination, route_msg_type, content, source='language')
             elif msg_type == 'broadcast_message':
                 destinations = message.get('destinations', [])
                 broadcast_msg_type = message.get('msg_type')
                 broadcast_content = message.get('content', {})
-                return self.thalamus.broadcast_message(destinations, broadcast_msg_type, broadcast_content)
+                return self.thalamus.broadcast_message(destinations, broadcast_msg_type, broadcast_content, source='language')
             else:
                 return self.thalamus.handle_request(message)
         except Exception:
@@ -1456,7 +1456,7 @@ class LanguageGenerator:
         self.thalamus.send_message('output', 'text_response', {
             'text': sentence,
             'user_input': user_input  # Pass user_input for memory storage
-        })
+        }, source='language')
     
     def start(self):
         """Start language generation - register with Thalamus (NO SOCKETS)"""

@@ -667,7 +667,7 @@ class DirectReasoningAdapter:
     # ------------------------------------------------------------------
 
     _GREETING_SENSE = "oewn-06645018-n"  # dictionary sense: "an expression of greeting"
-    _CONTENT_KINDS = {"noun", "proper_noun", "verb", "adjective", "adverb"}
+    _CONTENT_KINDS = {"noun", "proper_noun", "verb", "adjective", "adverb", "possessive"}
     _NOT_CONTENT = {"be", "do", "have", "can", "will", "would", "could", "should", "may",
                     "might", "must", "shall", "not"}
 

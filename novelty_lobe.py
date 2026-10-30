@@ -519,7 +519,7 @@ class NoveltyLobe:
             self.thalamus.send_message(
                 "notus",
                 "query_facts",
-                {"query": f"novelty {stimulus}", "limit": 5},
+                {"query": f"novelty {stimulus}", "limit": 5}, source='novelty'
             )
         except Exception as e:
             logger.error(f"Failed to query Notus: {e}")
@@ -617,7 +617,7 @@ class NoveltyLobe:
                     "object": stimulus,
                     "value": memory.learned_value,
                     "confidence": memory.intensity,
-                },
+                }, source='novelty'
             )
         except Exception as e:
             logger.error(f"Failed to store in Notus: {e}")

@@ -697,7 +697,7 @@ class OutputLobe:
                 destination = message.get('destination')
                 route_msg_type = message.get('msg_type')
                 content = message.get('content', {})
-                return self.thalamus.send_message(destination, route_msg_type, content)
+                return self.thalamus.send_message(destination, route_msg_type, content, source='output')
             else:
                 return self.thalamus.handle_request(message)
         except Exception:

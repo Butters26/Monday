@@ -19,10 +19,7 @@ import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
-GROUNDED_REFUSAL = (
-    "I don't have enough grounded information for that yet. "
-    "What should I know?"
-)
+# (GROUNDED_REFUSAL stock line removed Oct 30: no preset fallbacks.)
 
 _UNCERTAINTY_MARKERS = (
     "i do not know",
@@ -372,9 +369,11 @@ class MetaCognitionLobe:
         out["meta_cognition"] = meta
 
         if signals.get("force_grounded_refusal"):
+            # No stock refusal line (preset fallback removed): clear what was
+            # unsupported and mark it; Language decides what to say.
             out["grounded_structures"] = []
-            out["propositions"] = [GROUNDED_REFUSAL]
-            out["answer"] = GROUNDED_REFUSAL
+            out["propositions"] = []
+            out["answer"] = ""
             out["intent"] = "express_uncertainty"
             try:
                 out["certainty"] = min(float(out.get("certainty") or 0.3), 0.3)
@@ -385,8 +384,8 @@ class MetaCognitionLobe:
                 # Safe effect like force_grounded_refusal for composition, but
                 # keep conflicting_structures on meta for diagnosis/logging.
                 out["grounded_structures"] = []
-                out["propositions"] = [GROUNDED_REFUSAL]
-                out["answer"] = GROUNDED_REFUSAL
+                out["propositions"] = []
+                out["answer"] = ""
                 out["intent"] = "express_uncertainty"
                 # Prevent Language salvage from picking one conflicting side.
                 out["memory_context"] = []
@@ -466,7 +465,18 @@ class MetaCognitionLobe:
         elif signals.get("flag_uncertainty") and path == "grounded":
             path = "uncertain_or_empty"
 
-        corrected = GROUNDED_REFUSAL if signals.get("force_grounded_refusal") else None
+        # Blocking an unsupported sentence: no stock replacement line. The reply
+        # is withheld and reported as a failure, never passed off as her choice.
+        corrected = None
+        if signals.get("force_grounded_refusal"):
+            corrected = ""
+            try:
+                from trace_monitor import trace_event
+                trace_event("reply_done", silence="failed",
+                            reason="metacognition withheld it: " + ", ".join(findings[-3:]),
+                            sentence=text)
+            except Exception:
+                pass
 
         conflicting = prior.get("conflicting_structures")
         if isinstance(meta, dict) and isinstance(meta.get("conflicting_structures"), list):

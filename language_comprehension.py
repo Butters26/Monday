@@ -379,9 +379,23 @@ class LanguageComprehensionEngine:
         if low in _AUX_RAW:
             lemma = self.lemma(low, prefer_pos="v")
             return "auxiliary", lemma, self._lookup(low, pos="v") or self._lookup(low), True
+        # Possessive "dog's" / "Matthew's" / "witches'": the owner, marking whose.
+        possessive = re.fullmatch(r"([a-z]+)'s|([a-z]+s)'", low)
+        if possessive:
+            base = possessive.group(1) or possessive.group(2)
+            base_senses = self._lookup(base, pos="n")
+            base_lemma = self.lemma(base, prefer_pos="n") if base_senses else base
+            return "possessive", base_lemma, base_senses, True
 
         senses = self._lookup(low)
         cands = self._lemma_candidates(low)
+        # A lowercase word is not a place or person name: "nice" is not Nice, France.
+        if original[:1].islower():
+            proper_only = [c for c in cands if c.get("pos") == "n" and str(c["lemma"])[:1].isupper()]
+            common_nouns = [c for c in cands if c.get("pos") == "n" and str(c["lemma"])[:1].islower()]
+            if proper_only and not common_nouns and any(c.get("pos") != "n" for c in cands):
+                cands = [c for c in cands if c.get("pos") != "n"]
+                senses = [s for s in senses if s.get("pos") != "n"]
         pos_set = {c["pos"] for c in cands}
 
         # Capitalized alpha token with no lexicon hit → proper noun (open class).
@@ -739,6 +753,8 @@ class LanguageComprehensionEngine:
                 next_idx += 1
             if next_idx >= len(tokens):
                 continue
+            while next_idx < len(tokens) - 1 and re.fullmatch(r"[a-z]+'s|[a-z]+s'", lows[next_idx]):
+                next_idx += 1  # "is Matthew's wife": the complement is "wife"
             cand = tokens[next_idx]
             cand_low = cand.lower()
             if cand_low in _PRONOUNS or cand_low in _DETERMINERS:
@@ -860,6 +876,12 @@ class LanguageComprehensionEngine:
         """
         if start >= end:
             return None
+        # Prepositional dative: "gave Jester to Matthew" -> recipient after "to".
+        lows_span = [t.lower() for t in tokens[start:end]]
+        if "to" in lows_span:
+            to_idx = start + lows_span.index("to")
+            if start < to_idx < end - 1:
+                return (to_idx + 1, end), (start, to_idx)
         first = tokens[start].lower()
         if first in _PRONOUNS:
             return (start, start + 1), (start + 1, end)
@@ -1297,6 +1319,10 @@ class LanguageComprehensionEngine:
                 "lexicon_known": known,
                 "sense_count": len(senses),
             }
+            if kind == "proper_noun" and senses:
+                # "Ariana" may be a person, not the Tunisian city the dictionary lists.
+                entry["name_senses_uncertain"] = True
+                entry["ambiguous"] = True
             if len(senses) > 1:
                 entry["ambiguous"] = True
                 ambiguous_words.append(

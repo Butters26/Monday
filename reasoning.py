@@ -725,7 +725,7 @@ class ReasoningLobe:
                 'user_input': user_input, 
                 'semantic_input': semantic_input,
                 'is_main_response': is_main_response  # Reasoning controls what gets sent
-            })
+            }, source='reasoning')
 
             if result.get('status') == 'success':
                 response = result.get('response', '')
@@ -1650,33 +1650,9 @@ class ReasoningLobe:
         user_id = input_data.get('user_id', 'default')
         print(f"🧠 Reasoning: user_input = '{user_input[:50]}'")
         
-        # CRITICAL FIX: Check if Novelty Lobe has pending questions
-        # If so, this user input might be an answer to a novelty question
-        try:
-            novelty_check = self.thalamus.send_message(
-                'novelty',
-                'get_pending_questions',
-                {},
-                source='reasoning'
-            )
-            if novelty_check.get('status') == 'success':
-                pending = novelty_check.get('pending', {})
-                if pending:
-                    print(f"🧠 Reasoning: Found {len(pending)} pending novelty questions, routing response")
-                    for stimulus, context in pending.items():
-                        self.thalamus.send_message(
-                            'novelty',
-                            'user_response',
-                            {
-                                'type': 'user_response',
-                                'stimulus': stimulus,
-                                'answer': user_input
-                            },
-                            source='reasoning'
-                        )
-        except Exception as e:
-            print(f"⚠️  Novelty check failed: {e}")
-        
+        # (Removed: asking Novelty for pending questions. Novelty dropped that
+        # feature and rejected the request every turn; it is score-only now.)
+
         # Extract data from full lobe responses (Thalamus passes everything through)
         perception_result = input_data.get('perception_result', {})
         emotion_result = input_data.get('emotion_result', {})
@@ -2931,7 +2907,7 @@ class ReasoningLobe:
             # Direct function call - NO SOCKETS
             msg_type = message.get('type', 'query')
             content = message
-            return self.thalamus.send_message(lobe_name, msg_type, content)
+            return self.thalamus.send_message(lobe_name, msg_type, content, source='reasoning')
         except Exception:
             return None
     

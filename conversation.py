@@ -134,7 +134,7 @@ class ConversationSystem:
             response = self.thalamus.send_and_wait(
                 "language",
                 "comprehend",
-                {"text": user_input, "user_input": user_input},
+                {"text": user_input, "user_input": user_input}, source='conversation'
             )
             if response.get("status") != "success":
                 return None

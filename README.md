@@ -79,7 +79,7 @@ path.
 
 Lobe-local learning is separate from Notus conversation memory.
 
-### Sentence builder (Language, not yet live)
+### How she replies (Language builds, Reasoning reviews)
 
 `language_builder.py` is Language's expression half: it takes a meaning (who,
 what, to whom; telling, asking, or greeting) and builds the sentence with
@@ -89,7 +89,15 @@ No option gets a head start and there are no example lists; each option keeps
 a success record (used / judged good) in Language's learning store, the builder
 leans toward better records, and records persist per learner. Reach it with
 `LanguageGenerator.express()` / `express_feedback()` or the `express` /
-`express_feedback` messages. It is **not** wired into her live replies yet.
+`express_feedback` messages.
+
+This is how she replies live: Language gathers the pieces in front of her (the
+words she heard, what memory holds, how she feels, herself and the person),
+picks a grammar form (say, ask, greet, or stay quiet) and puts pieces together;
+every choice is learned, none is preset. Reasoning reviews each draft
+(`review_reply`) and says what's wrong; Language learns from the verdict and
+tries again, up to 7 times. Staying quiet is reviewed too. A failure is
+reported as a failure, never passed off as silence.
 
 ## Live tracing
 

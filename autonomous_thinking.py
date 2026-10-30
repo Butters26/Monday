@@ -309,7 +309,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             result = self.thalamus.send_and_wait(
                 'emotion',
                 'get_state',
-                {}
+                {}, source='autonomous'
             )
             if result.get('status') == 'success':
                 # Thalamus also mirrors fields under content=
@@ -339,7 +339,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
                 # Enrich from get_emotional_state when PAD / tone useful
                 try:
                     rich = self.thalamus.send_and_wait(
-                        'emotion', 'get_emotional_state', {}
+                        'emotion', 'get_emotional_state', {}, source='autonomous'
                     )
                     if rich.get('status') == 'success':
                         body = rich.get('content') if isinstance(rich.get('content'), dict) else {}
@@ -391,7 +391,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         )
         for msg_type, payload in attempts:
             try:
-                result = self.thalamus.send_and_wait('notus', msg_type, payload)
+                result = self.thalamus.send_and_wait('notus', msg_type, payload, source='autonomous')
                 if result.get('status') != 'success':
                     continue
                 content = result.get('content') if isinstance(result.get('content'), dict) else {}
@@ -448,7 +448,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             result = self.thalamus.send_and_wait(
                 'values',
                 'get_values',
-                {'min_strength': 0.5}
+                {'min_strength': 0.5}, source='autonomous'
             )
             if result.get('status') == 'success':
                 content = result.get('content') if isinstance(result.get('content'), dict) else {}
