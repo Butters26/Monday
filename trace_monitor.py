@@ -10,6 +10,7 @@ It changes nothing about her behavior. It records, one JSON line each:
   receiver did with it (HANDLED / HANDLED_EMPTY / NOT_UNDERSTOOD / REJECTED /
   CRASHED / NO_RECEIVER / NO_ANSWER) and how long it took; messages sent
   without waiting (tell / announce) are recorded as DELIVERED;
+- every announcement: who announced what topic, and which lobes heard it;
 - each lobe's own thread reporting what it handled ("handled": lobe, type,
   how long it sat in the inbox, how long handling took);
 - every turn: what was said, her reply, how long it took, and for a blank
@@ -184,6 +185,16 @@ def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str
                 _state["turn_failures"].append(f"{sender} -> {destination} [{msg_type}] {outcome}")
             return response
         thalamus.tell = traced_tell  # announce calls self.tell, so it is covered too.
+
+    original_announce = getattr(thalamus, "announce", None)
+    if callable(original_announce):
+        def traced_announce(topic, content=None, source="thalamus"):
+            sender = _real_sender(thalamus)
+            response = original_announce(topic, content, source)
+            _write({"kind": "announce", "from": sender, "claimed_from": source, "topic": topic,
+                    "to": list((response.get("content") or {}).get("to") or [])})
+            return response
+        thalamus.announce = traced_announce
 
     original_broadcast = thalamus.broadcast_message
 

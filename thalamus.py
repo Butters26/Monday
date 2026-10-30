@@ -71,6 +71,11 @@ class Thalamus:
         if old is not None:
             old.stop()
         inbox.start()
+        joined = getattr(lobe, "on_joined", None)
+        if callable(joined):
+            # Lets the lobe sign itself up for the announcements it wants
+            # (thalamus.listen); thalamus doesn't choose them.
+            joined(name)
         return {
             "status": "success",
             "content": {"registered": name},
@@ -865,10 +870,12 @@ class Thalamus:
         if perception_payload is None:
             perception_payload = {}
             if self._has_lobe("perception"):
+                # Her senses: perception recognizes the typed words and announces
+                # them; sensory integration hears that and builds the moment.
                 response = self.send_and_wait(
                     "perception",
-                    "perceive_text",
-                    {"text": user_input, "user_id": user_id},
+                    "sense",
+                    {"modality": "text", "text": user_input, "user_id": user_id},
                 )
                 if response.get("status") != "success":
                     return ""
@@ -879,30 +886,9 @@ class Thalamus:
                 )
                 if isinstance(normalized, str) and normalized.strip():
                     user_input = normalized.strip()
+                perception_payload = self._moment_for(perception_payload, user_id)
         else:
             perception_payload = dict(perception_payload)
-
-        if (
-            self._has_lobe("sensory_integration")
-            and isinstance(perception_payload, dict)
-            and perception_payload
-            and (perception_payload.get("raw_meta") or {}).get("source")
-            != "sensory_integration"
-        ):
-            response = self.send_and_wait(
-                "sensory_integration",
-                "absorb",
-                {
-                    "envelope": perception_payload,
-                    "user_id": user_id,
-                    "route_attention": False,
-                },
-                source="thalamus",
-            )
-            if response.get("status") == "success":
-                body = self._content(response)
-                if body:
-                    perception_payload = body
 
         if self._has_lobe("novelty"):
             response = self.send_and_wait(
@@ -1231,6 +1217,19 @@ class Thalamus:
                 self._flush_notus_fallback_best_effort(user_id)
         return reply
 
+    def _moment_for(self, recognition: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+        """Temporary turn-script step: fetch the moment sensory integration built
+        from this recognition (it heard perception's announcement itself)."""
+        if not self._has_lobe("sensory_integration"):
+            return recognition
+        response = self.send_and_wait(
+            "sensory_integration",
+            "get_moment",
+            {"user_id": user_id, "recognition_id": recognition.get("recognition_id")},
+        )
+        body = self._content(response) if response.get("status") == "success" else {}
+        return body or recognition
+
     def process_sensory_input(
         self,
         modality: str,
@@ -1255,38 +1254,28 @@ class Thalamus:
                 {"text": text, "user_id": user_id},
             )
 
-        if not self._has_lobe("sensory_integration"):
-            return {
-                "status": "error",
-                "message": "sensory_integration lobe not registered",
-            }
+        if not self._has_lobe("perception"):
+            return {"status": "error", "message": "perception lobe not registered"}
 
-        item: Dict[str, Any] = {"modality": modality}
+        sensed: Dict[str, Any] = {"modality": modality, "user_id": user_id}
         if path:
-            item["path"] = path
+            sensed["path"] = path
         if audio_bytes is not None:
-            item["audio_bytes"] = audio_bytes
+            sensed["audio_bytes"] = audio_bytes
         if image_bytes is not None:
-            item["image_bytes"] = image_bytes
-        inputs = [item]
-        for extra in extra_inputs or []:
-            if extra is not None:
-                inputs.append(extra)
-        response = self.send_and_wait(
-            "sensory_integration",
-            "ingest",
-            {
-                "inputs": inputs,
-                "user_id": user_id,
-                "route_attention": not continue_conversation,
-                "primary_modality": modality,
-            },
-            source="thalamus",
-        )
-        if response.get("status") != "success" or not continue_conversation:
+            sensed["image_bytes"] = image_bytes
+        response = self.send_and_wait("perception", "sense", sensed)
+        if response.get("status") != "success":
             return response
-        stream = self._content(response)
-        routed_text = stream.get("text") or stream.get("normalized_text")
+        for extra in extra_inputs or []:
+            if isinstance(extra, dict) and extra:
+                self.send_and_wait("perception", "sense", {"user_id": user_id, **extra})
+            elif isinstance(extra, str) and extra.strip():
+                self.send_and_wait("perception", "sense", {"modality": "text", "text": extra, "user_id": user_id})
+        stream = self._moment_for(self._content(response), user_id)
+        if not continue_conversation:
+            return {"status": "success", "content": stream, "stream": stream}
+        routed_text = (stream.get("text") or stream.get("normalized_text")) if modality == "audio" else None
         if not isinstance(routed_text, str) or not routed_text.strip():
             return ""
         return self.process_user_input(

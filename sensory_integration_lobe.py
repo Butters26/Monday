@@ -32,6 +32,7 @@ class SensoryIntegrationLobe:
         self.unified_stream: Optional[Dict[str, Any]] = None
         self.shared_context: Dict[str, Any] = self._empty_shared_context()
         self.attention_payload: Dict[str, Any] = {}
+        self._last_recognition: Dict[str, str] = {}
 
     def _empty_shared_context(self) -> Dict[str, Any]:
         return {
@@ -258,6 +259,51 @@ class SensoryIntegrationLobe:
             self.attention_payload = {}
             self.shared_context = self._empty_shared_context()
 
+    # ------------------------------------------------------------------
+    # On the team: hear what perception announces, build the moment from
+    # all her senses, and announce the moment for whoever needs it.
+    # ------------------------------------------------------------------
+
+    HEARS = ("heard_words", "heard_sound", "saw")
+
+    def on_joined(self, name: str) -> None:
+        listen = getattr(self.thalamus, "listen", None)
+        if callable(listen):
+            for topic in self.HEARS:
+                listen(name, topic)
+
+    def hear_from_senses(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        recognition = content.get("recognition")
+        if not isinstance(recognition, dict) or not recognition:
+            return {"status": "error", "message": "sensory_integration: announcement had no recognition"}
+        uid = self._uid(content.get("user_id") or recognition.get("user_id"))
+        rid = str(content.get("recognition_id") or recognition.get("recognition_id") or "")
+        last = getattr(self, "_last_recognition", {})
+        # One recognition can be announced twice (speech is both words and a sound).
+        if rid and last.get(uid) == rid:
+            return {"status": "success", "content": self.get_unified_stream(user_id=uid)}
+        stream = dict(self.absorb_envelope(recognition, user_id=uid, route_attention=False))
+        stream["recognition_id"] = rid
+        self._set_unified(uid, stream)
+        if rid:
+            last[uid] = rid
+            self._last_recognition = last
+        announce = getattr(self.thalamus, "announce", None)
+        if callable(announce):
+            announce("moment", {"user_id": uid, "moment": stream, "recognition_id": rid},
+                     source="sensory_integration")
+        return {"status": "success", "content": stream}
+
+    def get_moment(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        uid = self._uid(content.get("user_id"))
+        stream = self.get_unified_stream(user_id=uid)
+        wanted = content.get("recognition_id")
+        if wanted and stream.get("recognition_id") != wanted:
+            return {"status": "error",
+                    "message": "sensory_integration: that recognition hasn't reached me",
+                    "content": {}}
+        return {"status": "success", "content": stream}
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         if "content" in message:
@@ -270,6 +316,12 @@ class SensoryIntegrationLobe:
             }
         if not isinstance(content, dict):
             content = {}
+
+        if msg_type in self.HEARS:
+            return self.hear_from_senses(content)
+
+        if msg_type == "get_moment":
+            return self.get_moment(content)
 
         if msg_type in ("ingest", "integrate", "integrate_inputs"):
             inputs = content.get("inputs", [])

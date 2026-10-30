@@ -48,6 +48,15 @@ wait their turn. No answer within `MONDAY_LOBE_ANSWER_TIMEOUT` seconds (default
 is no socket code between lobes. (The chat daemon uses a Unix socket only as the
 transport between client and daemon.)
 
+When a lobe registers, Thalamus calls its `on_joined(name)` (if it has one) so the
+lobe can sign itself up for the announcements it wants.
+
+**Her senses:** `perception` recognizes what reaches her (typed text, sound,
+images) on a `sense` message and announces it: `heard_words`, `heard_sound`,
+`saw`, and `alarm` straight away for a loud sound. `sensory_integration` listens
+for the first three, combines them into one moment, and announces `moment`. Other
+lobes sign up for these as each is rebuilt (Monday Build Plan step 2).
+
 The offline dictionary keeps one SQLite connection per thread
 (`lexicon/oewn_offline.py`), since a connection only works on the thread that
 opened it.

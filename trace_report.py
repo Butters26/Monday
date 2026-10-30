@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-PROBLEM_OUTCOMES = ("CRASHED", "NOT_UNDERSTOOD", "REJECTED", "NO_RECEIVER")
+PROBLEM_OUTCOMES = ("CRASHED", "NOT_UNDERSTOOD", "REJECTED", "NO_RECEIVER", "NO_ANSWER")
 
 
 def load(path: str):
@@ -58,6 +58,29 @@ def main() -> int:
         print("no failed messages")
     for (src, dst, typ, outcome, msg), n in problems.most_common():
         print(f"{n:4d}  {outcome:14s} {src} -> {dst} [{typ}]  {msg}")
+
+    boots = [r for r in records if r.get("kind") == "boot"]
+    if boots and "running_on_own" in boots[-1]:
+        b = boots[-1]
+        print(f"\n== LOBES RUNNING ON THEIR OWN: {len(b.get('running_on_own') or [])} ==")
+        if b.get("not_running_on_own"):
+            print(f"  NOT running on their own: {', '.join(b['not_running_on_own'])}")
+
+    announces = collections.Counter(
+        (r.get("from"), r.get("topic"), ", ".join(r.get("to") or []) or "nobody listening")
+        for r in records if r.get("kind") == "announce")
+    if announces:
+        print("\n== ANNOUNCEMENTS (who announced what, who heard it) ==")
+        for (src, topic, heard), n in sorted(announces.items()):
+            print(f"{n:4d}  {src} announced {topic!r} -> {heard}")
+
+    failed_tells = collections.Counter(
+        (r.get("lobe"), r.get("msg_type"), (r.get("message") or "")[:90])
+        for r in records if r.get("kind") == "tell_failed")
+    if failed_tells:
+        print("\n== ANNOUNCEMENTS / TELLS A LOBE FAILED TO HANDLE ==")
+        for (lobe, typ, msg), n in failed_tells.most_common():
+            print(f"{n:4d}  {lobe} [{typ}]  {msg}")
 
     errors = [r for r in records if r.get("kind") == "uncaught_error"]
     print(f"\n== UNCAUGHT ERRORS: {len(errors)} ==")

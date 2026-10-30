@@ -26,6 +26,7 @@ import os
 import re
 import tempfile
 import time
+import uuid
 import wave
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -1624,6 +1625,87 @@ class PerceptionLobe:
             ],
         }
 
+    # ------------------------------------------------------------------
+    # Her senses on the team: recognize what came in, then announce it.
+    # Thalamus delivers each announcement to the lobes that signed up for it
+    # (sensory integration, and the others as each is built).
+    # ------------------------------------------------------------------
+
+    SENSE_TEXT = ("text", "chat", "typed")
+    SENSE_AUDIO = ("audio", "hearing", "sound")
+    SENSE_VISION = ("vision", "visual", "image", "sight")
+
+    def sense(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Something reached one of her senses. Recognize it and announce it.
+
+        Returns the recognition. Announces:
+          heard_words  - words were recognized (typed, or speech heard)
+          heard_sound  - a sound was heard (loudness, whether it sounds like speech)
+          saw          - something was seen (faces, brightness, how busy it is)
+          alarm        - a loud sound: sent at once, before anything works out
+                         what it was (like the shortcut from ear to amygdala)
+        Nothing is announced when the sense failed; the failure is returned.
+        """
+        modality = str(payload.get("modality") or "text").strip().lower()
+        user_id = str(payload.get("user_id") or "default")
+        if modality in self.SENSE_TEXT:
+            text = payload.get("text") or payload.get("user_input") or ""
+            recognition = self.perceive_text(text if isinstance(text, str) else "")
+            failed = None if recognition.get("text") else "nothing was typed"
+        elif modality in self.SENSE_AUDIO:
+            audio_bytes = payload.get("audio_bytes") or payload.get("bytes")
+            path = payload.get("path") or payload.get("file")
+            if path or audio_bytes is not None:
+                recognition = self.perceive_audio(path=path, audio_bytes=audio_bytes,
+                                                  try_stt=bool(payload.get("try_stt", True)))
+            else:
+                recognition = self.perceive_audio(use_mic=True)
+            failed = (recognition.get("raw_meta") or {}).get("error")
+        elif modality in self.SENSE_VISION:
+            image_bytes = payload.get("image_bytes") or payload.get("bytes")
+            path = payload.get("path") or payload.get("file")
+            if path or image_bytes is not None:
+                recognition = self.perceive_vision(path=path, image_bytes=image_bytes)
+            else:
+                recognition = self.perceive_vision(use_camera=True)
+            failed = (recognition.get("raw_meta") or {}).get("error")
+        else:
+            return {"status": "error", "message": f"Perception has no sense called {modality!r}"}
+
+        recognition = dict(recognition)
+        recognition["recognition_id"] = uuid.uuid4().hex[:12]
+        recognition["user_id"] = user_id
+        if failed:
+            return {"status": "error", "message": f"perception: {failed}", "content": recognition}
+        self._announce(recognition, user_id)
+        recognition["normalized_text"] = recognition.get("text", "")
+        recognition["words"] = list((recognition.get("raw_meta") or {}).get("words") or [])
+        return {"status": "success", "content": recognition}
+
+    def _announce(self, recognition: Dict[str, Any], user_id: str) -> None:
+        announce = getattr(self.thalamus, "announce", None)
+        if not callable(announce):
+            return
+        modality = recognition.get("modality")
+        meta = recognition.get("raw_meta") or {}
+        base = {"user_id": user_id, "modality": modality, "recognition": recognition,
+                "recognition_id": recognition["recognition_id"]}
+        if modality == "audio":
+            acoustics = meta.get("acoustics") or {}
+            if acoustics.get("loudness") == "loud":
+                announce("alarm", {**base, "what": "loud sound"}, source="perception")
+            announce("heard_sound", {**base, "loudness": acoustics.get("loudness"),
+                                     "speech_like": acoustics.get("speech_like")}, source="perception")
+        if modality == "vision":
+            announce("saw", {**base, "faces_detected": meta.get("faces_detected"),
+                             "brightness": meta.get("brightness_label"),
+                             "complexity": meta.get("complexity")}, source="perception")
+        words_text = recognition.get("text") if modality == "text" else recognition.get("transcript")
+        if isinstance(words_text, str) and words_text.strip():
+            announce("heard_words", {**base, "text": words_text,
+                                     "words": list(meta.get("words") or recognition.get("concepts") or [])},
+                     source="perception")
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         payload = message.get("content", message)
@@ -1632,6 +1714,9 @@ class PerceptionLobe:
 
         if msg_type == "health":
             return {"status": "success", "healthy": True, "pid": os.getpid()}
+
+        if msg_type == "sense":
+            return self.sense(payload)
 
         if msg_type in ("perceive_text", "process_text", "user_input", "perceive"):
             text = payload.get("text") or payload.get("user_input") or ""
