@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Mercy Thalamus: routing and turn coordination only.
+"""Mercy Thalamus: the message boy.
 
-HARD OWNERSHIP RULE:
-Thalamus may route envelopes, sequence lobe calls, record route diagnostics,
-and handle transport/failure boundaries. It must not determine meaning, select
-facts, judge answer relevance, infer truth, parse prose into semantics, generate
-fallback answers, or take over work owned by another lobe.
+Contract: .github/instructions/thalamus.instructions.md. Thalamus reads only
+the address on a message and delivers it to that lobe's inbox; every lobe runs
+on its own thread (lobe_inbox.py). It carries answers back, delivers
+announcements to the lobes that listen for them, and reports any delivery
+failure to the sender. It decides nothing.
+
+Temporary exception: the turn script in process_user_input still sequences a
+turn. It is removed lobe by lobe (Monday Build Plan steps 2-3); nothing new may
+be added to it.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ import time
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
+from lobe_inbox import ANSWER_TIMEOUT_SEC, Letter, LobeInbox, Reply, current_chain, new_chain
 from notus_outage_fallback import NotusOutageFallback
 
 
@@ -29,6 +34,8 @@ class Thalamus:
         self.lobe_handlers_lock = threading.RLock()
         self.lobe_status: Dict[str, str] = {}
         self.message_routes: deque = deque(maxlen=200)
+        self.inboxes: Dict[str, LobeInbox] = {}
+        self.listeners: Dict[str, List[str]] = {}
 
         self.last_output_envelope: Optional[Dict[str, Any]] = None
         self.last_grounded_structures: Optional[List[Dict[str, Any]]] = None
@@ -55,9 +62,15 @@ class Thalamus:
             getattr(lobe, "process_message_safe", None)
         ):
             return {"status": "error", "message": f"{name} has no message handler"}
+        inbox = LobeInbox(name, lobe, self._set_status)
         with self.lobe_handlers_lock:
+            old = self.inboxes.get(name)
             self.lobe_handlers[name] = lobe
             self.lobe_status[name] = "online"
+            self.inboxes[name] = inbox
+        if old is not None:
+            old.stop()
+        inbox.start()
         return {
             "status": "success",
             "content": {"registered": name},
@@ -68,6 +81,67 @@ class Thalamus:
         with self.lobe_handlers_lock:
             return name in self.lobe_handlers
 
+    def _set_status(self, name: str, status: str) -> None:
+        self.lobe_status[name] = status
+
+    def _caller_inbox(self) -> Optional[LobeInbox]:
+        with self.lobe_handlers_lock:
+            inboxes = list(self.inboxes.values())
+        for inbox in inboxes:
+            if inbox.owns_current_thread():
+                return inbox
+        return None
+
+    def _post(
+        self, destination: str, msg_type: str, content: Optional[Dict[str, Any]], source: str,
+        want_answer: bool,
+    ):
+        """Put one envelope in the destination's inbox. Returns (reply, chain, error)."""
+        if content is None:
+            content = {}
+        if not isinstance(content, dict):
+            return None, None, {"status": "error", "message": "Message content must be a dictionary", "content": {}}
+        with self.lobe_handlers_lock:
+            inbox = self.inboxes.get(destination)
+        if inbox is None or not inbox.alive:
+            self.lobe_status[destination] = "offline"
+            return None, None, {"status": "error", "message": f"Unknown destination: {destination}", "content": {}}
+        envelope = {
+            "type": msg_type,
+            "content": dict(content),
+            "source": source,
+            "message_id": str(uuid.uuid4()),
+        }
+        chain = current_chain() or new_chain()
+        reply = Reply() if want_answer else None
+        inbox.post(Letter(envelope, reply, chain))
+        return reply, chain, None
+
+    def _await(self, destination: str, reply: Reply, chain: str) -> Dict[str, Any]:
+        caller = self._caller_inbox()
+        if caller is not None:
+            answered = caller.wait_while_working(reply, chain, ANSWER_TIMEOUT_SEC)
+        else:
+            answered = reply.wait(ANSWER_TIMEOUT_SEC)
+        if not answered:
+            return {
+                "status": "error",
+                "message": f"No answer from {destination} in {ANSWER_TIMEOUT_SEC:g}s",
+                "content": {},
+            }
+        return reply.value
+
+    def _log_route(self, source: str, destination: str, msg_type: str, status: str) -> None:
+        self.message_routes.append(
+            {
+                "from": source,
+                "to": destination,
+                "type": msg_type,
+                "status": status,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+
     def send_message(
         self,
         destination: str,
@@ -75,60 +149,10 @@ class Thalamus:
         content: Optional[Dict[str, Any]] = None,
         source: str = "thalamus",
     ) -> Dict[str, Any]:
-        """Route one envelope unchanged except for transport metadata."""
-        if content is None:
-            content = {}
-        if not isinstance(content, dict):
-            return {"status": "error", "message": "Message content must be a dictionary", "content": {}}
-
-        with self.lobe_handlers_lock:
-            lobe = self.lobe_handlers.get(destination)
-        if lobe is None:
-            self.lobe_status[destination] = "offline"
-            return {
-                "status": "error",
-                "message": f"Unknown destination: {destination}",
-                "content": {},
-            }
-
-        envelope = {
-            "type": msg_type,
-            "content": dict(content),
-            "source": source,
-            "message_id": str(uuid.uuid4()),
-        }
-        try:
-            handler = getattr(lobe, "process_message", None) or getattr(
-                lobe, "process_message_safe", None
-            )
-            response = handler(envelope)
-            if not isinstance(response, dict):
-                response = {"status": "success", "content": {"result": response}}
-            response.setdefault("status", "success")
-            if "content" not in response:
-                response["content"] = {
-                    key: value
-                    for key, value in response.items()
-                    if key not in {"status", "message"}
-                }
-            self.lobe_status[destination] = "online"
-        except Exception as exc:
-            self.lobe_status[destination] = "error"
-            response = {
-                "status": "error",
-                "message": f"{destination}: {exc}",
-                "content": {},
-            }
-
-        self.message_routes.append(
-            {
-                "from": source,
-                "to": destination,
-                "type": msg_type,
-                "status": response.get("status", "error"),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+        """Deliver one envelope to the destination's inbox and carry its answer back."""
+        reply, chain, error = self._post(destination, msg_type, content, source, want_answer=True)
+        response = error if error is not None else self._await(destination, reply, chain)
+        self._log_route(source, destination, msg_type, response.get("status", "error"))
         return response
 
     def send_and_wait(
@@ -140,6 +164,39 @@ class Thalamus:
     ) -> Dict[str, Any]:
         return self.send_message(destination, msg_type, content or {}, source)
 
+    def tell(
+        self,
+        destination: str,
+        msg_type: str,
+        content: Optional[Dict[str, Any]] = None,
+        source: str = "thalamus",
+    ) -> Dict[str, Any]:
+        """Deliver one envelope without waiting for an answer."""
+        _reply, _chain, error = self._post(destination, msg_type, content, source, want_answer=False)
+        status = "error" if error is not None else "delivered"
+        self._log_route(source, destination, msg_type, status)
+        return error if error is not None else {"status": "delivered", "content": {"to": destination}}
+
+    def listen(self, lobe_name: str, topic: str) -> Dict[str, Any]:
+        """A lobe asks to receive every announcement on `topic`."""
+        with self.lobe_handlers_lock:
+            names = self.listeners.setdefault(topic, [])
+            if lobe_name not in names:
+                names.append(lobe_name)
+        return {"status": "success", "content": {"listening": topic, "lobe": lobe_name}}
+
+    def announce(
+        self,
+        topic: str,
+        content: Optional[Dict[str, Any]] = None,
+        source: str = "thalamus",
+    ) -> Dict[str, Any]:
+        """Deliver an announcement to every lobe that listens for `topic`."""
+        with self.lobe_handlers_lock:
+            names = [n for n in self.listeners.get(topic, []) if n != source]
+        results = {name: self.tell(name, topic, content, source) for name in names}
+        return {"status": "delivered", "content": {"topic": topic, "to": names, "results": results}}
+
     def broadcast_message(
         self,
         destinations: Iterable[str],
@@ -147,10 +204,17 @@ class Thalamus:
         content: Optional[Dict[str, Any]] = None,
         source: str = "thalamus",
     ) -> Dict[str, Dict[str, Any]]:
-        return {
-            destination: self.send_message(destination, msg_type, content or {}, source)
+        """Deliver to several lobes at once and carry back each answer."""
+        posted = {
+            destination: self._post(destination, msg_type, content or {}, source, want_answer=True)
             for destination in destinations
         }
+        results: Dict[str, Dict[str, Any]] = {}
+        for destination, (reply, chain, error) in posted.items():
+            response = error if error is not None else self._await(destination, reply, chain)
+            self._log_route(source, destination, msg_type, response.get("status", "error"))
+            results[destination] = response
+        return results
 
     @staticmethod
     def _content(response: Dict[str, Any]) -> Dict[str, Any]:
@@ -1274,6 +1338,10 @@ class Thalamus:
 
     def shutdown(self) -> None:
         self.running = False
+        with self.lobe_handlers_lock:
+            inboxes = list(self.inboxes.values())
+        for inbox in inboxes:
+            inbox.stop()
 
 
 _thalamus_instance: Optional[Thalamus] = None

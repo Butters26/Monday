@@ -31,11 +31,30 @@ Monday stores mutable data outside the repository. Do not add runtime data to Gi
 
 ## Architecture
 
-Lobes communicate through direct function calls via `thalamus.py`. There is no
-socket code between lobes. (The chat daemon uses a Unix socket only as the
+Thalamus is the message boy (contract: `.github/instructions/thalamus.instructions.md`):
+it reads only the address on a message and delivers it. Every registered lobe
+runs on its own thread with its own inbox (`lobe_inbox.py`); Thalamus puts each
+message in the destination's inbox and carries the answer back. Lobes can:
+
+- `send_message` / `send_and_wait`: ask another lobe and get its answer;
+- `tell`: deliver without waiting;
+- `listen` + `announce`: receive / send announcements on a topic;
+- `broadcast_message`: ask several lobes at once.
+
+A lobe waiting for an answer keeps handling messages from the same
+back-and-forth, so two lobes asking each other never lock up; unrelated messages
+wait their turn. No answer within `MONDAY_LOBE_ANSWER_TIMEOUT` seconds (default
+60) is reported to the sender as a failure. Everything runs in one process; there
+is no socket code between lobes. (The chat daemon uses a Unix socket only as the
 transport between client and daemon.)
 
-`run_abin.create_core_systems()` builds the live system. The prompted path is:
+The offline dictionary keeps one SQLite connection per thread
+(`lexicon/oewn_offline.py`), since a connection only works on the thread that
+opened it.
+
+`run_abin.create_core_systems()` builds the live system. For now a turn is still
+run by a temporary script in `Thalamus.process_user_input` (being removed lobe by
+lobe, see the Monday Build Plan). The prompted path is:
 
 conversation → Notus → emotion → reasoning → language → output
 
@@ -104,6 +123,8 @@ reported as a failure, never passed off as silence.
 Set `MONDAY_TRACE=1` (or a file path) before starting her (`run_abin.py` or the
 chat daemon) and `trace_monitor.py` records, while she is actually being used:
 every Thalamus message with its real sender and what the receiver did with it,
+which lobe's own thread handled it and how long it sat in the inbox, which lobes
+are running on their own (at boot),
 every turn with her reply and why a reply was blank, lobe-reported events,
 uncaught errors in any thread, and printed warnings. It does not change her
 behavior. `python trace_report.py [trace.jsonl]` summarizes it.

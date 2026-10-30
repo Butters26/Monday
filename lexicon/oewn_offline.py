@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,7 +32,45 @@ def lexicon_paths() -> Dict[str, Path]:
     }
 
 
+class _PerThreadConnections:
+    """wn keeps its open SQLite connections in one module-level dict, and a
+    SQLite connection only works on the thread that opened it. Every lobe runs
+    on its own thread and looks words up, so each thread gets its own."""
+
+    def __init__(self) -> None:
+        self._local = threading.local()
+
+    def _mine(self) -> dict:
+        conns = getattr(self._local, "conns", None)
+        if conns is None:
+            conns = self._local.conns = {}
+        return conns
+
+    def __contains__(self, key) -> bool:
+        return key in self._mine()
+
+    def __getitem__(self, key):
+        return self._mine()[key]
+
+    def __setitem__(self, key, value) -> None:
+        self._mine()[key] = value
+
+    def __delitem__(self, key) -> None:
+        del self._mine()[key]
+
+    def __iter__(self):
+        return iter(list(self._mine()))
+
+
+def _connections_per_thread() -> None:
+    import wn._db as wn_db
+
+    if not isinstance(wn_db.pool, _PerThreadConnections):
+        wn_db.pool = _PerThreadConnections()
+
+
 def _configure_wn(wn_module) -> None:
+    _connections_per_thread()
     # Force every wn call onto Monday's tree — never home ~/.wn_data or network.
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     wn_module.config.data_directory = _DATA_DIR

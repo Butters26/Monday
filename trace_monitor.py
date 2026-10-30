@@ -8,7 +8,10 @@ It changes nothing about her behavior. It records, one JSON line each:
 - every message through Thalamus: who REALLY sent it (from the call stack,
   not the self-reported source), who received it, the type, and what the
   receiver did with it (HANDLED / HANDLED_EMPTY / NOT_UNDERSTOOD / REJECTED /
-  CRASHED / NO_RECEIVER) and how long it took;
+  CRASHED / NO_RECEIVER / NO_ANSWER) and how long it took; messages sent
+  without waiting (tell / announce) are recorded as DELIVERED;
+- each lobe's own thread reporting what it handled ("handled": lobe, type,
+  how long it sat in the inbox, how long handling took);
 - every turn: what was said, her reply, how long it took, and for a blank
   reply whether it was her choice or a failure (and the first failure seen);
 - events lobes report themselves via trace_event() (e.g. reply attempts);
@@ -94,6 +97,8 @@ def _outcome(known: bool, response: Any, destination: str) -> str:
         empty = not content or (isinstance(content, dict) and not any(
             v not in (None, "", [], {}) for v in content.values()))
         return "HANDLED_EMPTY" if empty else "HANDLED"
+    if message.startswith("no answer from"):
+        return "NO_ANSWER"
     if any(m in message for m in NOT_UNDERSTOOD_MARKERS):
         return "NOT_UNDERSTOOD"
     if message.startswith(f"{destination.lower()}:"):
@@ -160,12 +165,47 @@ def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str
             "receiver_message": str((response or {}).get("message", ""))[:300] if isinstance(response, dict) else "",
             "ms": round((time.perf_counter() - started) * 1000, 2),
         })
-        if outcome in ("CRASHED", "NOT_UNDERSTOOD", "REJECTED", "NO_RECEIVER") and _state.get("turn_failures") is not None:
+        if outcome in ("CRASHED", "NOT_UNDERSTOOD", "REJECTED", "NO_RECEIVER", "NO_ANSWER") and _state.get("turn_failures") is not None:
             _state["turn_failures"].append(f"{sender} -> {destination} [{msg_type}] {outcome}")
         return response
 
     thalamus.send_message = traced
-    # send_and_wait / broadcast call self.send_message, so they are covered too.
+    # send_and_wait calls self.send_message, so it is covered too.
+
+    original_tell = getattr(thalamus, "tell", None)
+    if callable(original_tell):
+        def traced_tell(destination, msg_type, content=None, source="thalamus"):
+            sender = _real_sender(thalamus)
+            response = original_tell(destination, msg_type, content, source)
+            outcome = "DELIVERED" if response.get("status") == "delivered" else "NO_RECEIVER"
+            _write({"kind": "message", "from": sender, "claimed_from": source, "to": destination,
+                    "type": msg_type, "outcome": outcome, "waits": False})
+            if outcome == "NO_RECEIVER" and _state.get("turn_failures") is not None:
+                _state["turn_failures"].append(f"{sender} -> {destination} [{msg_type}] {outcome}")
+            return response
+        thalamus.tell = traced_tell  # announce calls self.tell, so it is covered too.
+
+    original_broadcast = thalamus.broadcast_message
+
+    def traced_broadcast(destinations, msg_type, content=None, source="thalamus"):
+        sender = _real_sender(thalamus)
+        destinations = list(destinations)
+        started = time.perf_counter()
+        results = original_broadcast(destinations, msg_type, content, source)
+        for destination in destinations:
+            with thalamus.lobe_handlers_lock:
+                known = destination in thalamus.lobe_handlers
+            response = results.get(destination)
+            outcome = _outcome(known, response, destination)
+            _write({"kind": "message", "from": sender, "claimed_from": source, "to": destination,
+                    "type": msg_type, "outcome": outcome, "broadcast": True,
+                    "receiver_message": str((response or {}).get("message", ""))[:300] if isinstance(response, dict) else "",
+                    "ms": round((time.perf_counter() - started) * 1000, 2)})
+            if outcome in ("CRASHED", "NOT_UNDERSTOOD", "REJECTED", "NO_RECEIVER", "NO_ANSWER") and _state.get("turn_failures") is not None:
+                _state["turn_failures"].append(f"{sender} -> {destination} [{msg_type}] {outcome}")
+        return results
+
+    thalamus.broadcast_message = traced_broadcast
 
     original_turn = thalamus.process_user_input
 
@@ -228,5 +268,9 @@ def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str
     if not isinstance(sys.stderr, _Tee):
         sys.stderr = _Tee(sys.stderr, "stderr")
 
-    _write({"kind": "boot", "lobes": sorted(_state["lobes"].values()), "pid": os.getpid()})
+    inboxes = getattr(thalamus, "inboxes", {}) or {}
+    _write({"kind": "boot", "lobes": sorted(_state["lobes"].values()), "pid": os.getpid(),
+            "running_on_own": sorted(n for n, box in inboxes.items() if getattr(box, "alive", False)),
+            "not_running_on_own": sorted(n for n in _state["lobes"].values()
+                                         if not getattr(inboxes.get(n), "alive", False))})
     return setting
