@@ -2125,9 +2125,11 @@ class ReasoningLobe:
                     if meaning:
                         concepts.append(word_clean)
             
-            # Skip Notus query - use concepts from input_data if available
-            if not concepts and input_data.get('concepts'):
-                concepts = input_data['concepts'][:10]
+            # Skip Notus query - use concepts from the understanding passed in, if any.
+            # (Was input_data, which is not in scope here: this always raised NameError.)
+            understood_concepts = (understanding or {}).get('concepts') if isinstance(understanding, dict) else None
+            if not concepts and isinstance(understood_concepts, list) and understood_concepts:
+                concepts = understood_concepts[:10]
             
             # Last resort: use basic word extraction without pattern matching
             if not concepts:

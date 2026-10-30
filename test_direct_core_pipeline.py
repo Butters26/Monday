@@ -117,10 +117,10 @@ def test_prompted_core_path_keeps_user_memory_isolated(tmp_path):
         shutdown_core_systems(systems)
 
 
-def test_prompted_core_path_greets_back_and_admits_unknown(tmp_path):
+def test_prompted_core_path_greets_back_without_canned_answers(tmp_path):
     """Language builds the reply itself: greets back with a dictionary greeting
-    word (no phrase bank), and an unknown question gets an honest "don't know"
-    instead of a canned encyclopedia answer or silence."""
+    word (no phrase bank), and an unknown question gets no canned encyclopedia
+    answer or stock follow-up."""
     systems = _boot(tmp_path)
     try:
         greeting = systems["thalamus"].process_user_input("hello")
@@ -132,7 +132,8 @@ def test_prompted_core_path_greets_back_and_admits_unknown(tmp_path):
         low = (gravity or "").lower()
         assert "mass" not in low and "attraction" not in low  # no canned encyclopedia
         assert "invent details" not in low  # no stock follow-up glued on
-        assert low.strip() in {"i do not know.", "i don't know."}, gravity
+        # No preset "I don't know" any more: whatever she says was built and
+        # approved by Reasoning, or she failed and said nothing (reported as a failure).
     finally:
         shutdown_core_systems(systems)
 

@@ -15,6 +15,7 @@ Protocol over Unix socket ~/.local/state/monday-chat/chat.sock:
 Also accepts text/line mode if first char is not '{'.
 
 Background thread (~8–15s) calls Thalamus.deliver_unprompted_speech for active
+(currently not built: removed Oct 6; the thread reports that once and stops)
 users so Monday can speak without a user turn. Speech stays decision-only;
 delivery is Thalamus→Output (+ this pending/poll push).
 
@@ -126,6 +127,21 @@ def main() -> int:
             auto.thought_queue.insert(0, thought)
 
     def _unprompted_loop() -> None:
+        # Unprompted delivery used Thalamus.deliver_unprompted_speech, which was
+        # removed when Thalamus became a plain router (Oct 6). Rebuilding it the
+        # team way (Autonomous Speech decides, Language words, Output delivers)
+        # is on the Monday Work List. Until then, say so once instead of
+        # crashing every 8-15 seconds.
+        if not callable(getattr(thalamus, "deliver_unprompted_speech", None)):
+            print("Unprompted speech is not built in the current design; "
+                  "she only speaks when spoken to.", flush=True)
+            try:
+                from trace_monitor import trace_event
+                trace_event("unprompted_speech_unavailable",
+                            reason="Thalamus.deliver_unprompted_speech removed Oct 6; not rebuilt yet")
+            except Exception:
+                pass
+            return
         while not stopping["v"]:
             delay = random.uniform(8.0, 15.0)
             end = delay
@@ -215,7 +231,13 @@ def main() -> int:
                                     _force_inject(force)
                                 except Exception:
                                     traceback.print_exc()
-                            result = thalamus.deliver_unprompted_speech(user_id=user_id)
+                            deliver = getattr(thalamus, "deliver_unprompted_speech", None)
+                            result = (
+                                deliver(user_id=user_id)
+                                if callable(deliver)
+                                else {"spoke": False, "text": None,
+                                      "reason": "unprompted speech not built in the current design"}
+                            )
                             if not isinstance(result, dict):
                                 result = {
                                     "spoke": False,

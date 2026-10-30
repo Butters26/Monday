@@ -773,6 +773,9 @@ class DirectReasoningAdapter:
         if situation == "greeting":
             if not self._has_greeting(reply):
                 return no("he greeted her and the reply does not greet him back")
+            first = next((t for t in reply.get("tokens") or [] if t.get("kind") != "punctuation"), {})
+            if not any(sense.get("synset_id") == self._GREETING_SENSE for sense in first.get("senses") or []):
+                return no("the greeting word is used as a thing in the sentence, not to greet him")
         elif situation == "question":
             if reply_is_question:
                 return no("he asked a question and the reply asks another question instead of answering")

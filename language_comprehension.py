@@ -667,6 +667,13 @@ class LanguageComprehensionEngine:
             # weather also has a verb sense — penalize uninflected nouny
             # forms only. Inflected "looks" keeps its score.
             score -= 3
+        # Right after a modal ("might give", "might not give", "will not send"),
+        # the base form is the verb slot, even when the word also reads as a noun.
+        back = idx - 1
+        while back >= 0 and tokens[back].lower() in _NEGATION:
+            back -= 1
+        if back >= 0 and tokens[back].lower() in _MODALS and "v" in pos_set:
+            score += 6
         return score
 
     def _find_main_verb(
@@ -1318,7 +1325,9 @@ class LanguageComprehensionEngine:
         if verb_idx is not None and predicate:
             pred_token_kind = lexical[verb_idx]["kind"] if verb_idx < len(lexical) else None
             pos_at_pred = self._pos_set(tokens[verb_idx])
-            copular = self._has_be_auxiliary_before(tokens, verb_idx)
+            # A passive ("was chased by") uses be as its auxiliary; the main verb is
+            # the participle, so the clause is not copular.
+            copular = (not passive) and self._has_be_auxiliary_before(tokens, verb_idx)
             pred_kind = (
                 self._predicative_complement_kind(tokens[verb_idx]) if copular else None
             )
