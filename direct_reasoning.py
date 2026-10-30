@@ -742,6 +742,14 @@ class DirectReasoningAdapter:
         def no(reason: str) -> Dict[str, Any]:
             return {"ok": False, "reason": reason}
 
+        if payload.get("chosen_silence"):
+            if situation == "greeting":
+                return no("he greeted her and she stayed quiet")
+            if situation == "question":
+                return no("he asked her something and she stayed quiet")
+            if situation == "emotional_share":
+                return no("he shared how he feels and she stayed quiet")
+            return {"ok": True, "reason": "staying quiet fits here"}
         if not sentence:
             return no("nothing was said")
         problems = [str(p) for p in payload.get("problems") or []]

@@ -1200,106 +1200,150 @@ class LanguageGenerator:
         meaning["_fact"] = record
         return meaning
 
-    def _plan_reply(self, semantic_input: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]], str]:
-        """Decide what Monday means to say. Returns (situation, candidate meanings, quiet reason)."""
+    # Grammar forms she can speak in (sentence shapes, not reply types).
+    _FORMS = ("state", "ask", "greet", "quiet")
+    _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling")
+
+    def _pieces(self, semantic_input: Dict[str, Any], user_id: str, user_input: str) -> Dict[str, List[Any]]:
+        """What she has in front of her this turn. Nothing here decides what to say."""
+        understanding = semantic_input.get("language_understanding") or {}
+        pieces: Dict[str, List[Any]] = {k: [] for k in self._PIECE_KINDS}
+        for token in understanding.get("tokens") or []:
+            kind = token.get("kind")
+            lemma = str(token.get("lemma") or "").strip()
+            surface = str(token.get("surface") or "").strip()
+            if not lemma or lemma.casefold() in {"be", "do", "have"}:
+                continue
+            if kind == "proper_noun":
+                pieces["heard_noun"].append({"name": surface[:1].upper() + surface[1:]})
+            elif kind == "noun":
+                pieces["heard_noun"].append({"noun": lemma.casefold(), "count": "one"})
+            elif kind == "verb":
+                pieces["heard_verb"].append(lemma.casefold())
+            elif kind == "adjective":
+                pieces["heard_adjective"].append(lemma.casefold())
+        for fact in self._user_facts(user_input, user_id)[:5]:
+            meaning = self._fact_meaning(fact)
+            if meaning:
+                pieces["memory"].append(meaning)
+        feeling = str(semantic_input.get("emotion") or "").strip().lower()
+        if feeling and feeling not in {"neutral", "unknown"}:
+            pieces["feeling"].append(feeling)
+        return pieces
+
+    @staticmethod
+    def _context_key(semantic_input: Dict[str, Any], pieces: Dict[str, List[Any]]) -> str:
+        """The circumstances her choices are learned under (what she perceives, not a rule)."""
+        understanding = semantic_input.get("language_understanding") or {}
+        social = semantic_input.get("social_context") or {}
+        cue = social.get("last_cue") if social.get("is_social_turn") else "none"
+        act = understanding.get("speech_act") or "unknown"
+        mem = "memory" if pieces.get("memory") else "no_memory"
+        return f"{act}.{cue or 'none'}.{mem}"
+
+    def _compose(self, builder: Any, plan: Any, ctx: str, pieces: Dict[str, List[Any]],
+                 user_id: str) -> Optional[Dict[str, Any]]:
+        """Put pieces together into a meaning. Every choice is learned; none is preset."""
+        rng = builder.rng
+        you = {"ref": "addressee"}
+        me = {"ref": "speaker"}
+        form = builder._choose(plan, f"plan_form@{ctx}", list(self._FORMS))
+        if form == "quiet":
+            return {"_quiet": True}
+        if form == "greet":
+            options = [you] + [p for p in pieces["heard_noun"] if p.get("name")]
+            names = [f for f in self._user_facts("name", user_id) if f.get("predicate") == "name"]
+            if names:
+                options.append({"name": names[0]["object"]})
+            target = builder._choose(plan, f"plan_greet_who@{ctx}", ["you", "a_name"])
+            named = [o for o in options if o.get("name")]
+            return {"act": "greet", "addressee": rng.choice(named) if target == "a_name" and named else you}
+        available = [k for k in self._PIECE_KINDS if pieces[k]]
+        if not available:
+            return None
+        kind = builder._choose(plan, f"plan_piece@{ctx}", available)
+        if kind == "memory":
+            meaning = dict(rng.choice(pieces["memory"]))
+        else:
+            subjects = {"me": me, "you": you}
+            if pieces["heard_noun"]:
+                subjects["heard"] = rng.choice(pieces["heard_noun"])
+            who = builder._choose(plan, f"plan_subject@{ctx}.{kind}", list(subjects))
+            subject = subjects[who]
+            if kind == "heard_verb":
+                meaning = {"subject": subject, "verb": rng.choice(pieces["heard_verb"])}
+                if pieces["heard_noun"] and builder._choose(plan, f"plan_object@{ctx}", ["object", "none"]) == "object":
+                    meaning["object"] = rng.choice(pieces["heard_noun"])
+            elif kind == "heard_adjective":
+                meaning = {"subject": subject, "verb": "be",
+                           "complement": {"adjectives": [rng.choice(pieces["heard_adjective"])]}}
+            elif kind == "feeling":
+                meaning = {"subject": subject, "verb": "be", "complement": {"adjectives": [pieces["feeling"][0]]}}
+            else:  # heard_noun
+                noun = rng.choice(pieces["heard_noun"])
+                meaning = {"subject": subject, "verb": "be",
+                           "complement": {"entity": noun} if noun.get("name")
+                           else {"noun": noun["noun"], "definite": False}}
+        meaning["act"] = "ask" if form == "ask" else "state"
+        return meaning
+
+    def respond(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
+        """Compose from the pieces, build, have Reasoning review, learn, redo. Always reports why."""
+        from language_builder import Built
+
         understanding = semantic_input.get("language_understanding") or {}
         user_id = str(understanding.get("user_id") or semantic_input.get("user_id") or "default")
         user_input = str(semantic_input.get("user_input") or understanding.get("raw_text") or "")
         situation = self._situation(semantic_input)
-        speaker = {"ref": "speaker"}
-        you = {"ref": "addressee"}
-
-        if situation == "greeting":
-            names = [f for f in self._user_facts("what is my name", user_id) if f.get("predicate") == "name"]
-            addressee = {"name": names[0]["object"]} if names else you
-            return situation, [{"act": "greet", "addressee": addressee, "_purpose": "greet_back"}], ""
-
-        if situation == "question":
-            candidates = []
-            asks_about_her = any(
-                str(t.get("lemma", "")).casefold() == "you" for t in understanding.get("tokens") or []
-            ) and not any(
-                str(t.get("lemma", "")).casefold() in {"i", "my", "me"} for t in understanding.get("tokens") or []
-            )
-            if not asks_about_her:
-                for fact in self._user_facts(user_input, user_id)[:3]:
-                    meaning = self._fact_meaning(fact)
-                    if meaning:
-                        meaning["_purpose"] = "answer_from_memory"
-                        candidates.append(meaning)
-            candidates.append({"subject": speaker, "verb": "know", "negated": True,
-                               "_purpose": "admit_unknown"})
-            return situation, candidates, ""
-
-        if situation == "emotional_share":
-            feeling = [e.get("surface") for e in (understanding.get("affect") or {}).get("evidence") or []
-                       if e.get("surface")]
-            if feeling:
-                return situation, [{"act": "ask", "ask_about": "reason", "subject": you, "verb": "be",
-                                    "complement": {"adjectives": [feeling[0]]},
-                                    "_purpose": "ask_why", "_feeling_words": feeling}], ""
-            return situation, [], "a feeling was shared but no feeling word was understood"
-
-        lowered = user_input.casefold()
-        learned = [f for f in self._user_facts(user_input, user_id)
-                   if str(f.get("object", "")).casefold() and str(f.get("object", "")).casefold() in lowered]
-        if learned:
-            meaning = self._fact_meaning(learned[0])
-            if meaning:
-                meaning["_purpose"] = "confirm_learned"
-                return situation, [meaning], ""
-        return situation, [], "nothing to add to that statement"
-
-    def respond(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Plan, build, have Reasoning review, redo on rejection. Always reports why."""
-        understanding = semantic_input.get("language_understanding") or {}
-        user_id = str(understanding.get("user_id") or semantic_input.get("user_id") or "default")
-        user_input = str(semantic_input.get("user_input") or understanding.get("raw_text") or "")
-        situation, candidates, quiet_reason = self._plan_reply(semantic_input)
-        if not candidates:
-            self._trace("reply_done", silence="chosen", situation=situation, reason=quiet_reason)
-            return {"sentence": "", "silence": "chosen", "reason": quiet_reason, "situation": situation}
+        pieces = self._pieces(semantic_input, user_id, user_input)
+        ctx = self._context_key(semantic_input, pieces)
+        feeling_words = [e.get("surface") for e in (understanding.get("affect") or {}).get("evidence") or []
+                         if e.get("surface")]
 
         builder = self._builder("monday")
         base_explore = builder.explore_rate
-        attempts = 0
         last_reason = ""
         try:
-            for meaning in candidates:
-                tries_for_this = 0
-                while attempts < self.MAX_REPLY_ATTEMPTS and tries_for_this < 3:
-                    attempts += 1
-                    tries_for_this += 1
-                    builder.explore_rate = min(1.0, base_explore + 0.3 * (tries_for_this - 1))
+            for attempt in range(1, self.MAX_REPLY_ATTEMPTS + 1):
+                builder.explore_rate = min(1.0, base_explore + 0.15 * (attempt - 1))
+                plan = Built("", learner=builder.learner)
+                meaning = self._compose(builder, plan, ctx, pieces, user_id)
+                if meaning is None:
+                    last_reason = "she had nothing to put together"
+                    continue
+                if meaning.get("_quiet"):
+                    built = Built("", learner=builder.learner)
+                else:
+                    meaning["_feeling_words"] = feeling_words
                     built = builder.build(meaning)
-                    review = self._ask("reasoning", "review_reply", {
-                        "sentence": built.sentence, "problems": built.problems, "situation": situation,
-                        "meaning": meaning, "user_input": user_input, "user_id": user_id,
-                    })
-                    if not review:
-                        last_reason = "reasoning did not review the reply"
-                        self._trace("reply_attempt", ok=False, sentence=built.sentence, reason=last_reason,
-                                    purpose=meaning.get("_purpose"), attempt=attempts)
-                        self._trace("reply_done", silence="failed", situation=situation, reason=last_reason)
-                        return {"sentence": "", "silence": "failed", "reason": last_reason, "situation": situation}
-                    ok = bool(review.get("ok"))
-                    last_reason = str(review.get("reason") or "")
-                    builder.feedback(built, ok, last_reason)
-                    self._trace("reply_attempt", ok=ok, sentence=built.sentence, reason=last_reason,
-                                purpose=meaning.get("_purpose"), attempt=attempts)
-                    if ok:
-                        self._trace("reply_done", silence=None, situation=situation,
-                                    attempts=attempts, sentence=built.sentence)
-                        return {"sentence": built.sentence, "silence": None, "reason": last_reason,
-                                "situation": situation, "attempts": attempts}
-                    if last_reason.startswith(("the reply does not answer", "the reply states something",
-                                               "the reply leaves out", "he asked a question")):
-                        break  # the meaning itself is wrong; rewording will not fix it
+                built.choices = plan.choices + built.choices
+                review = self._ask("reasoning", "review_reply", {
+                    "sentence": built.sentence, "problems": built.problems, "situation": situation,
+                    "meaning": meaning, "user_input": user_input, "user_id": user_id,
+                    "chosen_silence": bool(meaning.get("_quiet")),
+                })
+                if not review:
+                    last_reason = "reasoning did not review the reply"
+                    self._trace("reply_done", silence="failed", situation=situation, reason=last_reason)
+                    return {"sentence": "", "silence": "failed", "reason": last_reason, "situation": situation}
+                ok = bool(review.get("ok"))
+                last_reason = str(review.get("reason") or "")
+                builder.feedback(built, ok, last_reason)
+                self._trace("reply_attempt", ok=ok, sentence=built.sentence or "(stays quiet)",
+                            reason=last_reason, context=ctx, attempt=attempt,
+                            plan=[f"{p}={o}" for p, o, _ in plan.choices])
+                if ok:
+                    silence = "chosen" if meaning.get("_quiet") else None
+                    self._trace("reply_done", silence=silence, situation=situation, attempts=attempt,
+                                sentence=built.sentence, reason=last_reason)
+                    return {"sentence": built.sentence, "silence": silence, "reason": last_reason,
+                            "situation": situation, "attempts": attempt}
         finally:
             builder.explore_rate = base_explore
-        self._trace("reply_done", silence="failed", situation=situation, reason=last_reason, attempts=attempts)
+        self._trace("reply_done", silence="failed", situation=situation, reason=last_reason,
+                    attempts=self.MAX_REPLY_ATTEMPTS)
         return {"sentence": "", "silence": "failed", "reason": last_reason, "situation": situation,
-                "attempts": attempts}
+                "attempts": self.MAX_REPLY_ATTEMPTS}
 
     def _legacy_generate(self, semantic_input: Dict[str, Any]) -> str:
         """Previous reply path (templates + pass-through). Kept for reference; not used."""
