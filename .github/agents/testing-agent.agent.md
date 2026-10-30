@@ -10,6 +10,7 @@ description: |
   This agent tells you when your testing plans/workflows are fundamentally broken BEFORE you waste time.
 
 non_negotiable_invariants:  |
+  - MATTHEW'S RULE OVERRIDES EVERYTHING BELOW: checking Monday works means booting her up, using her, and reading the live trace (see CLAUDE.md / AGENTS.md / .github/copilot-instructions.md). Passing tests never prove she works. No PASS/FAIL scoring gates.
   - Every lobe must have unit tests for process_message()
   - Every Thalamus route must have integration tests
   - Tests must actually test behavior, not just imports
