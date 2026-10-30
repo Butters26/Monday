@@ -117,31 +117,22 @@ def test_prompted_core_path_keeps_user_memory_isolated(tmp_path):
         shutdown_core_systems(systems)
 
 
-def test_prompted_core_path_renders_greeting_and_ungrounded_fail_closed(tmp_path):
-    """Social greeting banks ripped (Step 4); ungrounded asks fail closed to silence."""
+def test_prompted_core_path_greets_back_and_admits_unknown(tmp_path):
+    """Language builds the reply itself: greets back with a dictionary greeting
+    word (no phrase bank), and an unknown question gets an honest "don't know"
+    instead of a canned encyclopedia answer or silence."""
     systems = _boot(tmp_path)
     try:
         greeting = systems["thalamus"].process_user_input("hello")
         gravity = systems["thalamus"].process_user_input("What is gravity?")
-        # Greeting/check-in/goodbye banks are gone — social cue alone → silence.
         g_low = (greeting or "").lower()
-        assert not g_low.strip(), f"greeting bank theater still speaking: {greeting!r}"
-        for needle in (
-            "hello", "hi there", "nice to meet", "how are you",
-            "still here", "take care", "see you later",
-        ):
+        assert g_low.split(",")[0].strip("!") in {"hello", "hullo", "hi", "howdy", "how-do-you-do"}, greeting
+        for needle in ("hi there", "nice to meet", "how are you", "take care"):
             assert needle not in g_low
         low = (gravity or "").lower()
-        # Provider canned encyclopedias ripped; Language Mad Libs quarantined.
-        # Ungrounded → silence (no stock "enough to go on" / filler question).
-        assert "mass" not in low
-        assert "attraction" not in low
-        assert "enough to go on" not in low
-        assert "enough grounded" not in low
-        assert "what should i know" not in low
-        assert "i'm thinking about that" not in low
-        assert "take care" not in low  # goodbye bank must not leak across turns
-        assert not low.strip()
+        assert "mass" not in low and "attraction" not in low  # no canned encyclopedia
+        assert "invent details" not in low  # no stock follow-up glued on
+        assert low.strip() in {"i do not know.", "i don't know."}, gravity
     finally:
         shutdown_core_systems(systems)
 
@@ -197,26 +188,29 @@ def test_prompted_core_recalls_stable_fact_after_restart(tmp_path):
         shutdown_core_systems(reopened)
 
 
-def test_reasoning_answer_reaches_output_without_provider_replacement(tmp_path):
-    class InjectedReasoning:
+def test_reasoning_reviews_language_reply_before_output(tmp_path):
+    """Language builds the reply; Reasoning reviews it. A rejected reply is not
+    delivered, and the reply that reaches Output is the one Reasoning approved."""
+    reviews = []
+
+    class ReviewingReasoning:
         def process_message(self, message):
-            return {
-                "status": "success",
-                "content": {
-                    "answer": "UNMISTAKABLE_REASONING_RESULT",
-                    "conclusion": "A lower-priority conclusion",
-                    "propositions": ["A lower-priority proposition"],
-                },
-            }
+            if message.get("type") == "review_reply":
+                content = message.get("content") or {}
+                reviews.append(content.get("sentence"))
+                return {"status": "success", "content": {"ok": True, "reason": "makes sense"}}
+            return {"status": "success", "content": {"answer": "IGNORED_PASS_THROUGH"}}
 
         def shutdown(self):
             pass
 
     systems = _boot(tmp_path)
-    systems["thalamus"].register_lobe("reasoning", InjectedReasoning())
+    systems["thalamus"].register_lobe("reasoning", ReviewingReasoning())
     try:
         response = systems["thalamus"].process_user_input("What is photosynthesis?")
-        assert response == "UNMISTAKABLE_REASONING_RESULT"
+        assert reviews, "reasoning never reviewed the reply"
+        assert response == reviews[-1]
+        assert "IGNORED_PASS_THROUGH" not in response
         assert systems["output"].last_output == response
     finally:
         shutdown_core_systems(systems)

@@ -660,6 +660,137 @@ class DirectReasoningAdapter:
         return f"The pattern is {joined}, so the next item is {nxt}."
 
 
+    # ------------------------------------------------------------------
+    # Reply review: Language builds a reply; Reasoning judges whether it makes
+    # sense (understandable, fits the situation, matches what memory holds)
+    # and says exactly why when it doesn't, so Language can redo it.
+    # ------------------------------------------------------------------
+
+    _GREETING_SENSE = "oewn-06645018-n"  # dictionary sense: "an expression of greeting"
+    _CONTENT_KINDS = {"noun", "proper_noun", "verb", "adjective", "adverb"}
+    _NOT_CONTENT = {"be", "do", "have", "can", "will", "would", "could", "should", "may",
+                    "might", "must", "shall", "not"}
+
+    def _analyze(self, text: str) -> Dict[str, Any]:
+        """Ask Language to read a sentence (Language owns understanding words)."""
+        if self.thalamus is None:
+            return {}
+        response = self.thalamus.send_message("language", "analyze", {"text": text}, source="reasoning")
+        if not isinstance(response, dict) or response.get("status") != "success":
+            return {}
+        return self._response_content(response).get("understanding") or {}
+
+    @classmethod
+    def _content_lemmas(cls, analysis: Dict[str, Any]) -> set:
+        out = set()
+        for token in analysis.get("tokens") or []:
+            lemma = str(token.get("lemma") or "").casefold()
+            kind = token.get("kind")
+            if lemma.endswith("'s"):
+                lemma = lemma[:-2]  # "dog's" is about the dog (read as unknown by comprehension)
+                if kind == "unknown":
+                    kind = "noun"
+            if kind in cls._CONTENT_KINDS and lemma and lemma not in cls._NOT_CONTENT:
+                out.add(lemma)
+        return out
+
+    @classmethod
+    def _has_greeting(cls, analysis: Dict[str, Any]) -> bool:
+        for token in analysis.get("tokens") or []:
+            for sense in token.get("senses") or []:
+                if sense.get("synset_id") == cls._GREETING_SENSE:
+                    return True
+        return False
+
+    @staticmethod
+    def _names_in(meaning: Any, out: Optional[set] = None) -> set:
+        out = set() if out is None else out
+        if isinstance(meaning, dict):
+            for key, value in meaning.items():
+                if key == "name" and isinstance(value, str):
+                    out.update(w.casefold() for w in re.findall(r"[A-Za-z]+", value))
+                else:
+                    DirectReasoningAdapter._names_in(value, out)
+        elif isinstance(meaning, list):
+            for item in meaning:
+                DirectReasoningAdapter._names_in(item, out)
+        return out
+
+    def _fact_in_memory(self, fact: Dict[str, Any], user_id: str) -> bool:
+        if self.thalamus is None:
+            return False
+        response = self.thalamus.send_message(
+            "notus", "query_facts",
+            {"query": f"{fact.get('predicate', '')} {fact.get('object', '')}", "user_id": user_id, "limit": 20},
+            source="reasoning",
+        )
+        facts = self._response_content(response).get("facts") if isinstance(response, dict) else None
+        for row in facts or []:
+            if (str(row.get("predicate")).casefold() == str(fact.get("predicate")).casefold()
+                    and str(row.get("object")).casefold() == str(fact.get("object")).casefold()):
+                return True
+        return False
+
+    def review_reply(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Does this reply make sense? Returns {"ok": bool, "reason": str}."""
+        sentence = str(payload.get("sentence") or "").strip()
+        situation = str(payload.get("situation") or "statement")
+        meaning = payload.get("meaning") if isinstance(payload.get("meaning"), dict) else {}
+        user_input = str(payload.get("user_input") or "")
+        user_id = str(payload.get("user_id") or "default")
+
+        def no(reason: str) -> Dict[str, Any]:
+            return {"ok": False, "reason": reason}
+
+        if not sentence:
+            return no("nothing was said")
+        problems = [str(p) for p in payload.get("problems") or []]
+        if problems:
+            return no("the sentence is incomplete: " + "; ".join(problems))
+        words = re.findall(r"[A-Za-z']+", sentence.casefold())
+        for first, second in zip(words, words[1:]):
+            if first == second:
+                return no(f"gibberish: the word '{first}' is repeated")
+
+        reply = self._analyze(sentence)
+        if not reply:
+            return no("could not read the reply to check it")
+        names = self._names_in(meaning)
+        unknown = [w for w in reply.get("unknown_words") or [] if w.casefold() not in names]
+        if unknown:
+            return no("gibberish: unknown word(s) " + ", ".join(unknown))
+
+        reply_is_question = sentence.endswith("?") or reply.get("speech_act") == "question"
+        purpose = str(meaning.get("_purpose") or "")
+        if situation == "greeting":
+            if not self._has_greeting(reply):
+                return no("he greeted her and the reply does not greet him back")
+        elif situation == "question":
+            if reply_is_question:
+                return no("he asked a question and the reply asks another question instead of answering")
+            if purpose != "admit_unknown":
+                asked = self._content_lemmas(self._analyze(user_input))
+                said = self._content_lemmas(reply)
+                if asked and not (asked & said):
+                    return no("the reply does not answer what he asked about ("
+                              + ", ".join(sorted(asked)) + ")")
+        elif situation == "emotional_share":
+            said_by_him = self._analyze(user_input)
+            if not any(str(t.get("lemma") or "").casefold() in {"i", "me", "myself"}
+                       for t in said_by_him.get("tokens") or []):
+                return no("he did not say he feels that; the feeling is about something else")
+            felt = {str(w).casefold() for w in meaning.get("_feeling_words") or []}
+            if felt and not (felt & {w.casefold() for w in words}):
+                return no("he shared a feeling and the reply does not respond to it")
+
+        fact = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
+        if fact:
+            if not self._fact_in_memory(fact, user_id):
+                return no("the reply states something memory does not hold")
+            if str(fact.get("object", "")).casefold() not in sentence.casefold():
+                return no(f"the reply leaves out the fact ({fact.get('object')})")
+        return {"ok": True, "reason": "makes sense"}
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         if message.get("type") == "health":
             return {"status": "success", "content": {"healthy": self.running}}
@@ -671,6 +802,10 @@ class DirectReasoningAdapter:
                 "status": "success",
                 "content": {"acknowledged": True, "focus": payload.get("focus")},
             }
+        if message.get("type") == "review_reply":
+            payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
+            verdict = self.review_reply(payload)
+            return {"status": "success", "content": verdict}
         if message.get("type") != "think":
             return {"status": "error", "message": "Unknown message type", "content": {}}
 

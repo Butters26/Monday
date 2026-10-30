@@ -1101,8 +1101,209 @@ class LanguageGenerator:
         
         return adjusted_input
     
+    # ------------------------------------------------------------------
+    # Reply: Language decides what Monday means and builds the sentence;
+    # Reasoning reviews it and says why when it doesn't make sense; Language
+    # redoes it. Silence is only ever her choice, and is reported as such.
+    # ------------------------------------------------------------------
+
+    MAX_REPLY_ATTEMPTS = 7
+    GREETING_SENSE = "oewn-06645018-n"  # dictionary sense: "an expression of greeting"
+
     def generate(self, semantic_input: Dict[str, Any]) -> str:
-        """Generate sentence from semantic input with emotional awareness"""
+        """Build Monday's reply for this turn."""
+        result = self.respond(semantic_input if isinstance(semantic_input, dict) else {})
+        return result["sentence"]
+
+    def _ask(self, lobe: str, msg_type: str, content: Dict[str, Any]) -> Dict[str, Any]:
+        if self.thalamus is None:
+            return {}
+        response = self.thalamus.send_message(lobe, msg_type, content, source="language")
+        if not isinstance(response, dict) or response.get("status") != "success":
+            return {}
+        body = response.get("content")
+        return body if isinstance(body, dict) else {}
+
+    @staticmethod
+    def _trace(kind: str, **data: Any) -> None:
+        try:
+            from trace_monitor import trace_event
+            trace_event(kind, **data)
+        except Exception:
+            pass
+
+    def _situation(self, semantic_input: Dict[str, Any]) -> str:
+        understanding = semantic_input.get("language_understanding") or {}
+        social = semantic_input.get("social_context") or {}
+        social_now = social.get("last_cue") if social.get("is_social_turn") else None
+        greeted = social_now == "greeting" or any(
+            sense.get("synset_id") == self.GREETING_SENSE
+            for token in understanding.get("tokens") or []
+            for sense in token.get("senses") or []
+        )
+        if greeted:
+            return "greeting"
+        if understanding.get("speech_act") == "question" or str(semantic_input.get("user_input", "")).strip().endswith("?"):
+            return "question"
+        # He is the one feeling it ("I", "me"); "my" is about something of his ("my favorite color").
+        about_self = any(
+            str(t.get("lemma") or t.get("surface") or "").casefold() in {"i", "me", "myself"}
+            for t in understanding.get("tokens") or []
+        )
+        # A feeling counts as shared only when Language reads it as about him (I / me),
+        # even if Social Context flags an emotional share.
+        if about_self and (social_now == "emotional_share" or (understanding.get("affect") or {}).get("present")):
+            return "emotional_share"
+        return "statement"
+
+    def _user_facts(self, query: str, user_id: str) -> List[Dict[str, Any]]:
+        body = self._ask("notus", "query_facts", {"query": query, "user_id": user_id, "limit": 10})
+        return [f for f in body.get("facts") or [] if isinstance(f, dict)]
+
+    @staticmethod
+    def _owner_for(subject: str) -> Dict[str, Any]:
+        sub = (subject or "").strip()
+        if sub.casefold() in {"user", "i", "me", ""}:
+            return {"ref": "addressee"}
+        return {"name": sub}
+
+    def _fact_meaning(self, fact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Turn a stored fact (subject / predicate / object) into a meaning to say."""
+        pred = str(fact.get("predicate") or "").strip()
+        obj = str(fact.get("object") or "").strip()
+        if not pred or not obj:
+            return None
+        owner = self._owner_for(str(fact.get("subject") or ""))
+        record = {"subject": fact.get("subject"), "predicate": pred, "object": obj}
+        value = {"name": obj} if obj[:1].isupper() else None
+        complement = {"entity": value} if value else {"phrase": obj}
+        if pred == "name":
+            meaning = {"subject": {"noun": "name", "owner": owner}, "verb": "be", "complement": complement}
+        elif pred.endswith("_name"):
+            thing = pred[:-5].replace("_", " ").strip() or "thing"
+            meaning = {"subject": {"noun": "name", "owner": {"noun": thing, "owner": owner}},
+                       "verb": "be", "complement": complement}
+        elif pred.startswith(("favorite_", "favourite_")):
+            thing = pred.split("_", 1)[1].replace("_", " ")
+            meaning = {"subject": {"noun": thing, "adjectives": ["favorite"], "owner": owner},
+                       "verb": "be", "complement": complement}
+        elif pred == "lives_in":
+            meaning = {"subject": owner, "verb": "live",
+                       "modifiers": [{"prep": "in", "object": value or {"noun": obj, "count": "mass"}}]}
+        elif pred.startswith("work_"):
+            prep = pred[5:] or "as"
+            target = value or ({"noun": obj, "count": "one"} if prep == "as" else {"noun": obj, "count": "mass"})
+            meaning = {"subject": owner, "verb": "work", "modifiers": [{"prep": prep, "object": target}]}
+        else:
+            meaning = {"subject": {"noun": pred.replace("_", " "), "owner": owner},
+                       "verb": "be", "complement": complement}
+        meaning["_fact"] = record
+        return meaning
+
+    def _plan_reply(self, semantic_input: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]], str]:
+        """Decide what Monday means to say. Returns (situation, candidate meanings, quiet reason)."""
+        understanding = semantic_input.get("language_understanding") or {}
+        user_id = str(understanding.get("user_id") or semantic_input.get("user_id") or "default")
+        user_input = str(semantic_input.get("user_input") or understanding.get("raw_text") or "")
+        situation = self._situation(semantic_input)
+        speaker = {"ref": "speaker"}
+        you = {"ref": "addressee"}
+
+        if situation == "greeting":
+            names = [f for f in self._user_facts("what is my name", user_id) if f.get("predicate") == "name"]
+            addressee = {"name": names[0]["object"]} if names else you
+            return situation, [{"act": "greet", "addressee": addressee, "_purpose": "greet_back"}], ""
+
+        if situation == "question":
+            candidates = []
+            asks_about_her = any(
+                str(t.get("lemma", "")).casefold() == "you" for t in understanding.get("tokens") or []
+            ) and not any(
+                str(t.get("lemma", "")).casefold() in {"i", "my", "me"} for t in understanding.get("tokens") or []
+            )
+            if not asks_about_her:
+                for fact in self._user_facts(user_input, user_id)[:3]:
+                    meaning = self._fact_meaning(fact)
+                    if meaning:
+                        meaning["_purpose"] = "answer_from_memory"
+                        candidates.append(meaning)
+            candidates.append({"subject": speaker, "verb": "know", "negated": True,
+                               "_purpose": "admit_unknown"})
+            return situation, candidates, ""
+
+        if situation == "emotional_share":
+            feeling = [e.get("surface") for e in (understanding.get("affect") or {}).get("evidence") or []
+                       if e.get("surface")]
+            if feeling:
+                return situation, [{"act": "ask", "ask_about": "reason", "subject": you, "verb": "be",
+                                    "complement": {"adjectives": [feeling[0]]},
+                                    "_purpose": "ask_why", "_feeling_words": feeling}], ""
+            return situation, [], "a feeling was shared but no feeling word was understood"
+
+        lowered = user_input.casefold()
+        learned = [f for f in self._user_facts(user_input, user_id)
+                   if str(f.get("object", "")).casefold() and str(f.get("object", "")).casefold() in lowered]
+        if learned:
+            meaning = self._fact_meaning(learned[0])
+            if meaning:
+                meaning["_purpose"] = "confirm_learned"
+                return situation, [meaning], ""
+        return situation, [], "nothing to add to that statement"
+
+    def respond(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
+        """Plan, build, have Reasoning review, redo on rejection. Always reports why."""
+        understanding = semantic_input.get("language_understanding") or {}
+        user_id = str(understanding.get("user_id") or semantic_input.get("user_id") or "default")
+        user_input = str(semantic_input.get("user_input") or understanding.get("raw_text") or "")
+        situation, candidates, quiet_reason = self._plan_reply(semantic_input)
+        if not candidates:
+            self._trace("reply_done", silence="chosen", situation=situation, reason=quiet_reason)
+            return {"sentence": "", "silence": "chosen", "reason": quiet_reason, "situation": situation}
+
+        builder = self._builder("monday")
+        base_explore = builder.explore_rate
+        attempts = 0
+        last_reason = ""
+        try:
+            for meaning in candidates:
+                tries_for_this = 0
+                while attempts < self.MAX_REPLY_ATTEMPTS and tries_for_this < 3:
+                    attempts += 1
+                    tries_for_this += 1
+                    builder.explore_rate = min(1.0, base_explore + 0.3 * (tries_for_this - 1))
+                    built = builder.build(meaning)
+                    review = self._ask("reasoning", "review_reply", {
+                        "sentence": built.sentence, "problems": built.problems, "situation": situation,
+                        "meaning": meaning, "user_input": user_input, "user_id": user_id,
+                    })
+                    if not review:
+                        last_reason = "reasoning did not review the reply"
+                        self._trace("reply_attempt", ok=False, sentence=built.sentence, reason=last_reason,
+                                    purpose=meaning.get("_purpose"), attempt=attempts)
+                        self._trace("reply_done", silence="failed", situation=situation, reason=last_reason)
+                        return {"sentence": "", "silence": "failed", "reason": last_reason, "situation": situation}
+                    ok = bool(review.get("ok"))
+                    last_reason = str(review.get("reason") or "")
+                    builder.feedback(built, ok, last_reason)
+                    self._trace("reply_attempt", ok=ok, sentence=built.sentence, reason=last_reason,
+                                purpose=meaning.get("_purpose"), attempt=attempts)
+                    if ok:
+                        self._trace("reply_done", silence=None, situation=situation,
+                                    attempts=attempts, sentence=built.sentence)
+                        return {"sentence": built.sentence, "silence": None, "reason": last_reason,
+                                "situation": situation, "attempts": attempts}
+                    if last_reason.startswith(("the reply does not answer", "the reply states something",
+                                               "the reply leaves out", "he asked a question")):
+                        break  # the meaning itself is wrong; rewording will not fix it
+        finally:
+            builder.explore_rate = base_explore
+        self._trace("reply_done", silence="failed", situation=situation, reason=last_reason, attempts=attempts)
+        return {"sentence": "", "silence": "failed", "reason": last_reason, "situation": situation,
+                "attempts": attempts}
+
+    def _legacy_generate(self, semantic_input: Dict[str, Any]) -> str:
+        """Previous reply path (templates + pass-through). Kept for reference; not used."""
+
         if not isinstance(semantic_input, dict):
             return ""
         
@@ -1255,9 +1456,27 @@ class LanguageGenerator:
             )
             return {'status': 'success', 'content': result}
 
+        if msg_type == 'analyze':
+            # Read a sentence without registering anything (used by Reasoning's review).
+            return {'status': 'success', 'content': {'understanding': self.comprehension.analyze(str(payload.get('text') or ''))}}
+
         if msg_type in {'generate', 'generate_grounded'}:
             semantic_input = payload.get('semantic_input', payload)
-            sentence = self.generate(semantic_input)
+            semantic_input = dict(semantic_input) if isinstance(semantic_input, dict) else {}
+            # Language hears what was said itself; it does not depend on another
+            # lobe forwarding it.
+            heard = str(payload.get('user_input') or semantic_input.get('user_input') or '')
+            if heard:
+                semantic_input['user_input'] = heard
+            if payload.get('user_id'):
+                semantic_input.setdefault('user_id', str(payload['user_id']))
+            understanding = semantic_input.get('language_understanding')
+            if heard and not (isinstance(understanding, dict) and understanding.get('tokens')):
+                understanding = self.comprehension.analyze(heard)
+                understanding['user_id'] = semantic_input.get('user_id', 'default')
+                semantic_input['language_understanding'] = understanding
+            result = self.respond(semantic_input)
+            sentence = result['sentence']
             
             # Only send to Output if reasoning explicitly says this is the main response
             is_main_response = payload.get('is_main_response', False)
@@ -1266,7 +1485,8 @@ class LanguageGenerator:
                 user_input = payload.get('user_input', '')
                 self._send_to_output(sentence, user_input)
             
-            return {'status': 'success', 'response': sentence, 'sentence': sentence, 'sent_to_output': is_main_response}
+            return {'status': 'success', 'response': sentence, 'sentence': sentence, 'sent_to_output': is_main_response,
+                    'silence': result.get('silence'), 'reason': result.get('reason'), 'situation': result.get('situation')}
         elif msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
         else:

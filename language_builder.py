@@ -28,12 +28,14 @@ Meaning format (all keys optional except what the act needs):
       "object": <entity>,
       "recipient": <entity>,          # gave Jester *to Matthew*
       "complement": {"noun": "wife", "of": <entity>, "adjectives": [...]}
-                  | {"adjectives": ["sweet", "loving"]},
+                  | {"adjectives": ["sweet", "loving"]}
+                  | {"entity": <entity>}        # Your name is *Matthew*
+                  | {"phrase": "almost dead"},  # stored wording, used as is
       "modifiers": [{"prep": "with", "object": <entity>}],
       "modal": "can" | "will" | "should" | ...,
       "negated": False,
       "tense": "present" | "past" | "future",
-      "ask_about": None | "subject" | "object",   # for act "ask"
+      "ask_about": None | "subject" | "object" | "reason",   # for act "ask"
       "addressee": <entity>,          # for act "greet"
     }
 
@@ -41,6 +43,7 @@ Meaning format (all keys optional except what the act needs):
            | {"ref": "speaker"} | {"ref": "addressee"}  # I / you
            | {"noun": "fire", "count": "mass" | "one" | "many",
               "definite": True|False, "adjectives": [...],
+              "owner": <entity>,                  # *your* name, *Matthew's* dog
               "modifiers": [{"prep": "with", "object": <entity>}]}
 """
 
@@ -354,7 +357,9 @@ class SentenceBuilder:
                 head = self._plural(head)
             adjectives = [self._word(built, a, "a") for a in entity.get("adjectives", [])]
             body = " ".join(adjectives + [head])
-            if entity.get("definite"):
+            if entity.get("owner"):
+                phrase = self.possessive(built, entity["owner"]) + " " + body
+            elif entity.get("definite"):
                 phrase = "the " + body
             elif count == "one":
                 phrase = indefinite_article(body) + " " + body
@@ -441,6 +446,10 @@ class SentenceBuilder:
     # ---- clauses ------------------------------------------------------------
 
     def _complement(self, built: Built, comp: Dict[str, Any]) -> str:
+        if comp.get("entity"):
+            return self.noun_phrase(built, comp["entity"], "object")
+        if comp.get("phrase"):
+            return str(comp["phrase"]).strip()
         adjectives = [self._word(built, a, "a") for a in comp.get("adjectives", [])]
         if comp.get("noun"):
             noun = self._word(built, str(comp["noun"]), "n")
@@ -491,6 +500,11 @@ class SentenceBuilder:
     def _question(self, built: Built, meaning: Dict[str, Any]) -> str:
         subject = meaning.get("subject") or {}
         about = meaning.get("ask_about")
+        if about == "reason":
+            finite, rest = self.verb_group(built, meaning, subject, invert=True)
+            subj = self.noun_phrase(built, subject, "subject")
+            tail = self._predicate_tail(built, meaning)
+            return " ".join(p for p in ("why", finite, subj, rest, tail) if p)
         if about == "subject":
             wh = "who" if (meaning.get("subject") or {}).get("name") or not meaning.get("subject") else "what"
             wh_subject = {"count": "one"}

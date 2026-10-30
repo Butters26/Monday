@@ -385,6 +385,8 @@ def test_pending_fallback_visible_when_query_succeeds(tmp_path):
     class CaptureReasoning:
         def process_message(self, message):
             content = message.get("content") if isinstance(message.get("content"), dict) else {}
+            if message.get("type") == "review_reply":
+                return {"status": "success", "content": {"ok": True, "reason": "makes sense"}}
             captured.append(content)
             return {
                 "status": "success",

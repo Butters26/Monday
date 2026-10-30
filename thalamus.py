@@ -1046,7 +1046,8 @@ class Thalamus:
         )
 
         language = self.send_and_wait(
-            "language", "generate", {"semantic_input": semantic_input}
+            "language", "generate",
+            {"semantic_input": semantic_input, "user_input": user_input, "user_id": user_id},
         )
         if language.get("status") != "success":
             return ""
@@ -1058,12 +1059,9 @@ class Thalamus:
         )
         self.last_language_sentence = response_text
 
-        final_text = self._maybe_attach_curiosity_follow_up(
-            response_text,
-            user_input=user_input,
-            emotional_state=emotional_state,
-            understanding=understanding,
-        )
+        # Language owns the whole reply (Reasoning has already reviewed it).
+        # Thalamus no longer appends Conversation's stock follow-up question.
+        final_text = response_text
         self._last_pre_output_final_text = final_text
 
         output = self.send_and_wait(

@@ -47,6 +47,9 @@ def trace_event(kind: str, **data: Any) -> None:
     """Lobes call this to report something. No-op when tracing is off."""
     if not enabled():
         return
+    if kind == "reply_done":
+        _state["silence"] = data.get("silence")
+        _state["silence_reason"] = data.get("reason")
     _write({"kind": kind, **data})
 
 
@@ -170,6 +173,8 @@ def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str
         turn_id = uuid.uuid4().hex[:8]
         _state["turn"] = turn_id
         _state["turn_failures"] = []
+        _state["silence"] = None
+        _state["silence_reason"] = None
         _write({"kind": "turn_start", "turn": turn_id, "user_id": user_id, "text": user_input})
         started = time.perf_counter()
         error = None
@@ -181,16 +186,16 @@ def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str
             error = "".join(traceback.format_exception(exc))[-2000:]
             raise
         finally:
-            silence = getattr(thalamus, "last_language_silence", None)
+            silence = _state.get("silence")
             blank = not (isinstance(reply, str) and reply.strip())
             cause = None
             if blank:
                 if error:
                     cause = "crash"
                 elif silence == "chosen":
-                    cause = "her choice"
+                    cause = f"her choice: {_state.get('silence_reason') or ''}".rstrip(": ")
                 elif silence == "failed":
-                    cause = "language could not form a reply"
+                    cause = f"FAILED to form a reply: {_state.get('silence_reason') or ''}".rstrip(": ")
                 else:
                     cause = "failure" if _state["turn_failures"] else "unexplained"
             _write({"kind": "turn_end", "turn": turn_id, "reply": reply, "blank": blank,
