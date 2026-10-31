@@ -43,6 +43,13 @@ class DirectNotusProcess:
             self.storage_path, check_same_thread=False
         )
         self._connection.row_factory = sqlite3.Row
+        # Write-ahead log: a crash mid-save can't corrupt what's already saved,
+        # and saving doesn't block looking things up.
+        try:
+            self._connection.execute("PRAGMA journal_mode=WAL")
+            self._connection.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.DatabaseError:
+            pass
 
         self.working_set: Dict[str, Deque[Dict[str, Any]]] = {
             "turns": deque(maxlen=50),
@@ -149,6 +156,7 @@ class DirectNotusProcess:
             self._ensure_fact_schema()
             self._ensure_episode_schema()
             self._ensure_lobe_learning_schema()
+            self._ensure_world_schema()
 
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_memories_user "
@@ -179,6 +187,144 @@ class DirectNotusProcess:
             )
         if "last_accessed" not in columns:
             connection.execute("ALTER TABLE memories ADD COLUMN last_accessed TEXT")
+
+    # ------------------------------------------------------------------
+    # Worlds: every memory belongs to real life, a story (his book), or
+    # something imagined, and says who told her and which sense it came by.
+    # Every person/topic is its own identity per world, so real Matthew and
+    # book Matthew are two identities that never share facts.
+    # ------------------------------------------------------------------
+
+    REAL = "real"
+
+    def _ensure_world_schema(self) -> None:
+        connection = self._require_connection()
+        columns = self._table_columns(connection, "memories")
+        for name, declaration in {
+            "world": "TEXT NOT NULL DEFAULT 'real'",
+            "world_sure": "INTEGER NOT NULL DEFAULT 1",
+            "told_by": "TEXT",
+            "sense": "TEXT",
+            "recognition_id": "TEXT",
+        }.items():
+            if name not in columns:
+                connection.execute(f"ALTER TABLE memories ADD COLUMN {name} {declaration}")
+
+        columns = self._table_columns(connection, "brain_facts")
+        if "world" not in columns:
+            # Same fact can be true in the book and not in real life, so the
+            # world is part of what makes a fact unique. Rebuild keeping ids.
+            connection.executescript(
+                """
+                CREATE TABLE brain_facts_by_world (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    subject TEXT NOT NULL COLLATE NOCASE,
+                    predicate TEXT NOT NULL COLLATE NOCASE,
+                    object TEXT NOT NULL COLLATE NOCASE,
+                    value TEXT,
+                    confidence REAL NOT NULL DEFAULT 0.9,
+                    usage_count INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    last_reinforced TEXT,
+                    is_contradicted INTEGER NOT NULL DEFAULT 0,
+                    conflicts_with TEXT,
+                    world TEXT NOT NULL DEFAULT 'real',
+                    world_sure INTEGER NOT NULL DEFAULT 1,
+                    told_by TEXT,
+                    source_memory_id INTEGER,
+                    UNIQUE(user_id, world, subject, predicate, object)
+                );
+                INSERT INTO brain_facts_by_world(
+                    id, user_id, subject, predicate, object, value, confidence,
+                    usage_count, created_at, last_reinforced, is_contradicted, conflicts_with
+                )
+                SELECT id, user_id, subject, predicate, object, value, confidence,
+                       usage_count, COALESCE(created_at, ''), last_reinforced,
+                       is_contradicted, conflicts_with
+                FROM brain_facts;
+                DROP TABLE brain_facts;
+                ALTER TABLE brain_facts_by_world RENAME TO brain_facts;
+                """
+            )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS identities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                name_key TEXT NOT NULL,
+                world TEXT NOT NULL,
+                world_sure INTEGER NOT NULL DEFAULT 1,
+                told_by TEXT,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                mentions INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(name_key, world)
+            )"""
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_identities_name ON identities(name_key, world)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_world ON memories(user_id, world, id)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brain_facts_world "
+            "ON brain_facts(user_id, world, is_contradicted)"
+        )
+
+    @staticmethod
+    def world_for(setting: Optional[Dict[str, Any]], told_by: str) -> Tuple[str, bool]:
+        """Which world a sentence belongs to, from Language's reading of its setting."""
+        if not isinstance(setting, dict) or setting.get("kind") not in ("story", "imagined"):
+            return DirectNotusProcess.REAL, True
+        owner = str(setting.get("owner") or "").strip().lower()
+        if owner in ("my", "our"):
+            owner_key = told_by or "speaker"
+        elif owner.endswith("'s"):
+            owner_key = owner[:-2]
+        else:
+            owner_key = "unnamed"
+        world = f"{setting['kind']}:{setting.get('noun') or 'unnamed'}:{owner_key}"
+        return world, bool(setting.get("sure"))
+
+    @staticmethod
+    def world_label(world: str) -> str:
+        if not world or world == DirectNotusProcess.REAL:
+            return "real life"
+        parts = str(world).split(":")
+        if len(parts) == 3:
+            kind, noun, owner = parts
+            whose = "" if owner == "unnamed" else f"{owner}'s "
+            return f"{whose}{noun} ({'a story' if kind == 'story' else 'imagined'})"
+        return str(world)
+
+    def note_identity(self, name: str, world: str, *, sure: bool = True, told_by: Optional[str] = None) -> None:
+        """Remember that this person/topic exists in this world."""
+        clean = self._clean_text(name)
+        if not clean or len(clean) > 200:
+            return
+        key = clean.casefold()
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute(
+                """INSERT INTO identities(name, name_key, world, world_sure, told_by, first_seen, last_seen)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(name_key, world) DO UPDATE SET
+                       last_seen = excluded.last_seen, mentions = mentions + 1""",
+                (clean, key, world, 1 if sure else 0, told_by, now, now),
+            )
+            connection.commit()
+
+    def worlds_of(self, name: str) -> List[str]:
+        key = self._clean_text(name).casefold()
+        if not key:
+            return []
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT world FROM identities WHERE name_key = ? ORDER BY mentions DESC", (key,)
+            ).fetchall()
+        return [str(r["world"]) for r in rows]
 
     def _ensure_fact_schema(self) -> None:
         connection = self._require_connection()

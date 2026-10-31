@@ -186,6 +186,54 @@ def lookup_senses(
     return [item[1] for item in scored[:max_senses]]
 
 
+# Where a noun's meanings lead in the dictionary (its "is a kind of" chain).
+_STORY_ANCESTORS = frozenset({
+    "oewn-06378552-n",  # fiction
+    "oewn-06375736-n",  # literary composition
+    "oewn-03133774-n",  # creation (a book, a movie, a painting)
+})
+_IMAGINED_ANCESTORS = frozenset({
+    "oewn-05775730-n",  # imagination (a dream while asleep)
+    "oewn-05633248-n",  # imagination (a daydream)
+})
+
+
+@lru_cache(maxsize=4096)
+def noun_setting_kinds(surface: str) -> Dict[str, int]:
+    """How many of a noun's dictionary meanings are a story world (fiction, a
+    creative work) or something imagined (a dream). Read from the word's
+    "kind of" chain in the dictionary, not from a word list."""
+    out = {"story": 0, "imagined": 0, "total": 0}
+    form = (surface or "").strip()
+    if not form or not form.replace("-", "").isalpha():
+        return out
+    try:
+        synsets = list(get_wordnet().synsets(form, pos="n"))
+    except Exception:
+        return out
+    for synset in synsets:
+        out["total"] += 1
+        seen, frontier, kind = set(), [synset], None
+        for _ in range(14):
+            nxt = []
+            for node in frontier:
+                for parent in node.hypernyms():
+                    if parent.id in seen:
+                        continue
+                    seen.add(parent.id)
+                    if parent.id in _STORY_ANCESTORS:
+                        kind = kind or "story"
+                    elif parent.id in _IMAGINED_ANCESTORS:
+                        kind = kind or "imagined"
+                    nxt.append(parent)
+            if kind or not nxt:
+                break
+            frontier = nxt
+        if kind:
+            out[kind] += 1
+    return out
+
+
 def lemma_and_pos_candidates(surface: str) -> List[Dict[str, str]]:
     """Return lemma/pos pairs OEWN knows for this surface (via Morphy)."""
     form = (surface or "").strip()
@@ -951,6 +999,7 @@ __all__ = [
     "complements_compete",
     "ensure_oewn",
     "get_wordnet",
+    "noun_setting_kinds",
     "lemma_and_pos_candidates",
     "lexicon_paths",
     "lookup_senses",

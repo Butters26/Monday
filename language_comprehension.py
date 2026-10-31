@@ -1298,7 +1298,57 @@ class LanguageComprehensionEngine:
             deduped.append(item)
         return {"present": bool(deduped), "evidence": deduped[:8]}
 
+    # A setting phrase puts the whole sentence inside a story or a dream:
+    # "In my book, Matthew is a knight." / "Matthew is a knight in my book."
+    _SETTING_OWNER = r"(?:(?:%s)\s+|[a-z][\w-]*'s\s+)?" % "|".join(sorted(_DETERMINERS))
+    _SETTING_START_RE = re.compile(r"^\s*in\s+(" + _SETTING_OWNER + r")([a-z][a-z-]*)\s*,\s*(.+)$", re.IGNORECASE)
+    _SETTING_END_RE = re.compile(r"^(.+?)\s+in\s+(" + _SETTING_OWNER + r")([a-z][a-z-]*)\s*([.!?]*)\s*$", re.IGNORECASE)
+
+    def _find_setting(self, text: str) -> Tuple[Optional[Dict[str, Any]], str]:
+        """Return (setting, the sentence inside it), or (None, text)."""
+        if self._lexicon_error:
+            return None, text
+        for position, regex in (("start", self._SETTING_START_RE), ("end", self._SETTING_END_RE)):
+            match = regex.match(text or "")
+            if not match:
+                continue
+            if position == "start":
+                owner, noun, inner = match.group(1), match.group(2), match.group(3)
+            else:
+                inner, owner, noun = match.group(1) + (match.group(4) or ""), match.group(2), match.group(3)
+            try:
+                from lexicon.oewn_offline import noun_setting_kinds
+                kinds = noun_setting_kinds(noun.lower())
+            except Exception:
+                continue
+            kind = "story" if kinds["story"] else ("imagined" if kinds["imagined"] else None)
+            if kind is None or not inner.strip():
+                continue
+            return {
+                "preposition": "in",
+                "owner": (owner or "").strip().lower() or None,
+                "noun": noun.lower(),
+                "kind": kind,
+                # Sure only when every dictionary meaning of the noun agrees
+                # ("book" can also be a ledger or a set of bets, so: not sure).
+                "sure": kinds[kind] == kinds["total"],
+                "position": position,
+                "phrase": match.group(0) if position == "start" else text[len(match.group(1)):].strip(),
+            }, inner.strip()
+        return None, text
+
     def analyze(self, text: str) -> Dict[str, Any]:
+        original = str(text or "").strip()
+        setting, inner = self._find_setting(original)
+        if setting is None:
+            return self._analyze_sentence(original)
+        result = self._analyze_sentence(inner)
+        result["raw_text"] = original
+        result["setting"] = setting
+        result["inner_text"] = inner
+        return result
+
+    def _analyze_sentence(self, text: str) -> Dict[str, Any]:
         original = str(text or "").strip()
         normalized = self.normalize(original)
         tokens = self.tokenize(normalized)
@@ -1789,6 +1839,7 @@ class LanguageComprehensionEngine:
                 "error": self._lexicon_error,
             },
             "boundary": self.HARD_BOUNDARY,
+            "setting": None,
         }
 
 
