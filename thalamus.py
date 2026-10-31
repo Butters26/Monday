@@ -767,51 +767,6 @@ class Thalamus:
             return dict(voice)
         return None
 
-    def _maybe_attach_curiosity_follow_up(
-        self,
-        reply: str,
-        user_input: str = "",
-        emotional_state: Optional[Dict[str, Any]] = None,
-        understanding: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """Conversation owns the question; Thalamus only attaches its returned text."""
-        if not isinstance(reply, str) or not reply.strip():
-            return reply
-        if self._executive_should_inhibit("curiosity_follow_up"):
-            self._force_curiosity_follow_up = False
-            return reply
-
-        with self.lobe_handlers_lock:
-            conversation = self.lobe_handlers.get("conversation")
-        decide = (
-            getattr(conversation, "maybe_curiosity_follow_up", None)
-            if conversation is not None
-            else None
-        )
-        if not callable(decide):
-            return reply
-
-        force = bool(self._force_curiosity_follow_up)
-        now = time.time()
-        if not force and now - self._last_curiosity_time < self._curiosity_cooldown_sec:
-            return reply
-        try:
-            question = decide(
-                user_input,
-                emotional_state if isinstance(emotional_state, dict) else {},
-                understanding if isinstance(understanding, dict) else {},
-                force=force,
-            )
-        except Exception:
-            return reply
-        if not isinstance(question, str) or not question.strip():
-            return reply
-        question = question.strip()
-        if question in reply:
-            return reply
-        self._last_curiosity_time = now
-        self._force_curiosity_follow_up = False
-        return f"{reply.rstrip()}\n\n{question}"
 
     def retry_unsaved_notus_records(
         self, user_id: Optional[str] = None

@@ -122,56 +122,6 @@ def is_mild_social_turn(user_input: str, intent: Optional[str] = None) -> bool:
     return False
 
 
-def honest_curiosity_question(
-    user_input: str,
-    emotional_state: Optional[Dict[str, Any]] = None,
-) -> str:
-    """One honest follow-up that asks instead of inventing facts.
-
-    Owned by the live emotion/conversation/direct_response path — not novelty_lobe.
-    """
-    state = emotional_state if isinstance(emotional_state, dict) else {}
-    unresolved = state.get("unresolved_appraisals") or []
-    emotion = str(
-        state.get("current_emotion")
-        or state.get("emotion")
-        or "this"
-    ).strip() or "this"
-    text = (user_input or "").strip()
-
-    primary = None
-    if isinstance(unresolved, list) and unresolved:
-        try:
-            primary = max(
-                (u for u in unresolved if isinstance(u, dict)),
-                key=lambda u: float(u.get("severity", 0.0) or 0.0),
-                default=None,
-            )
-        except Exception:
-            primary = next((u for u in unresolved if isinstance(u, dict)), None)
-
-    if isinstance(primary, dict):
-        et = str(primary.get("event_type") or "feeling").replace("_", " ").strip()
-        return (
-            f"What would help with this {et} - or is there more I should understand "
-            f"before I guess?"
-        )
-
-    snippet = text
-    if len(snippet) > 72:
-        cut = snippet[:69].rsplit(" ", 1)[0]
-        snippet = (cut or snippet[:69]) + "..."
-    if snippet:
-        # Ask about their words; do not invent missing details.
-        safe = snippet.replace('"', "'")
-        return (
-            f'I do not want to invent details - can you tell me more about what you '
-            f'meant by "{safe}"?'
-        )
-    return (
-        f"I am feeling {emotion} about this and I do not want to invent an answer - "
-        f"what am I missing?"
-    )
 
 
 
@@ -198,54 +148,6 @@ def looks_like_teaching_turn(user_input: str) -> bool:
     return False
 
 
-def empathic_grounded_reply(
-    user_input: str,
-    emotional_state: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
-    """Brief empathic acknowledge for distress / hot affect — never invent facts."""
-    state = emotional_state if isinstance(emotional_state, dict) else {}
-    text = (user_input or "").strip()
-    if not text or looks_questionish(text) or looks_like_teaching_turn(text):
-        return None
-    if is_mild_social_turn(text):
-        return None
-    try:
-        intensity = float(state.get("intensity", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        intensity = 0.0
-    unresolved = state.get("unresolved_appraisals") or []
-    emo_resp = state.get("response")
-    distress = bool(_DISTRESS_RE.search(text))
-    hot = intensity >= 0.55 or bool(unresolved) or distress
-    if not hot:
-        return None
-    # Prefer emotion lobe's own line when it is a real sentence (not poison).
-    if isinstance(emo_resp, str):
-        cleaned = emo_resp.strip()
-        if (
-            cleaned
-            and "How it felt:" not in cleaned
-            and "What it meant:" not in cleaned
-            and len(cleaned) >= 12
-            and not cleaned.lower().startswith("i do not have enough grounded")
-        ):
-            return cleaned
-    emotion = str(
-        state.get("current_emotion") or state.get("emotion") or ""
-    ).strip().lower()
-    if distress or unresolved:
-        if emotion in {"sad", "worried", "fearful", "anxious", "nostalgic"}:
-            return (
-                "That sounds heavy — I am sitting with how frightening this is for you. "
-                "I am here."
-            )
-        return (
-            "I hear how hard this is. I do not want to invent details — "
-            "I am here with you in it."
-        )
-    if intensity >= 0.70:
-        return "I can feel how much this matters. Tell me what you need from me right now."
-    return None
 
 
 
@@ -1261,12 +1163,7 @@ class DeterministicResponseProvider:
         if fact_answer:
             return fact_answer
 
-        emo_state = None
-        if isinstance(understanding, dict):
-            emo_state = understanding.get("emotion_result") or understanding.get("emotional_state")
-        empathic = empathic_grounded_reply(user_input or "", emo_state if isinstance(emo_state, dict) else None)
-        if empathic:
-            return empathic
+        # No canned comfort lines (moved to legacy/canned_lines_legacy.py).
 
         # No greeting / how-are-you / gravity / memory canned short-circuits.
         # No "I do not have enough grounded..." / "Please tell me more..." filler.

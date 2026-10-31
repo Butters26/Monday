@@ -14,7 +14,6 @@ from reasoning import Fact, MaximumSophisticationReasoning, ReasoningLobe
 from direct_response import (
     answer_from_grounded_memories,
     content_tokens,
-    empathic_grounded_reply,
     format_predicate_fact,
     looks_like_teaching_turn,
     looks_questionish,
@@ -1107,10 +1106,8 @@ class DirectReasoningAdapter:
                     if "filler" in u_low or "weather is fine" in u_low:
                         usable = None
                         break
-        # Empathic/social affect before Pattern narration — Pattern must not be the mouth.
+        # No canned comfort lines: Language builds every reply (Reasoning reviews it).
         empathic = None
-        if not teaching and not fact_structures and not fact_answer:
-            empathic = empathic_grounded_reply(user_input, emotional_state)
         pattern_answer = None
         if not teaching and not fact_structures and not fact_answer and not empathic:
             pattern_answer = self._answer_from_patterns(pattern_result, user_input)

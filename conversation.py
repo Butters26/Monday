@@ -44,7 +44,6 @@ from thalamus import get_thalamus
 from lexicon.oewn_offline import complements_compete
 from direct_response import (
     is_closing_social_turn,
-    honest_curiosity_question,
     is_mild_social_turn,
     looks_like_teaching_turn,
 )
@@ -1293,93 +1292,6 @@ class ConversationSystem:
 
         return {"status": "error", "message": f"Unknown message type: {msg_type}"}
 
-    def maybe_curiosity_follow_up(
-        self,
-        user_input: str,
-        emotional_context: Optional[Dict[str, Any]] = None,
-        understanding: Optional[Dict[str, Any]] = None,
-        *,
-        force: bool = False,
-    ) -> Optional[str]:
-        """Maybe one honest follow-up when affect is hot, unresolved, or novel.
-
-        Uses dialogue_move from Language-driven understanding. Does not invent
-        questions from Novelty.
-        """
-        emotional_context = emotional_context if isinstance(emotional_context, dict) else {}
-        understanding = understanding if isinstance(understanding, dict) else {}
-        intent = understanding.get("intent")
-        dialogue_move = understanding.get("dialogue_move")
-
-        if (
-            is_mild_social_turn(user_input, intent)
-            or is_closing_social_turn(user_input, intent)
-            or intent == "goodbye"
-            or dialogue_move in {"social_open", "social_close", "social_fragment"}
-        ) and not force:
-            return None
-        if looks_like_teaching_turn(user_input) and not force:
-            return None
-        if dialogue_move in {"assertion", "answer", "correction"} and looks_like_teaching_turn(
-            user_input
-        ):
-            return None
-
-        try:
-            intensity = float(emotional_context.get("intensity", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            intensity = 0.0
-        try:
-            novelty_score = float(understanding.get("novelty_score", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            novelty_score = 0.0
-        unresolved = emotional_context.get("unresolved_appraisals") or []
-        if not isinstance(unresolved, list):
-            unresolved = []
-        max_sev = 0.0
-        if unresolved:
-            try:
-                max_sev = max(
-                    float(u.get("severity", 0.0) or 0.0)
-                    for u in unresolved
-                    if isinstance(u, dict)
-                )
-            except Exception:
-                max_sev = 0.55
-
-        elevated_novelty = novelty_score >= 0.55
-        eligible = (
-            bool(force)
-            or bool(unresolved)
-            or intensity >= 0.70
-            or elevated_novelty
-        )
-        if not eligible:
-            return None
-
-        if not force:
-            if unresolved and (intensity >= 0.50 or max_sev >= 0.55):
-                if random.random() >= 0.88:
-                    return None
-            elif elevated_novelty and novelty_score >= 0.70:
-                if random.random() >= 0.70:
-                    return None
-            elif elevated_novelty:
-                if random.random() >= 0.45:
-                    return None
-            elif intensity >= 0.70:
-                if random.random() >= 0.55:
-                    return None
-            else:
-                return None
-
-        try:
-            question = honest_curiosity_question(user_input, emotional_context)
-        except Exception:
-            return None
-        if question:
-            self.note_mercy_question(question, topic=understanding.get("topic"))
-        return question
 
     def shutdown(self):
         """Graceful shutdown"""
