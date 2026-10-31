@@ -92,6 +92,19 @@ path.
   lines first and score only those (400 lines, 120 facts), and the database runs
   in write-ahead mode (crash-safe). With 50,000 lines and 5,000 facts, the
   slowest lookups measured 11–14 ms and fact lookups under 0.1 ms.
+- **Answers the other lobes:** recent memories, search / find_similar /
+  check_relation for reasoning, feelings for emotion (kept with the moment that
+  caused them), replaced facts (kept as history) for pattern recognition.
+- **Stronger with use:** a memory gets stronger once per moment it's recalled
+  in, and when it came with a feeling; stronger ones come back first. Facts get
+  a little surer each moment they're recalled in.
+- **Comes up on its own:** after saving each thing he says, memory announces
+  `remembered` (related facts, earlier moments with their feelings, beliefs) for
+  any lobe that signs up.
+- **Beliefs:** basic knowledge with how sure she is (`beliefs` table;
+  `store_belief`, `query_beliefs`, `adjust_belief`). Starting beliefs are read at
+  start-up from `<runtime dir>/beliefs.txt`, which Matthew writes: one belief per
+  line in plain English, optionally ending with `(sure 0.8)`; `#` lines are notes.
 - **One memory store:** unless a custom `notus_factory` is passed,
   `open_primary_notus()` opens a SQLite `DirectNotusProcess` at
   `shared_direct_notus_path()`. The REPL and chat daemon use the same file.

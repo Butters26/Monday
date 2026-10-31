@@ -57,6 +57,7 @@ class DirectNotusProcess:
             pass
         self._saved_recognitions: Deque[str] = deque(maxlen=256)
         self._talking_with: Optional[str] = None
+        self._strengthened: set = set()
 
         self.working_set: Dict[str, Deque[Dict[str, Any]]] = {
             "turns": deque(maxlen=50),
@@ -66,6 +67,12 @@ class DirectNotusProcess:
         self._fts_available = False
 
         self._initialize_schema()
+        # Matthew's starting beliefs, if he has written them (runtime dir, beliefs.txt).
+        try:
+            self.beliefs_file = runtime_file("beliefs.txt")
+            self.load_beliefs_file(self.beliefs_file)
+        except Exception:
+            self.beliefs_file = None
         self.memory_ready = threading.Event()
         self.memory_ready.set()
 
@@ -172,6 +179,19 @@ class DirectNotusProcess:
                     created_at TEXT NOT NULL
                 )"""
             )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS beliefs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    statement TEXT NOT NULL,
+                    statement_key TEXT NOT NULL UNIQUE,
+                    sureness REAL NOT NULL DEFAULT 0.6,
+                    source TEXT NOT NULL DEFAULT 'learned',
+                    times_confirmed INTEGER NOT NULL DEFAULT 0,
+                    times_contradicted INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
             self._ensure_memory_schema()
             self._ensure_fact_schema()
             self._ensure_episode_schema()
@@ -216,6 +236,10 @@ class DirectNotusProcess:
         for name in ("told_by", "sense", "recognition_id"):
             if name not in columns:
                 connection.execute(f"ALTER TABLE memories ADD COLUMN {name} TEXT")
+        # How strongly it's held: grows when it's recalled and when it came
+        # with a feeling, so those come back first.
+        if "strength" not in columns:
+            connection.execute("ALTER TABLE memories ADD COLUMN strength REAL NOT NULL DEFAULT 1.0")
 
     def _ensure_fact_schema(self) -> None:
         connection = self._require_connection()
@@ -592,7 +616,7 @@ class DirectNotusProcess:
                     return []
                 rows = connection.execute(
                     "SELECT m.id, m.role, m.content, m.user_id, m.memory_type, "
-                    "m.created_at, m.access_count, m.last_accessed, NULL AS fts_rank "
+                    "m.created_at, m.access_count, m.last_accessed, m.strength, NULL AS fts_rank "
                     "FROM memories AS m WHERE m.id IN (" + ",".join("?" * len(ids)) + ") "
                     "AND m.user_id = ? "
                     "AND m.role IN ('user', 'fact', 'note', 'monday', 'assistant', 'abin')"
@@ -666,6 +690,12 @@ class DirectNotusProcess:
                     continue
                 if row["fts_rank"] is not None:
                     score += max(0.0, -float(row["fts_rank"]))
+                # Stronger memories (recalled often, or felt) come back first.
+                try:
+                    import math
+                    score += math.log1p(max(0.0, float(row["strength"] or 1.0) - 1.0))
+                except (IndexError, KeyError, TypeError, ValueError):
+                    pass
                 ranked.append((score, str(row["created_at"] or ""), row))
 
             ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
@@ -679,6 +709,15 @@ class DirectNotusProcess:
                     "WHERE id = ?",
                     [(now, int(row["id"])) for _, _, row in chosen],
                 )
+                # Recalling makes a memory stronger, but only once per moment:
+                # many lobes looking at the same memory is still one recall.
+                fresh = [int(row["id"]) for _, _, row in chosen if int(row["id"]) not in self._strengthened]
+                if fresh:
+                    self._strengthened.update(fresh)
+                    connection.executemany(
+                        "UPDATE memories SET strength = strength + 0.1 WHERE id = ?",
+                        [(i,) for i in fresh],
+                    )
                 connection.commit()
 
         return [
@@ -1107,6 +1146,8 @@ class DirectNotusProcess:
                 phrase = FactText._phrase_bonus(query, blob)
                 conf = float(row["confidence"] or 0.0)
                 score = overlap + and_bonus + phrase + (0.05 * conf)
+                # Facts recalled in more moments are surer, so come back first.
+                score += 0.2 * max(0.0, conf - 0.9)
                 # Prefer exact predicate name over *_name on bare identity asks.
                 pred_l = predicate.strip().lower()
                 if pred_l == "name" and "name" in query_tokens:
@@ -1124,11 +1165,17 @@ class DirectNotusProcess:
 
             if chosen:
                 connection.executemany(
-                    "UPDATE brain_facts "
-                    "SET usage_count = usage_count + 1 "
-                    "WHERE id = ?",
+                    "UPDATE brain_facts SET usage_count = usage_count + 1 WHERE id = ?",
                     [(int(row["id"]),) for _, _, row, _ in chosen],
                 )
+                # Recalled in a new moment: a little surer (once per moment).
+                fresh = [int(row["id"]) for _, _, row, _ in chosen if ("fact", int(row["id"])) not in self._strengthened]
+                if fresh:
+                    self._strengthened.update(("fact", i) for i in fresh)
+                    connection.executemany(
+                        "UPDATE brain_facts SET confidence = MIN(1.0, confidence + 0.01) WHERE id = ?",
+                        [(i,) for i in fresh],
+                    )
                 connection.commit()
 
         return [
@@ -1783,6 +1830,7 @@ class DirectNotusProcess:
         self._talking_with = user_id
         if recognition_id and recognition_id in self._saved_recognitions:
             return {"status": "success", "content": {"stored": False, "already_saved": recognition_id}}
+        self._strengthened = set()  # a new moment: each memory can be strengthened once in it
         sense = self._clean_text(moment.get("modality")) or "text"
         if sense in ("text", "audio"):
             words = moment.get("text") if sense == "text" else (moment.get("transcript") or moment.get("text"))
@@ -1799,7 +1847,140 @@ class DirectNotusProcess:
         })
         if result.get("status") == "success" and recognition_id:
             self._saved_recognitions.append(recognition_id)
+        if result.get("status") == "success" and role == "user":
+            self._bring_up(words.strip(), user_id, recognition_id,
+                           exclude_id=(result.get("content") or {}).get("id"))
         return result
+
+    def _bring_up(self, text: str, user_id: str, recognition_id: str, *, exclude_id: Any = None) -> None:
+        """What this moment reminds her of comes up on its own, the way a smell
+        brings back a memory: memory announces it ("remembered") for any lobe
+        that signed up. Recalling it also makes it stronger."""
+        announce = getattr(self.thalamus, "announce", None)
+        if not callable(announce):
+            return
+        facts = self.query_brain_facts(text, user_id, 5)
+        memories = [m for m in self.retrieve_memories(text, user_id, 5) if m.get("id") != exclude_id
+                    and m.get("content", "").casefold() != text.casefold()]
+        felt = self._feelings_for_memories([m["id"] for m in memories])
+        for m in memories:
+            if felt.get(m["id"]):
+                m["feelings"] = felt[m["id"]]
+        beliefs = self.beliefs_about(text, limit=5)
+        if not (facts or memories or beliefs):
+            return
+        announce("remembered", {"user_id": user_id, "recognition_id": recognition_id, "about": text,
+                                "facts": facts, "memories": memories, "beliefs": beliefs},
+                 source="notus")
+
+    # ------------------------------------------------------------------
+    # Beliefs: basic knowledge with how sure she is. Starting beliefs come
+    # from a plain-English file Matthew writes; they change with experience.
+    # ------------------------------------------------------------------
+
+    def store_belief(self, statement: Any, *, sureness: Any = 0.6, source: str = "learned") -> Dict[str, Any]:
+        text = self._clean_text(statement)
+        if not text or len(text) > 500 or not self._is_safe_structured_text(text, 500):
+            return {"status": "error", "message": "notus: a belief needs a clean statement"}
+        sure = self._clamp_confidence(sureness, 0.6)
+        now = datetime.now(timezone.utc).isoformat()
+        key = " ".join(text.casefold().rstrip(".").split())
+        with self._lock:
+            connection = self._require_connection()
+            connection.execute(
+                """INSERT INTO beliefs(statement, statement_key, sureness, source, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(statement_key) DO UPDATE SET
+                       sureness = CASE WHEN excluded.source = 'matthew' THEN excluded.sureness ELSE sureness END,
+                       updated_at = excluded.updated_at""",
+                (text, key, sure, source, now, now),
+            )
+            connection.commit()
+            row = connection.execute("SELECT * FROM beliefs WHERE statement_key = ?", (key,)).fetchone()
+        return {"status": "success", "content": {"belief": self._row_belief(row)}}
+
+    @staticmethod
+    def _row_belief(r: sqlite3.Row) -> Dict[str, Any]:
+        return {"id": int(r["id"]), "statement": r["statement"], "sureness": float(r["sureness"]),
+                "source": r["source"], "times_confirmed": int(r["times_confirmed"]),
+                "times_contradicted": int(r["times_contradicted"]), "updated_at": r["updated_at"]}
+
+    def beliefs_about(self, text: str, *, limit: Any = 10) -> List[Dict[str, Any]]:
+        normalized = self._normalise_limit(limit, 10)
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT * FROM beliefs ORDER BY sureness DESC, id LIMIT 2000").fetchall()
+        query = self._clean_text(text)
+        if not query:
+            return [self._row_belief(r) for r in rows[:normalized]]
+        try:
+            from notus_fact_text import FactText
+            query_tokens = FactText._content_tokens(query)
+        except Exception:
+            query_tokens = set()
+        scored = []
+        for r in rows:
+            if query_tokens:
+                overlap = FactText._overlap_score(query_tokens, r["statement"])
+            else:
+                overlap = self._match_quality(query, r["statement"]) / 11.0
+            if overlap > 0:
+                scored.append((overlap + 0.1 * float(r["sureness"]), r))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [self._row_belief(r) for _, r in scored[:normalized]]
+
+    def adjust_belief(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Experience confirms or contradicts a belief; how sure she is moves with it."""
+        try:
+            belief_id = int(payload.get("id"))
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "notus: adjust_belief needs a belief id"}
+        how = str(payload.get("how") or "").strip().lower()
+        if how not in ("confirmed", "contradicted"):
+            return {"status": "error", "message": "notus: adjust_belief needs how = confirmed or contradicted"}
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            connection = self._require_connection()
+            if how == "confirmed":
+                connection.execute(
+                    "UPDATE beliefs SET sureness = MIN(0.99, sureness + (1 - sureness) * 0.1), "
+                    "times_confirmed = times_confirmed + 1, updated_at = ? WHERE id = ?", (now, belief_id))
+            else:
+                connection.execute(
+                    "UPDATE beliefs SET sureness = MAX(0.01, sureness * 0.85), "
+                    "times_contradicted = times_contradicted + 1, updated_at = ? WHERE id = ?", (now, belief_id))
+            connection.commit()
+            row = connection.execute("SELECT * FROM beliefs WHERE id = ?", (belief_id,)).fetchone()
+        if row is None:
+            return {"status": "error", "message": f"notus: no belief {belief_id}"}
+        return {"status": "success", "content": {"belief": self._row_belief(row)}}
+
+    _SURENESS_RE = re.compile(r"\(\s*sure(?:ness)?\s*[:=]?\s*(0?\.\d+|1(?:\.0+)?|\d{1,3}\s*%)\s*\)\s*$", re.IGNORECASE)
+
+    def load_beliefs_file(self, path: Any) -> Dict[str, Any]:
+        """Matthew's starting beliefs: one per line, plain English, optionally
+        ending with how sure she is, e.g.  People greet back when greeted. (sure 0.8)
+        Lines starting with # are notes. Re-loading updates his sureness only."""
+        file = Path(str(path)).expanduser()
+        if not file.is_file():
+            return {"status": "success", "content": {"loaded": 0, "file": str(file), "exists": False}}
+        loaded, skipped = 0, []
+        for number, raw in enumerate(file.read_text(encoding="utf-8").splitlines(), 1):
+            line = raw.strip().lstrip("-*").strip()
+            if not line or line.startswith("#"):
+                continue
+            sureness = 0.6
+            match = self._SURENESS_RE.search(line)
+            if match:
+                value = match.group(1).replace(" ", "")
+                sureness = float(value[:-1]) / 100 if value.endswith("%") else float(value)
+                line = line[: match.start()].strip()
+            result = self.store_belief(line, sureness=sureness, source="matthew")
+            if result.get("status") == "success":
+                loaded += 1
+            else:
+                skipped.append(number)
+        return {"status": "success", "content": {"loaded": loaded, "skipped_lines": skipped, "file": str(file), "exists": True}}
 
     # ------------------------------------------------------------------
     # Answering the other lobes.
@@ -1874,6 +2055,10 @@ class DirectNotusProcess:
                  json.dumps(context, default=str)[:2000] if isinstance(context, (dict, list)) else (self._optional_text(context) or None),
                  self._optional_text(payload.get("response")), int(moment["id"]) if moment else None, now),
             )
+            if moment:
+                # A moment that came with a feeling is held more strongly.
+                connection.execute("UPDATE memories SET strength = strength + ? WHERE id = ?",
+                                   (intensity, int(moment["id"])))
             connection.commit()
             feeling_id = int(cursor.lastrowid)
         return {"status": "success", "content": {"stored": True, "id": feeling_id,
@@ -2024,6 +2209,17 @@ class DirectNotusProcess:
 
         if msg_type == "moment":
             return self.hear_moment(payload)
+
+        if msg_type == "store_belief":
+            return self.store_belief(payload.get("statement"), sureness=payload.get("sureness", 0.6),
+                                     source=str(payload.get("source") or "learned"))
+        if msg_type in ("query_beliefs", "get_beliefs"):
+            found = self.beliefs_about(payload.get("query") or payload.get("text") or "", limit=payload.get("limit", 10))
+            return {"status": "success", "beliefs": found, "content": {"beliefs": found, "count": len(found)}}
+        if msg_type == "adjust_belief":
+            return self.adjust_belief(payload)
+        if msg_type == "load_beliefs":
+            return self.load_beliefs_file(payload.get("path") or runtime_file("beliefs.txt"))
 
         answered = self._answer_other_lobes(msg_type, payload)
         if answered is not None:
