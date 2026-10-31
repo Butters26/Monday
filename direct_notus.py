@@ -1930,6 +1930,10 @@ class DirectNotusProcess:
         subject = self._who(mentions.get(subject_id), tokens)
         if not subject:
             return []
+        subject_mention = mentions.get(subject_id) or {}
+        if subject[:1].islower() and "'s " not in subject and subject not in ("user", "monday"):
+            # A thing, kept as he said it ("the dog", "a castle").
+            subject = " ".join(str(subject_mention.get("surface") or subject).split()) or subject
         facts: List[Tuple[str, str, Optional[str]]] = []
         complement = reading.get("predicative_complement") or clause.get("predicative_complement") or {}
         if clause.get("copular") and complement:

@@ -8,7 +8,7 @@ the direct envelope and supplies user-scoped evidence.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Tuple, Any, Callable, Dict, Iterable, List, Optional
 
 from reasoning import Fact, MaximumSophisticationReasoning, ReasoningLobe
 from direct_response import (
@@ -666,6 +666,7 @@ class DirectReasoningAdapter:
     # ------------------------------------------------------------------
 
     _GREETING_SENSE = "oewn-06645018-n"  # dictionary sense: "an expression of greeting"
+    _FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
     _CONTENT_KINDS = {"noun", "proper_noun", "verb", "adjective", "adverb", "possessive"}
     _NOT_CONTENT = {"be", "do", "have", "can", "will", "would", "could", "should", "may",
                     "might", "must", "shall", "not"}
@@ -858,6 +859,86 @@ class DirectReasoningAdapter:
         return None
 
     @staticmethod
+    def _verb_frames(verb: str) -> List[Tuple[str, str]]:
+        """What the dictionary says a verb can take, from its sentence frames
+        ("Somebody ----s something", "It is ----ing"): (who does it, what follows)."""
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            senses = [sense for ss in get_wordnet().synsets(verb, pos="v") for sense in ss.senses()]
+        except Exception:
+            return []
+        out = []
+        for sense in senses:
+            if str(sense.word().lemma()).casefold() != verb.casefold():
+                continue
+            try:
+                frames = sense.frames()
+            except Exception:
+                continue
+            for frame in frames:
+                words = str(frame).split()
+                if len(words) < 2:
+                    continue
+                doer = words[0].casefold()
+                rest = " ".join(w for w in words[1:] if "----" not in w and w.casefold() != "is").casefold()
+                out.append((doer, rest))
+        return out
+
+    @classmethod
+    def _noun_is_person(cls, noun: str) -> bool:
+        """Is this noun a living doer in the dictionary (filed under people or
+        animals: wife, doctor, fool, dog)? The dictionary's "somebody" means one."""
+        if not noun:
+            return False
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            synsets = list(get_wordnet().synsets(noun, pos="n"))
+        except Exception:
+            return False
+        return any(str(ss.lexfile()) in ("noun.person", "noun.animal") for ss in synsets)
+
+    @classmethod
+    def _verb_makes_sense(cls, meaning: Dict[str, Any]) -> Optional[str]:
+        """None if the verb can be used this way, else why not ("people don't
+        rain"; "love needs who or what")."""
+        verb = str(meaning.get("verb") or "").casefold()
+        if not verb or verb in ("be", "have", "do") or "_" in verb:
+            return None
+        frames = cls._verb_frames(verb)
+        if not frames:
+            return None
+        subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}
+        person = bool(subject.get("ref") in ("speaker", "addressee") or subject.get("name")
+                      or subject.get("pronoun") in ("he", "she", "they")
+                      or cls._noun_is_person(str(subject.get("noun") or "")))
+        it = subject.get("pronoun") == "it"
+        doers = {"it"} if it else ({"somebody"} if person else {"something"})
+        has_object = bool(meaning.get("object"))
+        has_place = bool(meaning.get("modifiers"))
+        fitting_doer = [rest for doer, rest in frames if doer in doers]
+        if not fitting_doer:
+            who = "people" if person else "things"
+            return f"{who} can't '{verb}' (the dictionary only has: " + "; ".join(
+                sorted({f"{d} {verb}s {r}".strip() for d, r in frames})[:3]) + ")"
+        for rest in fitting_doer:
+            needs_object = any(w in rest for w in ("something", "somebody", "clause", "infinitive", "adjective"))
+            needs_place = "pp" in rest
+            if (needs_object == has_object or (has_object and needs_place)) and (not needs_place or has_place or has_object):
+                return None
+            if not rest and not has_object:
+                return None
+        if not has_object:
+            return f"'{verb}' needs who or what (somebody {verb}s something)"
+        return f"'{verb}' isn't used with something after it like that"
+
+    def _his_names(self, user_id: str) -> set:
+        response = self.thalamus.send_message("notus", "query_facts", {"query": "what is my name",
+                                              "user_id": user_id, "limit": 5}, source="reasoning") if self.thalamus else {}
+        body = self._response_content(response) if isinstance(response, dict) else {}
+        return {str(f.get("object") or "").casefold() for f in body.get("facts") or []
+                if isinstance(f, dict) and f.get("predicate") == "name" and str(f.get("subject") or "") == "user"}
+
+    @staticmethod
     def _says_nothing(meaning: Dict[str, Any], reply: Dict[str, Any]) -> bool:
         """'A dog is a dog': calling something itself tells nobody anything."""
         def head(part: Any) -> str:
@@ -893,6 +974,8 @@ class DirectReasoningAdapter:
                 return no("he asked her something and she stayed quiet", "not_silence")
             if situation == "emotional_share":
                 return no("he shared how he feels and she stayed quiet", "respond_to_feeling")
+            if situation == "farewell":
+                return no("he said goodbye and she stayed quiet", "farewell_back")
             return {"ok": True, "reason": "staying quiet fits here"}
         if not sentence:
             return no("nothing was said")
@@ -922,6 +1005,36 @@ class DirectReasoningAdapter:
 
         reply_is_question = sentence.endswith("?") or reply.get("speech_act") == "question"
         purpose = str(meaning.get("_purpose") or "")
+        act = str(meaning.get("act") or "")
+        first = next((t for t in reply.get("tokens") or [] if t.get("kind") != "punctuation"), {})
+        first_senses = {str(s.get("synset_id")) for s in first.get("senses") or []}
+        addressee = meaning.get("addressee") if isinstance(meaning.get("addressee"), dict) else {}
+        if act in ("greet", "farewell") and addressee.get("name") \
+                and str(addressee["name"]).casefold() not in self._his_names(user_id):
+            return no(f"she doesn't know '{addressee['name']}' is his name", "no_name")
+        nonsense = self._verb_makes_sense(meaning) if act in ("state", "ask") else None
+        if nonsense:
+            return no("it doesn't make sense: " + nonsense,
+                      "complete_it" if "needs who or what" in nonsense else "")
+        if act == "greet" and situation != "greeting":
+            return no("he didn't greet her, so greeting him doesn't fit", "not_greeting")
+        if act == "farewell" and situation != "farewell":
+            return no("he isn't leaving, so saying goodbye doesn't fit", "not_farewell")
+        if situation == "farewell":
+            if act != "farewell" or self._FAREWELL_SENSE not in first_senses:
+                return no("he said goodbye and the reply doesn't say goodbye back", "farewell_back")
+        if situation == "statement":
+            said = self._content_lemmas(reply)
+            his = self._content_lemmas(self._analyze(user_input))
+            used = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
+            if act == "state":
+                # Saying back what he just told her shows she took it in; any other
+                # claim is something she doesn't know is true.
+                if not used or not self._fact_fits(used, user_input):
+                    return no("she's claiming something she doesn't know; she can say back what he "
+                              "told her or ask about it", "restate_or_ask")
+            elif act == "ask" and his and not (his & said):
+                return no("the question isn't about what he said", "about_what_he_said")
         if situation == "greeting":
             if not self._has_greeting(reply):
                 return no("he greeted her and the reply does not greet him back", "greet_back")

@@ -465,6 +465,13 @@ class LanguageGenerator:
         )
         if greeted:
             return "greeting"
+        leaving = social_now == "farewell" or any(
+            sense.get("synset_id") == self.FAREWELL_SENSE
+            for token in understanding.get("tokens") or []
+            for sense in token.get("senses") or []
+        )
+        if leaving:
+            return "farewell"
         if understanding.get("speech_act") == "question" or str(semantic_input.get("user_input", "")).strip().endswith("?"):
             return "question"
         # He is the one feeling it ("I", "me"); "my" is about something of his ("my favorite color").
@@ -570,7 +577,8 @@ class LanguageGenerator:
         return meaning
 
     # Grammar forms she can speak in (sentence shapes, not reply types).
-    _FORMS = ("state", "ask", "greet", "quiet")
+    _FORMS = ("state", "ask", "greet", "farewell", "quiet")
+    FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
     _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing")
 
     def _pieces(self, semantic_input: Dict[str, Any], user_id: str, user_input: str) -> Dict[str, List[Any]]:
@@ -628,14 +636,14 @@ class LanguageGenerator:
         form = builder._choose(plan, f"plan_form@{ctx}", list(self._FORMS))
         if form == "quiet":
             return {"_quiet": True}
-        if form == "greet":
+        if form in ("greet", "farewell"):
             options = [you] + [p for p in pieces["heard_noun"] if p.get("name")]
             names = [f for f in self._user_facts("name", user_id) if f.get("predicate") == "name"]
             if names:
                 options.append({"name": names[0]["object"]})
-            target = builder._choose(plan, f"plan_greet_who@{ctx}", ["you", "a_name"])
+            target = builder._choose(plan, f"plan_{form}_who@{ctx}", ["you", "a_name"])
             named = [o for o in options if o.get("name")]
-            return {"act": "greet", "addressee": rng.choice(named) if target == "a_name" and named else you}
+            return {"act": form, "addressee": rng.choice(named) if target == "a_name" and named else you}
         available = [k for k in self._PIECE_KINDS if pieces[k]]
         if not available:
             return None
@@ -678,6 +686,14 @@ class LanguageGenerator:
         "not_silence": ({}, {"plan_form@": {"quiet"}}),
         "respond_to_feeling": ({"plan_piece@": {"heard_adjective", "feeling"}}, {"plan_form@": {"quiet"}}),
         "about_him": ({"plan_subject@": {"you"}}, {"plan_form@": {"quiet"}}),
+        "farewell_back": ({"plan_form@": {"farewell"}}, {}),
+        "no_name": ({"plan_greet_who@": {"you"}, "plan_farewell_who@": {"you"}}, {}),
+        "complete_it": ({"plan_object@": {"object"}}, {}),
+        "not_greeting": ({}, {"plan_form@": {"greet"}}),
+        "not_farewell": ({}, {"plan_form@": {"farewell"}}),
+        "restate_or_ask": ({"plan_form@": {"state", "ask"},
+                            "plan_piece@": {"memory", "heard_noun", "heard_verb", "heard_adjective"}}, {}),
+        "about_what_he_said": ({"plan_piece@": {"memory", "heard_noun", "heard_verb", "heard_adjective"}}, {}),
     }
 
     def _take_feedback(self, builder: Any, wanted: str) -> None:

@@ -23,7 +23,7 @@ front of her and builds it here. LanguageGenerator.express() and the
 Meaning format (all keys optional except what the act needs):
 
     {
-      "act": "state" | "ask" | "greet",
+      "act": "state" | "ask" | "greet" | "farewell",
       "subject": <entity>,            # who/what the sentence is about
       "verb": "devour",               # lemma; "be" with "complement" for X is Y
       "object": <entity>,
@@ -61,6 +61,7 @@ EXPLORE_RATE = 0.1
 START_SCORE = 0.5   # every option starts equal; nothing is preferred until learned
 # OEWN sense "an expression of greeting" (hello, hullo, hi, howdy, how-do-you-do).
 GREETING_SENSE = "oewn-06645018-n"
+FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
 
 _MODALS = {"can", "could", "will", "would", "shall", "should", "may", "might", "must"}
 _BE_PRESENT = {("1", "sg"): "am", ("2", "sg"): "are", ("3", "sg"): "is",
@@ -551,6 +552,18 @@ class SentenceBuilder:
                 return f"{word}, {addressee['name']}"
         return word
 
+    def _parting(self, built: Built, meaning: Dict[str, Any]) -> str:
+        words = self.lexicon.sense_words(FAREWELL_SENSE)
+        if not words:
+            built.problems.append("no farewell words: dictionary unavailable")
+            return ""
+        word = self._choose(built, "farewell_word", words)
+        addressee = meaning.get("addressee")
+        if addressee and addressee.get("name"):
+            if self._choose(built, "farewell_use_name", ["yes", "no"]) == "yes":
+                return f"{word}, {addressee['name']}"
+        return word
+
     # ---- public --------------------------------------------------------------
 
     def build(self, meaning: Dict[str, Any]) -> Built:
@@ -558,6 +571,8 @@ class SentenceBuilder:
         act = (meaning or {}).get("act", "state")
         if act == "greet":
             text, end = self._greeting(built, meaning), "!"
+        elif act == "farewell":
+            text, end = self._parting(built, meaning), "!"
         elif act == "ask":
             text, end = self._question(built, meaning), "?"
         else:
