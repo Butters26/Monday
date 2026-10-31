@@ -62,9 +62,11 @@ def test_prompted_core_path_order_and_output(tmp_path):
         route_pairs = [
             (r.get("to"), r.get("type")) for r in systems["thalamus"].message_routes
         ]
+        # Memory saves what he said itself: it hears the moment sensory
+        # integration announces, before the turn script reaches conversation.
         primary = [
+            ("notus", "moment"),
             ("conversation", "understand"),
-            ("notus", "store"),
             ("emotion", "process_input"),
             ("reasoning", "think"),
             ("language", "generate"),
@@ -80,7 +82,7 @@ def test_prompted_core_path_order_and_output(tmp_path):
             positions.append(idx)
             cursor = idx + 1
         assert positions == sorted(positions)
-        store_idx = positions[1]
+        store_idx = positions[0]
         emotion_idx = positions[2]
         context_indices = [
             i

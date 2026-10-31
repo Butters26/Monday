@@ -20,7 +20,7 @@ _COMBINED_TRANSCRIPT = re.compile(
     r"(?is)(?:^|\n)\s*(?:user|abin|monday|assistant)\s*:.*\n\s*"
     r"(?:user|abin|monday|assistant)\s*:"
 )
-_ALLOWED_MEMORY_ROLES = frozenset({"user", "fact", "note", "assistant", "monday", "abin"})
+_ALLOWED_MEMORY_ROLES = frozenset({"user", "fact", "note", "assistant", "monday", "abin", "sensed"})
 _LEARNING_KEY_SAFE = re.compile(r"[^a-z0-9:_-]+")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 _UNSAFE_LEARNING = re.compile(
@@ -33,6 +33,11 @@ _UNSAFE_LEARNING = re.compile(
 class DirectNotusProcess:
     """Persist structured, user-scoped memory in one SQLite file."""
 
+    # How many best-matching rows a lookup scores in detail. The search index
+    # ranks everything; only these get the slower word-by-word scoring.
+    CANDIDATES = 400
+    FACT_CANDIDATES = 120
+
     def __init__(self, storage_path: Optional[str] = None, thalamus: Any = None) -> None:
         self.running = True
         self.thalamus = thalamus or get_thalamus()
@@ -43,6 +48,14 @@ class DirectNotusProcess:
             self.storage_path, check_same_thread=False
         )
         self._connection.row_factory = sqlite3.Row
+        # Write-ahead log: a crash mid-save can't corrupt what's already saved,
+        # and saving doesn't block looking things up.
+        try:
+            self._connection.execute("PRAGMA journal_mode=WAL")
+            self._connection.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.DatabaseError:
+            pass
+        self._saved_recognitions: Deque[str] = deque(maxlen=256)
 
         self.working_set: Dict[str, Deque[Dict[str, Any]]] = {
             "turns": deque(maxlen=50),
@@ -179,6 +192,10 @@ class DirectNotusProcess:
             )
         if "last_accessed" not in columns:
             connection.execute("ALTER TABLE memories ADD COLUMN last_accessed TEXT")
+        # Who told her, which sense it reached her through, and which moment.
+        for name in ("told_by", "sense", "recognition_id"):
+            if name not in columns:
+                connection.execute(f"ALTER TABLE memories ADD COLUMN {name} TEXT")
 
     def _ensure_fact_schema(self) -> None:
         connection = self._require_connection()
@@ -447,11 +464,21 @@ class DirectNotusProcess:
 
     @classmethod
     def _fts_query(cls, query: str, *, conjunction: str = "AND") -> str:
-        terms = cls._query_terms(query)[:8]
+        terms = cls._query_terms(query)
+        try:
+            from notus_fact_text import FactText
+            content = [t for t in terms if t not in FactText._RETRIEVAL_STOPWORDS
+                       or t in FactText._RETRIEVAL_KEEPWORDS]
+        except Exception:
+            content = terms
+        # Filler words ("in", "the") would match half of everything; search
+        # on the words that carry the meaning, when there are any.
+        terms = (content or terms)[:8]
         if not terms:
             return ""
         joiner = " AND " if conjunction.upper() == "AND" else " OR "
-        return joiner.join(f'"{term}"' for term in terms)
+        # A word start also matches longer forms ("dog" finds "dogs").
+        return joiner.join(f'"{term}"*' for term in terms)
 
     @classmethod
     def _match_quality(cls, query: str, text: str) -> float:
@@ -530,20 +557,29 @@ class DirectNotusProcess:
             if not (self._fts_available and fts_query):
                 return []
             try:
-                return connection.execute(
-                    """
-                    SELECT m.id, m.role, m.content, m.user_id, m.memory_type,
-                           m.created_at, m.access_count, m.last_accessed,
-                           bm25(memories_fts) AS fts_rank
-                    FROM memories_fts
-                    JOIN memories AS m ON m.id = memories_fts.rowid
-                    WHERE memories_fts MATCH ?
-                      AND m.user_id = ?
-                    """
-                    + role_sql
-                    + type_sql,
-                    [fts_query, user_id, *type_params],
+                # Step 1: the search index alone hands over the newest
+                # matching line numbers (fast; recent things come back easier,
+                # as in people). Step 2: fetch just those lines. Only these
+                # get checked and scored, so a word in thousands of lines
+                # stays fast. Unsafe lines never get stored, and
+                # retrieve_memories checks each row again.
+                ids = [int(r[0]) for r in connection.execute(
+                    "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? "
+                    "ORDER BY rowid DESC LIMIT ?",
+                    (fts_query, self.CANDIDATES),
+                ).fetchall()]
+                if not ids:
+                    return []
+                rows = connection.execute(
+                    "SELECT m.id, m.role, m.content, m.user_id, m.memory_type, "
+                    "m.created_at, m.access_count, m.last_accessed, NULL AS fts_rank "
+                    "FROM memories AS m WHERE m.id IN (" + ",".join("?" * len(ids)) + ") "
+                    "AND m.user_id = ? "
+                    "AND m.role IN ('user', 'fact', 'note', 'monday', 'assistant', 'abin')"
+                    + type_sql + " ORDER BY m.id DESC LIMIT ?",
+                    [*ids, user_id, *type_params, self.CANDIDATES],
                 ).fetchall()
+                return rows
             except sqlite3.OperationalError:
                 self._fts_available = False
                 return []
@@ -551,7 +587,9 @@ class DirectNotusProcess:
         rows = _fts("AND")
         if not rows:
             rows = _fts("OR")
-        if rows:
+        if rows or self._fts_available:
+            # The index already looked at every word; reading every line
+            # letter by letter would find nothing more, only slower.
             return rows
 
         sql = (
@@ -566,13 +604,14 @@ class DirectNotusProcess:
         # Prefer AND of significant terms; fall back to OR if that is empty.
         significant = [t for t in terms if len(t) >= 4] or terms
         if len(significant) >= 2:
-            and_sql = sql + " AND (" + " AND ".join("lower(m.content) LIKE ?" for _ in significant) + ")"
-            and_params = params + [f"%{term}%" for term in significant]
+            and_sql = sql + " AND (" + " AND ".join("lower(m.content) LIKE ?" for _ in significant) + ")" + " ORDER BY m.id DESC LIMIT ?"
+            and_params = params + [f"%{term}%" for term in significant] + [self.CANDIDATES]
             and_rows = connection.execute(and_sql, and_params).fetchall()
             if and_rows:
                 return and_rows
-        sql += " AND (" + " OR ".join("lower(m.content) LIKE ?" for _ in terms) + ")"
+        sql += " AND (" + " OR ".join("lower(m.content) LIKE ?" for _ in terms) + ")" + " ORDER BY m.id DESC LIMIT ?"
         params.extend(f"%{term}%" for term in terms)
+        params.append(self.CANDIDATES)
         return connection.execute(sql, params).fetchall()
 
     def retrieve_memories(
@@ -650,13 +689,16 @@ class DirectNotusProcess:
 
         now = datetime.now(timezone.utc).isoformat()
         memory_type = self._clean_text(payload.get("memory_type")) or "conversation"
+        told_by = self._optional_text(payload.get("told_by"))
+        sense = self._optional_text(payload.get("sense"))
+        recognition_id = self._optional_text(payload.get("recognition_id"))
 
         with self._lock:
             connection = self._require_connection()
             cursor = connection.execute(
-                "INSERT INTO memories(role, content, user_id, memory_type, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (role, content.strip(), user_id, memory_type, now),
+                "INSERT INTO memories(role, content, user_id, memory_type, created_at, "
+                "told_by, sense, recognition_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (role, content.strip(), user_id, memory_type, now, told_by, sense, recognition_id),
             )
             memory_id = int(cursor.lastrowid)
             connection.commit()
@@ -668,6 +710,9 @@ class DirectNotusProcess:
             "user_id": user_id,
             "memory_type": memory_type,
             "timestamp": now,
+            "told_by": told_by,
+            "sense": sense,
+            "recognition_id": recognition_id,
         }
         self.working_set["turns"].append(item)
         learned: List[Dict[str, Any]] = []
@@ -928,6 +973,38 @@ class DirectNotusProcess:
             )
         return connection.execute(sql, params).fetchall()
 
+    def _fact_candidates(self, connection, query_tokens: set, user_id: str):
+        """Facts the search index finds for the question's words, their aliases
+        ("called" also finds "name") and word starts ("call" finds "called").
+        None when the index can't be used, so the caller scans instead."""
+        if not self._fts_available:
+            return None
+        from notus_fact_text import FactText
+
+        terms = sorted({
+            alias for token in query_tokens for alias in FactText._alias_set(token)
+            if re.fullmatch(r"[a-z0-9]+", alias or "")
+        })
+        if not terms:
+            return None
+        match = " OR ".join(f'"{term}"*' for term in terms[:48])
+        try:
+            ids = [int(r[0]) for r in connection.execute(
+                "SELECT rowid FROM brain_facts_fts WHERE brain_facts_fts MATCH ? "
+                "ORDER BY rowid DESC LIMIT ?",
+                (match, self.FACT_CANDIDATES),
+            ).fetchall()]
+            if not ids:
+                return []
+            return connection.execute(
+                "SELECT f.* FROM brain_facts AS f WHERE f.id IN ("
+                + ",".join("?" * len(ids)) + ") AND f.user_id = ? AND f.is_contradicted = 0 "
+                "ORDER BY f.id DESC LIMIT ?",
+                [*ids, user_id, self.FACT_CANDIDATES],
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return None
+
     def query_brain_facts(
         self,
         query: str = "",
@@ -954,17 +1031,19 @@ class DirectNotusProcess:
 
         with self._lock:
             connection = self._require_connection()
-            rows = connection.execute(
-                """
-                SELECT f.*
-                FROM brain_facts AS f
-                WHERE f.user_id = ?
-                  AND f.is_contradicted = 0
-                ORDER BY f.created_at ASC
-                LIMIT 5000
-                """,
-                (user_id,),
-            ).fetchall()
+            rows = self._fact_candidates(connection, query_tokens, user_id)
+            if rows is None:
+                rows = connection.execute(
+                    """
+                    SELECT f.*
+                    FROM brain_facts AS f
+                    WHERE f.user_id = ?
+                      AND f.is_contradicted = 0
+                    ORDER BY f.created_at ASC
+                    LIMIT 5000
+                    """,
+                    (user_id,),
+                ).fetchall()
 
             scored: List[Tuple[float, str, sqlite3.Row, str]] = []
             for row in rows:
@@ -1667,6 +1746,40 @@ class DirectNotusProcess:
             },
         }
 
+    # ------------------------------------------------------------------
+    # On the team: memory hears every moment sensory integration announces
+    # and saves it itself, with who it came from, when, and which sense.
+    # ------------------------------------------------------------------
+
+    def on_joined(self, name: str) -> None:
+        listen = getattr(self.thalamus, "listen", None)
+        if callable(listen):
+            listen(name, "moment")
+
+    def hear_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
+        recognition_id = str(payload.get("recognition_id") or moment.get("recognition_id") or "")
+        user_id = self._clean_text(payload.get("user_id") or moment.get("user_id")) or "default"
+        if recognition_id and recognition_id in self._saved_recognitions:
+            return {"status": "success", "content": {"stored": False, "already_saved": recognition_id}}
+        sense = self._clean_text(moment.get("modality")) or "text"
+        if sense in ("text", "audio"):
+            words = moment.get("text") if sense == "text" else (moment.get("transcript") or moment.get("text"))
+            role = "user"
+        else:
+            words = moment.get("text")
+            role = "sensed"
+        if not isinstance(words, str) or not words.strip():
+            return {"status": "error", "message": "notus: the moment had nothing to save"}
+        result = self._store({
+            "role": role, "content": words.strip(), "user_id": user_id,
+            "told_by": user_id if role == "user" else None,
+            "sense": sense, "recognition_id": recognition_id or None,
+        })
+        if result.get("status") == "success" and recognition_id:
+            self._saved_recognitions.append(recognition_id)
+        return result
+
     @staticmethod
     def _payload(message: Dict[str, Any]) -> Dict[str, Any]:
         payload = message.get("content", message)
@@ -1698,6 +1811,9 @@ class DirectNotusProcess:
 
         if msg_type == "store":
             return self._store(payload)
+
+        if msg_type == "moment":
+            return self.hear_moment(payload)
 
         if msg_type in {"query", "query_semantic"}:
             query = self._clean_text(

@@ -994,20 +994,8 @@ class Thalamus:
             attention_payload
         )
 
-        stored = self.send_and_wait(
-            "notus",
-            "store",
-            {"role": "user", "content": user_input, "user_id": user_id},
-        )
-        if stored.get("status") != "success":
-            self.notus_fallback.enqueue(
-                user_id=user_id,
-                role="user",
-                content=user_input,
-                memory_type="conversation",
-            )
-        else:
-            self._flush_notus_fallback_best_effort(user_id)
+        # Memory saves what he said itself: it hears the moment sensory
+        # integration announces (DirectNotusProcess.hear_moment).
 
         memory_context = self.send_and_wait(
             "notus",

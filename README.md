@@ -84,15 +84,23 @@ path.
 
 ### Notus memory
 
+- **On the team:** memory signs up for sensory integration's `moment`
+  announcement and saves each moment itself (what was said, who said it, which
+  sense, which moment). The turn script no longer saves his words, and thalamus
+  no longer keeps a backup of them.
+- **Fast as it fills up:** lookups ask the search index for the newest matching
+  lines first and score only those (400 lines, 120 facts), and the database runs
+  in write-ahead mode (crash-safe). With 50,000 lines and 5,000 facts, the
+  slowest lookups measured 11–14 ms and fact lookups under 0.1 ms.
 - **One memory store:** unless a custom `notus_factory` is passed,
   `open_primary_notus()` opens a SQLite `DirectNotusProcess` at
   `shared_direct_notus_path()`. The REPL and chat daemon use the same file.
   There is no PostgreSQL memory; it was removed. Fact extraction and
   matching helpers live in `notus_fact_text.py`.
-- **Outage fallback:** if a Notus store/query errors or raises (caught by
-  `Thalamus.send_message`), the prompted path keeps going using a bounded
+- **Outage fallback (her own replies only, for now):** if storing her reply or
+  a query errors, the prompted path keeps going using a bounded
   per-user in-memory queue (`notus_outage_fallback.py`, max 64 records per user,
-  oldest dropped first). Queued records carry stable `event_id`s. Recovery is
+  oldest dropped first). His words are saved by memory itself (above). Queued records carry stable `event_id`s. Recovery is
   strict FIFO and stops on the first sync failure.
   `Thalamus.retry_unsaved_notus_records()` uses the event_ids so a double retry
   doesn't re-store the same event.
