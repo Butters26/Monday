@@ -41,6 +41,7 @@ from novelty_lobe import NoveltyLobe
 from pattern_recognition import AdvancedPatternRecognition
 from perception import PerceptionLobe
 from sensory_integration_lobe import SensoryIntegrationLobe
+from values_lobe import ValuesLobe
 from meta_cognition_lobe import MetaCognitionLobe
 from executive_control_lobe import ExecutiveControlLobe
 from social_context_lobe import SocialContextLobe
@@ -165,6 +166,11 @@ def create_core_systems(
         "attention": AttentionLobe(thalamus=thalamus),
         "novelty": NoveltyLobe(thalamus=thalamus),
         "pattern": AdvancedPatternRecognition(thalamus=thalamus),
+        # Values: what matters to her. Starting values come from values.txt in
+        # her runtime folder (Matthew edits it).
+        "values": ValuesLobe(thalamus=thalamus,
+                             storage_path=str(Path(directory) / "values.json"),
+                             starting_file=str(Path(directory) / "values.txt")),
         "conversation": ConversationSystem(thalamus=thalamus),
         "notus": notus,
         "emotion": EmotionalProcess(
@@ -207,6 +213,7 @@ def create_core_systems(
         "speech",
         "meta_awareness",
         "shared_representation",
+        "values",
     ):
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
@@ -235,6 +242,7 @@ def create_core_systems(
 def shutdown_core_systems(systems: Dict[str, Any]) -> None:
     for name in (
         "autonomous",
+        "values",
         "output",
         "voice",
         "speech",

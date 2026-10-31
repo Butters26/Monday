@@ -57,6 +57,15 @@ images) on a `sense` message and announces it: `heard_words`, `heard_sound`,
 for the first three, combines them into one moment, and announces `moment`. Other
 lobes sign up for these as each is rebuilt (Monday Build Plan step 2).
 
+**Values** (`values_lobe.py`, registered as `values`): what matters to her and
+how much, changed by experience and never overwritten (each change keeps the old
+and new strength and why). Starting values come from `<runtime dir>/values.txt`,
+one per line, `name: what it means (strength 0.8)`. If the file doesn't exist it
+is written with six placeholder values from monday-with-more for Matthew to
+replace. A changed line in his file wins; an unchanged line never undoes what
+experience did. Whoever reports an experience says which values it touches
+(no preset map).
+
 The offline dictionary keeps one SQLite connection per thread
 (`lexicon/oewn_offline.py`), since a connection only works on the thread that
 opened it.
