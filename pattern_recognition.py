@@ -44,6 +44,17 @@ class Sequence:
     durable: bool = False  # promoted beyond working-window / persisted
     user_id: str = "default"
 
+    def __setattr__(self, name, value):
+        # Anything that can change which periods count as references bumps the
+        # change counter, so the kept reference list knows to rebuild.
+        if name in ("steps", "durable", "user_id"):
+            global _SEQUENCE_CHANGES
+            _SEQUENCE_CHANGES += 1
+        object.__setattr__(self, name, value)
+
+
+_SEQUENCE_CHANGES = 0
+
 @dataclass
 class BehavioralPattern:
     """Complex behavioral pattern combining multiple signals"""
@@ -95,6 +106,16 @@ class PareidoliaPattern:
 # ============================================================================
 # ADVANCED PATTERN RECOGNITION LOBE
 # ============================================================================
+
+from functools import lru_cache as _lru_cache
+
+
+@_lru_cache(maxsize=65536)
+def _linear_period(steps: tuple) -> bool:
+    """Whether a run of items is a constant-step number progression (2,4,6,8).
+    The answer for the same items never changes, so it is remembered."""
+    return AdvancedPatternRecognition._looks_like_linear_period_uncached(list(steps))
+
 
 class AdvancedPatternRecognition:
     """Human-like pattern recognition - sees everything"""
@@ -407,6 +428,10 @@ class AdvancedPatternRecognition:
     @staticmethod
     def _looks_like_linear_period(steps: List[str]) -> bool:
         """True for constant-delta / constant-ratio numeric runs (genuine progressions)."""
+        return _linear_period(tuple(str(s) for s in steps))
+
+    @staticmethod
+    def _looks_like_linear_period_uncached(steps: List[str]) -> bool:
         if len(steps) < 3:
             return False
         try:
@@ -423,6 +448,28 @@ class AdvancedPatternRecognition:
         return False
 
     def _iter_wrap_reference_periods(self, user_id: Any = None):
+        """The reference periods, kept and rebuilt only when the sequences
+        change (a sequence added, removed, or marked durable)."""
+        return iter(self._wrap_references(user_id)[0])
+
+    def _wrap_references(self, user_id: Any = None):
+        """(periods, index from item to the periods containing it), rebuilt only
+        after a sequence was added, removed, or changed."""
+        scope = self._normalize_user_id(user_id) if user_id is not None else None
+        fingerprint = (id(self.sequences), len(self.sequences), _SEQUENCE_CHANGES)
+        cache = self.__dict__.setdefault("_wrap_reference_cache", {})
+        hit = cache.get(scope)
+        if hit is None or hit[0] != fingerprint:
+            periods = list(self._build_wrap_reference_periods(user_id=user_id))
+            index: Dict[str, List[int]] = {}
+            for i, period in enumerate(periods):
+                for item in set(period):
+                    index.setdefault(item, []).append(i)
+            hit = (fingerprint, periods, index)
+            cache[scope] = hit
+        return hit[1], hit[2]
+
+    def _build_wrap_reference_periods(self, user_id: Any = None):
         """Periods trusted for wrap detection: linear progressions, then other durables.
 
         Rotations of a linear period are not references (they are wrap noise themselves).
@@ -465,8 +512,15 @@ class AdvancedPatternRecognition:
             period = steps[:p]
             if all(steps[i] == period[i % p] for i in range(len(steps))):
                 return True
-        for period in self._iter_wrap_reference_periods(user_id=user_id):
+        step_set = set(steps)
+        periods, index = self._wrap_references(user_id)
+        # A wrap or a rotation of a period only uses the period's own items, so
+        # only periods containing the first item can match (kept in order).
+        for i in index.get(steps[0], ()):
+            period = periods[i]
             if period == steps:
+                continue
+            if not step_set.issubset(period):
                 continue
             if len(period) != len(steps):
                 if self._is_cyclic_wrap_of_period(period, steps):
