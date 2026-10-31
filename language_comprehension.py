@@ -1338,7 +1338,23 @@ class LanguageComprehensionEngine:
             deduped.append(item)
         return {"present": bool(deduped), "evidence": deduped[:8]}
 
+    _READINGS_KEPT = 256
+
     def analyze(self, text: str) -> Dict[str, Any]:
+        """Read a sentence. The same sentence reads the same way, so recent
+        readings are kept (memory and reasoning both ask about each line)."""
+        import copy
+        key = str(text or "").strip()
+        cache = self.__dict__.setdefault("_readings", {})
+        if key in cache:
+            return copy.deepcopy(cache[key])
+        reading = self._analyze_uncached(text)
+        cache[key] = copy.deepcopy(reading)
+        if len(cache) > self._READINGS_KEPT:
+            cache.pop(next(iter(cache)))
+        return reading
+
+    def _analyze_uncached(self, text: str) -> Dict[str, Any]:
         original = str(text or "").strip()
         normalized = self.normalize(original)
         tokens = self.tokenize(normalized)
