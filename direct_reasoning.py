@@ -955,6 +955,33 @@ class DirectReasoningAdapter:
         theme = str(assertion.get("theme_concept") or reply.get("topic_head") or "").casefold()
         return bool(theme) and theme == str(complement.get("lemma") or "").casefold()
 
+    # Who a sentence's doer is, seen from the other speaker's side.
+    _TURNED = {"i": "you", "me": "you", "you": "i", "we": "you", "us": "you"}
+
+    def _doer(self, reading: Dict[str, Any], turn: bool = False) -> str:
+        for token in reading.get("tokens") or []:
+            kind = token.get("kind")
+            if kind in ("verb", "auxiliary", "modal"):
+                break
+            if kind in ("pronoun", "noun", "proper_noun"):
+                word = str(token.get("lemma") or token.get("surface") or "").casefold()
+                return self._TURNED.get(word, word) if turn else word
+        return ""
+
+    def _says_back(self, reply: Dict[str, Any], his: Dict[str, Any]) -> bool:
+        """Her reply says what he told her, from her side: the same doer
+        (his "I" is her "you"), the same content words, the same yes/no."""
+        if not reply or not his:
+            return False
+        said, told = self._content_lemmas(reply), self._content_lemmas(his)
+        if not told or said != told:
+            return False
+        if self._doer(reply) != self._doer(his, turn=True):
+            return False
+        negative = lambda r: str((r.get("assertion") or {}).get("polarity") or "") == "negative" or any(
+            t.get("kind") == "negation" for t in r.get("tokens") or [])
+        return negative(reply) == negative(his)
+
     def _calls_someone_a_thing(self, meaning: Dict[str, Any]) -> Optional[str]:
         """"Are you a music?": a person is a person-kind of thing (a doctor, a
         fool), never music or a table. The dictionary files each noun."""
@@ -963,7 +990,8 @@ class DirectReasoningAdapter:
         subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}
         complement = meaning.get("complement") if isinstance(meaning.get("complement"), dict) else {}
         noun = str(complement.get("noun") or "")
-        person = subject.get("ref") in ("speaker", "addressee") or bool(subject.get("name"))
+        person = subject.get("ref") in ("speaker", "addressee") or bool(subject.get("name")) \
+            or subject.get("pronoun") in ("he", "she", "we")
         if person and noun and not self._noun_is_person(noun):
             return f"a person isn't {noun}: the dictionary doesn't have '{noun}' as a kind of person"
         return None
@@ -1074,7 +1102,8 @@ class DirectReasoningAdapter:
             if act == "state":
                 # Saying back what he just told her shows she took it in; any other
                 # claim is something she doesn't know is true.
-                if not used or not self._fact_fits(used, user_input):
+                said_back = self._says_back(reply, self._analyze(user_input))
+                if not said_back and (not used or not self._fact_fits(used, user_input)):
                     return no("she's claiming something she doesn't know; she can say back what he "
                               "told her or ask about it", "restate_or_ask")
             elif act == "ask" and his and not (his & said):

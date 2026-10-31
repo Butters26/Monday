@@ -589,6 +589,16 @@ class LanguageGenerator:
     FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
     _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing")
 
+    # Pronouns he uses for other people and things, turned to her point of view.
+    # ("I", "me", "you" are the two of them and come in as subject choices already.)
+    _HIS_PRONOUNS = {
+        "he": {"pronoun": "he"}, "him": {"pronoun": "he"},
+        "she": {"pronoun": "she"}, "her": {"pronoun": "she"},
+        "it": {"pronoun": "it"},
+        "they": {"pronoun": "they"}, "them": {"pronoun": "they"},
+        "we": {"ref": "addressee"}, "us": {"ref": "addressee"},
+    }
+
     def _pieces(self, semantic_input: Dict[str, Any], user_id: str, user_input: str) -> Dict[str, List[Any]]:
         """What she has in front of her this turn. Nothing here decides what to say."""
         understanding = semantic_input.get("language_understanding") or {}
@@ -599,7 +609,12 @@ class LanguageGenerator:
             surface = str(token.get("surface") or "").strip()
             if not lemma or lemma.casefold() in {"be", "do", "have"}:
                 continue
-            if kind == "proper_noun":
+            if kind == "pronoun" and lemma.casefold() in self._HIS_PRONOUNS:
+                # Someone he spoke of, seen from her side: his "we" is "you" to her.
+                entity = self._HIS_PRONOUNS[lemma.casefold()]
+                if entity not in pieces["heard_noun"]:
+                    pieces["heard_noun"].append(dict(entity))
+            elif kind == "proper_noun":
                 pieces["heard_noun"].append({"name": surface[:1].upper() + surface[1:]})
             elif kind == "noun":
                 pieces["heard_noun"].append({"noun": lemma.casefold(), "count": "one"})
@@ -677,8 +692,11 @@ class LanguageGenerator:
                 # Her feeling is hers: it is only ever said about her.
                 meaning = {"subject": me, "verb": "be", "complement": {"adjectives": [pieces["feeling"][0]]},
                            "_purpose": "own_feeling"}
-            else:  # heard_noun
-                noun = rng.choice(pieces["heard_noun"])
+            else:  # heard_noun: a thing or a name, never a pronoun ("Are you a they?")
+                things = [n for n in pieces["heard_noun"] if n.get("noun") or n.get("name")]
+                if not things:
+                    return None
+                noun = rng.choice(things)
                 meaning = {"subject": subject, "verb": "be",
                            "complement": {"entity": noun} if noun.get("name")
                            else {"noun": noun["noun"], "definite": False}}
@@ -705,7 +723,7 @@ class LanguageGenerator:
         "complete_it": ({"plan_object@": {"object"}}, {}),
         "not_greeting": ({}, {"plan_form@": {"greet"}}),
         "not_farewell": ({}, {"plan_form@": {"farewell"}}),
-        "restate_or_ask": ({"plan_form@": {"state", "ask"},
+        "restate_or_ask": ({"plan_form@": {"state", "ask", "quiet"},
                             "plan_piece@": {"memory", "heard_noun", "heard_verb", "heard_adjective"}}, {}),
         "about_what_he_said": ({"plan_piece@": {"memory", "heard_noun", "heard_verb", "heard_adjective"}}, {}),
     }

@@ -42,6 +42,7 @@ Meaning format (all keys optional except what the act needs):
 
     entity = {"name": "Matthew"}                      # proper name
            | {"ref": "speaker"} | {"ref": "addressee"}  # I / you
+           | {"pronoun": "he" | "she" | "it" | "they" | "we"}  # anyone else
            | {"noun": "fire", "count": "mass" | "one" | "many",
               "definite": True|False, "adjectives": [...],
               "owner": <entity>,                  # *your* name, *Matthew's* dog
@@ -78,6 +79,14 @@ _AN_EXCEPTIONS_A = ("uni", "use", "usu", "uti", "one", "once", "eu", "ewe")
 _PRONOUNS = {
     "speaker": {"subject": "I", "object": "me", "possessive": "my"},
     "addressee": {"subject": "you", "object": "you", "possessive": "your"},
+}
+# Everyone else, by the pronoun that stands for them: forms and agreement.
+_THIRD_PRONOUNS = {
+    "he": {"subject": "he", "object": "him", "possessive": "his", "person": ("3", "sg")},
+    "she": {"subject": "she", "object": "her", "possessive": "her", "person": ("3", "sg")},
+    "it": {"subject": "it", "object": "it", "possessive": "its", "person": ("3", "sg")},
+    "they": {"subject": "they", "object": "them", "possessive": "their", "person": ("3", "pl")},
+    "we": {"subject": "we", "object": "us", "possessive": "our", "person": ("1", "pl")},
 }
 
 
@@ -348,6 +357,9 @@ class SentenceBuilder:
             return "1", "sg"
         if ref == "addressee":
             return "2", "sg"
+        pronoun = _THIRD_PRONOUNS.get(str(entity.get("pronoun") or ""))
+        if pronoun:
+            return pronoun["person"]
         return "3", "pl" if entity.get("count") == "many" else "sg"
 
     def _plural(self, noun: str) -> str:
@@ -362,6 +374,8 @@ class SentenceBuilder:
         ref = entity.get("ref")
         if ref in _PRONOUNS:
             return _PRONOUNS[ref][case if case in ("subject", "object") else "object"]
+        if entity.get("pronoun") in _THIRD_PRONOUNS:
+            return _THIRD_PRONOUNS[entity["pronoun"]][case if case in ("subject", "object") else "object"]
         if entity.get("name"):
             phrase = str(entity["name"])
         elif entity.get("noun"):
@@ -392,6 +406,8 @@ class SentenceBuilder:
         ref = entity.get("ref")
         if ref in _PRONOUNS:
             return _PRONOUNS[ref]["possessive"]
+        if entity.get("pronoun") in _THIRD_PRONOUNS:
+            return _THIRD_PRONOUNS[entity["pronoun"]]["possessive"]
         phrase = self.noun_phrase(built, entity, "object")
         return phrase + ("'" if phrase.endswith("s") and entity.get("count") == "many" else "'s")
 
