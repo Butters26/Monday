@@ -310,6 +310,18 @@ class SentenceBuilder:
         options = list(dict.fromkeys(o for o in options if o))
         if not options:
             return ""
+        # Feedback for this reply narrows the choice (Language acting on why
+        # the last try was sent back); learning still records what gets used.
+        for prefix, allowed in (getattr(self, "steer_only", None) or {}).items():
+            if point.startswith(prefix):
+                narrowed = [o for o in options if o in allowed]
+                if narrowed:
+                    options = narrowed
+        for prefix, banned in (getattr(self, "steer_avoid", None) or {}).items():
+            if point.startswith(prefix):
+                narrowed = [o for o in options if o not in banned]
+                if narrowed:
+                    options = narrowed
         if len(options) == 1:
             return options[0]
         scored = [(self.memory.score(point, o, START_SCORE), o) for o in options]

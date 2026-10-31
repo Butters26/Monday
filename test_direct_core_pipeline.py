@@ -158,7 +158,8 @@ def test_prompted_core_recalls_stable_fact_after_restart(tmp_path):
         learned = first["thalamus"].process_user_input(
             "My favorite color is violet", user_id="alice"
         )
-        assert isinstance(learned, str) and learned.strip()
+        # After a plain statement, staying quiet is a choice she may make.
+        assert isinstance(learned, str)
         stored = first["notus"].retrieve_memories(
             "favorite color violet", user_id="alice"
         )
@@ -186,7 +187,8 @@ def test_prompted_core_recalls_stable_fact_after_restart(tmp_path):
         reply = reopened["thalamus"].process_user_input(
             "What is my favorite color?", user_id="alice"
         )
-        assert isinstance(reply, str) and reply.strip()
+        # Asked after a restart, she answers from what she remembers.
+        assert isinstance(reply, str) and "violet" in reply.lower(), reply
     finally:
         shutdown_core_systems(reopened)
 

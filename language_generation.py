@@ -524,7 +524,7 @@ class LanguageGenerator:
 
     # Grammar forms she can speak in (sentence shapes, not reply types).
     _FORMS = ("state", "ask", "greet", "quiet")
-    _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling")
+    _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing")
 
     def _pieces(self, semantic_input: Dict[str, Any], user_id: str, user_input: str) -> Dict[str, List[Any]]:
         """What she has in front of her this turn. Nothing here decides what to say."""
@@ -551,6 +551,15 @@ class LanguageGenerator:
         feeling = str(semantic_input.get("emotion") or "").strip().lower()
         if feeling and feeling not in {"neutral", "unknown"}:
             pieces["feeling"].append(feeling)
+        for evidence in (understanding.get("affect") or {}).get("evidence") or []:
+            # A word Language read as his feeling ("tired") is something she can
+            # say back as a feeling, even when it also reads as a verb.
+            word = str(evidence.get("lemma") or evidence.get("surface") or "").strip().casefold()
+            if word and word not in pieces["heard_adjective"]:
+                pieces["heard_adjective"].append(word)
+        if understanding.get("speech_act") == "question":
+            # Asked something, she can always say she doesn't know it.
+            pieces["not_knowing"].append(True)
         return pieces
 
     @staticmethod
@@ -586,6 +595,8 @@ class LanguageGenerator:
         kind = builder._choose(plan, f"plan_piece@{ctx}", available)
         if kind == "memory":
             meaning = dict(rng.choice(pieces["memory"]))
+        elif kind == "not_knowing":
+            meaning = {"subject": me, "verb": "know", "negated": True, "_purpose": "admit_unknown"}
         else:
             subjects = {"me": me, "you": you}
             if pieces["heard_noun"]:
@@ -609,6 +620,31 @@ class LanguageGenerator:
         meaning["act"] = "ask" if form == "ask" else "state"
         return meaning
 
+    # What kind of reply Reasoning said would fit, and how Language narrows its
+    # next try to fit it (it still chooses, and still learns from what's kept).
+    _FEEDBACK = {
+        "use_memory": ({"plan_form@": {"state"}, "plan_piece@": {"memory"}}, {}),
+        "say_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"not_knowing"}}, {}),
+        "other_fact_or_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"memory", "not_knowing"}}, {}),
+        "answer_not_ask": ({}, {"plan_form@": {"ask"}}),
+        "greet_back": ({"plan_form@": {"greet"}}, {}),
+        "not_silence": ({}, {"plan_form@": {"quiet"}}),
+        "respond_to_feeling": ({"plan_piece@": {"heard_adjective", "feeling"}}, {"plan_form@": {"quiet"}}),
+        "about_him": ({"plan_subject@": {"you"}}, {"plan_form@": {"quiet"}}),
+    }
+
+    def _take_feedback(self, builder: Any, wanted: str) -> None:
+        if wanted.startswith("plain_word:"):
+            _, pos, word = (wanted.split(":", 2) + ["", ""])[:3]
+            if pos and word:
+                builder.steer_only[f"word_{pos}_{word}"] = {word}
+            return
+        only, avoid = self._FEEDBACK.get(wanted, ({}, {}))
+        for prefix, values in only.items():
+            builder.steer_only[prefix] = set(values)
+        for prefix, values in avoid.items():
+            builder.steer_avoid.setdefault(prefix, set()).update(values)
+
     def respond(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
         """Compose from the pieces, build, have Reasoning review, learn, redo. Always reports why."""
         from language_builder import Built
@@ -625,19 +661,28 @@ class LanguageGenerator:
         builder = self._builder("monday")
         base_explore = builder.explore_rate
         last_reason = ""
+        builder.steer_only, builder.steer_avoid = {}, {}
+        sent_back: set = set()
         try:
             for attempt in range(1, self.MAX_REPLY_ATTEMPTS + 1):
                 builder.explore_rate = min(1.0, base_explore + 0.15 * (attempt - 1))
-                plan = Built("", learner=builder.learner)
-                meaning = self._compose(builder, plan, ctx, pieces, user_id)
+                # Don't say the same thing that was just sent back.
+                for _ in range(6):
+                    plan = Built("", learner=builder.learner)
+                    meaning = self._compose(builder, plan, ctx, pieces, user_id)
+                    if meaning is None:
+                        built = None
+                        break
+                    if meaning.get("_quiet"):
+                        built = Built("", learner=builder.learner)
+                    else:
+                        meaning["_feeling_words"] = feeling_words
+                        built = builder.build(meaning)
+                    if (built.sentence or "(quiet)") not in sent_back:
+                        break
                 if meaning is None:
                     last_reason = "she had nothing to put together"
                     continue
-                if meaning.get("_quiet"):
-                    built = Built("", learner=builder.learner)
-                else:
-                    meaning["_feeling_words"] = feeling_words
-                    built = builder.build(meaning)
                 built.choices = plan.choices + built.choices
                 review = self._ask("reasoning", "review_reply", {
                     "sentence": built.sentence, "problems": built.problems, "situation": situation,
@@ -651,6 +696,9 @@ class LanguageGenerator:
                 ok = bool(review.get("ok"))
                 last_reason = str(review.get("reason") or "")
                 builder.feedback(built, ok, last_reason)
+                if not ok:
+                    sent_back.add(built.sentence or "(quiet)")
+                    self._take_feedback(builder, str(review.get("wanted") or ""))
                 self._trace("reply_attempt", ok=ok, sentence=built.sentence or "(stays quiet)",
                             reason=last_reason, context=ctx, attempt=attempt,
                             plan=[f"{p}={o}" for p, o, _ in plan.choices])
@@ -662,6 +710,7 @@ class LanguageGenerator:
                             "situation": situation, "attempts": attempt}
         finally:
             builder.explore_rate = base_explore
+            builder.steer_only, builder.steer_avoid = {}, {}
         self._trace("reply_done", silence="failed", situation=situation, reason=last_reason,
                     attempts=self.MAX_REPLY_ATTEMPTS)
         return {"sentence": "", "silence": "failed", "reason": last_reason, "situation": situation,

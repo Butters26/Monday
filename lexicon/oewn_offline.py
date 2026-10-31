@@ -186,6 +186,19 @@ def lookup_senses(
     return [item[1] for item in scored[:max_senses]]
 
 
+@lru_cache(maxsize=8192)
+def meaning_count(lemma: str, pos: Optional[str] = None) -> int:
+    """How many meanings the dictionary lists for a word. Everyday words have
+    many ("know": 11); rare stand-ins have few ("cognize": 1)."""
+    form = (lemma or "").strip()
+    if not form:
+        return 0
+    try:
+        return len(get_wordnet().synsets(form, pos=pos) if pos else get_wordnet().synsets(form))
+    except Exception:
+        return 0
+
+
 def lemma_and_pos_candidates(surface: str) -> List[Dict[str, str]]:
     """Return lemma/pos pairs OEWN knows for this surface (via Morphy)."""
     form = (surface or "").strip()
@@ -951,6 +964,7 @@ __all__ = [
     "complements_compete",
     "ensure_oewn",
     "get_wordnet",
+    "meaning_count",
     "lemma_and_pos_candidates",
     "lexicon_paths",
     "lookup_senses",

@@ -731,6 +731,129 @@ class DirectReasoningAdapter:
                 return True
         return False
 
+    # ------------------------------------------------------------------
+    # On the team: reasoning signs up for what memory brings up on its own,
+    # so it knows what she remembers about what was just said.
+    # ------------------------------------------------------------------
+
+    def on_joined(self, name: str) -> None:
+        listen = getattr(self.thalamus, "listen", None)
+        if callable(listen):
+            listen(name, "remembered")
+
+    def _hear_remembered(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        about = str(payload.get("about") or "").strip().casefold()
+        user = str(payload.get("user_id") or "default")
+        if not hasattr(self, "_remembered"):
+            self._remembered = {}
+        self._remembered[(user, about)] = payload
+        if len(self._remembered) > 64:
+            self._remembered.pop(next(iter(self._remembered)))
+        return {"status": "success", "content": {"heard": True}}
+
+    def _remembered_about(self, user_input: str, user_id: str) -> Dict[str, Any]:
+        return (getattr(self, "_remembered", {}) or {}).get((user_id, user_input.strip().casefold())) or {}
+
+    @staticmethod
+    def _fact_words(fact: Dict[str, Any]) -> set:
+        from notus_fact_text import FactText
+        text = " ".join(str(fact.get(k) or "") for k in ("predicate",)).replace("_", " ")
+        return FactText._content_tokens(text)
+
+    def _fact_fits(self, fact: Dict[str, Any], question: str) -> bool:
+        """Is this fact about what he asked? Both ways: every word the fact is
+        about ("dog name") was asked about, allowing words that mean the same
+        ("called" = "name"; asking "who" asks for a name), and every thing he
+        asked about (the nouns: "cat") is in the fact."""
+        from notus_fact_text import FactText
+        asked = FactText._expand_tokens(FactText._content_tokens(question))
+        reading = self._analyze(question)
+        if any(str(t.get("lemma") or "").casefold() == "who" for t in reading.get("tokens") or []):
+            asked |= FactText._alias_set("name")
+        about = self._fact_words(fact)
+        if not about or not all(FactText._alias_set(word) & asked for word in about):
+            return False
+        about_all = FactText._expand_tokens(about)
+        for token in reading.get("tokens") or []:
+            if token.get("kind") not in ("noun", "proper_noun", "possessive"):
+                continue
+            for word in FactText._content_tokens(str(token.get("lemma") or "").replace("'s", "")):
+                if not (FactText._alias_set(word) & about_all):
+                    return False
+        return True
+
+    _POS = {"verb": "v", "noun": "n", "adjective": "a", "adverb": "r"}
+
+    @classmethod
+    def _meant_words(cls, meaning: Any, out: Optional[Dict[str, set]] = None) -> Dict[str, set]:
+        """The words the meaning was built from, by kind."""
+        out = out if out is not None else {"v": set(), "n": set(), "a": set()}
+        if isinstance(meaning, dict):
+            if isinstance(meaning.get("verb"), str):
+                out["v"].add(meaning["verb"].casefold())
+            if isinstance(meaning.get("noun"), str):
+                out["n"].add(meaning["noun"].casefold())
+            for adj in meaning.get("adjectives") or []:
+                if isinstance(adj, str):
+                    out["a"].add(adj.casefold())
+            for key, value in meaning.items():
+                if not str(key).startswith("_") and isinstance(value, (dict, list)):
+                    cls._meant_words(value, out)
+        elif isinstance(meaning, list):
+            for item in meaning:
+                cls._meant_words(item, out)
+        return out
+
+    @classmethod
+    def _rare_stand_in(cls, meaning: Dict[str, Any], reply: Dict[str, Any]):
+        """A word in the reply that stands in for a meant word but is far rarer
+        (has far fewer dictionary meanings): 'cognize' for 'know'."""
+        try:
+            from lexicon.oewn_offline import meaning_count
+        except Exception:
+            return None
+        from lexicon.oewn_offline import get_wordnet
+        meant = cls._meant_words(meaning)
+        every_meant = {w for words in meant.values() for w in words}
+        for token in reply.get("tokens") or []:
+            if token.get("kind") in ("punctuation", "determiner", "pronoun", "proper_noun", "auxiliary"):
+                continue
+            # Compare the word itself, whatever kind it was read as
+            # ("colouring" read as a verb still stands in for the noun "color").
+            for form in {str(token.get("surface") or "").casefold(), str(token.get("lemma") or "").casefold()}:
+                if not form or form in every_meant or form in cls._NOT_CONTENT:
+                    continue
+                for pos, words in meant.items():
+                    for word in words:
+                        try:
+                            used_ids = {str(ss.id) for ss in get_wordnet().synsets(form, pos=pos)}
+                            word_ids = {str(ss.id) for ss in get_wordnet().synsets(word, pos=pos)}
+                        except Exception:
+                            continue
+                        if not (used_ids & word_ids):
+                            continue  # not standing in for this word
+                        common, rare_count = meaning_count(word, pos), meaning_count(form, pos)
+                        if common >= 3 and rare_count * 2 <= common:
+                            return form, word, pos
+        return None
+
+    @staticmethod
+    def _says_nothing(meaning: Dict[str, Any], reply: Dict[str, Any]) -> bool:
+        """'A dog is a dog': calling something itself tells nobody anything."""
+        def head(part: Any) -> str:
+            if not isinstance(part, dict):
+                return ""
+            entity = part.get("entity") if isinstance(part.get("entity"), dict) else part
+            return str(entity.get("noun") or entity.get("name") or entity.get("pronoun") or "").casefold()
+        if str(meaning.get("verb") or "") == "be":
+            subject, complement = head(meaning.get("subject")), head(meaning.get("complement"))
+            if subject and subject == complement:
+                return True
+        complement = reply.get("predicative_complement") or {}
+        assertion = reply.get("assertion") or {}
+        theme = str(assertion.get("theme_concept") or reply.get("topic_head") or "").casefold()
+        return bool(theme) and theme == str(complement.get("lemma") or "").casefold()
+
     def review_reply(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Does this reply make sense? Returns {"ok": bool, "reason": str}."""
         sentence = str(payload.get("sentence") or "").strip()
@@ -739,16 +862,17 @@ class DirectReasoningAdapter:
         user_input = str(payload.get("user_input") or "")
         user_id = str(payload.get("user_id") or "default")
 
-        def no(reason: str) -> Dict[str, Any]:
-            return {"ok": False, "reason": reason}
+        def no(reason: str, wanted: str = "") -> Dict[str, Any]:
+            # wanted: the kind of reply that would fit (never the words).
+            return {"ok": False, "reason": reason, "wanted": wanted}
 
         if payload.get("chosen_silence"):
             if situation == "greeting":
-                return no("he greeted her and she stayed quiet")
+                return no("he greeted her and she stayed quiet", "greet_back")
             if situation == "question":
-                return no("he asked her something and she stayed quiet")
+                return no("he asked her something and she stayed quiet", "not_silence")
             if situation == "emotional_share":
-                return no("he shared how he feels and she stayed quiet")
+                return no("he shared how he feels and she stayed quiet", "respond_to_feeling")
             return {"ok": True, "reason": "staying quiet fits here"}
         if not sentence:
             return no("nothing was said")
@@ -768,17 +892,41 @@ class DirectReasoningAdapter:
         if unknown:
             return no("gibberish: unknown word(s) " + ", ".join(unknown))
 
+        if self._says_nothing(meaning, reply):
+            return no("it says nothing: it calls a thing itself")
+        rare = self._rare_stand_in(meaning, reply)
+        if rare:
+            used, meant, pos = rare
+            return no(f"'{used}' is a rare word for '{meant}'; it doesn't sound natural",
+                      f"plain_word:{pos}:{meant}")
+
         reply_is_question = sentence.endswith("?") or reply.get("speech_act") == "question"
         purpose = str(meaning.get("_purpose") or "")
         if situation == "greeting":
             if not self._has_greeting(reply):
-                return no("he greeted her and the reply does not greet him back")
+                return no("he greeted her and the reply does not greet him back", "greet_back")
             first = next((t for t in reply.get("tokens") or [] if t.get("kind") != "punctuation"), {})
             if not any(sense.get("synset_id") == self._GREETING_SENSE for sense in first.get("senses") or []):
-                return no("the greeting word is used as a thing in the sentence, not to greet him")
+                return no("the greeting word is used as a thing in the sentence, not to greet him", "greet_back")
         elif situation == "question":
             if reply_is_question:
-                return no("he asked a question and the reply asks another question instead of answering")
+                return no("he asked a question and the reply asks another question instead of answering", "answer_not_ask")
+            used = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
+            if used and not self._fact_fits(used, user_input):
+                return no("the fact in the reply is about something else ("
+                          + " ".join(sorted(self._fact_words(used))) + "), not what he asked",
+                          "other_fact_or_dont_know")
+            remembered = self._remembered_about(user_input, user_id)
+            known = [f for f in remembered.get("facts") or []
+                     if isinstance(f, dict) and self._fact_fits(f, user_input)]
+            if known and not meaning.get("_fact"):
+                best = known[0]
+                return no("she remembers something about this (" + str(best.get("content") or best.get("object"))
+                          + ") and the reply doesn't use it", "use_memory")
+            if not meaning.get("_fact") and purpose != "admit_unknown":
+                # Answering needs knowing: use what she remembers, or say she doesn't know.
+                return no("she doesn't know the answer, and the reply makes something up instead of saying so",
+                          "say_dont_know")
             if purpose != "admit_unknown":
                 asked = self._content_lemmas(self._analyze(user_input))
                 said = self._content_lemmas(reply)
@@ -792,7 +940,11 @@ class DirectReasoningAdapter:
                 return no("he did not say he feels that; the feeling is about something else")
             felt = {str(w).casefold() for w in meaning.get("_feeling_words") or []}
             if felt and not (felt & {w.casefold() for w in words}):
-                return no("he shared a feeling and the reply does not respond to it")
+                return no("he shared a feeling and the reply does not respond to it", "respond_to_feeling")
+            subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}
+            if subject.get("ref") != "addressee" and felt & {w.casefold() for w in words}:
+                who = "her" if subject.get("ref") == "speaker" else "something else"
+                return no(f"the reply puts his feeling on {who}; it should be about him", "about_him")
 
         fact = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
         if fact:
@@ -813,6 +965,9 @@ class DirectReasoningAdapter:
                 "status": "success",
                 "content": {"acknowledged": True, "focus": payload.get("focus")},
             }
+        if message.get("type") == "remembered":
+            payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
+            return self._hear_remembered(payload)
         if message.get("type") == "review_reply":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             verdict = self.review_reply(payload)
