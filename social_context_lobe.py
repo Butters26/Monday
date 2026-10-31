@@ -45,7 +45,10 @@ def _social_move_of(synset_id: str, pos: str) -> Optional[str]:
         for sense in start.senses():
             nouns += [r.synset() for r in sense.get_related("derivation") if r.synset().pos == "n"]
         for lemma in start.lemmas():
-            for word in str(lemma).split():
+            # A phrase like "give thanks": the words after the verb name the move.
+            # (A one-word verb is not looked up as a noun spelled the same:
+            # "like" -> "wish" -> "good wishes" is not a greeting.)
+            for word in str(lemma).split()[1:]:
                 nouns += list(wn.synsets(word, pos="n"))
     for noun in nouns:
         frontier, seen = [(noun, None)], set()

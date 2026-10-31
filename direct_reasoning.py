@@ -763,6 +763,16 @@ class DirectReasoningAdapter:
             self._remembered.pop(next(iter(self._remembered)))
         return {"status": "success", "content": {"heard": True}}
 
+    def _facts_for(self, text: str, user_id: str) -> List[Dict[str, Any]]:
+        if self.thalamus is None:
+            return []
+        response = self.thalamus.send_message("notus", "query_facts", {"query": text, "user_id": user_id,
+                                                                       "limit": 10}, source="reasoning")
+        if not isinstance(response, dict) or response.get("status") != "success":
+            return []
+        body = response.get("content") if isinstance(response.get("content"), dict) else response
+        return [f for f in body.get("facts") or [] if isinstance(f, dict)]
+
     def _remembered_about(self, user_input: str, user_id: str) -> Dict[str, Any]:
         return (getattr(self, "_remembered", {}) or {}).get((user_id, user_input.strip().casefold())) or {}
 
@@ -795,6 +805,8 @@ class DirectReasoningAdapter:
         # What he asked about may also be what the fact says ("Is Lily brave?").
         about_all = FactText._expand_tokens(about | FactText._content_tokens(
             str(fact.get("object") or "") + " " + str(fact.get("value") or "")))
+        if str(fact.get("object") or "")[:1].isupper():
+            about_all |= FactText._alias_set("name")  # "my cat is Luna": Luna is the cat's name
         for token in reading.get("tokens") or []:
             if token.get("kind") not in ("noun", "proper_noun", "possessive"):
                 continue
@@ -1102,7 +1114,10 @@ class DirectReasoningAdapter:
             if act == "state":
                 # Saying back what he just told her shows she took it in; any other
                 # claim is something she doesn't know is true.
-                said_back = self._says_back(reply, self._analyze(user_input))
+                resolved = str(payload.get("resolved_input") or "")
+                said_back = self._says_back(reply, self._analyze(user_input)) or (
+                    bool(resolved) and resolved != user_input
+                    and self._says_back(reply, self._analyze(resolved)))  # "Tom loves the dog" for "he loves it"
                 if not said_back and (not used or not self._fact_fits(used, user_input)):
                     return no("she's claiming something she doesn't know; she can say back what he "
                               "told her or ask about it", "restate_or_ask")
@@ -1115,16 +1130,21 @@ class DirectReasoningAdapter:
             if not any(sense.get("synset_id") == self._GREETING_SENSE for sense in first.get("senses") or []):
                 return no("the greeting word is used as a thing in the sentence, not to greet him", "greet_back")
         elif situation == "question":
+            # Who he/she/they mean, as Language worked it out ("her dog" -> "Ariana's dog").
+            question = str(payload.get("resolved_input") or user_input)
             if reply_is_question:
                 return no("he asked a question and the reply asks another question instead of answering", "answer_not_ask")
             used = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
-            if used and not self._fact_fits(used, user_input):
+            if used and not self._fact_fits(used, question):
                 return no("the fact in the reply is about something else ("
                           + " ".join(sorted(self._fact_words(used))) + "), not what he asked",
                           "other_fact_or_dont_know")
-            remembered = self._remembered_about(user_input, user_id)
+            remembered = self._remembered_about(question, user_id)
+            if not remembered and question != user_input:
+                # Memory brought things up for his words ("he"); ask it about who he meant.
+                remembered = {"facts": self._facts_for(question, user_id)}
             known = [f for f in remembered.get("facts") or []
-                     if isinstance(f, dict) and self._fact_fits(f, user_input)]
+                     if isinstance(f, dict) and self._fact_fits(f, question)]
             if known and not meaning.get("_fact"):
                 best = known[0]
                 return no("she remembers something about this (" + str(best.get("content") or best.get("object"))

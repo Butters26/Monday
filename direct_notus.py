@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -775,7 +776,10 @@ class DirectNotusProcess:
         }
         self.working_set["turns"].append(item)
         learned: List[Dict[str, Any]] = []
-        if role == "user":
+        # Facts come from Language's reading of the line (hear_moment ->
+        # _learn_from_reading). The old regex sentence-shape filer is in
+        # legacy/fact_shapes_legacy.md; it is only used if MONDAY_OLD_FACT_SHAPES=1.
+        if role == "user" and os.environ.get("MONDAY_OLD_FACT_SHAPES") == "1":
             try:
                 from notus_fact_text import FactText
 
@@ -1872,11 +1876,47 @@ class DirectNotusProcess:
     # words); memory files what the reading says.
     # ------------------------------------------------------------------
 
-    def _read(self, text: str) -> Dict[str, Any]:
+    def _context_for_reading(self, text: str, user_id: str) -> Dict[str, Any]:
+        """What memory supplies so Language can tell who he/she/they mean: his
+        last few lines and what she knows each name is."""
+        try:
+            # His lines (her own replies are built from his words, mistakes included).
+            recent = [m.get("content", "") for m in self.recent_memories(user_id, 16)
+                      if m.get("role") != "monday"]
+        except Exception:
+            recent = []
+        recent = [line for line in recent if line.strip().casefold() != text.strip().casefold()]
+        people: Dict[str, List[str]] = {}
+        try:
+            with self._lock:
+                rows = self._require_connection().execute(
+                    "SELECT subject, object FROM brain_facts WHERE user_id = ? AND predicate = 'is_a' "
+                    "AND is_contradicted = 0 ORDER BY id DESC LIMIT 200", (user_id,)).fetchall()
+            for row in rows:
+                subject = str(row["subject"])
+                if subject[:1].isupper():
+                    people.setdefault(subject, []).append(str(row["object"]))
+            with self._lock:
+                # "My wife is Ariana": filed as user / wife / Ariana, so Ariana is a wife.
+                rows = self._require_connection().execute(
+                    "SELECT predicate, object FROM brain_facts WHERE user_id = ? AND subject = 'user' "
+                    "AND is_contradicted = 0 ORDER BY id DESC LIMIT 200", (user_id,)).fetchall()
+            for row in rows:
+                name, what = str(row["object"]), str(row["predicate"])
+                if name[:1].isupper() and what.isalpha():
+                    people.setdefault(name, []).append(what)
+        except Exception:
+            pass
+        return {"context": recent[:6], "people": people, "user_id": user_id}
+
+    def _read(self, text: str, user_id: Optional[str] = None) -> Dict[str, Any]:
         send = getattr(self.thalamus, "send_message", None)
         if not callable(send):
             return {}
-        response = send("language", "analyze", {"text": text}, source="notus")
+        payload: Dict[str, Any] = {"text": text}
+        if user_id:
+            payload.update(self._context_for_reading(text, user_id))
+        response = send("language", "analyze", payload, source="notus")
         if not isinstance(response, dict) or response.get("status") != "success":
             return {}
         body = response.get("content") if isinstance(response.get("content"), dict) else {}
@@ -1884,10 +1924,28 @@ class DirectNotusProcess:
         return reading if isinstance(reading, dict) else {}
 
     @staticmethod
-    def _who(mention: Dict[str, Any], tokens: List[Dict[str, Any]]) -> Optional[str]:
+    def _filed_as(entity: Dict[str, Any]) -> Optional[str]:
+        """How memory files someone Language says a pronoun means."""
+        if not isinstance(entity, dict):
+            return None
+        if entity.get("name"):
+            return str(entity["name"])
+        if entity.get("names"):
+            return " and ".join(str(n) for n in entity["names"])
+        noun = str(entity.get("noun") or "")
+        if not noun:
+            return None
+        owner = entity.get("owner")
+        return f"{owner}'s {noun}" if owner else f"the {noun}"
+
+    @classmethod
+    def _who(cls, mention: Dict[str, Any], tokens: List[Dict[str, Any]],
+             references: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """How memory files the person/thing a mention is about."""
         if not isinstance(mention, dict):
             return None
+        if mention.get("refers_to"):
+            return cls._filed_as(mention["refers_to"])
         if mention.get("pronoun"):
             pronoun = str((mention.get("properties") or {}).get("pronoun") or mention.get("surface") or "").casefold()
             return {"i": "user", "me": "user", "you": "monday"}.get(pronoun)  # he/she/it: unresolved
@@ -1896,8 +1954,28 @@ class DirectNotusProcess:
             return None
         start = mention.get("start")
         kind = next((t.get("kind") for t in tokens if t.get("index") == mention.get("end", 0) - 1), None)
+        start_end = (mention.get("start"), mention.get("end"))
+        inside_all = [t for t in tokens if isinstance(start_end[0], int) and isinstance(start_end[1], int)
+                      and start_end[0] <= int(t.get("index", -1)) < start_end[1]]
+        if any(t.get("kind") == "conjunction" for t in inside_all):
+            # "Ariana and Cleo": both of them, together.
+            names = [str(t.get("surface") or "") for t in inside_all if t.get("kind") == "proper_noun"]
+            if len(names) >= 2:
+                return " and ".join(n[:1].upper() + n[1:] for n in names)
         if kind == "proper_noun" or (head[:1].isupper()):
             head = head[:1].upper() + head[1:]
+            # "my brother Tom": Tom is who it's about (the brother part is filed
+            # separately as what Tom is).
+            if kind == "proper_noun":
+                return head
+        else:
+            # Describing words before the head stay with it: "my favorite color".
+            end = mention.get("end")
+            inside = [t for t in tokens if isinstance(start, int) and isinstance(end, int)
+                      and start <= int(t.get("index", -1)) < end - 1
+                      and t.get("kind") in ("adjective", "noun")]
+            if inside:
+                head = " ".join([str(t.get("lemma") or t.get("surface") or "").casefold() for t in inside] + [head])
         surface = str(mention.get("surface") or "").casefold().split()
         owner = None
         if isinstance(start, int):
@@ -1910,11 +1988,46 @@ class DirectNotusProcess:
         elif surface and surface[0] in ("your",):
             owner = "monday"
         elif surface and surface[0] in ("his", "her", "their", "its"):
-            return None  # whose? unresolved, so don't guess
+            # Whose? Only if Language worked out who "his/her/their" means.
+            ref = next((r for r in references or [] if r.get("sure") and r.get("index") == start), None)
+            owner = cls._filed_as(ref["refers_to"]) if ref else None
+            if not owner:
+                return None
         return f"{owner}'s {head}" if owner else head
 
+    def _file(self, subject: str, predicate: str, obj: str, negative: bool, user_id: str) -> List[Dict[str, Any]]:
+        try:
+            fact = self.store_brain_fact(subject, ("not_" if negative else "") + predicate, obj,
+                                         confidence=0.8, user_id=user_id)
+        except ValueError:
+            return []
+        return [fact] if isinstance(fact, dict) else []
+
+    def _what_a_name_is(self, mention: Optional[Dict[str, Any]], tokens: List[Dict[str, Any]],
+                        negative: bool, user_id: str) -> List[Dict[str, Any]]:
+        """"My brother Tom": files that Tom is his brother."""
+        if not isinstance(mention, dict):
+            return []
+        start, end = mention.get("start"), mention.get("end")
+        if not isinstance(start, int) or not isinstance(end, int) or end - start < 2:
+            return []
+        inside = sorted((t for t in tokens if start <= int(t.get("index", -1)) < end),
+                        key=lambda t: int(t.get("index", 0)))
+        if len(inside) < 2 or inside[-1].get("kind") != "proper_noun" or inside[-2].get("kind") != "noun":
+            return []
+        name = str(inside[-1].get("surface") or "")
+        first = str(inside[0].get("surface") or "").casefold()
+        owner = {"my": "user", "our": "user", "your": "monday"}.get(first)
+        try:
+            fact = self.store_brain_fact(name[:1].upper() + name[1:], "is_a",
+                                         str(inside[-2].get("lemma") or "").casefold(), value=owner,
+                                         confidence=0.8, user_id=user_id, single_valued=False)
+        except ValueError:
+            return []
+        return [fact] if isinstance(fact, dict) else []
+
     def _learn_from_reading(self, text: str, user_id: str) -> List[Dict[str, Any]]:
-        reading = self._read(text)
+        reading = self._read(text, user_id)
         if not reading or reading.get("speech_act") not in ("declarative", "statement", None):
             return []
         clauses = reading.get("clauses") or []
@@ -1925,26 +2038,41 @@ class DirectNotusProcess:
         mentions = {m.get("mention_id"): m for m in reading.get("mentions") or [] if isinstance(m, dict)}
         tokens = [t for t in reading.get("tokens") or [] if isinstance(t, dict)]
         negative = (clause.get("qualifiers") or {}).get("polarity") == "negative"
-        subject_id = roles.get("theme") if clause.get("copular") else (
+        subject_id = (roles.get("theme") or roles.get("agent")) if clause.get("copular") else (
             roles.get("agent") or roles.get("experiencer") or roles.get("theme"))
-        subject = self._who(mentions.get(subject_id), tokens)
+        subject = self._who(mentions.get(subject_id), tokens, reading.get("references"))
         if not subject:
             return []
+        extra = self._what_a_name_is(mentions.get(subject_id), tokens, negative=False, user_id=user_id)
+        predicate_lemma = str(clause.get("predicate") or clause.get("predicate_surface") or "").casefold()
+        if predicate_lemma in ("name", "named", "call", "called"):
+            # "My cat is named Luna" / "her dog is called Rex": the thing's name.
+            named = [t for t in tokens if t.get("kind") == "proper_noun"
+                     and int(t.get("index", -1)) > int((mentions.get(subject_id) or {}).get("end", 0) or 0)]
+            if named and "'s " in subject:
+                whose, thing = subject.split("'s ", 1)
+                name = str(named[-1].get("surface") or "")
+                return extra + self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
         subject_mention = mentions.get(subject_id) or {}
-        if subject[:1].islower() and "'s " not in subject and subject not in ("user", "monday"):
+        if subject[:1].islower() and "'s " not in subject and subject not in ("user", "monday") \
+                and not subject_mention.get("refers_to"):
             # A thing, kept as he said it ("the dog", "a castle").
             subject = " ".join(str(subject_mention.get("surface") or subject).split()) or subject
         facts: List[Tuple[str, str, Optional[str]]] = []
         complement = reading.get("predicative_complement") or clause.get("predicative_complement") or {}
         if clause.get("copular") and complement:
-            if complement.get("kind") == "adjective":
+            describing = complement.get("kind") == "adjective" or any(
+                t.get("kind") in ("adjective", "adverb")
+                and str(t.get("lemma") or "").casefold() == str(complement.get("lemma") or "").casefold()
+                for t in tokens)
+            if describing:
                 facts.append(("is", str(complement.get("lemma") or ""), None))
             elif complement.get("kind") == "nominal":
                 target = mentions.get(complement.get("mention_id")) or {}
-                owned = self._who(target, tokens) if target else None
+                owned = self._who(target, tokens, reading.get("references")) if target else None
                 owner = owned.split("'s ", 1)[0] if owned and "'s " in owned else None
                 # Whose it is, from the word right before it: "my wife" is his,
-                # "Matthew's wife" is Matthew's; "his/her wife" (whose?) isn't guessed.
+                # "Matthew's wife" is Matthew's; "his/her wife" is whoever Language says.
                 start = target.get("start") if isinstance(target, dict) else None
                 before = [t for t in tokens if isinstance(start, int) and t.get("index") == start - 1]
                 word = str(before[0].get("surface") or "").casefold() if before else ""
@@ -1953,10 +2081,24 @@ class DirectNotusProcess:
                 elif word == "your":
                     owner = "monday"
                 elif word in ("his", "her", "their", "its"):
-                    return []
+                    # Whose? Only if Language worked out who it means.
+                    ref = next((r for r in reading.get("references") or []
+                                if r.get("sure") and r.get("index") == start - 1), None)
+                    owner = self._filed_as(ref["refers_to"]) if ref else None
+                    if not owner:
+                        return []
                 elif before and before[0].get("kind") == "possessive" and not owner:
                     lemma = str(before[0].get("lemma") or "")
                     owner = lemma[:1].upper() + lemma[1:]
+                named = next((t for t in tokens if isinstance(target.get("start"), int)
+                              and t.get("index") == target.get("end", 0) - 1
+                              and t.get("kind") == "proper_noun"), None) if isinstance(target, dict) else None
+                if named and "'s " in subject:
+                    # "Her dog is Rex": Ariana's dog is called Rex -> Ariana / dog / Rex,
+                    # filed the same way as "my dog is Rex".
+                    whose, thing = subject.split("'s ", 1)
+                    name = str(named.get("surface") or "")
+                    return self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
                 facts.append(("is_a", str(complement.get("lemma") or ""), owner))
         else:
             verb = str(clause.get("predicate_surface") or "").casefold()
@@ -1964,20 +2106,21 @@ class DirectNotusProcess:
                 return []
             other_role = next((r for r in ("theme", "patient") if r in roles and roles[r] != subject_id), None)
             if other_role:
-                other = self._who(mentions.get(roles[other_role]), tokens)
+                other = self._who(mentions.get(roles[other_role]), tokens, reading.get("references"))
                 if other:
                     facts.append((f"v:{verb}", other, None))
             for role, mention_id in roles.items():
                 if role.startswith("prep_"):
-                    other = self._who(mentions.get(mention_id), tokens)
+                    other = self._who(mentions.get(mention_id), tokens, reading.get("references"))
                     if other:
                         facts.append((f"v:{verb}@{role[5:]}", other, None))
         # Keep things on the other side as he said them ("a castle", "rain"),
         # names as names.
         def as_said(mention_id: Any) -> Optional[str]:
             mention = mentions.get(mention_id) or {}
-            who = self._who(mention, tokens)
-            if not who or "'s " in who or who[:1].isupper() or who in ("user", "monday"):
+            who = self._who(mention, tokens, reading.get("references"))
+            if not who or "'s " in who or who[:1].isupper() or who in ("user", "monday") \
+                    or mention.get("refers_to"):
                 return who
             surface = " ".join(w for w in str(mention.get("surface") or "").casefold().split()
                                if w not in ("my", "your", "our"))
@@ -1987,7 +2130,7 @@ class DirectNotusProcess:
                                                       if roles.get(r) and roles[r] != subject_id), None))
                                         if p.startswith("v:") else o)) or o, v)
                  for p, o, v in facts]
-        learned = []
+        learned = list(extra)
         for predicate, obj, value in facts:
             if not predicate or not obj:
                 continue
@@ -2294,6 +2437,10 @@ class DirectNotusProcess:
                     m["feelings"] = felt
             return {"status": "success", "memories": memories,
                     "content": {"memories": memories, "count": len(memories)}}
+        if msg_type == "reading_context":
+            # What Language needs to tell who he/she/they mean in a line.
+            body = self._context_for_reading(self._clean_text(payload.get("text")) or "", user_id)
+            return {"status": "success", "content": body}
         if msg_type == "check_relation":
             return self.check_relation(payload.get("text1"), payload.get("text2"), user_id)
         if msg_type == "store_emotional_memory":

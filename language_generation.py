@@ -11,6 +11,7 @@ were moved to legacy/language_generation_legacy.py (Oct 30, 2026).
 
 import json
 import os
+import re
 import random
 import time
 from typing import Dict, Any, List, Optional, Tuple
@@ -454,6 +455,48 @@ class LanguageGenerator:
         except Exception:
             pass
 
+    # ---- who he / she / it / they mean ------------------------------------
+    def _resolve_references(self, reading: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
+        from language_references import PeopleBeliefs, resolve
+        beliefs = self.__dict__.get("_people_beliefs")
+        if beliefs is None:
+            path = self.__dict__.get("people_beliefs_path")
+            if path is None:
+                try:
+                    from runtime_paths import runtime_file
+                    path = runtime_file("language_people.json")
+                except Exception:
+                    path = None
+            beliefs = self.__dict__["_people_beliefs"] = PeopleBeliefs(path)
+        people = payload.get("people") if isinstance(payload.get("people"), dict) else {}
+        context = [str(line) for line in payload.get("context") or [] if str(line).strip()]
+        return resolve(reading, context, {str(k): list(v or []) for k, v in people.items()},
+                       self.comprehension.analyze, beliefs, str(payload.get("user_id") or "default"))
+
+    _POSSESSIVE_PRONOUNS = {"his", "her", "its", "their"}
+
+    def _resolved_text(self, text: str, user_id: str) -> str:
+        """His line with he/she/it/they replaced by who they mean, where Language
+        is sure ("what is her dog's name?" -> "what is Ariana's dog's name?")."""
+        reading = self.comprehension.analyze(text)
+        if not any(str(t.get("surface") or "").casefold() in
+                   {"he", "him", "his", "she", "her", "it", "its", "they", "them", "their"}
+                   for t in reading.get("tokens") or []):
+            return text
+        context = self._ask("notus", "reading_context", {"text": text, "user_id": user_id})
+        if not isinstance(context.get("context"), list):
+            return text
+        reading = self._resolve_references(reading, {**context, "user_id": user_id})
+        words = [str(t.get("surface") or "") for t in reading.get("tokens") or []]
+        for ref in reading.get("references") or []:
+            idx = ref.get("index")
+            if not ref.get("sure") or not isinstance(idx, int) or idx >= len(words):
+                continue
+            label = str(ref.get("label") or "")  # in his own words ("my brother")
+            words[idx] = label + ("'s" if ref.get("pronoun") in self._POSSESSIVE_PRONOUNS else "")
+        out = " ".join(w for w in words if w)
+        return re.sub(r"\s+([?.!,])", r"\1", out)
+
     # ---- on the team: hear social context's read of each moment -----------
     def on_joined(self, name: str) -> None:
         listen = getattr(self.thalamus, "listen", None)
@@ -511,7 +554,8 @@ class LanguageGenerator:
             owner, thing = t.split("'s ", 1)
             return {"noun": thing.strip().casefold(), "owner": LanguageGenerator._entity_for(owner)}
         if t[:1].isupper():
-            return {"name": t}
+            # "Ariana and Cleo" are two: they take "are".
+            return {"name": t, "count": "many"} if " and " in t else {"name": t}
         words = low.split()
         # As he said it: "a castle", "the sword", "rain" (no article: uncountable or many).
         if len(words) > 1 and words[0] in ("a", "an"):
@@ -585,7 +629,10 @@ class LanguageGenerator:
         return meaning
 
     # Grammar forms she can speak in (sentence shapes, not reply types).
-    _FORMS = ("state", "ask", "greet", "farewell", "quiet")
+    # Whether to say anything at all is not Language's decision (Matthew,
+    # Oct 31): Language only turns what she means into words. The part that
+    # decides whether she replies isn't built yet, so for now she always tries.
+    _FORMS = ("state", "ask", "greet", "farewell")
     FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
     _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing")
 
@@ -617,7 +664,16 @@ class LanguageGenerator:
             elif kind == "proper_noun":
                 pieces["heard_noun"].append({"name": surface[:1].upper() + surface[1:]})
             elif kind == "noun":
-                pieces["heard_noun"].append({"noun": lemma.casefold(), "count": "one"})
+                # Keep it the way he said it: "music" (no a/the) stays "music",
+                # "dogs" stays many, "a dog" one.
+                index = int(token.get("index", -1))
+                before = next((t for t in understanding.get("tokens") or []
+                               if int(t.get("index", -2)) == index - 1), {})
+                plural = surface.casefold() != lemma.casefold() and surface.casefold().endswith("s")
+                bare = before.get("kind") not in ("determiner", "possessive", "number") \
+                    and str(before.get("kind")) != "adjective"
+                count = "many" if plural else ("mass" if bare else "one")
+                pieces["heard_noun"].append({"noun": lemma.casefold(), "count": count})
             elif kind == "verb":
                 pieces["heard_verb"].append(lemma.casefold())
             elif kind == "adjective":
@@ -657,8 +713,6 @@ class LanguageGenerator:
         you = {"ref": "addressee"}
         me = {"ref": "speaker"}
         form = builder._choose(plan, f"plan_form@{ctx}", list(self._FORMS))
-        if form == "quiet":
-            return {"_quiet": True}
         if form in ("greet", "farewell"):
             options = [you] + [p for p in pieces["heard_noun"] if p.get("name")]
             names = [f for f in self._user_facts("name", user_id) if f.get("predicate") == "name"]
@@ -715,15 +769,14 @@ class LanguageGenerator:
         "state_not_ask": ({"plan_form@": {"state"}}, {}),
         "not_about_herself": ({}, {"plan_subject@": {"me"}}),
         "greet_back": ({"plan_form@": {"greet"}}, {}),
-        "not_silence": ({}, {"plan_form@": {"quiet"}}),
-        "respond_to_feeling": ({"plan_piece@": {"heard_adjective", "feeling"}}, {"plan_form@": {"quiet"}}),
-        "about_him": ({"plan_subject@": {"you"}}, {"plan_form@": {"quiet"}}),
+        "respond_to_feeling": ({"plan_piece@": {"heard_adjective", "feeling"}}, {}),
+        "about_him": ({"plan_subject@": {"you"}}, {}),
         "farewell_back": ({"plan_form@": {"farewell"}}, {}),
         "no_name": ({"plan_greet_who@": {"you"}, "plan_farewell_who@": {"you"}}, {}),
         "complete_it": ({"plan_object@": {"object"}}, {}),
         "not_greeting": ({}, {"plan_form@": {"greet"}}),
         "not_farewell": ({}, {"plan_form@": {"farewell"}}),
-        "restate_or_ask": ({"plan_form@": {"state", "ask", "quiet"},
+        "restate_or_ask": ({"plan_form@": {"state", "ask"},
                             "plan_piece@": {"memory", "heard_noun", "heard_verb", "heard_adjective"}}, {}),
         "about_what_he_said": ({"plan_piece@": {"memory", "heard_noun", "heard_verb", "heard_adjective"}}, {}),
     }
@@ -748,7 +801,10 @@ class LanguageGenerator:
         user_id = str(understanding.get("user_id") or semantic_input.get("user_id") or "default")
         user_input = str(semantic_input.get("user_input") or understanding.get("raw_text") or "")
         situation = self._situation(semantic_input)
-        pieces = self._pieces(semantic_input, user_id, user_input)
+        resolved_input = self._resolved_text(user_input, user_id) if user_input else user_input
+        if resolved_input != user_input:
+            self._trace("references_resolved", heard=user_input, means=resolved_input)
+        pieces = self._pieces(semantic_input, user_id, resolved_input)
         ctx = self._context_key(semantic_input, pieces)
         feeling_words = [e.get("surface") for e in (understanding.get("affect") or {}).get("evidence") or []
                          if e.get("surface")]
@@ -768,12 +824,9 @@ class LanguageGenerator:
                     if meaning is None:
                         built = None
                         break
-                    if meaning.get("_quiet"):
-                        built = Built("", learner=builder.learner)
-                    else:
-                        meaning["_feeling_words"] = feeling_words
-                        built = builder.build(meaning)
-                    if (built.sentence or "(quiet)") not in sent_back:
+                    meaning["_feeling_words"] = feeling_words
+                    built = builder.build(meaning)
+                    if built.sentence not in sent_back:
                         break
                 if meaning is None:
                     last_reason = "she had nothing to put together"
@@ -782,7 +835,7 @@ class LanguageGenerator:
                 review = self._ask("reasoning", "review_reply", {
                     "sentence": built.sentence, "problems": built.problems, "situation": situation,
                     "meaning": meaning, "user_input": user_input, "user_id": user_id,
-                    "chosen_silence": bool(meaning.get("_quiet")),
+                    "resolved_input": resolved_input,
                     "her_feeling": (pieces.get("feeling") or [None])[0],
                     "expected_move": situation if situation in ("greeting", "farewell") else None,
                 })
@@ -794,13 +847,13 @@ class LanguageGenerator:
                 last_reason = str(review.get("reason") or "")
                 builder.feedback(built, ok, last_reason)
                 if not ok:
-                    sent_back.add(built.sentence or "(quiet)")
+                    sent_back.add(built.sentence)
                     self._take_feedback(builder, str(review.get("wanted") or ""))
-                self._trace("reply_attempt", ok=ok, sentence=built.sentence or "(stays quiet)",
+                self._trace("reply_attempt", ok=ok, sentence=built.sentence,
                             reason=last_reason, context=ctx, attempt=attempt,
                             plan=[f"{p}={o}" for p, o, _ in plan.choices])
                 if ok:
-                    silence = "chosen" if meaning.get("_quiet") else None
+                    silence = None
                     self._trace("reply_done", silence=silence, situation=situation, attempts=attempt,
                                 sentence=built.sentence, reason=last_reason)
                     return {"sentence": built.sentence, "silence": silence, "reason": last_reason,
@@ -904,8 +957,13 @@ class LanguageGenerator:
             return {'status': 'success', 'content': result}
 
         if msg_type == 'analyze':
-            # Read a sentence without registering anything (used by Reasoning's review).
-            return {'status': 'success', 'content': {'understanding': self.comprehension.analyze(str(payload.get('text') or ''))}}
+            # Read a sentence without registering anything. Whoever asks may supply
+            # context (recent lines, what's known about names); with it, Language
+            # works out who he/she/it/they mean, or marks them uncertain.
+            reading = self.comprehension.analyze(str(payload.get('text') or ''))
+            if isinstance(payload.get('context'), list):
+                reading = self._resolve_references(reading, payload)
+            return {'status': 'success', 'content': {'understanding': reading}}
 
         if msg_type in {'generate', 'generate_grounded'}:
             semantic_input = payload.get('semantic_input', payload)

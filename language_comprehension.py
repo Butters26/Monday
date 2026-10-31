@@ -76,6 +76,8 @@ _PREPOSITIONS = {
     "about", "under", "over", "inside", "outside", "across", "through", "between",
 }
 _NEGATION = {"not", "never", "no"}
+# Joining words (grammar, like the sets above): "Ariana and Cleo", "tea or coffee".
+_CONJUNCTIONS = {"and", "or", "but", "nor"}
 _WH = {"who", "what", "when", "where", "why", "how", "which"}
 _DEMONSTRATIVES = {"this", "that", "these", "those"}
 _PROFORMS = {"one"}  # nominal pro-form ("the one on the shelf")
@@ -384,6 +386,8 @@ class LanguageComprehensionEngine:
             return "modal", low, [], True
         if low in _NEGATION:
             return "negation", low, [], True
+        if low in _CONJUNCTIONS:
+            return "conjunction", low, [], True
         if low in _TIME:
             return "temporal", low, self._lookup(low), True
         if low in _DETERMINERS:
@@ -673,9 +677,12 @@ class LanguageComprehensionEngine:
         ]
         # Sole preverbal demonstrative/pronoun = subject NP ("That looks awful"),
         # not a determiner attaching to the verb. Do not noun-penalize the verb.
+        # "her" (like me/him/us/them) is never a subject: "her dog" is the dog
+        # that belongs to her, so "dog" is a noun here, not the verb.
         sole_deictic_subject = (
             len(raw_before) == 1
             and raw_before[0].lower() in (_DEMONSTRATIVES | _PRONOUNS | _WH)
+            and raw_before[0].lower() not in {"me", "him", "her", "us", "them"}
         )
         has_subject_material = any(
             t.lower() in _DETERMINERS

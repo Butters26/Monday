@@ -567,6 +567,12 @@ class FactText:
             if self_sub:
                 return f"You work {prep} {obj}."
             return f"{subject} works {prep} {obj}."
+        # "Ariana / dog / Rex": a name for something of hers ("my dog is Rex" is filed
+        # the same way for him), so its words include "name".
+        named = obj[:1].isupper() and pred.replace("_", "").isalpha()
         if self_sub:
-            return f"Your {pred.replace('_', ' ')} is {obj}."
+            return f"Your {pred.replace('_', ' ')} is {obj}." + (
+                f" Your {pred.replace('_', ' ')}'s name is {obj}." if named else "")
+        if named:
+            return f"{subject}'s {pred.replace('_', ' ')} is {obj}. {subject}'s {pred.replace('_', ' ')}'s name is {obj}."
         return f"{subject} {pred.replace('_', ' ')} {obj}".strip()
