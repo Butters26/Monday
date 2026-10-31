@@ -955,6 +955,11 @@ class DirectReasoningAdapter:
         theme = str(assertion.get("theme_concept") or reply.get("topic_head") or "").casefold()
         return bool(theme) and theme == str(complement.get("lemma") or "").casefold()
 
+    def _asks_how(self, text: str) -> bool:
+        """A "how" question: asking about the manner or state of something."""
+        return any(str(t.get("lemma") or t.get("surface") or "").casefold() == "how"
+                   for t in self._analyze(text).get("tokens") or [])
+
     def review_reply(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Does this reply make sense? Returns {"ok": bool, "reason": str}."""
         sentence = str(payload.get("sentence") or "").strip()
@@ -1056,11 +1061,20 @@ class DirectReasoningAdapter:
                 best = known[0]
                 return no("she remembers something about this (" + str(best.get("content") or best.get("object"))
                           + ") and the reply doesn't use it", "use_memory")
-            if not meaning.get("_fact") and purpose != "admit_unknown":
+            asked_her = any(str(t.get("lemma") or t.get("surface") or "").casefold() == "you"
+                            for t in self._analyze(user_input).get("tokens") or [])
+            if purpose == "own_feeling" and not asked_her:
+                return no("he didn't ask how she feels", "say_dont_know")
+            her_feeling = str(payload.get("her_feeling") or "").strip()
+            if purpose == "admit_unknown" and asked_her and her_feeling \
+                    and not known and self._asks_how(user_input):
+                return no(f"he asked how she is and she knows how she feels ({her_feeling})",
+                          "say_own_feeling")
+            if not meaning.get("_fact") and purpose not in ("admit_unknown", "own_feeling"):
                 # Answering needs knowing: use what she remembers, or say she doesn't know.
                 return no("she doesn't know the answer, and the reply makes something up instead of saying so",
                           "say_dont_know")
-            if purpose != "admit_unknown" and not used:
+            if purpose not in ("admit_unknown", "own_feeling") and not used:
                 asked = self._content_lemmas(self._analyze(user_input))
                 said = self._content_lemmas(reply)
                 if asked and not (asked & said):

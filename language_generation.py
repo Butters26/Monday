@@ -454,24 +454,32 @@ class LanguageGenerator:
         except Exception:
             pass
 
+    # ---- on the team: hear social context's read of each moment -----------
+    def on_joined(self, name: str) -> None:
+        listen = getattr(self.thalamus, "listen", None)
+        if callable(listen):
+            listen(name, "social_read")
+
+    def _hear_social(self, read: Dict[str, Any]) -> Dict[str, Any]:
+        self.__dict__.setdefault("_social_reads", {})[str(read.get("user_id") or "default")] = dict(read)
+        return {"status": "success", "content": {"heard": True}}
+
+    def _social_for(self, user_id: str, user_input: str) -> Dict[str, Any]:
+        read = (self.__dict__.get("_social_reads") or {}).get(user_id) or {}
+        return read if str(read.get("said") or "").strip() == user_input.strip() else {}
+
     def _situation(self, semantic_input: Dict[str, Any]) -> str:
         understanding = semantic_input.get("language_understanding") or {}
+        user_id = str(understanding.get("user_id") or semantic_input.get("user_id") or "default")
+        heard = self._social_for(user_id, str(semantic_input.get("user_input") or understanding.get("raw_text") or ""))
         social = semantic_input.get("social_context") or {}
-        social_now = social.get("last_cue") if social.get("is_social_turn") else None
-        greeted = social_now == "greeting" or any(
-            sense.get("synset_id") == self.GREETING_SENSE
-            for token in understanding.get("tokens") or []
-            for sense in token.get("senses") or []
-        )
-        if greeted:
+        expects = heard.get("expects") or social.get("expects")
+        if expects == "greeting":
             return "greeting"
-        leaving = social_now == "farewell" or any(
-            sense.get("synset_id") == self.FAREWELL_SENSE
-            for token in understanding.get("tokens") or []
-            for sense in token.get("senses") or []
-        )
-        if leaving:
+        if expects == "goodbye":
             return "farewell"
+        # Greetings and goodbyes are Social Context's call (above), not Language's.
+        social_now = social.get("last_cue") if social.get("is_social_turn") else None
         if understanding.get("speech_act") == "question" or str(semantic_input.get("user_input", "")).strip().endswith("?"):
             return "question"
         # He is the one feeling it ("I", "me"); "my" is about something of his ("my favorite color").
@@ -667,6 +675,8 @@ class LanguageGenerator:
                            "complement": {"adjectives": [rng.choice(pieces["heard_adjective"])]}}
             elif kind == "feeling":
                 meaning = {"subject": subject, "verb": "be", "complement": {"adjectives": [pieces["feeling"][0]]}}
+                if who == "me":
+                    meaning["_purpose"] = "own_feeling"  # how she feels: something she knows
             else:  # heard_noun
                 noun = rng.choice(pieces["heard_noun"])
                 meaning = {"subject": subject, "verb": "be",
@@ -680,6 +690,8 @@ class LanguageGenerator:
     _FEEDBACK = {
         "use_memory": ({"plan_form@": {"state"}, "plan_piece@": {"memory"}}, {}),
         "say_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"not_knowing"}}, {}),
+        "say_own_feeling": ({"plan_form@": {"state"}, "plan_piece@": {"feeling"},
+                             "plan_subject@": {"me"}}, {}),
         "other_fact_or_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"memory", "not_knowing"}}, {}),
         "answer_not_ask": ({}, {"plan_form@": {"ask"}}),
         "greet_back": ({"plan_form@": {"greet"}}, {}),
@@ -751,6 +763,8 @@ class LanguageGenerator:
                     "sentence": built.sentence, "problems": built.problems, "situation": situation,
                     "meaning": meaning, "user_input": user_input, "user_id": user_id,
                     "chosen_silence": bool(meaning.get("_quiet")),
+                    "her_feeling": (pieces.get("feeling") or [None])[0],
+                    "expected_move": situation if situation in ("greeting", "farewell") else None,
                 })
                 if not review:
                     last_reason = "reasoning did not review the reply"
@@ -844,7 +858,9 @@ class LanguageGenerator:
         """Process incoming message - DIRECT FUNCTION CALL"""
         msg_type = message.get('type')
         payload = message.get('content', message)
-        
+
+        if msg_type == 'social_read':
+            return self._hear_social(payload if isinstance(payload, dict) else {})
         if msg_type == 'comprehend':
             text = payload.get('text') or payload.get('user_input') or ''
             user_id = str(payload.get('user_id') or 'default')

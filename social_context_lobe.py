@@ -16,13 +16,6 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
-try:
-    from direct_response import is_mild_social_turn
-except Exception:  # pragma: no cover - defensive
-    def is_mild_social_turn(user_input: str, intent: Optional[str] = None) -> bool:
-        return False
-
-
 # Conversation intents that are social cues Social tracks (does not re-classify).
 _INTENT_TO_CUE = {
     "greeting": "greeting",
@@ -30,36 +23,92 @@ _INTENT_TO_CUE = {
     "emotional_share": "emotional_share",
 }
 
-_CHECK_IN_RE = re.compile(
-    r"(?i)\b(?:"
-    r"how are you|how's it going|how is it going|how's it goin|"
-    r"what's up|whats up|what up|"
-    r"you still there|you there|still with me|are you there|still there"
-    r")\b"
-)
+# Social moves are noticed from the dictionary, not phrase lists: a word whose
+# meaning falls under "acknowledgment" (greeting, farewell, thanks, apology,
+# welcome...) names the move by the kind of acknowledgment it is.
+_ACKNOWLEDGMENT = "oewn-06641368-n"
+_MOVE_NAMES = {"farewell": "goodbye"}  # names Executive/Language already use
 
-_GOODBYE_RE = re.compile(
-    r"(?i)(?:"
-    r"^\s*(?:bye|goodbye|good\s*bye|farewell|good\s*night|goodnight|"
-    r"see\s+you(?:\s+later)?|later)\b|"
-    r"\b(?:i\s+)?(?:gotta|have\s+to|need\s+to)\s+go\b|"
-    r"\btalk\s+(?:to\s+you\s+)?later\b|"
-    r"\bsee\s+you\s+later\b"
-    r")"
-)
+
+def _social_move_of(synset_id: str, pos: str) -> Optional[str]:
+    """The kind of acknowledgment a word meaning is, if it is one."""
+    try:
+        from lexicon.oewn_offline import get_wordnet
+        wn = get_wordnet()
+        start = wn.synset(synset_id)
+    except Exception:
+        return None
+    nouns = [start] if pos == "n" else []
+    if pos == "v":
+        # A verb ("thank", "greet") is a move if the nouns tied to it in the
+        # dictionary are ("give thanks" -> thanks; greet -> greeting).
+        for sense in start.senses():
+            nouns += [r.synset() for r in sense.get_related("derivation") if r.synset().pos == "n"]
+        for lemma in start.lemmas():
+            for word in str(lemma).split():
+                nouns += list(wn.synsets(word, pos="n"))
+    for noun in nouns:
+        frontier, seen = [(noun, None)], set()
+        for _ in range(8):
+            nxt = []
+            for node, child in frontier:
+                if node.id == _ACKNOWLEDGMENT and child is not None:
+                    name = str(child.lemmas()[0]).casefold()
+                    return _MOVE_NAMES.get(name, name)
+                for parent in node.hypernyms():
+                    if parent.id not in seen:
+                        seen.add(parent.id)
+                        nxt.append((parent, node))
+            if not nxt:
+                break
+            frontier = nxt
+    return None
 
 
 class SocialContextLobe:
     """Track interlocutor social stance/cues; distribute compact context."""
 
-    def __init__(self, thalamus: Any = None) -> None:
+    RETURNED_IN_KIND = ("greeting", "goodbye")
+
+    def __init__(self, thalamus: Any = None, storage_path: Optional[str] = None) -> None:
         self.thalamus = thalamus
-        # Per-user state (in-memory for this process).
-        self._users: Dict[str, Dict[str, Any]] = {}
+        # Per-user state, kept across restarts (who someone is to her).
+        self.storage_path = storage_path
+        self._users: Dict[str, Dict[str, Any]] = self._load()
         self.context_state: Dict[str, Any] = {}  # last distributed snapshot
         self.social_cues: List[Any] = []  # legacy flat cue log (bounded)
         self.last_context: Optional[Dict[str, Any]] = None
         self._observe_count: int = 0
+
+    # --- remembering people across restarts -------------------------------
+
+    def _load(self) -> Dict[str, Dict[str, Any]]:
+        if not self.storage_path:
+            return {}
+        try:
+            import json
+            from pathlib import Path
+            path = Path(self.storage_path)
+            if path.is_file():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return {str(k): dict(v) for k, v in (data.get("people") or {}).items() if isinstance(v, dict)}
+        except Exception as exc:
+            print(f"⚠️  Social context: could not load {self.storage_path}: {exc}")
+        return {}
+
+    def _save(self) -> None:
+        if not self.storage_path:
+            return
+        try:
+            import json
+            from pathlib import Path
+            path = Path(self.storage_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"people": self._users}, indent=1, default=str), encoding="utf-8")
+            tmp.replace(path)
+        except Exception as exc:
+            print(f"⚠️  Social context: could not save {self.storage_path}: {exc}")
 
     # --- internals ---------------------------------------------------------
 
@@ -86,27 +135,42 @@ class SocialContextLobe:
             self._users[uid] = state
         return state
 
+    def _read(self, text: str) -> Dict[str, Any]:
+        """Ask Language to read what he said (Language owns understanding words)."""
+        send = getattr(self.thalamus, "send_message", None)
+        if not callable(send) or not text.strip():
+            return {}
+        response = send("language", "analyze", {"text": text}, source="social_context")
+        if not isinstance(response, dict) or response.get("status") != "success":
+            return {}
+        body = response.get("content") if isinstance(response.get("content"), dict) else {}
+        reading = body.get("understanding") if isinstance(body.get("understanding"), dict) else body
+        return reading if isinstance(reading, dict) else {}
+
     def _extract_cue(
         self,
         user_input: str,
         understanding: Optional[Dict[str, Any]],
     ) -> Optional[str]:
-        """Map Conversation intent / mild social markers → cue. No intent theft."""
+        """What kind of social move this is, from the dictionary meanings of the
+        words he used (greeting, goodbye, thanks, apology...), or a question
+        put to her ("how are you?" asks about her). Conversation's emotional
+        share is kept as it reads it."""
         understanding = understanding if isinstance(understanding, dict) else {}
         intent = str(understanding.get("intent") or "").strip().lower()
-        if intent in _INTENT_TO_CUE:
-            return _INTENT_TO_CUE[intent]
-        text = user_input if isinstance(user_input, str) else ""
-        if _GOODBYE_RE.search(text) and len(text.split()) <= 14:
-            return "goodbye"
-        if _CHECK_IN_RE.search(text) and len(text.split()) <= 12:
-            return "check_in"
-        if is_mild_social_turn(text, intent or None):
-            # Mild social without a more specific cue — treat as check_in/greeting.
-            if intent == "greeting" or not text.strip():
-                return "greeting"
-            return "check_in"
-        return None
+        if intent == "emotional_share":
+            return "emotional_share"
+        reading = self._read(user_input if isinstance(user_input, str) else "")
+        for token in reading.get("tokens") or []:
+            for sense in token.get("senses") or []:
+                move = _social_move_of(str(sense.get("synset_id") or ""), str(sense.get("pos") or ""))
+                if move:
+                    return move
+        if reading.get("speech_act") == "question" and any(
+                str(t.get("lemma") or t.get("surface") or "").casefold() == "you"
+                for t in reading.get("tokens") or []):
+            return "check_in"  # a question put to her, about her
+        return _INTENT_TO_CUE.get(intent)
 
     def _cue_nearby_count(self, state: Dict[str, Any], cue: str, window: int = 4) -> int:
         recent = list(state.get("recent_cues") or [])
@@ -289,9 +353,19 @@ class SocialContextLobe:
         snap = self._snapshot(
             state, cue=cue, continuity=continuity, is_social_turn=is_social
         )
+        # The social expectation this move sets up: a greeting is answered with
+        # a greeting, a goodbye with a goodbye (meeting and parting are returned
+        # in kind). Moves whose answer she hasn't learned set none.
+        snap["expects"] = cue if cue in self.RETURNED_IN_KIND else None
+        snap["move"] = cue
+        snap["said"] = user_input
         self.context_state = dict(snap)
         self.last_context = dict(snap)
         self._observe_count += 1
+        self._save()
+        announce = getattr(self.thalamus, "announce", None)
+        if callable(announce):
+            announce("social_read", dict(snap), source="social_context")
         return snap
 
     def get_context(self, user_id: str = "default") -> Dict[str, Any]:

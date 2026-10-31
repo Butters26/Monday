@@ -184,7 +184,7 @@ def create_core_systems(
         "output": OutputLobe(thalamus=thalamus, enable_tts=False),
         "meta_cognition": MetaCognitionLobe(thalamus=thalamus),
         "executive_control": ExecutiveControlLobe(thalamus=thalamus),
-        "social_context": SocialContextLobe(thalamus=thalamus),
+        "social_context": SocialContextLobe(thalamus=thalamus, storage_path=str(Path(directory) / "social_context.json")),
         "motor_action": MotorActionLobe(thalamus=thalamus),
         "voice": VoiceLobe(thalamus=thalamus),
         "speech": AutonomousSpeechSystem(thalamus=thalamus),
