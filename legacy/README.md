@@ -7,7 +7,7 @@ just in case. Nothing imports anything in this folder.
 | --- | --- | --- |
 | `language_generation_legacy.py` | Language's old grammar engine (163-word list, unused rulebook, fixed "I'm Monday" lines, fact templates, Mad Libs composers) and its old reply path | Oct 30, 2026 |
 
-## test_thalamus_memory_backup_legacy.py (moved Oct 30, 2026)
+## test_thalamus_memory_queue_legacy.py (moved Oct 30, 2026)
 
 Five tests for thalamus keeping a backup queue of his words when memory failed
 to save them. Memory now saves each moment itself (it hears sensory
