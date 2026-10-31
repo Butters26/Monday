@@ -756,9 +756,16 @@ class DirectReasoningAdapter:
 
     @staticmethod
     def _fact_words(fact: Dict[str, Any]) -> set:
+        """What a fact is about: its relation ("dog name"), and who it's about
+        unless that's him ("user" is the person asking: "my")."""
         from notus_fact_text import FactText
-        text = " ".join(str(fact.get(k) or "") for k in ("predicate",)).replace("_", " ")
-        return FactText._content_tokens(text)
+        predicate = str(fact.get("predicate") or "")
+        predicate = predicate[4:] if predicate.startswith("not_") else predicate
+        predicate = predicate[2:] if predicate.startswith("v:") else predicate
+        predicate = predicate.replace("@", " ").replace("_", " ")
+        subject = str(fact.get("subject") or "")
+        subject = "" if subject.casefold() == "user" else subject.replace("user's ", "")
+        return FactText._content_tokens(f"{predicate} {subject}")
 
     def _fact_fits(self, fact: Dict[str, Any], question: str) -> bool:
         """Is this fact about what he asked? Both ways: every word the fact is
@@ -773,7 +780,9 @@ class DirectReasoningAdapter:
         about = self._fact_words(fact)
         if not about or not all(FactText._alias_set(word) & asked for word in about):
             return False
-        about_all = FactText._expand_tokens(about)
+        # What he asked about may also be what the fact says ("Is Lily brave?").
+        about_all = FactText._expand_tokens(about | FactText._content_tokens(
+            str(fact.get("object") or "") + " " + str(fact.get("value") or "")))
         for token in reading.get("tokens") or []:
             if token.get("kind") not in ("noun", "proper_noun", "possessive"):
                 continue
@@ -927,7 +936,7 @@ class DirectReasoningAdapter:
                 # Answering needs knowing: use what she remembers, or say she doesn't know.
                 return no("she doesn't know the answer, and the reply makes something up instead of saying so",
                           "say_dont_know")
-            if purpose != "admit_unknown":
+            if purpose != "admit_unknown" and not used:
                 asked = self._content_lemmas(self._analyze(user_input))
                 said = self._content_lemmas(reply)
                 if asked and not (asked & said):

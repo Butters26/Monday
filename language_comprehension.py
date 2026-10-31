@@ -257,6 +257,29 @@ class LanguageComprehensionEngine:
         except Exception:
             return []
 
+    @staticmethod
+    def _spells(root: str, word: str) -> bool:
+        """Does English regular spelling turn this root into this word?
+        hate -> hates yes; hat -> hates no (it's hats)."""
+        r, w = root.casefold(), word.casefold()
+        if r == w:
+            return True
+        sibilant = r.endswith(("s", "x", "z", "ch", "sh", "o"))
+        forms = {r + "es" if sibilant else r + "s", r + "ed" if not r.endswith("e") else r + "d",
+                 r + "ing" if not r.endswith("e") or r.endswith("ee") else r[:-1] + "ing", r + "er", r + "est"}
+        if r.endswith("y") and len(r) > 2 and r[-2] not in "aeiou":
+            forms |= {r[:-1] + "ies", r[:-1] + "ied", r[:-1] + "ier", r[:-1] + "iest"}
+        if len(r) >= 3 and r[-1] not in "aeiouwxy" and r[-2] in "aeiou" and r[-3] not in "aeiou":
+            forms |= {r + r[-1] + "ed", r + r[-1] + "ing", r + r[-1] + "er", r + r[-1] + "est"}
+        return w in forms
+
+    def _lemma_order(self, low: str):
+        return lambda c: (0 if str(c["lemma"]).casefold() == low else 1,
+                          # irregular forms ("ran") still win when no regular one fits
+                          0 if self._spells(str(c["lemma"]), low) else 1,
+                          0 if str(c["lemma"])[:1].islower() else 1,
+                          str(c["lemma"]))
+
     def lemma(self, token: str, *, prefer_pos: Optional[str] = None) -> str:
         """Best lemma for a token from OEWN/Morphy; fall back to surface lower."""
         low = token.lower()
@@ -264,16 +287,13 @@ class LanguageComprehensionEngine:
         if prefer_pos:
             preferred = [c for c in cands if c.get("pos") == prefer_pos]
             if preferred:
-                # Prefer lowercase/common lemma over Proper-case OEWN entries.
-                preferred.sort(key=lambda c: (0 if str(c["lemma"]).casefold() == low else 1,
-                                              0 if str(c["lemma"])[:1].islower() else 1,
-                                              str(c["lemma"])))
+                # Exact word first, then a root whose regular spelling makes the
+                # word, then lowercase/common over Proper-case entries.
+                preferred.sort(key=self._lemma_order(low))
                 return str(preferred[0]["lemma"])
         if cands:
             cands = list(cands)
-            cands.sort(key=lambda c: (0 if str(c["lemma"]).casefold() == low else 1,
-                                      0 if str(c["lemma"])[:1].islower() else 1,
-                                      str(c["lemma"])))
+            cands.sort(key=self._lemma_order(low))
             return str(cands[0]["lemma"])
         return low
 
@@ -732,6 +752,22 @@ class LanguageComprehensionEngine:
             if score >= 3:
                 known_candidates.append((idx, lemma, score))
 
+        if not known_candidates:
+            # "Magnus has a sword": have is the main verb when no verb follows
+            # it (as a helper it comes before one: "has gone").
+            for idx, low in enumerate(lows):
+                if low not in {"have", "has", "had"}:
+                    continue
+                nxt = idx + 1
+                while nxt < len(tokens) and lows[nxt] in _NEGATION:
+                    nxt += 1
+                if nxt < len(tokens) and lows[nxt] not in _DETERMINERS and self._has_pos(tokens[nxt], "v") \
+                        and not self._has_pos(tokens[nxt], "n"):
+                    continue
+                if nxt < len(tokens) and not re.fullmatch(r"[.!?,;:]", tokens[nxt]):
+                    known_candidates.append((idx, "have", 5))
+                    break
+
         known = None
         if known_candidates:
             # Highest verb score wins (looks=4 beats weather=3 in
@@ -755,6 +791,10 @@ class LanguageComprehensionEngine:
                 continue
             while next_idx < len(tokens) - 1 and re.fullmatch(r"[a-z]+'s|[a-z]+s'", lows[next_idx]):
                 next_idx += 1  # "is Matthew's wife": the complement is "wife"
+            # "is a knight" / "is an animal" / "is the one": the complement is
+            # the word after the article.
+            while next_idx < len(tokens) - 1 and lows[next_idx] in {"a", "an", "the"}:
+                next_idx += 1
             cand = tokens[next_idx]
             cand_low = cand.lower()
             if cand_low in _PRONOUNS or cand_low in _DETERMINERS:
@@ -1458,9 +1498,12 @@ class LanguageComprehensionEngine:
                 clause_confidence = 0.90 if subject else 0.55
             else:
                 object_start = verb_idx + 1
+                skipped_prep = None
                 while object_start < len(tokens) and tokens[object_start].lower() in (
                     _NEGATION | _PREPOSITIONS
                 ):
+                    if tokens[object_start].lower() in _PREPOSITIONS:
+                        skipped_prep = tokens[object_start].lower()
                     object_start += 1
                 object_end = self._trim_object_end(tokens, object_start)
 
@@ -1541,6 +1584,9 @@ class LanguageComprehensionEngine:
                                 about_at = i
                                 break
                         obj_end = about_at if about_at is not None else object_end
+                        # "lives in a castle": the castle is where, not what is
+                        # lived (the preposition was stepped over above).
+                        place_prep = skipped_prep if skipped_prep not in (None, "about") else None
                         obj = (
                             self._noun_phrase(
                                 tokens, object_start, obj_end, f"m{len(mentions)+1}"
@@ -1548,6 +1594,12 @@ class LanguageComprehensionEngine:
                             if object_start < obj_end
                             else None
                         )
+                        if place_prep and obj:
+                            mentions.append(obj)
+                            roles[f"prep_{place_prep}"] = obj.mention_id
+                            qualifiers.setdefault("prepositions", []).append(
+                                {"preposition": place_prep, "mention_id": obj.mention_id})
+                            obj = None
                         if obj:
                             mentions.append(obj)
                         about = None

@@ -524,6 +524,33 @@ class FactText:
         """Turn a stored triple into a short, answerable sentence."""
         pred = (predicate or "").strip()
         obj = (obj or "").strip()
+        # Facts memory filed from Language's reading of any sentence.
+        negated = pred.startswith("not_")
+        core = pred[4:] if negated else pred
+        if core in ("is", "is_a") or core.startswith("v:"):
+            def who(text: str) -> str:
+                t = (text or "").strip()
+                if t.casefold() == "user":
+                    return "you"
+                if t.casefold() == "monday":
+                    return "Monday"
+                if t.casefold().startswith("user's "):
+                    return "your " + t[7:]
+                return t
+            sub = who(subject)
+            sub = sub[:1].upper() + sub[1:]
+            plural_you = sub in ("You",)
+            be = ("are" if plural_you else "is") + (" not" if negated else "")
+            if core == "is":
+                return f"{sub} {be} {obj}."
+            if core == "is_a":
+                return f"{sub} {be} {'an' if obj[:1].lower() in 'aeiou' else 'a'} {obj}."
+            verb, _, prep = core[2:].partition("@")
+            if negated:
+                verb = ("do not " if plural_you else "does not ") + verb
+            elif not plural_you:
+                verb = verb + ("es" if verb.endswith(("s", "x", "z", "ch", "sh", "o")) else "s")
+            return f"{sub} {verb} {prep + ' ' if prep else ''}{who(obj)}.".replace("  ", " ")
         if pred.endswith("_name"):
             noun = pred[:-5].replace("_", " ").strip() or "thing"
             return f"Your {noun}'s name is {obj}."

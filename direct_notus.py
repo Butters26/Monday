@@ -829,6 +829,7 @@ class DirectNotusProcess:
         value: Any = None,
         confidence: Any = 0.9,
         user_id: Any = "default",
+        single_valued: bool = True,
     ) -> Dict[str, Any]:
         subject_text = self._clean_text(subject)
         predicate_text = self._clean_text(predicate)
@@ -916,23 +917,33 @@ class DirectNotusProcess:
                     ),
                 )
 
+            # What this fact replaces: for a one-answer relation (a name, a
+            # favorite) any other answer; for any relation, its opposite
+            # ("Lily is not brave" replaces "Lily is brave"). Many-answer
+            # relations ("is a knight", "is a writer") don't replace each other.
+            opposite = predicate_text[4:] if predicate_text.casefold().startswith("not_") else "not_" + predicate_text
             conflicting_rows = connection.execute(
                 """
                 SELECT id, conflicts_with
                 FROM brain_facts
                 WHERE user_id = ?
                   AND lower(subject) = lower(?)
-                  AND lower(predicate) = lower(?)
-                  AND lower(object) <> lower(?)
                   AND id <> ?
                   AND is_contradicted = 0
+                  AND (
+                        (? = 1 AND lower(predicate) = lower(?) AND lower(object) <> lower(?))
+                     OR (lower(predicate) = lower(?) AND lower(object) = lower(?))
+                  )
                 """,
                 (
                     user_text,
                     subject_text,
+                    fact_id,
+                    1 if single_valued else 0,
                     predicate_text,
                     object_text,
-                    fact_id,
+                    opposite,
+                    object_text,
                 ),
             ).fetchall()
 
@@ -1848,9 +1859,129 @@ class DirectNotusProcess:
         if result.get("status") == "success" and recognition_id:
             self._saved_recognitions.append(recognition_id)
         if result.get("status") == "success" and role == "user":
+            if not (result.get("content") or {}).get("facts_learned"):
+                learned = self._learn_from_reading(words.strip(), user_id)
+                if learned:
+                    result.setdefault("content", {})["facts_learned"] = learned
             self._bring_up(words.strip(), user_id, recognition_id,
                            exclude_id=(result.get("content") or {}).get("id"))
         return result
+
+    # ------------------------------------------------------------------
+    # Facts from any sentence: Language reads it (Language owns understanding
+    # words); memory files what the reading says.
+    # ------------------------------------------------------------------
+
+    def _read(self, text: str) -> Dict[str, Any]:
+        send = getattr(self.thalamus, "send_message", None)
+        if not callable(send):
+            return {}
+        response = send("language", "analyze", {"text": text}, source="notus")
+        if not isinstance(response, dict) or response.get("status") != "success":
+            return {}
+        body = response.get("content") if isinstance(response.get("content"), dict) else {}
+        reading = body.get("understanding") if isinstance(body.get("understanding"), dict) else body
+        return reading if isinstance(reading, dict) else {}
+
+    @staticmethod
+    def _who(mention: Dict[str, Any], tokens: List[Dict[str, Any]]) -> Optional[str]:
+        """How memory files the person/thing a mention is about."""
+        if not isinstance(mention, dict):
+            return None
+        if mention.get("pronoun"):
+            pronoun = str((mention.get("properties") or {}).get("pronoun") or mention.get("surface") or "").casefold()
+            return {"i": "user", "me": "user", "you": "monday"}.get(pronoun)  # he/she/it: unresolved
+        head = str((mention.get("properties") or {}).get("head_lemma") or mention.get("concept_surface") or "").strip()
+        if not head:
+            return None
+        start = mention.get("start")
+        kind = next((t.get("kind") for t in tokens if t.get("index") == mention.get("end", 0) - 1), None)
+        if kind == "proper_noun" or (head[:1].isupper()):
+            head = head[:1].upper() + head[1:]
+        surface = str(mention.get("surface") or "").casefold().split()
+        owner = None
+        if isinstance(start, int):
+            before = [t for t in tokens if t.get("index") == start - 1]
+            if before and before[0].get("kind") == "possessive":
+                lemma = str(before[0].get("lemma") or "")
+                owner = lemma[:1].upper() + lemma[1:]
+        if surface and surface[0] in ("my", "our"):
+            owner = "user"
+        elif surface and surface[0] in ("your",):
+            owner = "monday"
+        elif surface and surface[0] in ("his", "her", "their", "its"):
+            return None  # whose? unresolved, so don't guess
+        return f"{owner}'s {head}" if owner else head
+
+    def _learn_from_reading(self, text: str, user_id: str) -> List[Dict[str, Any]]:
+        reading = self._read(text)
+        if not reading or reading.get("speech_act") not in ("declarative", "statement", None):
+            return []
+        clauses = reading.get("clauses") or []
+        if not clauses:
+            return []
+        clause = clauses[0]
+        roles = clause.get("roles") or {}
+        mentions = {m.get("mention_id"): m for m in reading.get("mentions") or [] if isinstance(m, dict)}
+        tokens = [t for t in reading.get("tokens") or [] if isinstance(t, dict)]
+        negative = (clause.get("qualifiers") or {}).get("polarity") == "negative"
+        subject_id = roles.get("theme") if clause.get("copular") else (
+            roles.get("agent") or roles.get("experiencer") or roles.get("theme"))
+        subject = self._who(mentions.get(subject_id), tokens)
+        if not subject:
+            return []
+        facts: List[Tuple[str, str, Optional[str]]] = []
+        complement = reading.get("predicative_complement") or clause.get("predicative_complement") or {}
+        if clause.get("copular") and complement:
+            if complement.get("kind") == "adjective":
+                facts.append(("is", str(complement.get("lemma") or ""), None))
+            elif complement.get("kind") == "nominal":
+                target = mentions.get(complement.get("mention_id")) or {}
+                owned = self._who(target, tokens) if target else None
+                owner = owned.split("'s ", 1)[0] if owned and "'s " in owned else None
+                facts.append(("is_a", str(complement.get("lemma") or ""), owner))
+        else:
+            verb = str(clause.get("predicate_surface") or "").casefold()
+            if not verb or verb == "be":
+                return []
+            other_role = next((r for r in ("theme", "patient") if r in roles and roles[r] != subject_id), None)
+            if other_role:
+                other = self._who(mentions.get(roles[other_role]), tokens)
+                if other:
+                    facts.append((f"v:{verb}", other, None))
+            for role, mention_id in roles.items():
+                if role.startswith("prep_"):
+                    other = self._who(mentions.get(mention_id), tokens)
+                    if other:
+                        facts.append((f"v:{verb}@{role[5:]}", other, None))
+        # Keep things on the other side as he said them ("a castle", "rain"),
+        # names as names.
+        def as_said(mention_id: Any) -> Optional[str]:
+            mention = mentions.get(mention_id) or {}
+            who = self._who(mention, tokens)
+            if not who or "'s " in who or who[:1].isupper() or who in ("user", "monday"):
+                return who
+            surface = " ".join(w for w in str(mention.get("surface") or "").casefold().split()
+                               if w not in ("my", "your", "our"))
+            return surface or who
+        facts = [(p, (as_said(roles[next(r for r in roles if r.startswith("prep_") and p.endswith("@" + r[5:]))])
+                      if "@" in p else (as_said(next((roles[r] for r in ("theme", "patient")
+                                                      if roles.get(r) and roles[r] != subject_id), None))
+                                        if p.startswith("v:") else o)) or o, v)
+                 for p, o, v in facts]
+        learned = []
+        for predicate, obj, value in facts:
+            if not predicate or not obj:
+                continue
+            try:
+                fact = self.store_brain_fact(subject, ("not_" if negative else "") + predicate, obj,
+                                             value=value, confidence=0.8, user_id=user_id, single_valued=False)
+            except ValueError:
+                continue
+            learned.append({"id": fact.get("id"), "subject": fact.get("subject"),
+                            "predicate": fact.get("predicate"), "object": fact.get("object"),
+                            "value": fact.get("value"), "from": "language's reading"})
+        return learned
 
     def _bring_up(self, text: str, user_id: str, recognition_id: str, *, exclude_id: Any = None) -> None:
         """What this moment reminds her of comes up on its own, the way a smell

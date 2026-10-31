@@ -483,6 +483,29 @@ class LanguageGenerator:
         return [f for f in body.get("facts") or [] if isinstance(f, dict)]
 
     @staticmethod
+    def _entity_for(text: str) -> Dict[str, Any]:
+        """Who/what a filed fact is about, as a meaning: "user" is him,
+        "monday" is her, "user's brother" is his brother, a name is a name."""
+        t = (text or "").strip()
+        low = t.casefold()
+        if low in ("user", "i", "me", ""):
+            return {"ref": "addressee"}
+        if low == "monday":
+            return {"ref": "speaker"}
+        if "'s " in t:
+            owner, thing = t.split("'s ", 1)
+            return {"noun": thing.strip().casefold(), "owner": LanguageGenerator._entity_for(owner)}
+        if t[:1].isupper():
+            return {"name": t}
+        words = low.split()
+        # As he said it: "a castle", "the sword", "rain" (no article: uncountable or many).
+        if len(words) > 1 and words[0] in ("a", "an"):
+            return {"noun": " ".join(words[1:]), "definite": False, "count": "one"}
+        if len(words) > 1 and words[0] == "the":
+            return {"noun": " ".join(words[1:]), "definite": True}
+        return {"noun": low, "count": "mass"}
+
+    @staticmethod
     def _owner_for(subject: str) -> Dict[str, Any]:
         sub = (subject or "").strip()
         if sub.casefold() in {"user", "i", "me", ""}:
@@ -499,6 +522,30 @@ class LanguageGenerator:
         record = {"subject": fact.get("subject"), "predicate": pred, "object": obj}
         value = {"name": obj} if obj[:1].isupper() else None
         complement = {"entity": value} if value else {"phrase": obj}
+        negated = pred.startswith("not_")
+        core = pred[4:] if negated else pred
+        if core in ("is", "is_a") or core.startswith("v:"):
+            # A fact memory filed from Language's reading of any sentence.
+            subject = self._entity_for(str(fact.get("subject") or ""))
+            if core == "is":
+                meaning = {"subject": subject, "verb": "be", "complement": {"adjectives": [obj]}}
+            elif core == "is_a":
+                whose = str(fact.get("value") or "").strip()
+                meaning = {"subject": subject, "verb": "be",
+                           "complement": ({"entity": {"noun": obj, "owner": self._entity_for(whose)}} if whose
+                                          else {"noun": obj, "definite": False})}
+            else:
+                verb, _, prep = core[2:].partition("@")
+                target = self._entity_for(obj)
+                meaning = {"subject": subject, "verb": verb}
+                if prep:
+                    meaning["modifiers"] = [{"prep": prep, "object": target}]
+                else:
+                    meaning["object"] = target
+            if negated:
+                meaning["negated"] = True
+            meaning["_fact"] = record
+            return meaning
         if pred == "name":
             meaning = {"subject": {"noun": "name", "owner": owner}, "verb": "be", "complement": complement}
         elif pred.endswith("_name"):
