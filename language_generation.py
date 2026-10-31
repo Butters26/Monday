@@ -674,9 +674,9 @@ class LanguageGenerator:
                 meaning = {"subject": subject, "verb": "be",
                            "complement": {"adjectives": [rng.choice(pieces["heard_adjective"])]}}
             elif kind == "feeling":
-                meaning = {"subject": subject, "verb": "be", "complement": {"adjectives": [pieces["feeling"][0]]}}
-                if who == "me":
-                    meaning["_purpose"] = "own_feeling"  # how she feels: something she knows
+                # Her feeling is hers: it is only ever said about her.
+                meaning = {"subject": me, "verb": "be", "complement": {"adjectives": [pieces["feeling"][0]]},
+                           "_purpose": "own_feeling"}
             else:  # heard_noun
                 noun = rng.choice(pieces["heard_noun"])
                 meaning = {"subject": subject, "verb": "be",
@@ -694,6 +694,8 @@ class LanguageGenerator:
                              "plan_subject@": {"me"}}, {}),
         "other_fact_or_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"memory", "not_knowing"}}, {}),
         "answer_not_ask": ({}, {"plan_form@": {"ask"}}),
+        "state_not_ask": ({"plan_form@": {"state"}}, {}),
+        "not_about_herself": ({}, {"plan_subject@": {"me"}}),
         "greet_back": ({"plan_form@": {"greet"}}, {}),
         "not_silence": ({}, {"plan_form@": {"quiet"}}),
         "respond_to_feeling": ({"plan_piece@": {"heard_adjective", "feeling"}}, {"plan_form@": {"quiet"}}),

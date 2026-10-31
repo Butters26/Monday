@@ -479,7 +479,8 @@ class NoveltyLobe:
         is_strong = intensity > 0.6 or abs(valence) > 0.4
         if not is_strong or score < self.ELEVATED_THRESHOLD:
             return {
-                "status": "noted",
+                "status": "success",
+                "content": {"noted": True, "elevated": False, "novelty_score": score},
                 "reason": "affect_or_novelty_below_threshold",
                 "novelty_score": score,
             }
@@ -487,7 +488,8 @@ class NoveltyLobe:
         # Do NOT draft/queue questions — Conversation owns curiosity wording.
         self._update_emotional_momentum(valence)
         return {
-            "status": "noted_elevated",
+            "status": "success",
+            "content": {"noted": True, "elevated": True, "novelty_score": score},
             "stimulus": stimulus,
             "novelty_score": score,
             "question_draft": None,

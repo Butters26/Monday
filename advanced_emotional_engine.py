@@ -3,13 +3,13 @@
 Advanced Emotional Engine — Monday emotion lobe (live mood path).
 
 LIVE mood driver (design lock 2026-09-25):
-  MondayCoreAffect (valence/arousal + decay) + SelfImpact v1 (aimed-at-her patterns)
+  MondayCoreAffect (valence/arousal + decay) + appraisal (monday_appraisal.py: Language reading + word-feeling beliefs)
   → thin label readout (calm/happy/sad/angry/worried/scared/excited).
 
 Honesty:
   - Does NOT claim keyword-understanding or appraisal-as-driver theater.
-  - SelfImpact v1 is regex aimed-at-her patterns — NOT full OCC/goal understanding.
-  - User self-reports ("I'm sad") do NOT write her mood; Conversation/Social own user-feeling.
+  - Appraisal decides how much an event moves HER by who it is about (her, him, other).
+  - His feelings ("I'm sad") move her a little FOR him; she does not adopt his feeling as hers.
   - Fancy EmotionalState members beyond the thin set are UNUSED/legacy (persist/feel_emotion compat).
   - AppraisalEngine / old PAD-lottery helpers are deleted or fail-closed stubs only.
 
@@ -32,7 +32,8 @@ from collections import deque
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from threading import Lock
 from thalamus import get_thalamus
-from monday_core_affect import MondayCoreAffect, SelfImpact, label_from_va, THIN_LABELS
+from monday_core_affect import MondayCoreAffect, label_from_va, THIN_LABELS
+from monday_appraisal import WordFeelings, appraise, INTERNAL as _INTERNAL_SCALE
 
 # ------------------------------
 # Core Enums & Dataclasses
@@ -172,7 +173,7 @@ class EmotionalBlend:
 class InternalEventAppraisal:
     """Metadata for an autonomously recalled memory or thought passed to the appraisal pipeline."""
     source: str                            # "memory", "thought", "rumination", "association"
-    content: str                           # Thought/memory text for capped SelfImpact nudge
+    content: str                           # Thought/memory text for a gentle appraisal nudge
     memory_age_seconds: float              # How old the memory is (0 = fresh thought)
     resolved: bool                         # Was the underlying situation resolved?
     prior_appraisal_event_type: Optional[str]  # event_type from first appraisal, or None
@@ -234,7 +235,7 @@ class UserAffectModel:
 @dataclass
 class EmotionalUnderstanding:
     """Combined text-understanding result for an emotional NL event.
-    LEGACY container. Live mood does not use this pipeline (CoreAffect + SelfImpact).
+    LEGACY container. Live mood does not use this pipeline (CoreAffect + appraisal).
     """
     appraisal: AppraisalResult
     semantic_event: Optional[str] = None
@@ -258,7 +259,7 @@ class AppraisalEngine:
     LEGACY STUB (2026-09-25 emotion honesty cleanup).
 
     Phrase→event classifier tables and the old appraisal driver were DELETED.
-    Live Monday mood is MondayCoreAffect + SelfImpact only
+    Live Monday mood is MondayCoreAffect + appraisal only
     (see get_emotional_response / appraise_internal_event).
 
     This class remains only so unused/compat call sites do not crash.
@@ -325,8 +326,10 @@ class AdvancedEmotionalEngine:
         self.pad: PAD = PAD(0.0, 0.0, 0.0)
         # LIVE mood substrate (design lock 2026-09-25). Classifiers no longer drive her mood.
         self.core_affect = MondayCoreAffect()
-        self._self_impact = SelfImpact()
+        # How what happens affects her: Language's reading + her word-feeling beliefs.
+        self.word_feelings = WordFeelings()
         self._last_self_impact_reason: str = "init"
+        self.last_appraisal: Dict[str, Any] = {}
         self._last_primary: EmotionalState = EmotionalState.CALM
         self._last_switch_time: float = 0.0
         # PAD prototypes for feel_emotion compat ONLY (thin live set).
@@ -430,8 +433,20 @@ class AdvancedEmotionalEngine:
         except Exception:
             pass
 
+    def _read(self, text: str) -> Dict[str, Any]:
+        """Language reads the sentence; Emotion doesn't parse grammar itself."""
+        if not text.strip():
+            return {}
+        response = self._query_lobe('language', {'type': 'analyze', 'text': text})
+        if not isinstance(response, dict) or response.get('status') != 'success':
+            print(f"⚠️  Emotion: Language couldn't read {text[:40]!r} for her: "
+                  f"{(response or {}).get('message') if isinstance(response, dict) else 'no answer'}")
+            return {}
+        content = response.get('content') if isinstance(response.get('content'), dict) else response
+        return content.get('understanding') or {}
+
     def get_emotional_response(self, user_input: str) -> str:
-        """Live mood path: CoreAffect + SelfImpact only (not AppraisalEngine classifiers)."""
+        """Live mood path: CoreAffect + appraisal only (not AppraisalEngine classifiers)."""
         # Query Notus for emotional memories (side channel; does not set her mood)
         try:
             notus_emotions = self._query_lobe('notus', {'type': 'get_emotional_memories', 'trigger': user_input})
@@ -443,11 +458,13 @@ class AdvancedEmotionalEngine:
         # Quiet baseline first: decay toward setpoint (no RNG flip)
         self.core_affect.decay_toward_setpoint(1.0)
 
-        # SelfImpact: ONLY things aimed at / about her move core affect.
-        # Explicit user self-reports ("I'm sad") return zero delta.
-        delta = self._self_impact.evaluate(user_input or "")
+        # Appraisal: how what he said affects HER (aimed at her moves her most;
+        # his own feelings move her for him, gently, without becoming hers).
+        delta = appraise(self._read(user_input or ""), self.word_feelings)
         self._last_self_impact_reason = delta.reason
-        if delta.kind != "none" and (abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9):
+        self.last_appraisal = {"about": delta.about, "dv": delta.dv, "da": delta.da,
+                               "reason": delta.reason, "words": delta.words}
+        if abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9:
             self.core_affect.apply_delta(delta.dv, delta.da, delta.reason)
 
         self._sync_from_core_affect(trigger=(user_input or "")[:80])
@@ -506,11 +523,9 @@ class AdvancedEmotionalEngine:
             return
 
         # Gentle capped nudge — never full phrase-table slam
-        delta = self._self_impact.evaluate_internal(
-            event.content or "", relevance=float(getattr(event, "relevance", 0.5) or 0.5)
-        )
-        if event.resolved:
-            delta = type(delta)(delta.dv * 0.5, delta.da * 0.5, delta.reason + "|resolved", delta.kind)
+        relevance = max(0.0, min(1.0, float(getattr(event, "relevance", 0.5) or 0.5)))
+        delta = appraise(self._read(event.content or ""), self.word_feelings,
+                         scale=_INTERNAL_SCALE * relevance * (0.5 if event.resolved else 1.0))
 
         if abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9:
             self.core_affect.apply_delta(delta.dv, delta.da, delta.reason)
@@ -590,6 +605,7 @@ class AdvancedEmotionalEngine:
             'pad': {'v': self.pad.v, 'a': self.pad.a, 'd': self.pad.d},
             'core_affect': self.core_affect.to_dict(),
             'last_self_impact_reason': getattr(self, '_last_self_impact_reason', ''),
+            'learned_word_feelings': dict(self.word_feelings.learned),
             'attachment': asdict(self.attachment),
             'needs': asdict(self.needs),
             'internal': asdict(self.internal),
@@ -671,6 +687,9 @@ class AdvancedEmotionalEngine:
                 arousal=float(pad_obj.get('a', -0.10)),
             )
         self._last_self_impact_reason = str(obj.get('last_self_impact_reason', 'loaded'))
+        learned = obj.get('learned_word_feelings')
+        if isinstance(learned, dict):
+            self.word_feelings = WordFeelings({str(k): float(v) for k, v in learned.items()})
         self._sync_from_core_affect(trigger="load")
         att = obj.get('attachment')
         if isinstance(att, dict):
@@ -1364,6 +1383,7 @@ class EmotionalProcess:
                     'dominance': snap['dominance'],
                     'monday_emotion': snap.get('monday_emotion', snap['current_emotion']),
                     'self_impact_reason': snap.get('self_impact_reason', ''),
+                    'appraisal': dict(getattr(self.engine, 'last_appraisal', {}) or {}),
                     'pad': snap['pad'],
                     'attachment': snap['attachment'],
                     'needs': snap['needs'],
@@ -1376,6 +1396,16 @@ class EmotionalProcess:
                     'patterns': snap['patterns'],
                     'user_affect': snap.get('user_affect'),
                 }
+
+            elif msg_type == 'adjust_word_feeling':
+                # A belief about how a word feels, changed (by experience or by Matthew).
+                word = str(message.get('word') or '').strip()
+                if not word or 'feeling' not in message:
+                    return {'status': 'error', 'message': 'adjust_word_feeling needs a word and a feeling (-1..1)'}
+                old_value = self.engine.word_feelings.feel(word)
+                new_value = self.engine.word_feelings.adjust(word, float(message['feeling']))
+                self._atomic_save_state()
+                return {'status': 'success', 'content': {'word': word, 'old': old_value, 'new': new_value}}
                 
             elif msg_type == 'feel_emotion':
                 # Canonical live contract matches AdvancedEmotionalEngine.feel_emotion:
@@ -1604,14 +1634,7 @@ class EmotionalProcess:
             if not has_novelty:
                 return  # novelty_lobe dead / unregistered — do not spam or fail
 
-            positive_emotions = ['happy', 'excited', 'curious', 'proud', 'euphoric', 'playful']
-            negative_emotions = ['sad', 'angry', 'disgusted', 'scared', 'worried', 'anxious']
-            if emotion in positive_emotions:
-                valence = 0.5 + (intensity * 0.5)
-            elif emotion in negative_emotions:
-                valence = -(0.5 + (intensity * 0.5))
-            else:
-                valence = 0.0
+            valence = float(self.engine.core_affect.valence)  # her real valence, not a list of names
 
             thalamus.send_message(
                 'novelty',

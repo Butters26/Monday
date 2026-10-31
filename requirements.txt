@@ -18,3 +18,4 @@ openai-whisper  # offline STT for semantic hearing (tiny model)
 # vosk  # optional offline STT fallback (needs model dir)
 # Semantic vision: Salesforce/blip-image-captioning-base via transformers (lazy CPU)
 wn>=0.9.0  # offline OEWN for Language comprehension
+vaderSentiment>=3.3.2  # starting word-feeling beliefs for Emotion's appraisal

@@ -955,6 +955,32 @@ class DirectReasoningAdapter:
         theme = str(assertion.get("theme_concept") or reply.get("topic_head") or "").casefold()
         return bool(theme) and theme == str(complement.get("lemma") or "").casefold()
 
+    def _calls_someone_a_thing(self, meaning: Dict[str, Any]) -> Optional[str]:
+        """"Are you a music?": a person is a person-kind of thing (a doctor, a
+        fool), never music or a table. The dictionary files each noun."""
+        if str(meaning.get("verb") or "") != "be":
+            return None
+        subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}
+        complement = meaning.get("complement") if isinstance(meaning.get("complement"), dict) else {}
+        noun = str(complement.get("noun") or "")
+        person = subject.get("ref") in ("speaker", "addressee") or bool(subject.get("name"))
+        if person and noun and not self._noun_is_person(noun):
+            return f"a person isn't {noun}: the dictionary doesn't have '{noun}' as a kind of person"
+        return None
+
+    def _dropped_what_he_said_it_about(self, meaning: Dict[str, Any], user_input: str) -> Optional[str]:
+        """She reuses his verb without the someone/something he used it on
+        ("I hate you" -> "You hate."): that's a different meaning of the verb."""
+        verb = str(meaning.get("verb") or "").casefold()
+        if not verb or verb in ("be", "have", "do") or meaning.get("object"):
+            return None
+        tokens = [t for t in self._analyze(user_input).get("tokens") or [] if t.get("kind") != "punctuation"]
+        for idx, token in enumerate(tokens[:-1]):
+            if token.get("kind") == "verb" and str(token.get("lemma") or "").casefold() == verb \
+                    and tokens[idx + 1].get("kind") in ("pronoun", "noun", "proper_noun", "determiner", "possessive"):
+                return verb
+        return None
+
     def _asks_how(self, text: str) -> bool:
         """A "how" question: asking about the manner or state of something."""
         return any(str(t.get("lemma") or t.get("surface") or "").casefold() == "how"
@@ -1021,6 +1047,19 @@ class DirectReasoningAdapter:
         if nonsense:
             return no("it doesn't make sense: " + nonsense,
                       "complete_it" if "needs who or what" in nonsense else "")
+        called = self._calls_someone_a_thing(meaning) if act in ("state", "ask") else None
+        if called:
+            return no(called)
+        dropped = self._dropped_what_he_said_it_about(meaning, user_input) if act in ("state", "ask") else None
+        if dropped:
+            return no(f"he said '{dropped}' about someone or something; with nothing after it, "
+                      "it means something else", "complete_it")
+        subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}
+        if act == "ask" and subject.get("ref") == "speaker" and purpose != "admit_unknown":
+            return no("she's asking him about herself, which he can't know better than she does",
+                      "not_about_herself")
+        if purpose == "own_feeling" and (act == "ask" or reply_is_question):
+            return no("she knows how she feels; asking him about it doesn't make sense", "state_not_ask")
         if act == "greet" and situation != "greeting":
             return no("he didn't greet her, so greeting him doesn't fit", "not_greeting")
         if act == "farewell" and situation != "farewell":

@@ -1354,6 +1354,63 @@ class LanguageComprehensionEngine:
             cache.pop(next(iter(cache)))
         return reading
 
+    @staticmethod
+    def _can_stand_alone(verb: str) -> bool:
+        """Does any dictionary frame of this verb take nothing after it
+        ("Somebody ----s")? "run" does; "amaze" always amazes somebody."""
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            for sense in get_wordnet().senses(verb, pos="v"):
+                if any(str(f).strip().endswith("----s") for f in sense.frames()):
+                    return True
+        except Exception:
+            return True  # can't tell: keep the verb reading
+        return False
+
+    _SUBJECT_FORMS = ("i", "you", "he", "she", "we", "they")
+
+    def _action_after_subject(self, lexical: List[Dict[str, Any]]) -> None:
+        """Right after a subject ("I", "you", "they"...), a word the dictionary
+        also knows as a verb is the action: "I hate you", "they love music".
+        (A word that can't be a verb keeps its reading.)"""
+        for idx, entry in enumerate(lexical):
+            if idx == 0 or entry.get("kind") != "noun":
+                continue
+            before = lexical[idx - 1]
+            if before.get("kind") != "pronoun" or str(before.get("lemma")) not in self._SUBJECT_FORMS:
+                continue
+            if idx >= 2 and lexical[idx - 2].get("kind") in ("verb", "preposition", "auxiliary"):
+                continue  # "I told you stories": "you" is not the subject here
+            verb = [s for s in self._lookup(entry["surface"], pos="v")]
+            if not verb:
+                continue
+            entry.update({"kind": "verb", "lemma": self.lemma(entry["surface"], prefer_pos="v"),
+                          "senses": verb, "sense_count": len(verb), "read_as": "action after its subject"})
+
+    def _describing_after_be(self, lexical: List[Dict[str, Any]]) -> None:
+        """Right after "is/are/was", a word the dictionary also knows as an
+        adjective, with nothing after it for it to act on, describes the
+        subject: "you are amazing", "he is boring", "you are stupid".
+        ("you are amazing me" keeps the verb: it has something to act on.)"""
+        for idx, entry in enumerate(lexical):
+            if idx == 0 or entry.get("kind") not in ("verb", "noun"):
+                continue
+            before = lexical[idx - 1]
+            if before.get("kind") != "auxiliary" or before.get("lemma") != "be":
+                continue
+            after = lexical[idx + 1] if idx + 1 < len(lexical) else None
+            if after is not None and after.get("kind") in (
+                    "pronoun", "determiner", "noun", "proper_noun", "possessive", "number"):
+                continue
+            adjective = [s for s in self._lookup(entry["surface"]) if s.get("pos") in ("a", "s")]
+            if not adjective:
+                continue
+            if entry.get("kind") == "verb" and str(entry["surface"]).endswith("ing") \
+                    and self._can_stand_alone(str(entry.get("lemma") or "")):
+                continue  # "I am running": an action that needs nothing to act on
+            entry.update({"kind": "adjective", "lemma": entry["surface"], "senses": adjective,
+                          "sense_count": len(adjective), "read_as": "describing after be"})
+
     def _analyze_uncached(self, text: str) -> Dict[str, Any]:
         original = str(text or "").strip()
         normalized = self.normalize(original)
@@ -1392,6 +1449,8 @@ class LanguageComprehensionEngine:
             if kind == "unknown" and token.isalpha() and token not in unknown_words:
                 unknown_words.append(token)
 
+        self._describing_after_be(lexical)
+        self._action_after_subject(lexical)
         verb_idx, predicate, passive, predicate_known = self._find_main_verb(tokens)
         mentions: List[LinguisticMention] = []
         roles: Dict[str, str] = {}
