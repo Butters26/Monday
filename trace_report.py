@@ -82,6 +82,19 @@ def main() -> int:
         for (lobe, typ, msg), n in failed_tells.most_common():
             print(f"{n:4d}  {lobe} [{typ}]  {msg}")
 
+    crashes = [r for r in records if r.get("kind") == "lobe_crashed"]
+    if crashes:
+        print(f"\n== LOBE CRASHES: {len(crashes)} (where, from the traceback) ==")
+        seen = set()
+        for r in crashes:
+            key = (r.get("lobe"), r.get("msg_type"), r.get("error"))
+            if key in seen:
+                continue
+            seen.add(key)
+            n = sum(1 for c in crashes if (c.get("lobe"), c.get("msg_type"), c.get("error")) == key)
+            print(f"-- {n}x {r.get('lobe')} [{r.get('msg_type')}] {r.get('error')}")
+            print("   " + "\n   ".join((r.get("traceback") or "").strip().splitlines()[-8:]))
+
     errors = [r for r in records if r.get("kind") == "uncaught_error"]
     print(f"\n== UNCAUGHT ERRORS: {len(errors)} ==")
     for r in errors:

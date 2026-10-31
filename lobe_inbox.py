@@ -193,6 +193,11 @@ class LobeInbox:
         except Exception as exc:
             self._on_status(self.name, "error")
             response = {"status": "error", "message": f"{self.name}: {exc}", "content": {}}
+            if _trace_enabled():
+                import traceback
+                _trace_event("lobe_crashed", lobe=self.name, msg_type=envelope.get("type"),
+                             source=envelope.get("source"), error=f"{type(exc).__name__}: {exc}",
+                             traceback="".join(traceback.format_exception(exc))[-3000:])
         finally:
             _current.chain = previous
         self.handled += 1

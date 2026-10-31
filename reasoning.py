@@ -1051,8 +1051,10 @@ class ReasoningLobe:
     def experience_concept_with_data(self, concept: str, context: Dict, past_qualia: str) -> str:
         """What it 'feels like' to process this concept using provided qualia data"""
         # Use past_qualia if available
+        if isinstance(past_qualia, dict):  # a memory from Notus: use what it says
+            past_qualia = str(past_qualia.get('content') or '')
         if past_qualia:
-            return f"Reminds me of: {past_qualia[:100]}"
+            return f"Reminds me of: {str(past_qualia)[:100]}"
         return self._process_concept_basic(concept, context)
     
     def _process_concept_basic(self, concept: str, context: Dict) -> str:

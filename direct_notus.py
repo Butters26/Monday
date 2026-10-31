@@ -56,6 +56,7 @@ class DirectNotusProcess:
         except sqlite3.DatabaseError:
             pass
         self._saved_recognitions: Deque[str] = deque(maxlen=256)
+        self._talking_with: Optional[str] = None
 
         self.working_set: Dict[str, Deque[Dict[str, Any]]] = {
             "turns": deque(maxlen=50),
@@ -158,6 +159,19 @@ class DirectNotusProcess:
                 )"""
             )
 
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS feelings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    emotion TEXT NOT NULL,
+                    intensity REAL NOT NULL DEFAULT 0.5,
+                    trigger_text TEXT,
+                    context TEXT,
+                    response TEXT,
+                    memory_id INTEGER,
+                    created_at TEXT NOT NULL
+                )"""
+            )
             self._ensure_memory_schema()
             self._ensure_fact_schema()
             self._ensure_episode_schema()
@@ -174,6 +188,12 @@ class DirectNotusProcess:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_episodic_events_user "
                 "ON episodic_events(user_id, created_at)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feelings_memory ON feelings(memory_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feelings_user ON feelings(user_id, id)"
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_lobe_learning_scope "
@@ -1760,6 +1780,7 @@ class DirectNotusProcess:
         moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
         recognition_id = str(payload.get("recognition_id") or moment.get("recognition_id") or "")
         user_id = self._clean_text(payload.get("user_id") or moment.get("user_id")) or "default"
+        self._talking_with = user_id
         if recognition_id and recognition_id in self._saved_recognitions:
             return {"status": "success", "content": {"stored": False, "already_saved": recognition_id}}
         sense = self._clean_text(moment.get("modality")) or "text"
@@ -1779,6 +1800,195 @@ class DirectNotusProcess:
         if result.get("status") == "success" and recognition_id:
             self._saved_recognitions.append(recognition_id)
         return result
+
+    # ------------------------------------------------------------------
+    # Answering the other lobes.
+    # ------------------------------------------------------------------
+
+    def _row_memory(self, row: sqlite3.Row) -> Dict[str, Any]:
+        keys = row.keys()
+        return {
+            "id": int(row["id"]), "role": row["role"], "content": str(row["content"] or "").strip(),
+            "user_id": row["user_id"], "memory_type": row["memory_type"], "timestamp": row["created_at"],
+            "told_by": row["told_by"] if "told_by" in keys else None,
+            "sense": row["sense"] if "sense" in keys else None,
+        }
+
+    def recent_memories(self, user_id: str, limit: Any = 10) -> List[Dict[str, Any]]:
+        """Her newest memories with this person, newest first."""
+        normalized = self._normalise_limit(limit, 10)
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT * FROM memories WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                (user_id, normalized),
+            ).fetchall()
+        return [self._row_memory(r) for r in rows if self._is_safe_memory(r["role"], r["content"])]
+
+    def _feelings_for_memories(self, memory_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+        if not memory_ids:
+            return {}
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT * FROM feelings WHERE memory_id IN (" + ",".join("?" * len(memory_ids)) + ") "
+                "ORDER BY id", list(memory_ids),
+            ).fetchall()
+        out: Dict[int, List[Dict[str, Any]]] = {}
+        for r in rows:
+            out.setdefault(int(r["memory_id"]), []).append(self._row_feeling(r))
+        return out
+
+    @staticmethod
+    def _row_feeling(r: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": int(r["id"]), "emotion": r["emotion"], "intensity": float(r["intensity"] or 0.0),
+            "influence_strength": float(r["intensity"] or 0.0), "trigger": r["trigger_text"] or "",
+            "context": r["context"], "response": r["response"], "memory_id": r["memory_id"],
+            "timestamp": r["created_at"], "user_id": r["user_id"],
+        }
+
+    def store_feeling(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Emotion tells memory how something made her feel. It is kept with the
+        moment that caused it (the newest saved line matching what triggered it)."""
+        emotion = self._clean_text(payload.get("emotion"))
+        if not emotion or len(emotion) > 60:
+            return {"status": "error", "message": "notus: a feeling needs the emotion's name"}
+        trigger = self._clean_text(payload.get("trigger"))[:1000]
+        try:
+            intensity = max(0.0, min(1.0, float(payload.get("intensity", 0.5))))
+        except (TypeError, ValueError):
+            intensity = 0.5
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            connection = self._require_connection()
+            moment = None
+            if trigger:
+                moment = connection.execute(
+                    "SELECT id, user_id FROM memories WHERE content = ? ORDER BY id DESC LIMIT 1", (trigger,)
+                ).fetchone()
+            user_id = self._clean_text(payload.get("user_id")) or (moment["user_id"] if moment else (self._talking_with or "default"))
+            context = payload.get("context")
+            cursor = connection.execute(
+                "INSERT INTO feelings(user_id, emotion, intensity, trigger_text, context, response, memory_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, emotion, intensity, trigger or None,
+                 json.dumps(context, default=str)[:2000] if isinstance(context, (dict, list)) else (self._optional_text(context) or None),
+                 self._optional_text(payload.get("response")), int(moment["id"]) if moment else None, now),
+            )
+            connection.commit()
+            feeling_id = int(cursor.lastrowid)
+        return {"status": "success", "content": {"stored": True, "id": feeling_id,
+                                                 "memory_id": int(moment["id"]) if moment else None}}
+
+    def feelings_about(self, text: str, *, limit: Any = 20) -> List[Dict[str, Any]]:
+        """Feelings tied to memories that match this text, newest first."""
+        normalized = self._normalise_limit(limit, 20)
+        query = self._clean_text(text)
+        with self._lock:
+            connection = self._require_connection()
+            if not query:
+                rows = connection.execute(
+                    "SELECT * FROM feelings ORDER BY id DESC LIMIT ?", (normalized,)).fetchall()
+                return [self._row_feeling(r) for r in rows]
+            fts_query = self._fts_query(query, conjunction="OR")
+            ids: List[int] = []
+            if self._fts_available and fts_query:
+                try:
+                    ids = [int(r[0]) for r in connection.execute(
+                        "SELECT rowid FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rowid DESC LIMIT ?",
+                        (fts_query, self.CANDIDATES)).fetchall()]
+                except sqlite3.OperationalError:
+                    ids = []
+            if not ids:
+                return []
+            rows = connection.execute(
+                "SELECT * FROM feelings WHERE memory_id IN (" + ",".join("?" * len(ids)) + ") "
+                "ORDER BY id DESC LIMIT ?", [*ids, normalized]).fetchall()
+        return [self._row_feeling(r) for r in rows]
+
+    def check_relation(self, text1: str, text2: str, user_id: str) -> Dict[str, Any]:
+        """Are these two connected in what she remembers? Related when at least one
+        memory or fact involves both. Memory reports the link; reasoning judges it."""
+        a, b = self._clean_text(text1), self._clean_text(text2)
+        if not a or not b:
+            return {"status": "error", "message": "notus: check_relation needs text1 and text2"}
+        first = {m["id"]: m for m in self.retrieve_memories(a, user_id, 50)}
+        both = [m for m in self.retrieve_memories(b, user_id, 50) if m["id"] in first]
+        facts_a = {f["id"] for f in self.query_brain_facts(a, user_id, 20)}
+        shared_facts = [f for f in self.query_brain_facts(b, user_id, 20) if f["id"] in facts_a]
+        related = bool(both or shared_facts)
+        body = {"related": related, "memories": both[:10], "facts": shared_facts[:10],
+                "basis": "a memory or fact involves both" if related else "nothing she remembers involves both"}
+        return {"status": "success", "content": body, **body}
+
+    def contradictions_about(self, statement: str, user_id: str) -> List[Dict[str, Any]]:
+        """Facts that were contradicted (kept as history), matching the statement."""
+        query = self._clean_text(statement)
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT * FROM brain_facts WHERE user_id = ? AND is_contradicted = 1 ORDER BY id DESC LIMIT 200",
+                (user_id,)).fetchall()
+        out = []
+        for r in rows:
+            blob = f"{r['subject']} {r['predicate']} {r['object']} {r['value'] or ''}".replace("_", " ")
+            if query and not self._match_quality(query, blob):
+                continue
+            out.append({"id": int(r["id"]), "subject": r["subject"], "predicate": r["predicate"],
+                        "object": r["object"], "replaced_by": self._decode_conflicts(r["conflicts_with"]),
+                        "created_at": r["created_at"]})
+        return out[:20]
+
+    def _answer_other_lobes(self, msg_type: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        # Not every lobe says who it's asking about; then it's the person she's
+        # talking with (whoever memory last heard a moment from).
+        user_id = self._clean_text(payload.get("user_id")) or self._talking_with or "default"
+        if msg_type in ("get_recent", "get_recent_memories", "get_conversation_history"):
+            memories = self.recent_memories(user_id, payload.get("limit", 10))
+            return {"status": "success", "memories": memories,
+                    "content": {"memories": memories, "history": memories, "count": len(memories)}}
+        if msg_type in ("search", "find_similar"):
+            text = self._clean_text(payload.get("query") or payload.get("experience") or payload.get("text"))
+            # A kind of memory asked for ("qualia") is respected: none kept means none returned.
+            kind = payload.get("memory_type") or (payload.get("type") if payload.get("type") not in (None, msg_type) else None)
+            memories = self.retrieve_memories(text, user_id, payload.get("limit", 10), kind)
+            if msg_type == "find_similar":
+                memories = [m for m in memories if m.get("content", "").casefold() != text.casefold()]
+            feelings = self._feelings_for_memories([m["id"] for m in memories])
+            for m in memories:
+                felt = feelings.get(m["id"]) or []
+                if felt:
+                    m["emotion"] = felt[-1]["emotion"]
+                    m["feelings"] = felt
+            return {"status": "success", "memories": memories,
+                    "content": {"memories": memories, "count": len(memories)}}
+        if msg_type == "check_relation":
+            return self.check_relation(payload.get("text1"), payload.get("text2"), user_id)
+        if msg_type == "store_emotional_memory":
+            return self.store_feeling(payload)
+        if msg_type in ("get_emotional_memories", "get_all_emotional_memories"):
+            text = payload.get("trigger") or payload.get("input") or ""
+            felt = self.feelings_about(text) if msg_type == "get_emotional_memories" else self.feelings_about("", limit=200)
+            return {"status": "success", "memories": felt, "content": {"memories": felt, "count": len(felt)}}
+        if msg_type == "get_past_emotional_responses":
+            felt = [f for f in self.feelings_about(payload.get("input") or "") if f.get("response")]
+            return {"status": "success", "responses": felt, "content": {"responses": felt, "count": len(felt)}}
+        if msg_type == "get_emotional_context":
+            felt = self.feelings_about(payload.get("input") or "", limit=50)
+            counts: Dict[str, int] = {}
+            for f in felt:
+                counts[f["emotion"]] = counts.get(f["emotion"], 0) + 1
+            context = {"times_felt_before": len(felt), "by_emotion": counts,
+                       "last": felt[0] if felt else None} if felt else {}
+            return {"status": "success", "context": context, "content": {"context": context}}
+        if msg_type == "get_contradictions":
+            found = self.contradictions_about(payload.get("statement") or "", user_id)
+            return {"status": "success", "contradictions": found,
+                    "content": {"contradictions": found, "count": len(found)}}
+        if msg_type in ("get_behavioral_patterns", "get_meta_patterns", "get_past_observations"):
+            key = {"get_behavioral_patterns": "patterns", "get_meta_patterns": "meta_patterns",
+                   "get_past_observations": "observations"}[msg_type]
+            note = "pattern recognition hasn't given memory any of these to keep"
+            return {"status": "success", key: [], "note": note, "content": {key: [], "note": note}}
+        return None
 
     @staticmethod
     def _payload(message: Dict[str, Any]) -> Dict[str, Any]:
@@ -1814,6 +2024,10 @@ class DirectNotusProcess:
 
         if msg_type == "moment":
             return self.hear_moment(payload)
+
+        answered = self._answer_other_lobes(msg_type, payload)
+        if answered is not None:
+            return answered
 
         if msg_type in {"query", "query_semantic"}:
             query = self._clean_text(
