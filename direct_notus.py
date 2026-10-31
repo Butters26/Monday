@@ -1939,6 +1939,20 @@ class DirectNotusProcess:
                 target = mentions.get(complement.get("mention_id")) or {}
                 owned = self._who(target, tokens) if target else None
                 owner = owned.split("'s ", 1)[0] if owned and "'s " in owned else None
+                # Whose it is, from the word right before it: "my wife" is his,
+                # "Matthew's wife" is Matthew's; "his/her wife" (whose?) isn't guessed.
+                start = target.get("start") if isinstance(target, dict) else None
+                before = [t for t in tokens if isinstance(start, int) and t.get("index") == start - 1]
+                word = str(before[0].get("surface") or "").casefold() if before else ""
+                if word in ("my", "our"):
+                    owner = "user"
+                elif word == "your":
+                    owner = "monday"
+                elif word in ("his", "her", "their", "its"):
+                    return []
+                elif before and before[0].get("kind") == "possessive" and not owner:
+                    lemma = str(before[0].get("lemma") or "")
+                    owner = lemma[:1].upper() + lemma[1:]
                 facts.append(("is_a", str(complement.get("lemma") or ""), owner))
         else:
             verb = str(clause.get("predicate_surface") or "").casefold()

@@ -793,8 +793,8 @@ class LanguageComprehensionEngine:
                 next_idx += 1  # "is Matthew's wife": the complement is "wife"
             # "is a knight" / "is an animal" / "is the one": the complement is
             # the word after the article.
-            while next_idx < len(tokens) - 1 and lows[next_idx] in {"a", "an", "the"}:
-                next_idx += 1
+            while next_idx < len(tokens) - 1 and lows[next_idx] in (_DETERMINERS - _DEMONSTRATIVES):
+                next_idx += 1  # "is my wife": the complement is "wife"
             cand = tokens[next_idx]
             cand_low = cand.lower()
             if cand_low in _PRONOUNS or cand_low in _DETERMINERS:

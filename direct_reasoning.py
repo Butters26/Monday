@@ -672,13 +672,25 @@ class DirectReasoningAdapter:
                     "might", "must", "shall", "not"}
 
     def _analyze(self, text: str) -> Dict[str, Any]:
-        """Ask Language to read a sentence (Language owns understanding words)."""
+        """Ask Language to read a sentence (Language owns understanding words).
+        A reading is kept for a while, so checking several facts against the
+        same question doesn't ask Language to read it again each time."""
         if self.thalamus is None:
             return {}
+        cache = getattr(self, "_readings", None)
+        if cache is None:
+            cache = self._readings = {}
+        key = str(text or "")
+        if key in cache:
+            return cache[key]
         response = self.thalamus.send_message("language", "analyze", {"text": text}, source="reasoning")
         if not isinstance(response, dict) or response.get("status") != "success":
             return {}
-        return self._response_content(response).get("understanding") or {}
+        reading = self._response_content(response).get("understanding") or {}
+        cache[key] = reading
+        if len(cache) > 128:
+            cache.pop(next(iter(cache)))
+        return reading
 
     @classmethod
     def _content_lemmas(cls, analysis: Dict[str, Any]) -> set:
