@@ -1056,9 +1056,12 @@ class DirectReasoningAdapter:
         if not reply or not his:
             return False
         said, told = self._content_lemmas(reply), self._content_lemmas(his)
-        if not told or said != told:
+        # All of it, or part of it about the same one ("Joe is a farmer" for
+        # "my uncle Joe is a farmer"): nothing she adds that he didn't say.
+        if not told or not said or not said <= told or (said != told and len(said) < 2):
             return False
-        if self._doer(reply) != self._doer(his, turn=True):
+        if self._doer(reply) != self._doer(his, turn=True) and \
+                self._topic(reply) != self._topic(his, turn=True):
             return False
         negative = lambda r: str((r.get("assertion") or {}).get("polarity") or "") == "negative" or any(
             t.get("kind") == "negation" for t in r.get("tokens") or [])

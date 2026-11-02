@@ -585,8 +585,31 @@ class LanguageGenerator:
         if len(words) > 1 and words[0] in ("a", "an"):
             return {"noun": " ".join(words[1:]), "definite": False, "count": "one"}
         if len(words) > 1 and words[0] == "the":
-            return {"noun": " ".join(words[1:]), "definite": True}
-        return {"noun": low, "count": "mass"}
+            noun, count = LanguageGenerator._number_of(" ".join(words[1:]))
+            return {"noun": noun, "definite": True, "count": count}
+        noun, count = LanguageGenerator._number_of(low)
+        return {"noun": noun, "count": "many" if count == "many" else "mass"}
+
+    @staticmethod
+    def _number_of(phrase: str) -> Tuple[str, str]:
+        """("kid", "many") for "kids": the dictionary's base word is shorter, so
+        he meant more than one. The last word of the phrase decides."""
+        words = phrase.split()
+        if not words:
+            return phrase, "one"
+        last = words[-1]
+        try:
+            from lexicon.oewn_offline import lemma_and_pos_candidates
+            bases = {str(c.get("lemma")) for c in lemma_and_pos_candidates(last) if c.get("pos") == "n"
+                     and str(c.get("lemma")) == str(c.get("lemma")).lower()}  # not CAT the scan
+        except Exception:
+            bases = set()
+        if last in bases:
+            bases = set()  # the word is a base word itself ("news", "glasses")
+        base = next((b for b in bases if b != last), None)
+        if base and last.endswith("s"):
+            return " ".join(words[:-1] + [base]), "many"
+        return phrase, "one"
 
     @staticmethod
     def _owner_for(subject: str) -> Dict[str, Any]:

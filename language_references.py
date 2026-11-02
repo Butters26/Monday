@@ -222,6 +222,25 @@ def _same_ones(reading: Dict[str, Any], found: List[Dict[str, Any]]) -> List[Dic
     return [c for c in found if not any(c is m for m in merged)]
 
 
+def _weather_it(tokens: List[Dict[str, Any]], token: Dict[str, Any]) -> bool:
+    """Is this "it" the placeholder subject of a verb like rain or snow (the
+    dictionary has the verb as "It ----s" / "It is ----ing")?"""
+    after = [t for t in tokens if int(t.get("index", -1)) > int(token.get("index", 0))
+             and t.get("kind") != "punctuation"]
+    while after and after[0].get("kind") in ("auxiliary", "modal", "negation"):
+        after = after[1:]
+    if not after or after[0].get("kind") != "verb":
+        return False
+    verb = str(after[0].get("lemma") or "").casefold()
+    try:
+        frames = [str(f) for sense in _wordnet().senses(verb, pos="v") for f in sense.frames()]
+    except Exception:
+        return False
+    # Used the "It ----s" way: the verb has that frame and nothing comes after it.
+    nothing_after = not [t for t in after[1:] if t.get("kind") not in ("adverb", "temporal")]
+    return nothing_after and any(f.strip().startswith("It ") for f in frames)
+
+
 def _fit(pronoun: str, cand: Dict[str, Any]) -> float:
     """How well a pronoun fits a mention (0 = it can't)."""
     kind, sex, plural = cand["kind"], cand["sex"], cand["plural"]
@@ -263,6 +282,12 @@ def resolve(reading: Dict[str, Any], context: List[str], people: Dict[str, List[
     for token in pronouns:
         word = str(token.get("surface") or "").casefold()
         pronoun = _SUBJECTS[word]
+        if pronoun == "it" and _weather_it(tokens, token):
+            # "It is raining": the dictionary only uses this verb with "it" as a
+            # placeholder; it means nothing to look back for.
+            references.append({"index": token.get("index"), "pronoun": word, "refers_to": None,
+                               "sure": True, "placeholder": True, "candidates": []})
+            continue
         here = _candidates(reading, people, beliefs, user_id, stop_at=int(token.get("index", 0)))
         scored = []
         for age, cands in [(0, here)] + earlier:

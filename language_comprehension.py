@@ -799,6 +799,16 @@ class LanguageComprehensionEngine:
             pool = clear if clear else known_candidates
             known = max(pool, key=lambda c: (c[2], c[0]))
 
+
+        # Right after the subject ("my sister", "the kids", "Tom") comes its
+        # verb; a later verb-looking word is what it acts on ("likes cats",
+        # "play games", "drives trucks").
+        after_subject = self._verb_after_subject(tokens)
+        if after_subject is not None and (known is None or known[0] < after_subject or (
+                known[0] > after_subject and self._has_pos(tokens[known[0]], "n"))):
+            # (A "verb" picked inside the subject, like "Cleo", isn't one.)
+            known = (after_subject, self.lemma(tokens[after_subject], prefer_pos="v"), 5)
+
         # Copula: be-AUX + complement (adjective OR nominal).
         # "Matthew is happy" / "The gasket is aluminum" / "No, the gasket is steel".
         # Prefer this over noun-with-accidental-verb-reading as the complement itself.
@@ -891,7 +901,12 @@ class LanguageComprehensionEngine:
                 # Return complement index; caller uses kind via lexical POS / flag.
                 return c_idx, c_lemma, False, True
 
-        # Unknown earlier than known (Steve florbed the dog) wins.
+        # Unknown earlier than known (Steve florbed the dog) wins, but a name is
+        # never the verb ("where does Cleo live?").
+        lexical_now = getattr(self, "_lexical_now", None) or []
+        if unknown is not None and unknown[0] < len(lexical_now) \
+                and lexical_now[unknown[0]].get("kind") == "proper_noun":
+            unknown = None
         if unknown is not None and (known is None or unknown[0] < known[0]):
             return unknown[0], unknown[1], False, False
         if known is not None:
@@ -1409,6 +1424,43 @@ class LanguageComprehensionEngine:
             entry.update({"kind": "verb", "lemma": self.lemma(entry["surface"], prefer_pos="v"),
                           "senses": verb, "sense_count": len(verb), "read_as": "action after its subject"})
 
+    def _verb_after_subject(self, tokens: Sequence[str]) -> Optional[int]:
+        """Index of the verb in a sentence that opens with its subject ("my
+        sister likes cats", "the kids watch movies", "Tom drives trucks").
+        The verb agrees with the subject: one sister likes, many kids watch."""
+        lexical = getattr(self, "_lexical_now", None) or []
+        if len(lexical) != len(tokens):
+            return None
+        idx = 0
+        helped = False  # "what does my sister like?": after do/does/can the verb is plain
+        while idx < len(lexical) and lexical[idx].get("kind") in ("wh", "auxiliary", "modal"):
+            if lexical[idx].get("kind") == "auxiliary" and str(lexical[idx].get("lemma")) == "be":
+                return None  # "is my dog...": no verb of this kind follows
+            helped = True
+            idx += 1
+        opened = idx
+        while idx < len(lexical) and lexical[idx].get("kind") in ("determiner", "possessive"):
+            idx += 1
+        if idx == opened and not (idx < len(lexical) and lexical[idx].get("kind") == "proper_noun"):
+            return None  # no "my/the" and no name: not this shape
+        while idx < len(lexical) and lexical[idx].get("kind") == "adjective":
+            idx += 1
+        start = idx
+        for pos in range(start + 1, len(lexical)):
+            word, before = tokens[pos].lower(), tokens[pos - 1].lower()
+            if lexical[pos].get("kind") in ("auxiliary", "modal", "preposition", "punctuation",
+                                            "conjunction", "negation", "wh"):
+                return None
+            if not self._has_pos(tokens[pos], "v") or not self._has_pos(tokens[pos - 1], "n") \
+                    and lexical[pos - 1].get("kind") != "proper_noun":
+                continue
+            many = before.endswith("s") and not before.endswith("ss") and self.lemma(before, prefer_pos="n") != before
+            agrees = (word.endswith(("s", "ed")) and not many) or (many and not word.endswith("s")) \
+                or word.endswith("ed") or (helped and self.lemma(word, prefer_pos="v") == word)
+            if agrees:
+                return pos
+        return None
+
     def _describing_before_noun(self, lexical: List[Dict[str, Any]]) -> None:
         """Between "the/a/my" and a noun, a word the dictionary also knows as an
         adjective describes that noun: "the old dog", "a new car"."""
@@ -1488,7 +1540,34 @@ class LanguageComprehensionEngine:
         self._describing_before_noun(lexical)
         self._describing_after_be(lexical)
         self._action_after_subject(lexical)
-        verb_idx, predicate, passive, predicate_known = self._find_main_verb(tokens)
+        self._lexical_now = lexical
+        try:
+            verb_idx, predicate, passive, predicate_known = self._find_main_verb(tokens)
+        finally:
+            self._lexical_now = None
+        if isinstance(verb_idx, int) and 0 <= verb_idx < len(lexical) and not passive \
+                and lexical[verb_idx].get("kind") in ("noun", "verb") and predicate \
+                and predicate != "be" and self._lookup(lexical[verb_idx]["surface"], pos="v") \
+                and self.lemma(lexical[verb_idx]["surface"], prefer_pos="v") == predicate \
+                and not (verb_idx > 0 and lexical[verb_idx - 1].get("kind") == "determiner"):
+            # (After "a/the/my" a word is never the verb: "is a doctor".)
+            # The word chosen as the verb is read as one; things after it that
+            # can be nouns are what it acts on ("play games").
+            verb_entry = lexical[verb_idx]
+            if verb_entry.get("kind") != "verb":
+                verb_entry.update({"kind": "verb", "lemma": predicate or verb_entry.get("lemma"),
+                                   "senses": self._lookup(verb_entry["surface"], pos="v") or verb_entry.get("senses")})
+            for entry in lexical[:verb_idx]:
+                # The subject before it is a thing, not a verb ("the kids watch").
+                i = lexical.index(entry)
+                if entry.get("kind") == "verb" and self._lookup(entry["surface"], pos="n") \
+                        and i > 0 and lexical[i - 1].get("kind") in ("determiner", "possessive", "adjective"):
+                    entry.update({"kind": "noun", "lemma": self.lemma(entry["surface"], prefer_pos="n"),
+                                  "senses": self._lookup(entry["surface"], pos="n")})
+            for entry in lexical[verb_idx + 1:]:
+                if entry.get("kind") == "verb" and self._lookup(entry["surface"], pos="n"):
+                    entry.update({"kind": "noun", "lemma": self.lemma(entry["surface"], prefer_pos="n"),
+                                  "senses": self._lookup(entry["surface"], pos="n")})
         mentions: List[LinguisticMention] = []
         roles: Dict[str, str] = {}
         qualifiers = self._qualifiers(tokens)
