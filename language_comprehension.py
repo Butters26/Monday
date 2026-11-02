@@ -413,6 +413,14 @@ class LanguageComprehensionEngine:
 
         senses = self._lookup(low)
         cands = self._lemma_candidates(low)
+        # Spelled differently from an acronym, it isn't that word: "Sam" (a name)
+        # is not SAM (a missile), "it" is not IT. Only the way he wrote it counts.
+        if not original.isupper():
+            def _acronym(lemmas: Any) -> bool:
+                same = [str(l) for l in lemmas or [] if str(l).casefold() == low]
+                return bool(same) and all(l.isupper() and len(l) > 1 for l in same)
+            senses = [x for x in senses if not _acronym(x.get("lemmas"))]
+            cands = [c for c in cands if not (str(c.get("lemma") or "").isupper() and len(str(c.get("lemma") or "")) > 1)]
         # A lowercase word is not a place or person name: "nice" is not Nice, France.
         if original[:1].islower():
             proper_only = [c for c in cands if c.get("pos") == "n" and str(c["lemma"])[:1].isupper()]
@@ -617,9 +625,16 @@ class LanguageComprehensionEngine:
         # Head lemma from OEWN when available (last content token).
         head = low[-1]
         head_lemma = self.lemma(head, prefer_pos="n")
+        head_senses = self._lookup(head, pos="n") or self._lookup(head)
+        written = str(raw[-1]) if raw else head
+        if head_lemma.isupper() and len(head_lemma) > 1 and not written.isupper():
+            # "Sam" as he wrote it is not the acronym SAM.
+            head_lemma = head
+            head_senses = [x for x in head_senses
+                           if not all(str(l).isupper() for l in x.get("lemmas") or []
+                                      if str(l).casefold() == head)]
         concept_surface = " ".join(low[:-1] + [head_lemma]) if len(low) > 1 else head_lemma
 
-        head_senses = self._lookup(head, pos="n") or self._lookup(head)
         kind = "proper_noun" if raw[0][:1].isupper() and raw[0].isalpha() else "nominal"
         return LinguisticMention(
             mention_id=mention_id,
@@ -1368,7 +1383,7 @@ class LanguageComprehensionEngine:
         try:
             from lexicon.oewn_offline import get_wordnet
             for sense in get_wordnet().senses(verb, pos="v"):
-                if any(str(f).strip().endswith("----s") for f in sense.frames()):
+                if any(str(f).strip().endswith(("----s", "----ing")) for f in sense.frames()):
                     return True
         except Exception:
             return True  # can't tell: keep the verb reading
@@ -1393,6 +1408,20 @@ class LanguageComprehensionEngine:
                 continue
             entry.update({"kind": "verb", "lemma": self.lemma(entry["surface"], prefer_pos="v"),
                           "senses": verb, "sense_count": len(verb), "read_as": "action after its subject"})
+
+    def _describing_before_noun(self, lexical: List[Dict[str, Any]]) -> None:
+        """Between "the/a/my" and a noun, a word the dictionary also knows as an
+        adjective describes that noun: "the old dog", "a new car"."""
+        for idx in range(1, len(lexical) - 1):
+            entry, before, after = lexical[idx], lexical[idx - 1], lexical[idx + 1]
+            if entry.get("kind") not in ("noun", "verb") or before.get("kind") not in ("determiner", "possessive"):
+                continue
+            if after.get("kind") not in ("noun", "proper_noun"):
+                continue
+            adjective = [x for x in self._lookup(entry["surface"]) if x.get("pos") in ("a", "s")]
+            if adjective:
+                entry.update({"kind": "adjective", "lemma": entry["surface"], "senses": adjective,
+                              "sense_count": len(adjective), "read_as": "describing the noun after it"})
 
     def _describing_after_be(self, lexical: List[Dict[str, Any]]) -> None:
         """Right after "is/are/was", a word the dictionary also knows as an
@@ -1456,6 +1485,7 @@ class LanguageComprehensionEngine:
             if kind == "unknown" and token.isalpha() and token not in unknown_words:
                 unknown_words.append(token)
 
+        self._describing_before_noun(lexical)
         self._describing_after_be(lexical)
         self._action_after_subject(lexical)
         verb_idx, predicate, passive, predicate_known = self._find_main_verb(tokens)

@@ -511,6 +511,30 @@ class LanguageGenerator:
         read = (self.__dict__.get("_social_reads") or {}).get(user_id) or {}
         return read if str(read.get("said") or "").strip() == user_input.strip() else {}
 
+    @classmethod
+    def _his_words(cls, pieces: Any, out: Optional[set] = None) -> set:
+        """(part of speech, word) for every word in what he said and what she
+        remembers him saying."""
+        out = out if out is not None else set()
+        if isinstance(pieces, dict):
+            for key, value in pieces.items():
+                if key == "noun" and isinstance(value, str):
+                    out.add(("n", value.casefold()))
+                elif key == "verb" and isinstance(value, str):
+                    out.add(("v", value.casefold()))
+                elif key == "adjectives" and isinstance(value, list):
+                    out.update(("a", str(a).casefold()) for a in value if isinstance(a, str))
+                elif key in ("heard_verb",) and isinstance(value, list):
+                    out.update(("v", str(v).casefold()) for v in value if isinstance(v, str))
+                elif key in ("heard_adjective",) and isinstance(value, list):
+                    out.update(("a", str(a).casefold()) for a in value if isinstance(a, str))
+                elif not str(key).startswith("_") and isinstance(value, (dict, list)):
+                    cls._his_words(value, out)
+        elif isinstance(pieces, list):
+            for item in pieces:
+                cls._his_words(item, out)
+        return out
+
     def _situation(self, semantic_input: Dict[str, Any]) -> str:
         understanding = semantic_input.get("language_understanding") or {}
         user_id = str(understanding.get("user_id") or semantic_input.get("user_id") or "default")
@@ -813,6 +837,11 @@ class LanguageGenerator:
         base_explore = builder.explore_rate
         last_reason = ""
         builder.steer_only, builder.steer_avoid = {}, {}
+        # His words stay his words: saying back what he said (or what he told
+        # her before), she keeps the words he used instead of a dictionary
+        # synonym that may mean something else ("hold" for "have").
+        for pos, word in self._his_words(pieces):
+            builder.steer_only[f"word_{pos}_{word}"] = {word}
         sent_back: set = set()
         try:
             for attempt in range(1, self.MAX_REPLY_ATTEMPTS + 1):

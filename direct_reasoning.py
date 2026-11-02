@@ -800,13 +800,44 @@ class DirectReasoningAdapter:
         if any(str(t.get("lemma") or "").casefold() == "who" for t in reading.get("tokens") or []):
             asked |= FactText._alias_set("name")
         about = self._fact_words(fact)
-        if not about or not all(FactText._alias_set(word) & asked for word in about):
+        asks_who = any(str(t.get("lemma") or "").casefold() == "who" for t in reading.get("tokens") or [])
+        if asks_who and str(fact.get("subject") or "")[:1].isupper():
+            # "Who has a cat?": the person is the answer, so the question needn't name them.
+            subject_words = FactText._content_tokens(str(fact.get("subject") or ""))
+            unnamed = {w for w in about if w not in subject_words}
+            if not (subject_words & asked):
+                about = unnamed
+                if not about:
+                    # Only the person was left: what he asked about (the cat) has
+                    # to be what the fact is about, checked below.
+                    about = {"_who_"}
+        if about == {"_who_"}:
+            pass
+        elif not about or not all(FactText._alias_set(word) & asked for word in about):
             return False
         # What he asked about may also be what the fact says ("Is Lily brave?").
         about_all = FactText._expand_tokens(about | FactText._content_tokens(
             str(fact.get("object") or "") + " " + str(fact.get("value") or "")))
         if str(fact.get("object") or "")[:1].isupper():
             about_all |= FactText._alias_set("name")  # "my cat is Luna": Luna is the cat's name
+        # What he asked someone does ("what does Sam have?") must be what the fact
+        # says they do, not something else about them ("Sam is your friend").
+        words = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        verbs = [str(t.get("lemma") or "").casefold() for t in words if t.get("kind") == "verb"]
+        if not verbs and words and words[-1].get("kind") == "auxiliary" \
+                and str(words[-1].get("lemma") or "") == "have":
+            verbs = ["have"]  # "what does Sam have?": have is the verb asked about
+        asked_verb = verbs[-1] if verbs else ""
+        if not verbs and len(words) > 1 and str(words[0].get("lemma") or "").casefold() == "who" \
+                and str(words[1].get("lemma") or "") == "be" \
+                and str(fact.get("predicate") or "").startswith(("v:", "not_v:")):
+            return False  # "who is Sam?" asks what Sam is (your friend), not what Sam does
+        if asked_verb and asked_verb not in ("be", "do", "name", "call", "named", "called"):
+            predicate = str(fact.get("predicate") or "")
+            predicate = predicate[4:] if predicate.startswith("not_") else predicate
+            fact_verb = predicate[2:].split("@", 1)[0] if predicate.startswith("v:") else predicate
+            if fact_verb.casefold() != asked_verb:
+                return False
         for token in reading.get("tokens") or []:
             if token.get("kind") not in ("noun", "proper_noun", "possessive"):
                 continue
@@ -980,6 +1011,45 @@ class DirectReasoningAdapter:
                 return self._TURNED.get(word, word) if turn else word
         return ""
 
+    def _moved_description(self, meaning: Dict[str, Any], reply: Dict[str, Any], heard: str) -> Optional[str]:
+        """A describing word he used stays with what he described: in "I have a
+        new car" the car is new, not him ("Are you new?")."""
+        complement = meaning.get("complement") if isinstance(meaning.get("complement"), dict) else {}
+        adjectives = [str(a).casefold() for a in complement.get("adjectives") or []]
+        if str(meaning.get("verb") or "") != "be" or not adjectives:
+            return None
+        his = [t for t in self._analyze(str(heard)).get("tokens") or [] if t.get("kind") != "punctuation"]
+        for i, token in enumerate(his):
+            if token.get("kind") != "adjective" or str(token.get("lemma") or "").casefold() not in adjectives:
+                continue
+            after = his[i + 1] if i + 1 < len(his) else {}
+            if after.get("kind") in ("noun", "proper_noun"):
+                described = str(after.get("lemma") or "").casefold()
+                if described and described != self._topic(reply):
+                    return (f"he said the {described} is {token.get('lemma')}, "
+                            f"not {self._topic(reply) or 'that'}")
+        return None
+
+    def _topic(self, reading: Dict[str, Any], turn: bool = False) -> str:
+        """Who or what a sentence is about: the last name, noun or pronoun before
+        its verb ("my sister Cleo is..." -> cleo); in a question, after the
+        helper verb that opens it ("Is Cleo a painter?" -> cleo)."""
+        tokens = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        question = bool(tokens) and tokens[0].get("kind") in ("auxiliary", "modal", "wh")
+        while tokens and tokens[0].get("kind") in ("auxiliary", "modal", "wh"):
+            tokens = tokens[1:]
+        found = ""
+        for token in tokens:
+            kind = token.get("kind")
+            if kind in ("verb", "auxiliary", "modal"):
+                break
+            if kind in ("pronoun", "noun", "proper_noun"):
+                found = str(token.get("surface") if kind == "proper_noun" else
+                            token.get("lemma") or token.get("surface") or "").casefold()
+                if question:
+                    break  # "Are you Cleo?": the one asked about comes first
+        return self._TURNED.get(found, found) if turn else found
+
     def _says_back(self, reply: Dict[str, Any], his: Dict[str, Any]) -> bool:
         """Her reply says what he told her, from her side: the same doer
         (his "I" is her "you"), the same content words, the same yes/no."""
@@ -1087,6 +1157,10 @@ class DirectReasoningAdapter:
         if nonsense:
             return no("it doesn't make sense: " + nonsense,
                       "complete_it" if "needs who or what" in nonsense else "")
+        moved = self._moved_description(meaning, reply, payload.get("resolved_input") or user_input) \
+            if act in ("state", "ask") else None
+        if moved:
+            return no(moved)
         called = self._calls_someone_a_thing(meaning) if act in ("state", "ask") else None
         if called:
             return no(called)
@@ -1123,6 +1197,14 @@ class DirectReasoningAdapter:
                               "told her or ask about it", "restate_or_ask")
             elif act == "ask" and his and not (his & said):
                 return no("the question isn't about what he said", "about_what_he_said")
+            elif act == "ask":
+                # Asking back is about the one he talked about ("Is Cleo a
+                # painter?"), not someone else ("Are you Cleo?").
+                his_reading = self._analyze(str(payload.get("resolved_input") or user_input))
+                asked_about, talked_about = self._topic(reply), self._topic(his_reading, turn=True)
+                if asked_about and talked_about and asked_about != talked_about:
+                    return no(f"he talked about {talked_about}, and the question is about {asked_about}",
+                              "about_what_he_said")
         if situation == "greeting":
             if not self._has_greeting(reply):
                 return no("he greeted her and the reply does not greet him back", "greet_back")

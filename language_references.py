@@ -213,6 +213,12 @@ def _same_ones(reading: Dict[str, Any], found: List[Dict[str, Any]]) -> List[Dic
     nouns = [c for c in left if "noun" in c["entity"]]
     if copular and len(names) == 1 and len(nouns) == 1:
         merge(names[0], nouns[0])
+    elif copular and not names and len(nouns) == 2:
+        # "My mom is a nurse": one person, known by what he called her first.
+        first, second = nouns
+        first.update({"kind": first["kind"] if first["kind"] != "thing" else second["kind"],
+                      "sex": first["sex"] or second["sex"]})
+        merged.append(second)
     return [c for c in found if not any(c is m for m in merged)]
 
 
