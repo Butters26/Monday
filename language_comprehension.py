@@ -2407,6 +2407,18 @@ class LanguageComprehensionEngine:
         if not any(str(x.lexfile()) == "verb.communication" for x in senses):
             return None
         roles = clause.get("roles") or {}
+        raw = str(reading.get("raw_text") or "")
+        first_meaning = str(senses[0].definition() or "").casefold() if senses else ""
+        saying = "express in words" in first_meaning or " say" in f" {first_meaning}"
+        if saying and not roles.get("about") and not roles.get("recipient"):
+            # "Say hello", "repeat after me: I am Monday": the words to say are
+            # what comes after the verb, as he wrote them.
+            words = raw.split(":", 1)[1] if ":" in raw else raw.split(None, 1)[1] if len(raw.split()) > 1 else ""
+            words = words.strip().strip('"\'“”').strip()
+            if words.casefold().startswith("after me"):
+                words = words[8:].strip(" ,:").strip('"\'“”')
+            if words:
+                return {"verb": verb, "say": words}
         target = roles.get("about") or roles.get("patient") or roles.get("theme")
         mention = next((m for m in reading.get("mentions") or [] if m.get("mention_id") == target), None)
         if not mention:

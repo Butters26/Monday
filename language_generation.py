@@ -1193,7 +1193,7 @@ class LanguageGenerator:
         situation = self._situation(semantic_input)
         resolved_input = self._resolved_text(user_input, user_id) if user_input else user_input
         asks_her = understanding.get("asks_her") or self.comprehension.analyze(resolved_input or "").get("asks_her")
-        if asks_her and asks_her.get("about"):
+        if asks_her and asks_her.get("about") and not asks_her.get("say"):
             # "Tell me about my brother" asks what she knows about him: answered
             # like that question, from what she knows.
             about = str(asks_her["about"]).strip()
@@ -1205,6 +1205,10 @@ class LanguageGenerator:
         # What social context believes this moment calls for, in words ("you're welcome").
         social_now = self._social_for(user_id, user_input) or semantic_input.get("social_context") or {}
         expected_reply = str(social_now.get("expected_reply") or "").strip()
+        if asks_her and asks_her.get("say"):
+            # "Say hello", "repeat after me: ...": what he asked her to say, as he gave it.
+            expected_reply = str(asks_her["say"])
+            situation = "social_reply"
         if resolved_input != user_input:
             self._trace("references_resolved", heard=user_input, means=resolved_input)
         if understanding.get("unknown_words") or [u for u in understanding.get("unresolved_references") or []]:
