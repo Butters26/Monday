@@ -513,11 +513,15 @@ class LanguageGenerator:
 
     # His words for the two of them, turned to her side.
     _TURN = {"i": {"ref": "addressee"}, "me": {"ref": "addressee"}, "myself": {"ref": "addressee"},
-             "you": {"ref": "speaker"}, "we": {"ref": "addressee"}, "us": {"ref": "addressee"},
+             "you": {"ref": "speaker"},
+             # "we" said by him is him and her: said back, still both of them.
+             "we": {"group": [{"ref": "addressee"}, {"ref": "speaker"}], "count": "many"},
+             "us": {"group": [{"ref": "addressee"}, {"ref": "speaker"}], "count": "many"},
              "he": {"pronoun": "he"}, "him": {"pronoun": "he"}, "she": {"pronoun": "she"},
              "her": {"pronoun": "she"}, "it": {"pronoun": "it"}, "they": {"pronoun": "they"},
              "them": {"pronoun": "they"}}
-    _OWNER = {"my": {"ref": "addressee"}, "our": {"ref": "addressee"}, "your": {"ref": "speaker"},
+    _OWNER = {"my": {"ref": "addressee"}, "our": {"group": [{"ref": "addressee"}, {"ref": "speaker"}],
+                                                    "count": "many"}, "your": {"ref": "speaker"},
               "his": {"pronoun": "he"}, "her": {"pronoun": "she"}, "their": {"pronoun": "they"},
               "its": {"pronoun": "it"}}
 
@@ -533,6 +537,28 @@ class LanguageGenerator:
         start, end = mention.get("start"), mention.get("end")
         inside = [t for t in tokens if isinstance(start, int) and isinstance(end, int)
                   and start <= int(t.get("index", -1)) < end]
+        if any(str(t.get("surface") or "").casefold() == "and" for t in inside) \
+                and not all(t.get("kind") in ("proper_noun", "conjunction") for t in inside):
+            # "me and you", "my sister and I": each of them, together.
+            groups, group = [], []
+            for t in inside:
+                if str(t.get("surface") or "").casefold() == "and":
+                    groups.append(group)
+                    group = []
+                else:
+                    group.append(t)
+            groups.append(group)
+            members = []
+            for g in groups:
+                if not g:
+                    continue
+                one = self._mention_entity({"start": g[0].get("index"), "end": int(g[-1].get("index", 0)) + 1,
+                                            "pronoun": len(g) == 1 and g[0].get("kind") == "pronoun",
+                                            "surface": " ".join(str(t.get("surface") or "") for t in g)}, tokens)
+                if not one:
+                    return None
+                members.append(one)
+            return {"group": members, "count": "many"} if len(members) > 1 else (members[0] if members else None)
         if mention.get("pronoun"):
             word = str((mention.get("properties") or {}).get("pronoun") or mention.get("surface") or "").casefold()
             return dict(self._TURN.get(word) or {}) or None
@@ -754,6 +780,10 @@ class LanguageGenerator:
         "monday" is her, "user's brother" is his brother, a name is a name."""
         t = (text or "").strip()
         low = t.casefold()
+        if " and " in t and not all(m.strip()[:1].isupper() for m in t.split(" and ")):
+            # "user's sister and user": both of them ("you and your sister").
+            return {"group": [LanguageGenerator._entity_for(m) for m in t.split(" and ") if m.strip()],
+                    "count": "many"}
         if low in ("user", "i", "me", ""):
             return {"ref": "addressee"}
         if low == "monday":
@@ -773,6 +803,33 @@ class LanguageGenerator:
             return {"noun": noun, "definite": True, "count": count}
         noun, count = LanguageGenerator._number_of(low)
         return {"noun": noun, "count": "many" if count == "many" else "mass"}
+
+    @staticmethod
+    def _from_her_side(words: str) -> str:
+        """His words said back by her: what he said about himself is about
+        "you", what he said about her is about "I" ("when I was a kid" ->
+        "when you were a kid")."""
+        out: List[str] = []
+        said = words.split()
+        for i, word in enumerate(said):
+            low = word.casefold()
+            before = said[i - 1].casefold() if i else ""
+            if low in ("i", "me"):
+                out.append("you")
+            elif low == "you":
+                nxt = said[i + 1].casefold() if i + 1 < len(said) else ""
+                out.append("I" if nxt and nxt not in ("and", "or") and i + 1 < len(said) else "me")
+            elif low in ("my", "mine", "myself"):
+                out.append({"my": "your", "mine": "yours", "myself": "yourself"}[low])
+            elif low in ("your", "yours", "yourself"):
+                out.append({"your": "my", "yours": "mine", "yourself": "myself"}[low])
+            elif low in ("am", "was") and before == "i":
+                out.append({"am": "are", "was": "were"}[low])
+            elif low in ("are", "were") and before == "you":
+                out.append({"are": "am", "were": "was"}[low])
+            else:
+                out.append(word)
+        return " ".join(out)
 
     @staticmethod
     def _number_of(phrase: str) -> Tuple[str, str]:
@@ -828,7 +885,10 @@ class LanguageGenerator:
         if isinstance(sure, (int, float)) and sure < 0.9:
             meaning["hedge"] = "maybe" if sure < 0.6 else "probably"
         when = str(fact.get("when_said") or "").strip()
-        if when and LanguageGenerator._said_today(fact):
+        if when and when.split()[0].casefold() in ("when", "after", "before", "while", "since", "until", "once"):
+            # "when I was a kid": true whenever it's said, in her words ("when you were a kid").
+            meaning["when"] = LanguageGenerator._from_her_side(when)
+        elif when and LanguageGenerator._said_today(fact):
             # "yesterday" is only still true the day he said it.
             meaning["when"] = when
         because = str(fact.get("because") or "").strip()

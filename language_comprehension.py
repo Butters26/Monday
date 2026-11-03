@@ -79,6 +79,8 @@ _PREPOSITIONS = {
 _NEGATION = {"not", "never", "no"}
 # Joining words (grammar, like the sets above): "Ariana and Cleo", "tea or coffee".
 _CONJUNCTIONS = {"and", "or", "but", "nor", "because"}
+# Words that start a statement inside another ("if it rains", "although it was cold").
+_SUBORDINATING = {"if", "although", "though", "unless", "whereas"}
 # Counting words (grammar): "how many cats", "some dogs".
 _QUANTIFIERS = {"many", "much", "few", "several", "some", "any", "more", "most"}
 _WH = {"who", "what", "when", "where", "why", "how", "which"}
@@ -391,6 +393,8 @@ class LanguageComprehensionEngine:
             return "negation", low, [], True
         if low in _CONJUNCTIONS:
             return "conjunction", low, [], True
+        if low in _SUBORDINATING:
+            return "subordinator", low, [], True
         if low in _TIME:
             return "temporal", low, self._lookup(low), True
         if low in _DETERMINERS:
@@ -522,10 +526,19 @@ class LanguageComprehensionEngine:
         while len(raw) > 1 and self._pos_set(raw[0]) == {"r"}:
             raw.pop(0)
             start += 1
+        kept_end = None
+        if len(raw) >= 3 and raw[-1].lower() in _PREPOSITIONS \
+                and "to" in [t.lower() for t in raw[:-2]] and self._has_pos(raw[-2], "v"):
+            # "a lot to work on", "someone to talk to": the word after the action
+            # belongs to it; it isn't left over.
+            kept_end = raw[-1]
+            raw = raw[:-1]
         while raw and raw[-1].lower() in _PREPOSITIONS:
             raw.pop()
         if not raw:
             return None
+        if kept_end:
+            raw.append(kept_end)
 
         surface = " ".join(raw)
         low = [t.lower() for t in raw]
@@ -755,6 +768,8 @@ class LanguageComprehensionEngine:
             | _AUX_RAW
             | _NEGATION
             | set(_TIME)
+            | _CONJUNCTIONS  # joining words are never the action ("my sister and I went")
+            | _SUBORDINATING
         )
 
         # Passive: be-AUX + lexical past participle + by.
@@ -903,6 +918,12 @@ class LanguageComprehensionEngine:
         # and last-resort noun-as-verb (gasket).
         if be_complement is not None:
             c_idx, c_lemma, c_kind = be_complement
+            now = getattr(self, "_lexical_now", None) or []
+            if c_idx < len(now) and now[c_idx].get("kind") == "verb" \
+                    and str(now[c_idx].get("surface") or "").endswith("ing"):
+                # "she is working", "you are getting better": what's going on is
+                # the action, not a description after "is".
+                return c_idx, self.lemma(tokens[c_idx], prefer_pos="v"), False, True
             known_ok = (
                 known is not None
                 and known[0] != c_idx
@@ -1473,11 +1494,21 @@ class LanguageComprehensionEngine:
         while idx < len(lexical) and lexical[idx].get("kind") == "adjective":
             idx += 1
         start = idx
+        group = False  # "Tom and Ben", "my sister and I": more than one doing it
         for pos in range(start + 1, len(lexical)):
             word, before = tokens[pos].lower(), tokens[pos - 1].lower()
+            if word == "and" and pos + 1 < len(lexical) and lexical[pos + 1].get("kind") in (
+                    "pronoun", "proper_noun", "determiner", "possessive", "noun"):
+                group = True
+                continue
+            if group and lexical[pos].get("kind") in ("pronoun", "proper_noun", "determiner", "possessive"):
+                continue
             if lexical[pos].get("kind") in ("auxiliary", "modal", "preposition", "punctuation",
                                             "conjunction", "negation", "wh"):
                 return None
+            if group and self._has_pos(tokens[pos], "v") and lexical[pos - 1].get("kind") in (
+                    "pronoun", "proper_noun", "noun") and (not word.endswith("s") or word.endswith("ss")):
+                return pos  # more than one: "Tom and Ben play"
             if not self._has_pos(tokens[pos], "v") or not self._has_pos(tokens[pos - 1], "n") \
                     and lexical[pos - 1].get("kind") != "proper_noun":
                 continue
@@ -1518,42 +1549,6 @@ class LanguageComprehensionEngine:
                     and not helper_now:  # "is named", "has gone": not the past
                 return "past"
         return None
-
-    def _parts(self, lexical: List[Dict[str, Any]], original: str, joins: List[str]) -> List[str]:
-        """A sentence that joins two statements ("I like cats and I hate dogs")
-        split into each one. Only where the joining word starts a new subject
-        that has its own verb."""
-        # Separate sentences ("I am tired. I worked all day.") are separate statements.
-        sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", original.strip()) if x.strip()]
-        if len(sentences) > 1:
-            out: List[str] = []
-            for sentence in sentences:
-                inner = self.analyze(sentence).get("parts") or []
-                out += inner or [sentence.rstrip(".!")]
-            return out
-        words = original.split()
-        if len(words) != len([e for e in lexical if e.get("kind") != "punctuation"]) or len(lexical) < 4:
-            return []
-        content = [e for e in lexical if e.get("kind") != "punctuation"]
-        cuts = []
-        for i, entry in enumerate(content[:-2]):
-            if entry.get("kind") != "conjunction" or i == 0:
-                continue
-            nxt = content[i + 1]
-            if nxt.get("kind") in ("pronoun", "proper_noun", "determiner", "possessive") and any(
-                    e.get("kind") in ("verb", "auxiliary", "modal") or self._has_pos(str(e.get("surface")), "v")
-                    for e in content[i + 2:]) and any(
-                    e.get("kind") in ("verb", "auxiliary", "modal") for e in content[:i]):
-                cuts.append(i)
-        joins[:] = [str(content[c].get("surface") or "").casefold() for c in cuts]
-        if not cuts:
-            return []
-        parts, start = [], 0
-        for cut in cuts:
-            parts.append(" ".join(words[start:cut]).strip(" ,"))
-            start = cut + 1
-        parts.append(" ".join(words[start:]).strip(" ,"))
-        return [p for p in parts if p]
 
     def _thing_after_number(self, lexical: List[Dict[str, Any]]) -> None:
         """After a number ("two cats", "3 dogs") comes a thing, not a verb."""
@@ -1622,6 +1617,137 @@ class LanguageComprehensionEngine:
             entry.update({"kind": "adjective", "lemma": entry["surface"], "senses": adjective,
                           "sense_count": len(adjective), "read_as": "describing after be"})
 
+    def _action_in_progress(self, lexical: List[Dict[str, Any]]) -> None:
+        """After "is/are/was", an -ing word the dictionary knows as a verb is
+        what's going on: "you are getting better", "she is working". (One that
+        describes, like "amazing", was already read as describing.)"""
+        for idx in range(1, len(lexical)):
+            entry, before = lexical[idx], lexical[idx - 1]
+            if before.get("kind") != "auxiliary" or before.get("lemma") != "be":
+                continue
+            surface = str(entry.get("surface") or "")
+            if entry.get("kind") not in ("noun", "unknown") or not surface.endswith("ing"):
+                continue
+            verb = self._lookup(surface, pos="v")
+            if verb:
+                entry.update({"kind": "verb", "lemma": self.lemma(surface, prefer_pos="v"), "senses": verb,
+                              "sense_count": len(verb), "read_as": "what is going on"})
+
+    def _action_after_to(self, lexical: List[Dict[str, Any]]) -> None:
+        """After "to", a word that is an action: "a lot to work on", "something
+        to do", "I want to swim". It's an action when something follows it that
+        an action takes (on, a thing, someone), or when the dictionary knows it
+        more as an action than a thing ("to swim"; "to school" stays a place)."""
+        for idx in range(1, len(lexical)):
+            entry, before = lexical[idx], lexical[idx - 1]
+            if str(before.get("surface")) != "to" or entry.get("kind") not in ("noun", "unknown"):
+                continue
+            surface = str(entry.get("surface") or "")
+            verb, noun = self._lookup(surface, pos="v"), self._lookup(surface, pos="n")
+            if not verb:
+                continue
+            after = lexical[idx + 1] if idx + 1 < len(lexical) else None
+            takes_something = after is not None and after.get("kind") in (
+                "preposition", "determiner", "possessive", "pronoun", "proper_noun")
+            if takes_something or len(verb) > len(noun):
+                entry.update({"kind": "verb", "lemma": self.lemma(surface, prefer_pos="v"), "senses": verb,
+                              "sense_count": len(verb), "read_as": "an action after to"})
+
+    _structure_reader = None
+
+    def _structure(self):
+        """Language's own small pattern reader (language_structure.py), with
+        the sentence shapes she has learned kept in her runtime folder."""
+        if LanguageComprehensionEngine._structure_reader is None:
+            from language_structure import SentenceStructure, ShapeMemory
+            try:
+                from runtime_paths import runtime_file
+                path = runtime_file("sentence_shapes.json")
+            except Exception:
+                path = None
+            LanguageComprehensionEngine._structure_reader = SentenceStructure(ShapeMemory(path))
+        return LanguageComprehensionEngine._structure_reader
+
+    def _statements(self, lexical: List[Dict[str, Any]], original: str,
+                    surfaces: Optional[Sequence[str]]) -> Dict[str, Any]:
+        """The simple statements in what was said, and how they're linked."""
+        from language_structure import words_of
+        sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", original.strip()) if x.strip()]
+        if len(sentences) > 1:
+            # Separate sentences ("I am tired. I worked all day.") are separate statements.
+            parts: List[str] = []
+            for sentence in sentences:
+                parts += self.analyze(sentence).get("parts") or [sentence.rstrip(".!")]
+            return {"parts": parts, "joins": [""] * (len(parts) - 1), "links": [], "frames": [], "opener": None,
+                    "positions": [], "single": ""}
+        read = self._structure().read([e for e in lexical if not (
+            e.get("kind") == "punctuation" and str(e.get("surface")) in (".", "!", "?"))])
+        pieces = read["pieces"]
+        texts = [words_of(p, surfaces) for p in pieces]
+        links = [l for l in read["links"] if l.get("from") is not None and l.get("to") is not None]
+        joins = []
+        for i in range(len(texts) - 1):
+            link = next((l for l in links if l["from"] == i and l["to"] == i + 1), None) \
+                or next((l for l in links if l["to"] == i + 1), None)
+            joins.append(str((link or {}).get("word") or ""))
+        positions = [[e.get("index") for e in p["words"]] for p in pieces]
+        return {"parts": texts if len(texts) > 1 else [], "joins": joins if len(texts) > 1 else [],
+                "positions": positions if len(texts) > 1 else [],
+                "links": [{**l, "thing": l.get("thing")} for l in links],
+                "frames": read["frames"], "opener": read["opener"], "single": texts[0] if texts else ""}
+
+    def _whole_from_parts(self, reading: Dict[str, Any], positions: List[List[Any]]) -> None:
+        """A sentence of several statements, read as the statements it's made
+        of: each statement's clause and the things in it, placed at their own
+        words in the whole sentence. The first statement is the main one."""
+        clauses: List[Dict[str, Any]] = []
+        mentions: List[Dict[str, Any]] = []
+        main: Dict[str, Any] = {}
+        for n, part in enumerate(reading.get("parts") or []):
+            inner = self.analyze(part)
+            where = positions[n] if n < len(positions) else []
+            words = [t for t in inner.get("tokens") or []]
+            place = {k: where[k] for k in range(len(words))} if len(words) == len(where) else {}
+            rename = {}
+            for m in inner.get("mentions") or []:
+                m = dict(m)
+                old_id = m.get("mention_id")
+                m["mention_id"] = f"p{n + 1}{old_id}"
+                rename[old_id] = m["mention_id"]
+                start, end = m.get("start"), m.get("end")
+                if isinstance(start, int) and isinstance(end, int) and start in place and (end - 1) in place:
+                    m["start"], m["end"] = place[start], place[end - 1] + 1
+                else:
+                    m["start"], m["end"] = None, None
+                m["statement"] = n
+                mentions.append(m)
+            for c in inner.get("clauses") or []:
+                c = dict(c)
+                c["roles"] = {r: rename.get(v, v) for r, v in (c.get("roles") or {}).items()}
+                c["clause_id"] = f"clause_{len(clauses) + 1}"
+                c["statement"] = n
+                clauses.append(c)
+            if n == 0:
+                main = inner
+        if not clauses:
+            return
+        reading["clauses"] = clauses
+        reading["mentions"] = mentions
+        # His feelings, from each statement ("... and I am so happy": happy).
+        evidence = []
+        for part in reading.get("parts") or []:
+            for e in (self.analyze(part).get("affect") or {}).get("evidence") or []:
+                if e not in evidence:
+                    evidence.append(e)
+        affect = dict(main.get("affect") or {})
+        affect["evidence"] = evidence
+        reading["affect"] = affect
+        for key in ("assertion", "topic_head", "predicative_complement", "tense", "modal", "certainty"):
+            reading[key] = main.get(key)
+        if isinstance(reading.get("assertion"), dict):
+            reading["assertion"] = dict(reading["assertion"])
+        reading["statements"] = len(reading.get("parts") or [])
+
     def _analyze_uncached(self, text: str) -> Dict[str, Any]:
         original = str(text or "").strip()
         normalized = self.normalize(original)
@@ -1664,8 +1790,9 @@ class LanguageComprehensionEngine:
         self._describing_before_noun(lexical)
         self._degree_before_describing(lexical)
         self._describing_after_be(lexical)
+        self._action_in_progress(lexical)
+        self._action_after_to(lexical)
         self._action_after_subject(lexical)
-        joins: List[str] = []  # how the reading's parts are joined ("and", "because")
         self._lexical_now = lexical
         try:
             verb_idx, predicate, passive, predicate_known = self._find_main_verb(tokens)
@@ -1710,7 +1837,9 @@ class LanguageComprehensionEngine:
             pos_at_pred = self._pos_set(tokens[verb_idx])
             # A passive ("was chased by") uses be as its auxiliary; the main verb is
             # the participle, so the clause is not copular.
-            copular = (not passive) and self._has_be_auxiliary_before(tokens, verb_idx)
+            copular = (not passive) and self._has_be_auxiliary_before(tokens, verb_idx) \
+                and not (pred_token_kind == "verb" and tokens[verb_idx].lower().endswith("ing"))
+            # ("she is working": an action going on, not "she" described as "working")
             pred_kind = (
                 self._predicative_complement_kind(tokens[verb_idx]) if copular else None
             )
@@ -1976,6 +2105,23 @@ class LanguageComprehensionEngine:
 
         speech_features = self._speech_act_features(original, tokens)
         speech_act = self._speech_act(original, tokens)
+        statements = self._statements(lexical, original,
+                                      original_tokens if len(original_tokens) == len(tokens) else None)
+        if (statements["opener"] or statements["frames"]) and not statements["parts"] and statements["single"] \
+                and statements["single"].casefold() != original.casefold().rstrip(".!?"):
+            # "No wait, my dog is named Max" / "I think that you are getting
+            # better": the statement, read on its own, with what opened it
+            # ("no wait") or who holds it ("I think") kept.
+            inner = self.analyze(statements["single"] + ("?" if original.rstrip().endswith("?") else ""))
+            inner["raw_text"] = original
+            inner["opener"] = statements["opener"] or inner.get("opener")
+            inner["frames"] = statements["frames"] + (inner.get("frames") or [])
+            return inner
+        if statements["parts"] and speech_act == "question" and not original.rstrip().endswith("?") \
+                and any(l.get("kind") in ("when", "why", "on_condition", "unless", "despite")
+                        for l in statements["links"]):
+            # "When I was a kid I lived in Ohio": not a question; it says when.
+            speech_act = self.analyze(statements["parts"][0]).get("speech_act") or "declarative"
         contrast = self._contrast_features(tokens, lexical)
         affect = self._packet_affect(
             predicate_senses=predicate_senses,
@@ -2132,7 +2278,7 @@ class LanguageComprehensionEngine:
         if self._lexicon_error:
             overall = 0.0
 
-        return {
+        reading = {
             "contract": "language_understanding_v1",
             "raw_text": original,
             "normalized_text": normalized,
@@ -2144,8 +2290,11 @@ class LanguageComprehensionEngine:
             "tense": self._tense(lexical, verb_idx),
             "modal": next((str(e.get("surface")) for e in lexical if e.get("kind") == "modal"
                            and str(e.get("surface")) not in ("will", "shall", "'ll")), None),
-            "parts": self._parts(lexical, original, joins),
-            "joins": joins,
+            "parts": statements["parts"],
+            "joins": statements["joins"],
+            "links": statements["links"],
+            "frames": statements["frames"],
+            "opener": statements["opener"],
             "unresolved_references": unresolved_references,
             "ambiguous_words": ambiguous_words,
             "speech_act": speech_act,
@@ -2165,6 +2314,9 @@ class LanguageComprehensionEngine:
             },
             "boundary": self.HARD_BOUNDARY,
         }
+        if reading["parts"] and statements.get("positions"):
+            self._whole_from_parts(reading, statements["positions"])
+        return reading
 
 
 __all__ = ["LanguageComprehensionEngine", "LinguisticMention"]

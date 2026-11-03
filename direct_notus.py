@@ -263,6 +263,9 @@ class DirectNotusProcess:
             "because": "TEXT",
             # When, in his words ("yesterday", "next week"), true as of created_at.
             "when_said": "TEXT",
+            # Whose view it is, when it was said as someone's view ("I think
+            # you are getting better" -> "user think"); none = said as so.
+            "held_by": "TEXT",
         }
         for name, declaration in additions.items():
             if name not in columns:
@@ -2048,10 +2051,36 @@ class DirectNotusProcess:
             name = str(names_inside[-1].get("surface") or "")
             return name[:1].upper() + name[1:]
         if any(t.get("kind") == "conjunction" for t in inside_all):
-            # "Ariana and Cleo": both of them, together.
-            names = [str(t.get("surface") or "") for t in inside_all if t.get("kind") == "proper_noun"]
-            if len(names) >= 2:
-                return " and ".join(n[:1].upper() + n[1:] for n in names)
+            # "Ariana and Cleo", "me and you", "my sister and I": each of them,
+            # together ("Ariana and Cleo", "user and monday", "user's sister and user").
+            groups, group = [], []
+            for t in inside_all:
+                if t.get("kind") == "conjunction" and str(t.get("surface") or "").casefold() == "and":
+                    groups.append(group)
+                    group = []
+                else:
+                    group.append(t)
+            groups.append(group)
+            who: List[str] = []
+            for g in groups:
+                if not g:
+                    continue
+                if len(g) == 1 and g[0].get("kind") == "pronoun":
+                    one = {"i": "user", "me": "user", "you": "monday"}.get(str(g[0].get("surface") or "").casefold())
+                else:
+                    nouns = [t for t in g if t.get("kind") in ("noun", "proper_noun")]
+                    head_word = str((nouns[-1].get("lemma") if nouns and nouns[-1].get("kind") == "noun"
+                                     else (nouns[-1].get("surface") if nouns else "")) or "")
+                    one = cls._who({"start": g[0].get("index"), "end": int(g[-1].get("index", 0)) + 1,
+                                    "surface": " ".join(str(t.get("surface") or "") for t in g),
+                                    "concept_surface": head_word, "properties": {"head_lemma": head_word}},
+                                   tokens, references) if head_word else None
+                if not one:
+                    who = []
+                    break
+                who.append(one)
+            if len(who) >= 2:
+                return " and ".join(who)
         if kind == "proper_noun" or (head[:1].isupper()):
             head = head[:1].upper() + head[1:]
             # "my brother Tom": Tom is who it's about (the brother part is filed
@@ -2164,6 +2193,16 @@ class DirectNotusProcess:
 
     def _learn_from_reading(self, text: str, user_id: str) -> List[Dict[str, Any]]:
         reading = self._read(text, user_id)
+        links = [l for l in reading.get("links") or [] if isinstance(l, dict)]
+        if any(l.get("kind") in ("on_condition", "unless") for l in links):
+            # "If it rains we will stay home": neither has happened or is so;
+            # nothing to file as a fact.
+            return []
+        if reading.get("frames") and not reading.get("parts"):
+            # "I think you are getting better": filed as his view.
+            facts = self._learn_one(text, user_id, reading)
+            self._mark_held_by(facts, reading["frames"][0], tokens=reading.get("tokens") or [])
+            return facts
         if reading.get("parts"):
             # "I like cats and I hate dogs": each statement on its own.
             # "I am sad because my dog died": the first one's reason is the second.
@@ -2180,10 +2219,43 @@ class DirectNotusProcess:
                                                    (parts[i + 1], fact["id"]))
                                 fact["because"] = parts[i + 1]
                         connection.commit()
+            for link in links:
+                # "When I was a kid, I lived in Ohio": when the first one was true.
+                a, b = link.get("from"), link.get("to")
+                if link.get("kind") == "when" and isinstance(a, int) and isinstance(b, int) \
+                        and a < len(per_part) and b < len(parts):
+                    when = f"{link.get('word') or 'when'} {parts[b]}"
+                    with self._lock:
+                        connection = self._require_connection()
+                        for fact in per_part[a]:
+                            if fact.get("id"):
+                                connection.execute("UPDATE brain_facts SET when_said = ? WHERE id = ?",
+                                                   (when, fact["id"]))
+                                fact["when_said"] = when
+                        connection.commit()
+            for frame in reading.get("frames") or []:
+                n = frame.get("piece")
+                if isinstance(n, int) and n < len(per_part):
+                    self._mark_held_by(per_part[n], frame, tokens=reading.get("tokens") or [])
             for facts in per_part:
                 learned += facts
             return learned
         return self._learn_one(text, user_id, reading)
+
+    def _mark_held_by(self, facts: List[Dict[str, Any]], frame: Dict[str, Any], tokens: List[Dict[str, Any]]) -> None:
+        """Facts said as someone's view ("I think ...", "she said ...")."""
+        who = " ".join(str(w) for w in frame.get("who") or []).casefold()
+        who = {"i": "user", "you": "monday"}.get(who, who)
+        held = f"{who} {frame.get('verb') or ''}".strip()
+        if not held or not facts:
+            return
+        with self._lock:
+            connection = self._require_connection()
+            for fact in facts:
+                if fact.get("id"):
+                    connection.execute("UPDATE brain_facts SET held_by = ? WHERE id = ?", (held, fact["id"]))
+                    fact["held_by"] = held
+            connection.commit()
 
     def _learn_one(self, text: str, user_id: str, reading: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._mark(self._learn_reading(text, user_id, reading), self._how_said(reading))
@@ -2215,7 +2287,9 @@ class DirectNotusProcess:
                 name = str(named[-1].get("surface") or "")
                 return extra + self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
         subject_mention = mentions.get(subject_id) or {}
+        members = [m.strip() for m in subject.split(" and ")]
         if subject[:1].islower() and "'s " not in subject and subject not in ("user", "monday") \
+                and not any(m in ("user", "monday") or "'s " in m for m in members) \
                 and not subject_mention.get("refers_to"):
             # A thing, kept as he said it ("the dog", "a castle").
             subject = " ".join(str(subject_mention.get("surface") or subject).split()) or subject

@@ -57,6 +57,10 @@ def noun_kind(noun: str) -> Tuple[str, Optional[str]]:
         synsets = list(_wordnet().synsets(key, pos="n"))
     except Exception:
         synsets = []
+    # A word written in small letters ("lot", "man") means its ordinary sense,
+    # not a name spelled the same (Lot in the Bible, the Isle of Man).
+    ordinary = [x for x in synsets if any(str(l) == key for l in x.lemmas())]
+    synsets = ordinary or synsets
     if synsets:
         first = str(synsets[0].lexfile())
         kind = {"noun.person": "person", "noun.animal": "animal"}.get(first, "thing")

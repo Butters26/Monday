@@ -797,6 +797,26 @@ class DirectReasoningAdapter:
         return False
 
     @staticmethod
+    def _feeling_words_meet(his: set, hers: set) -> bool:
+        """Does a word in her reply mean his feeling, by the dictionary: one is
+        in the other's meaning ("glad": "...made happy")?"""
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            wn = get_wordnet()
+        except Exception:
+            return False
+        def meanings(word):
+            return " ".join(str(s.definition() or "") for s in wn.synsets(word, pos="a")
+                            + wn.synsets(word, pos="s")).casefold()
+        for mine in hers:
+            if not mine.isalpha():
+                continue
+            for felt in his:
+                if felt in meanings(mine).split() or mine in meanings(felt).split():
+                    return True
+        return False
+
+    @staticmethod
     def _is_number_word(word: str) -> bool:
         """A word the dictionary files first as a quantity ("two", "twelve")."""
         try:
@@ -836,6 +856,24 @@ class DirectReasoningAdapter:
             asked |= FactText._alias_set("name")
         about = self._fact_words(fact)
         lows = [str(t.get("surface") or "").casefold() for t in reading.get("tokens") or []]
+        subject = str(fact.get("subject") or "")
+        names = FactText._alias_set("name")
+        if any(w in names for w in lows) and not (about & names) and not str(fact.get("object") or "")[:1].isupper():
+            return False  # "what is my dog named?" asks for a name, not that the dog is loud
+        if "my" in lows and subject.casefold().startswith(("the ", "a ")):
+            return False  # "my dog" isn't "the dog" someone else has
+        if " and " in subject:
+            # "my sister and I bought apples" answers "what did my sister buy?"
+            # and "what did we buy?": asking about any of them asks about the group.
+            members = [m.strip() for m in subject.split(" and ")]
+            member_words = set()
+            for m in members:
+                member_words |= FactText._content_tokens(m.replace("user's ", "")) - {"user", "monday"}
+            about -= (member_words - asked) | {"user", "monday"}  # the ones he didn't name needn't be asked
+            named = bool(asked & member_words) or (
+                "user" in members and any(w in ("we", "us", "our") for w in lows))
+            if not named:
+                return False
         if any(a == "how" and b in ("many", "much") for a, b in zip(lows, lows[1:])):
             # "How many cats?" asks for the number: the fact's number is the answer.
             about = {w for w in about if not (w.isdigit() or self._is_number_word(w))}
@@ -850,6 +888,12 @@ class DirectReasoningAdapter:
             "future" if q.get("modality") == "future" else None))
         if asked_when and fact.get("tense") in ("past", "future") and fact.get("tense") != asked_when:
             return False
+        if not asked_when and fact.get("tense") in ("past", "future") \
+                and reading.get("speech_act") == "question":
+            return False  # "where do I live?" isn't answered by where he lived
+        if asked_when == "past" and not fact.get("tense") \
+                and str(fact.get("when_said") or "").strip().casefold() == "now":
+            return False  # "where did I live?" isn't answered by where he lives now
         asks_who = any(str(t.get("lemma") or "").casefold() in ("who", "what")
                        for t in (reading.get("tokens") or [])[:1])
         if asks_who and str(fact.get("subject") or "").casefold() not in ("user", "monday"):
@@ -1109,13 +1153,31 @@ class DirectReasoningAdapter:
         (his "I" is her "you"), the same content words, the same yes/no."""
         if not reply or not his:
             return False
+        if his.get("parts"):
+            # A long sentence is several statements: saying back is saying one of them.
+            return any(self._says_back(reply, self._analyze(part)) for part in his["parts"])
         said, told = self._content_lemmas(reply), self._content_lemmas(his)
+        if (reply.get("tense") or "now") != (his.get("tense") or "now"):
+            return False  # "it was cold" isn't said back as "it is cold"
+        mine = (reply.get("clauses") or [{}])[0]
+        theirs = (his.get("clauses") or [{}])[0]
+        if bool(mine.get("copular")) != bool(theirs.get("copular")) or (
+                not mine.get("copular") and str(mine.get("predicate") or mine.get("predicate_surface") or "")
+                != str(theirs.get("predicate") or theirs.get("predicate_surface") or "")):
+            return False  # "A sister is a store" doesn't say "my sister went to the store"
         # All of it, or part of it about the same one ("Joe is a farmer" for
         # "my uncle Joe is a farmer"): nothing she adds that he didn't say.
         if not told or not said or not said <= told or (said != told and len(said) < 2):
             return False
+        before_verb = []
+        for t in his.get("tokens") or []:
+            if t.get("kind") in ("verb", "auxiliary", "modal"):
+                break
+            before_verb.append(str(t.get("surface") or "").casefold())
+        both_of_them = bool({"i", "me"} & set(before_verb)) and "you" in before_verb
         if self._doer(reply) != self._doer(his, turn=True) and \
-                self._topic(reply) != self._topic(his, turn=True):
+                self._topic(reply) != self._topic(his, turn=True) and not (
+                both_of_them and self._topic(reply) == "we"):  # "me and you have..." -> "We have..."
             return False
         negative = lambda r: str((r.get("assertion") or {}).get("polarity") or "") == "negative" or any(
             t.get("kind") == "negation" for t in r.get("tokens") or [])
@@ -1346,7 +1408,8 @@ class DirectReasoningAdapter:
                        for t in said_by_him.get("tokens") or []):
                 return no("he did not say he feels that; the feeling is about something else")
             felt = {str(w).casefold() for w in meaning.get("_feeling_words") or []}
-            if felt and not (felt & {w.casefold() for w in words}):
+            if felt and not (felt & {w.casefold() for w in words}) \
+                    and not self._feeling_words_meet(felt, {w.casefold() for w in words}):
                 return no("he shared a feeling and the reply does not respond to it", "respond_to_feeling")
             subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}
             if subject.get("ref") != "addressee" and felt & {w.casefold() for w in words}:

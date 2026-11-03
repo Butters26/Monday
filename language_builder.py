@@ -352,6 +352,9 @@ class SentenceBuilder:
 
     @staticmethod
     def _person_number(entity: Dict[str, Any]) -> Tuple[str, str]:
+        if entity.get("group"):
+            refs = {m.get("ref") for m in entity["group"] if isinstance(m, dict)}
+            return ("1" if "speaker" in refs else "2" if "addressee" in refs else "3"), "pl"
         ref = entity.get("ref")
         if ref == "speaker":
             return "1", "sg"
@@ -376,6 +379,18 @@ class SentenceBuilder:
             return _PRONOUNS[ref][case if case in ("subject", "object") else "object"]
         if entity.get("pronoun") in _THIRD_PRONOUNS:
             return _THIRD_PRONOUNS[entity["pronoun"]][case if case in ("subject", "object") else "object"]
+        if entity.get("group"):
+            # "you and your sister", "my sister and I": "you" first, "I"/"me" last.
+            members = [m for m in entity["group"] if isinstance(m, dict)]
+            if {str(m.get("ref")) for m in members} == {"speaker", "addressee"} and len(members) == 2:
+                return "we" if case == "subject" else "us"  # her and him
+            members.sort(key=lambda m: {"addressee": 0, "speaker": 2}.get(str(m.get("ref")), 1))
+            said = [self.noun_phrase(built, m, case) for m in members]
+            said = [x for x in said if x]
+            if len(said) < 2:
+                built.problems.append(f"a group of one in {case}")
+                return said[0] if said else ""
+            return ", ".join(said[:-1]) + " and " + said[-1]
         if entity.get("name"):
             phrase = str(entity["name"])
         elif entity.get("noun"):
@@ -403,6 +418,9 @@ class SentenceBuilder:
         return phrase
 
     def possessive(self, built: Built, entity: Dict[str, Any]) -> str:
+        if entity.get("group") and {str(m.get("ref")) for m in entity["group"] if isinstance(m, dict)} \
+                == {"speaker", "addressee"}:
+            return "our"
         ref = entity.get("ref")
         if ref in _PRONOUNS:
             return _PRONOUNS[ref]["possessive"]
