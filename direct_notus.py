@@ -1149,7 +1149,12 @@ class DirectNotusProcess:
                     sig_covered = all(
                         FactText._alias_set(t) & blob_exp for t in significant
                     )
-                    if len(significant) >= 2 and not sig_covered and overlap < 0.75:
+                    covered = sum(1 for t in significant if FactText._alias_set(t) & blob_exp)
+                    # A sentence can hold several facts ("my uncle Joe is a farmer":
+                    # Joe is his uncle, Joe is a farmer); a fact sharing most of its
+                    # words and one of its important ones is part of it.
+                    part_of_it = covered >= 2 or (covered >= 1 and overlap >= 0.6)
+                    if len(significant) >= 2 and not sig_covered and overlap < 0.75 and not part_of_it:
                         continue
                     if overlap < max(FactText._MIN_RELEVANCE, 0.5) and not sig_covered:
                         continue
