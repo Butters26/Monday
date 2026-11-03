@@ -777,6 +777,26 @@ class DirectReasoningAdapter:
         return (getattr(self, "_remembered", {}) or {}).get((user_id, user_input.strip().casefold())) or {}
 
     @staticmethod
+    def _is_a_kind_of(verb: str, general: str) -> bool:
+        """Is doing `verb` a kind of doing `general`, in the dictionary? Visiting
+        is a kind of going; going isn't necessarily visiting."""
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            wn = get_wordnet()
+            targets = {s.id for s in wn.synsets(general, pos="v")}
+            frontier = list(wn.synsets(verb, pos="v"))[:2]
+            if {s.id for s in frontier} & targets:
+                return True  # the same meaning (travel = go)
+            for _ in range(4):
+                nxt = [up for s in frontier for up in s.hypernyms()]
+                if {s.id for s in nxt} & targets:
+                    return True
+                frontier = nxt
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
     def _is_number_word(word: str) -> bool:
         """A word the dictionary files first as a quantity ("two", "twelve")."""
         try:
@@ -844,7 +864,8 @@ class DirectReasoningAdapter:
                     about = {"_who_"}
         if about == {"_who_"}:
             pass
-        elif not about or not all(FactText._alias_set(word) & asked for word in about):
+        elif not about or not all(FactText._alias_set(word) & asked
+                                  or any(self._is_a_kind_of(word, q) for q in asked) for word in about):
             return False
         # What he asked about may also be what the fact says ("Is Lily brave?").
         about_all = FactText._expand_tokens(about | FactText._content_tokens(
@@ -869,7 +890,7 @@ class DirectReasoningAdapter:
             predicate = str(fact.get("predicate") or "")
             predicate = predicate[4:] if predicate.startswith("not_") else predicate
             fact_verb = predicate[2:].split("@", 1)[0] if predicate.startswith("v:") else predicate
-            if fact_verb.casefold() != asked_verb:
+            if fact_verb.casefold() != asked_verb and not self._is_a_kind_of(fact_verb, asked_verb):
                 return False
         for token in reading.get("tokens") or []:
             if token.get("kind") not in ("noun", "proper_noun", "possessive"):
@@ -1226,7 +1247,7 @@ class DirectReasoningAdapter:
                 same = re.findall(r"[a-z']+", expected.casefold()) == re.findall(r"[a-z']+", sentence.casefold())
                 if not same:
                     return no(f"he made a social move; what she believes fits is '{expected}'", "say_expected")
-            elif want and (self._content_lemmas(reply) != want or reply_is_question):
+            elif want and (self._content_lemmas(reply) != want or sentence.endswith("?")):
                 return no(f"he made a social move; what she believes fits is '{expected}'", "say_expected")
             return {"ok": True, "reason": f"it's what she believes fits ('{expected}')"}
         if situation == "statement":

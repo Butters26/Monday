@@ -724,6 +724,11 @@ class LanguageGenerator:
             words = set(re.findall(r"[a-z]+", " ".join(str(fact.get(k) or "") for k in
                                                        ("subject", "predicate", "object")).casefold()))
             words |= {w[:-1] for w in words if w.endswith("s")}
+            predicate = str(fact.get("predicate") or "")
+            if "v:" in predicate:
+                # "drove" counts as going: the dictionary's more general verbs.
+                from direct_notus import DirectNotusProcess
+                words |= set(DirectNotusProcess._verb_kinds(predicate.split("v:", 1)[1].split("@", 1)[0]))
             subject = str(fact.get("subject") or "").casefold()
             about_them = 2 if who and (subject == who or subject.startswith(who + "'s")) else 0
             return len(his & words) + about_them

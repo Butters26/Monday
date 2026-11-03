@@ -1078,6 +1078,15 @@ class DirectNotusProcess:
                 "ORDER BY rowid DESC LIMIT ?",
                 (match, self.FACT_CANDIDATES),
             ).fetchall()]
+            # Facts whose action is a kind of one he asked about ("where will I go?"
+            # finds "visit Boston": visiting is a kind of going, in the dictionary).
+            for row in connection.execute(
+                    "SELECT id, predicate FROM brain_facts WHERE user_id = ? AND is_contradicted = 0 "
+                    "AND (predicate LIKE 'v:%' OR predicate LIKE 'not_v:%') ORDER BY id DESC LIMIT 400",
+                    (user_id,)).fetchall():
+                verb = str(row["predicate"]).split("v:", 1)[1].split("@", 1)[0]
+                if verb not in query_tokens and any(self._kind_of(verb, q) for q in query_tokens):
+                    ids.append(int(row["id"]))
             if not ids:
                 return []
             return connection.execute(
@@ -1145,6 +1154,9 @@ class DirectNotusProcess:
                 except Exception:
                     readable = fact_text
                 blob = f"{fact_text} {readable}".replace("_", " ")
+                if predicate.startswith(("v:", "not_v:")):
+                    # "visit" is a kind of "go": findable by the more general word.
+                    blob += " " + " ".join(self._verb_kinds(predicate.split("v:", 1)[1].split("@", 1)[0]))
                 overlap = FactText._overlap_score(query_tokens, blob)
                 if overlap < FactText._MIN_RELEVANCE:
                     continue
@@ -1942,6 +1954,36 @@ class DirectNotusProcess:
         body = response.get("content") if isinstance(response.get("content"), dict) else {}
         reading = body.get("understanding") if isinstance(body.get("understanding"), dict) else body
         return reading if isinstance(reading, dict) else {}
+
+    @classmethod
+    def _kind_of(cls, verb: str, general: str) -> bool:
+        return general in cls._verb_kinds(verb)
+
+    _verb_kinds_cache: Dict[str, List[str]] = {}
+
+    @classmethod
+    def _verb_kinds(cls, verb: str) -> List[str]:
+        """The more general verbs a verb is a kind of, from the dictionary
+        (visit -> travel, go), a few steps up."""
+        if verb in cls._verb_kinds_cache:
+            return cls._verb_kinds_cache[verb]
+        out: List[str] = []
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            frontier = list(get_wordnet().synsets(verb, pos="v"))[:2]
+            for synset in frontier:  # the same meaning, other words (travel = go)
+                out += [str(l) for l in synset.lemmas() if " " not in str(l) and str(l) != verb]
+            for _ in range(3):
+                nxt = []
+                for synset in frontier:
+                    for up in synset.hypernyms():
+                        out += [str(l) for l in up.lemmas() if " " not in str(l)]
+                        nxt.append(up)
+                frontier = nxt
+        except Exception:
+            pass
+        cls._verb_kinds_cache[verb] = list(dict.fromkeys(out))[:12]
+        return cls._verb_kinds_cache[verb]
 
     @staticmethod
     def _compared_with(tokens: List[Dict[str, Any]]) -> Optional[str]:

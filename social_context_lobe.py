@@ -176,7 +176,8 @@ compliment -> "thank you" (sure 0.7)
         stored = dict(getattr(self, "_stored_beliefs", None) or {})
         stored[move] = belief
         self._stored_beliefs = stored
-        return {"move": move, **belief}
+        # What she says back: what she learned, from her side.
+        return {"move": move, "heard": m.group(1).strip().strip('"'), "reply": words, **belief}
 
     # --- remembering people across restarts -------------------------------
 
@@ -486,6 +487,8 @@ compliment -> "thank you" (sure 0.7)
         snap["belief_sure"] = belief.get("sure")
         if taught:
             snap["taught"] = taught
+            # Saying back what she was taught shows she took it in.
+            snap["expected_reply"] = f"when you say {taught['heard']}, I will say {taught['reply']}"
         snap["move"] = cue
         snap["said"] = user_input
         self.context_state = dict(snap)
