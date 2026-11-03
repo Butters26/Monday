@@ -616,7 +616,9 @@ class LanguageGenerator:
         meaning: Dict[str, Any] = {"subject": subject, "act": "state", "_purpose": "say_back"}
         complement = reading.get("predicative_complement") or clause.get("predicative_complement") or {}
         if copular:
-            meaning["verb"] = "be"
+            # "we will stay home", "she seems happy": the linking verb he used stays.
+            linking = str(clause.get("predicate_surface") or "").casefold()
+            meaning["verb"] = linking if linking and linking != "be" and linking.isalpha() else "be"
             if complement.get("kind") == "adjective" and complement.get("lemma"):
                 meaning["complement"] = {"adjectives": [str(complement["lemma"]).casefold()]}
             else:
@@ -630,6 +632,19 @@ class LanguageGenerator:
             if not verb or verb in ("be",):
                 return None
             meaning["verb"] = verb
+            verb_token = next((t for t in tokens if t.get("kind") == "verb" and t.get("phrase")
+                               and str(t.get("lemma") or "").casefold() == verb), None)
+            particle = ""
+            inside: set = set()
+            if verb_token and str(verb_token["phrase"]).split()[0] == verb:
+                # "gave up", "work on", "kicked the bucket": the phrase is the action.
+                meaning["verb"] = str(verb_token["phrase"])
+                words = str(verb_token["phrase"]).split()
+                particle = words[-1] if len(words) == 2 else ""
+                start = int(verb_token.get("index", -99))
+                inside = {mid for mid, m in mentions.items()
+                          if isinstance(m.get("start"), int) and start < m["start"] < start + len(words)}
+                roles = {r: mid for r, mid in roles.items() if mid not in inside}
             other = next((roles[r] for r in ("theme", "patient") if roles.get(r) and roles[r] != subject_id), None)
             if other:
                 target = self._mention_entity(mentions.get(other), tokens)
@@ -639,7 +654,9 @@ class LanguageGenerator:
             for role, mention_id in roles.items():
                 if role.startswith("prep_"):
                     target = self._mention_entity(mentions.get(mention_id), tokens)
-                    if target:
+                    if target and particle and role[5:] == particle and "object" not in meaning:
+                        meaning["object"] = target  # "work on cars": cars is what's worked on
+                    elif target:
                         mods.append({"prep": role[5:], "object": target})
             if mods:
                 meaning["modifiers"] = mods

@@ -1617,6 +1617,64 @@ class LanguageComprehensionEngine:
             entry.update({"kind": "adjective", "lemma": entry["surface"], "senses": adjective,
                           "sense_count": len(adjective), "read_as": "describing after be"})
 
+    _phrase_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _phrase_senses(self, phrase: str) -> List[Dict[str, Any]]:
+        """The dictionary's meanings of a set phrase ("give up", "piece of
+        cake", "kick the bucket", "by the way"), if it has the phrase."""
+        cache = LanguageComprehensionEngine._phrase_cache
+        if phrase in cache:
+            return cache[phrase]
+        found: List[Dict[str, Any]] = []
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            for x in get_wordnet().synsets(phrase):
+                found.append({"synset_id": x.id, "pos": x.pos, "definition": str(x.definition() or ""),
+                              "lemmas": [str(l) for l in x.lemmas()]})
+        except Exception:
+            found = []
+        cache[phrase] = found
+        return found
+
+    def _set_phrases(self, lexical: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Words that go together as one meaning the dictionary has: "gave up"
+        (give up), "work on", "a piece of cake", "by the way". The first word
+        of a phrase that acts is matched by its base form ("gave" -> give)."""
+        phrases: List[Dict[str, Any]] = []
+        i = 0
+        while i < len(lexical):
+            found = None
+            for size in (4, 3, 2):
+                window = lexical[i:i + size]
+                if len(window) < size or any(e.get("kind") in ("punctuation", "pronoun", "proper_noun")
+                                             for e in window[1:]):
+                    continue
+                words = [str(e.get("surface") or "").casefold() for e in window]
+                if not all(w.replace("'", "").isalpha() for w in words):
+                    continue
+                for first in dict.fromkeys([words[0], self.lemma(words[0], prefer_pos="v"),
+                                            self.lemma(words[0], prefer_pos="n")]):
+                    phrase = " ".join([first] + words[1:])
+                    senses = self._phrase_senses(phrase)
+                    if senses:
+                        found = (size, phrase, senses)
+                        break
+                if found:
+                    break
+            if not found:
+                i += 1
+                continue
+            size, phrase, senses = found
+            pos = senses[0].get("pos")
+            phrases.append({"phrase": phrase, "start": i, "end": i + size, "pos": pos,
+                            "meaning": senses[0].get("definition"), "senses": senses})
+            lexical[i]["phrase"] = phrase
+            lexical[i]["phrase_senses"] = senses
+            for e in lexical[i + 1:i + size]:
+                e["in_phrase"] = phrase
+            i += size
+        return phrases
+
     def _action_in_progress(self, lexical: List[Dict[str, Any]]) -> None:
         """After "is/are/was", an -ing word the dictionary knows as a verb is
         what's going on: "you are getting better", "she is working". (One that
@@ -1795,6 +1853,7 @@ class LanguageComprehensionEngine:
             if kind == "unknown" and token.isalpha() and token not in unknown_words:
                 unknown_words.append(token)
 
+        phrases = self._set_phrases(lexical)
         self._thing_after_number(lexical)
         self._describing_before_noun(lexical)
         self._degree_before_describing(lexical)
@@ -2302,6 +2361,7 @@ class LanguageComprehensionEngine:
             "tense": self._tense(lexical, verb_idx),
             "modal": next((str(e.get("surface")) for e in lexical if e.get("kind") == "modal"
                            and str(e.get("surface")) not in ("will", "shall", "'ll")), None),
+            "phrases": phrases,
             "parts": statements["parts"],
             "joins": statements["joins"],
             "links": statements["links"],

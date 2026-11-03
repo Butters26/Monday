@@ -462,8 +462,15 @@ class SentenceBuilder:
         modal = (meaning.get("modal") or "").lower() or None
         negated = bool(meaning.get("negated"))
         pn = self._person_number(subject)
-        if verb != "be":
+        if verb != "be" and not meaning.get("_word_chosen"):
             verb = self._word(built, verb, "v")
+        if " " in verb:
+            # "give up", "work on": the first word takes the tense, the rest follows it.
+            head, particle = verb.split(" ", 1)
+            finite, rest = self.verb_group(built, {**meaning, "verb": head, "_word_chosen": True}, subject, invert)
+            if rest:
+                return finite, f"{rest} {particle}"
+            return f"{finite} {particle}", ""
 
         if tense == "future" and not modal:
             modal = "will"
