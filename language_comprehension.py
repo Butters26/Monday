@@ -14,6 +14,9 @@ HARD RULES:
 from __future__ import annotations
 
 import re
+import json
+import threading
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -188,7 +191,67 @@ class LanguageComprehensionEngine:
     def tokenize(self, text: str) -> List[str]:
         return _WORD_RE.findall(text)
 
+    # ---- words he has taught her ("yeet means throw") -----------------------
+    _taught: Optional[Dict[str, Dict[str, Any]]] = None
+    _taught_lock = threading.Lock()
+
+    @classmethod
+    def _taught_path(cls) -> Optional[str]:
+        try:
+            from runtime_paths import runtime_file
+            return runtime_file("taught_words.json")
+        except Exception:
+            return None
+
+    @classmethod
+    def taught_words(cls) -> Dict[str, Dict[str, Any]]:
+        with cls._taught_lock:
+            if cls._taught is None:
+                cls._taught = {}
+                path = cls._taught_path()
+                if path:
+                    try:
+                        cls._taught = json.loads(Path(path).read_text(encoding="utf-8"))
+                    except FileNotFoundError:
+                        pass
+                    except Exception as error:
+                        print(f"⚠️  Language: couldn't read the words she was taught ({error})")
+            return cls._taught
+
+    def learn_taught_word(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """"Yeet means throw": a word he teaches her, believed to mean what the
+        words he gave mean (their dictionary senses), kept in her own file.
+        Slang the dictionary doesn't have is learned this way."""
+        clause = (reading.get("clauses") or [{}])[0]
+        if str(clause.get("predicate_surface") or "") != "mean" or reading.get("speech_act") != "declarative":
+            return None
+        roles = clause.get("roles") or {}
+        mentions = {m.get("mention_id"): m for m in reading.get("mentions") or []}
+        word = str((mentions.get(roles.get("agent") or roles.get("theme")) or {}).get("surface") or "").casefold()
+        means = str((mentions.get(roles.get("patient")) or {}).get("surface") or "").casefold()
+        if not word or not means or " " in word or not word.isalpha():
+            return None
+        head = means.split()[-1]
+        senses = [dict(x, taught=True) for x in self._lookup(head)] if head.isalpha() else []
+        entry = {"means": means, "senses": senses}
+        words = self.taught_words()
+        with self._taught_lock:
+            words[word] = entry
+            path = self._taught_path()
+            if path:
+                try:
+                    Path(path).write_text(json.dumps(words, indent=1), encoding="utf-8")
+                except Exception as error:
+                    print(f"⚠️  Language: couldn't save the word she was taught ({error})")
+        self.__dict__.get("_readings", {}).clear()  # read again with the new word
+        return {"word": word, **entry}
+
     def _lookup(self, surface: str, *, pos: Optional[str] = None) -> List[Dict[str, Any]]:
+        taught = self.taught_words().get(str(surface or "").casefold())
+        if taught and taught.get("senses"):
+            # A word he taught her means what he said it means.
+            return [x for x in taught["senses"] if pos is None or x.get("pos") == pos
+                    or (pos == "a" and x.get("pos") == "s")]
         if self._lexicon_error:
             return []
         try:
@@ -420,6 +483,9 @@ class LanguageComprehensionEngine:
 
         senses = self._lookup(low)
         cands = self._lemma_candidates(low)
+        if low in self.taught_words() and senses:
+            # A word he taught her: its kinds are the kinds of what it means.
+            cands = [{"lemma": low, "pos": p} for p in dict.fromkeys(str(x.get("pos")) for x in senses)]
         # Spelled differently from an acronym, it isn't that word: "Sam" (a name)
         # is not SAM (a missile), "it" is not IT. Only the way he wrote it counts.
         if not original.isupper():
@@ -1465,6 +1531,9 @@ class LanguageComprehensionEngine:
         lexical = getattr(self, "_lexical_now", None) or []
         if len(lexical) != len(tokens):
             return None
+        if len(lexical) > 2 and lexical[0].get("kind") == "pronoun" \
+                and str(lexical[0].get("lemma")) in self._SUBJECT_FORMS and lexical[1].get("kind") == "verb":
+            return 1  # "I yeet rocks": right after "I" comes what I do; "rocks" is what
         # "I don't like spiders" / "she didn't go": after do (and not) comes the verb.
         for i, entry in enumerate(lexical[:-1]):
             if entry.get("kind") == "auxiliary" and str(entry.get("lemma")) == "do" and i > 0 \
@@ -1899,10 +1968,16 @@ class LanguageComprehensionEngine:
                         and i > 0 and lexical[i - 1].get("kind") in ("determiner", "possessive", "adjective"):
                     entry.update({"kind": "noun", "lemma": self.lemma(entry["surface"], prefer_pos="n"),
                                   "senses": self._lookup(entry["surface"], pos="n")})
-            for entry in lexical[verb_idx + 1:]:
-                if entry.get("kind") in ("conjunction", "subordinator", "wh") \
-                        or str(entry.get("surface")) in (",", ";", "that", "who", "which"):
+            rest_after = lexical[verb_idx + 1:]
+            for n, entry in enumerate(rest_after):
+                nxt = rest_after[n + 1] if n + 1 < len(rest_after) else {}
+                if (entry.get("kind") in ("conjunction", "subordinator", "wh")
+                        or str(entry.get("surface")) in (",", ";", "that", "who", "which")) \
+                        and (nxt.get("kind") in ("pronoun", "determiner", "possessive", "proper_noun", "auxiliary")
+                             or (nxt.get("kind") == "verb" and (str(nxt.get("surface") or "").endswith("ed")
+                                                               or not self._lookup(str(nxt.get("surface") or ""), pos="n")))):
                     break  # "... and he works at a bank": the next statement has its own verb
+                    # ("cats and dogs" goes on: dogs are liked too)
                 if entry.get("kind") == "verb" and self._lookup(entry["surface"], pos="n"):
                     entry.update({"kind": "noun", "lemma": self.lemma(entry["surface"], prefer_pos="n"),
                                   "senses": self._lookup(entry["surface"], pos="n")})

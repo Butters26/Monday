@@ -1226,6 +1226,11 @@ class LanguageGenerator:
         # What he said, as a whole meaning, from Language's own reading of it
         # (each part of a two-part sentence on its own).
         his = self.comprehension.analyze(resolved_input or "")
+        taught = self.comprehension.learn_taught_word(his)
+        if taught:
+            self._trace("word_taught", word=taught["word"], means=taught["means"],
+                        senses=len(taught.get("senses") or []))
+            his = self.comprehension.analyze(resolved_input or "")
         said_parts = [self._statement_meaning(self.comprehension.analyze(part)) for part in his.get("parts") or []] \
             if his.get("parts") else [self._statement_meaning(his)]
         attached = set()

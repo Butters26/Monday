@@ -685,7 +685,15 @@ class SentenceBuilder:
             key = repr(m.get("subject"))
             if key not in order:
                 order.append(key)
-        meanings = sorted(meanings, key=lambda m: order.index(repr(m.get("subject"))))
+        happened = [m for m in meanings if m.get("tense") == "past"]
+        if len(happened) == len(meanings) and len(meanings) > 1:
+            # Things that happened are told in the order they happened (the
+            # order he told her them): "You went to the store. Then you bought apples."
+            meanings = sorted(meanings, key=lambda m: str((m.get("_fact") or {}).get("created_at") or ""))
+            telling_events = True
+        else:
+            meanings = sorted(meanings, key=lambda m: order.index(repr(m.get("subject"))))
+            telling_events = False
         last_subject = None
         while i < len(meanings):
             first = meanings[i]
@@ -729,6 +737,10 @@ class SentenceBuilder:
                     b = self.build(m)
                     combined.choices.extend(b.choices)
                     combined.problems.extend(b.problems)
+                    if telling_events and sentences and b.sentence \
+                            and self._choose(combined, "next_event", ["then", "plain"]) == "then":
+                        b.sentence = "Then " + b.sentence[:1].lower() + b.sentence[1:] \
+                            if not b.sentence.startswith("I ") else "Then " + b.sentence
                     sentences.append(b.sentence)
             i = j
         combined.sentence = " ".join(s for s in sentences if s)
