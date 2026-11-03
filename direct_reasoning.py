@@ -800,8 +800,16 @@ class DirectReasoningAdapter:
         if any(str(t.get("lemma") or "").casefold() == "who" for t in reading.get("tokens") or []):
             asked |= FactText._alias_set("name")
         about = self._fact_words(fact)
-        asks_who = any(str(t.get("lemma") or "").casefold() == "who" for t in reading.get("tokens") or [])
-        if asks_who and str(fact.get("subject") or "")[:1].isupper():
+        # The time asked about must be the fact's time: "where will I go?" isn't
+        # answered by where he went.
+        q = ((reading.get("clauses") or [{}])[0].get("qualifiers") or {})
+        asked_when = reading.get("tense") or ("past" if q.get("temporal_relation") == "before_now" else (
+            "future" if q.get("modality") == "future" else None))
+        if asked_when and fact.get("tense") in ("past", "future") and fact.get("tense") != asked_when:
+            return False
+        asks_who = any(str(t.get("lemma") or "").casefold() in ("who", "what")
+                       for t in (reading.get("tokens") or [])[:1])
+        if asks_who and str(fact.get("subject") or "").casefold() not in ("user", "monday"):
             # "Who has a cat?": the person is the answer, so the question needn't name them.
             subject_words = FactText._content_tokens(str(fact.get("subject") or ""))
             unnamed = {w for w in about if w not in subject_words}
@@ -1211,6 +1219,10 @@ class DirectReasoningAdapter:
                 # Asking back is about the one he talked about ("Is Cleo a
                 # painter?"), not someone else ("Are you Cleo?").
                 his_reading = self._analyze(str(payload.get("resolved_input") or user_input))
+                parts = his_reading.get("parts") or []
+                if parts and not any(said <= self._content_lemmas(self._analyze(p)) for p in parts):
+                    # "I like cats and I hate dogs": not "Do you like dogs?"
+                    return no("the question mixes two different things he said", "about_what_he_said")
                 asked_about, talked_about = self._topic(reply), self._topic(his_reading, turn=True)
                 if asked_about and talked_about and asked_about != talked_about:
                     return no(f"he talked about {talked_about}, and the question is about {asked_about}",
@@ -1277,7 +1289,8 @@ class DirectReasoningAdapter:
         if fact:
             if not self._fact_in_memory(fact, user_id):
                 return no("the reply states something memory does not hold")
-            if str(fact.get("object", "")).casefold() not in sentence.casefold():
+            if str(fact.get("object", "")) != "(nothing)" \
+                    and str(fact.get("object", "")).casefold() not in sentence.casefold():
                 return no(f"the reply leaves out the fact ({fact.get('object')})")
         return {"ok": True, "reason": "makes sense"}
 

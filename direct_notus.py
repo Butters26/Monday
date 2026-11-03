@@ -253,6 +253,12 @@ class DirectNotusProcess:
             "last_reinforced": "TEXT",
             "is_contradicted": "INTEGER NOT NULL DEFAULT 0",
             "conflicts_with": "TEXT",
+            # When it happens ("past"/"future"; none = now or always), what it
+            # says is possible ("can"), and how sure he was when he said it
+            # ("maybe" -> 0.4). Read by Language from his words.
+            "tense": "TEXT",
+            "modal": "TEXT",
+            "sure": "REAL",
         }
         for name, declaration in additions.items():
             if name not in columns:
@@ -1212,6 +1218,9 @@ class DirectNotusProcess:
                 "last_reinforced": row["last_reinforced"],
                 "is_contradicted": False,
                 "conflicts_with": self._decode_conflicts(row["conflicts_with"]),
+                "tense": row["tense"] if "tense" in row.keys() else None,
+                "modal": row["modal"] if "modal" in row.keys() else None,
+                "sure": row["sure"] if "sure" in row.keys() else None,
                 "match_score": float(score),
                 "role": "fact",
                 "content": readable,
@@ -1929,6 +1938,16 @@ class DirectNotusProcess:
         return reading if isinstance(reading, dict) else {}
 
     @staticmethod
+    def _is_time_word(noun: str) -> bool:
+        """A word the dictionary files as a time (week, morning, Monday)."""
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            synsets = list(get_wordnet().synsets(noun, pos="n"))
+        except Exception:
+            return False
+        return bool(synsets) and str(synsets[0].lexfile()) == "noun.time"
+
+    @staticmethod
     def _filed_as(entity: Dict[str, Any]) -> Optional[str]:
         """How memory files someone Language says a pronoun means."""
         if not isinstance(entity, dict):
@@ -1962,6 +1981,12 @@ class DirectNotusProcess:
         start_end = (mention.get("start"), mention.get("end"))
         inside_all = [t for t in tokens if isinstance(start_end[0], int) and isinstance(start_end[1], int)
                       and start_end[0] <= int(t.get("index", -1)) < start_end[1]]
+        names_inside = [t for t in inside_all if t.get("kind") == "proper_noun"]
+        if names_inside and inside_all and inside_all[-1].get("kind") == "noun" \
+                and cls._is_time_word(str(inside_all[-1].get("lemma") or "")):
+            # "Rome next week": the place is Rome; "next week" is when.
+            name = str(names_inside[-1].get("surface") or "")
+            return name[:1].upper() + name[1:]
         if any(t.get("kind") == "conjunction" for t in inside_all):
             # "Ariana and Cleo": both of them, together.
             names = [str(t.get("surface") or "") for t in inside_all if t.get("kind") == "proper_noun"]
@@ -2031,8 +2056,49 @@ class DirectNotusProcess:
             return []
         return [fact] if isinstance(fact, dict) else []
 
+    # Stands in the object slot when an action has no object ("I can swim").
+    NOTHING = "(nothing)"
+
+    def _how_said(self, reading: Dict[str, Any]) -> Dict[str, Any]:
+        """Tense, "can", and how sure he was, from Language's reading."""
+        clause = (reading.get("clauses") or [{}])[0]
+        q = clause.get("qualifiers") or {}
+        tense = reading.get("tense") or ("past" if q.get("temporal_relation") == "before_now" else (
+            "future" if q.get("modality") == "future" or q.get("temporal_relation") == "after_now" else None))
+        modal = reading.get("modal") or (None if q.get("modality") in (None, "future")
+                                         else str(q.get("modality_text") or q.get("modality")))
+        sure = (reading.get("certainty") or {}).get("sure")
+        return {"tense": tense, "modal": modal, "sure": sure}
+
+    def _mark(self, facts: List[Dict[str, Any]], how: Dict[str, Any]) -> List[Dict[str, Any]]:
+        # Always written: saying it again plainly ("Lily is sick") makes a
+        # "maybe" sure, and a later plain statement is about now.
+        if not facts:
+            return facts
+        with self._lock:
+            connection = self._require_connection()
+            for fact in facts:
+                if isinstance(fact, dict) and fact.get("id"):
+                    connection.execute("UPDATE brain_facts SET tense = ?, modal = ?, sure = ? WHERE id = ?",
+                                       (how["tense"], how["modal"], how["sure"], fact["id"]))
+                    fact.update(how)
+            connection.commit()
+        return facts
+
     def _learn_from_reading(self, text: str, user_id: str) -> List[Dict[str, Any]]:
         reading = self._read(text, user_id)
+        if reading.get("parts"):
+            # "I like cats and I hate dogs": each statement on its own.
+            learned: List[Dict[str, Any]] = []
+            for part in reading["parts"]:
+                learned += self._learn_one(part, user_id, self._read(part, user_id))
+            return learned
+        return self._learn_one(text, user_id, reading)
+
+    def _learn_one(self, text: str, user_id: str, reading: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self._mark(self._learn_reading(text, user_id, reading), self._how_said(reading))
+
+    def _learn_reading(self, text: str, user_id: str, reading: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not reading or reading.get("speech_act") not in ("declarative", "statement", None):
             return []
         clauses = reading.get("clauses") or []
@@ -2119,6 +2185,9 @@ class DirectNotusProcess:
                     other = self._who(mentions.get(mention_id), tokens, reading.get("references"))
                     if other:
                         facts.append((f"v:{verb}@{role[5:]}", other, None))
+            if not facts:
+                # "I can swim", "Tom sleeps": the action alone, with nothing after it.
+                facts.append((f"v:{verb}", self.NOTHING, None))
         # Keep things on the other side as he said them ("a castle", "rain"),
         # names as names.
         def as_said(mention_id: Any) -> Optional[str]:
@@ -2130,7 +2199,7 @@ class DirectNotusProcess:
             surface = " ".join(w for w in str(mention.get("surface") or "").casefold().split()
                                if w not in ("my", "your", "our"))
             return surface or who
-        facts = [(p, (as_said(roles[next(r for r in roles if r.startswith("prep_") and p.endswith("@" + r[5:]))])
+        facts = [(p, o if o == self.NOTHING else (as_said(roles[next(r for r in roles if r.startswith("prep_") and p.endswith("@" + r[5:]))])
                       if "@" in p else (as_said(next((roles[r] for r in ("theme", "patient")
                                                       if roles.get(r) and roles[r] != subject_id), None))
                                         if p.startswith("v:") else o)) or o, v)

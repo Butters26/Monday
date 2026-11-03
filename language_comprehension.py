@@ -817,7 +817,7 @@ class LanguageComprehensionEngine:
             if token not in _AUX_RAW or self.lemma(token, prefer_pos="v") != "be":
                 continue
             next_idx = idx + 1
-            while next_idx < len(tokens) and lows[next_idx] in _NEGATION:
+            while next_idx < len(tokens) - 1 and (lows[next_idx] in _NEGATION or self._pos_set(tokens[next_idx]) == {"r"} or ("r" in self._pos_set(tokens[next_idx]) and self._has_pos(tokens[next_idx + 1], "a"))):  # "is not", "is probably", "is very sick"
                 next_idx += 1
             if next_idx >= len(tokens):
                 continue
@@ -1431,6 +1431,15 @@ class LanguageComprehensionEngine:
         lexical = getattr(self, "_lexical_now", None) or []
         if len(lexical) != len(tokens):
             return None
+        # "I don't like spiders" / "she didn't go": after do (and not) comes the verb.
+        for i, entry in enumerate(lexical[:-1]):
+            if entry.get("kind") == "auxiliary" and str(entry.get("lemma")) == "do" and i > 0 \
+                    and lexical[i - 1].get("kind") in ("pronoun", "noun", "proper_noun"):
+                j = i + 1
+                while j < len(lexical) and lexical[j].get("kind") == "negation":
+                    j += 1
+                if j < len(lexical) and self._has_pos(tokens[j], "v"):
+                    return j
         idx = 0
         helped = False  # "what does my sister like?": after do/does/can the verb is plain
         while idx < len(lexical) and lexical[idx].get("kind") in ("wh", "auxiliary", "modal"):
@@ -1439,6 +1448,11 @@ class LanguageComprehensionEngine:
             helped = True
             idx += 1
         opened = idx
+        if helped and idx < len(lexical) - 1 and lexical[idx].get("kind") == "pronoun":
+            # "do I hate dogs?", "can you swim?": after the helper and its subject, the verb.
+            if self._has_pos(tokens[idx + 1], "v"):
+                return idx + 1
+            return None
         while idx < len(lexical) and lexical[idx].get("kind") in ("determiner", "possessive"):
             idx += 1
         if idx == opened and not (idx < len(lexical) and lexical[idx].get("kind") == "proper_noun"):
@@ -1460,6 +1474,61 @@ class LanguageComprehensionEngine:
             if agrees:
                 return pos
         return None
+
+    # How sure the speaker is, from the dictionary's senses of the words that
+    # say so: "maybe/perhaps/possibly" (by chance), "probably/likely".
+    _UNSURE_SENSES = {"oewn-00301501-r": 0.4, "oewn-00139421-r": 0.7}
+
+    def _certainty(self, lexical: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        for entry in lexical:
+            for sense in entry.get("senses") or []:
+                sure = self._UNSURE_SENSES.get(str(sense.get("synset_id") or ""))
+                if sure is not None:
+                    return {"word": entry.get("surface"), "sure": sure}
+        return None
+
+    def _tense(self, lexical: List[Dict[str, Any]], verb_idx: Optional[int]) -> Optional[str]:
+        """When it happens, from the grammar: "will" -> future; "did", "was",
+        or a verb in its past form ("went", "chased") -> past."""
+        for entry in lexical:
+            surface = str(entry.get("surface") or "")
+            if entry.get("kind") == "modal" and surface in ("will", "shall", "'ll"):
+                return "future"
+            if entry.get("kind") == "auxiliary" and surface in ("did", "was", "were", "had"):
+                return "past"
+        if isinstance(verb_idx, int) and 0 <= verb_idx < len(lexical):
+            entry = lexical[verb_idx]
+            surface, lemma = str(entry.get("surface") or ""), str(entry.get("lemma") or "")
+            if entry.get("kind") == "verb" and surface != lemma and not surface.endswith(("s", "ing")):
+                return "past"
+        return None
+
+    def _parts(self, lexical: List[Dict[str, Any]], original: str) -> List[str]:
+        """A sentence that joins two statements ("I like cats and I hate dogs")
+        split into each one. Only where the joining word starts a new subject
+        that has its own verb."""
+        words = original.split()
+        if len(words) != len([e for e in lexical if e.get("kind") != "punctuation"]) or len(lexical) < 4:
+            return []
+        content = [e for e in lexical if e.get("kind") != "punctuation"]
+        cuts = []
+        for i, entry in enumerate(content[:-2]):
+            if entry.get("kind") != "conjunction" or i == 0:
+                continue
+            nxt = content[i + 1]
+            if nxt.get("kind") in ("pronoun", "proper_noun", "determiner", "possessive") and any(
+                    e.get("kind") in ("verb", "auxiliary", "modal") or self._has_pos(str(e.get("surface")), "v")
+                    for e in content[i + 2:]) and any(
+                    e.get("kind") in ("verb", "auxiliary", "modal") for e in content[:i]):
+                cuts.append(i)
+        if not cuts:
+            return []
+        parts, start = [], 0
+        for cut in cuts:
+            parts.append(" ".join(words[start:cut]).strip(" ,"))
+            start = cut + 1
+        parts.append(" ".join(words[start:]).strip(" ,"))
+        return [p for p in parts if p]
 
     def _describing_before_noun(self, lexical: List[Dict[str, Any]]) -> None:
         """Between "the/a/my" and a noun, a word the dictionary also knows as an
@@ -2014,6 +2083,11 @@ class LanguageComprehensionEngine:
             "mentions": [m.to_public() for m in mentions],
             "clauses": [clause] if clause else [],
             "unknown_words": unknown_words,
+            "certainty": self._certainty(lexical),
+            "tense": self._tense(lexical, verb_idx),
+            "modal": next((str(e.get("surface")) for e in lexical if e.get("kind") == "modal"
+                           and str(e.get("surface")) not in ("will", "shall", "'ll")), None),
+            "parts": self._parts(lexical, original),
             "unresolved_references": unresolved_references,
             "ambiguous_words": ambiguous_words,
             "speech_act": speech_act,

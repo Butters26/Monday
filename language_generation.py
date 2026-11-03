@@ -638,6 +638,18 @@ class LanguageGenerator:
             return {"ref": "addressee"}
         return {"name": sub}
 
+    @staticmethod
+    def _how_it_was_said(meaning: Dict[str, Any], fact: Dict[str, Any]) -> None:
+        """Keep a fact's tense, its "can", and how sure he was: "I went" stays
+        past, "I can swim" keeps can, "maybe Lily is sick" keeps maybe."""
+        if fact.get("tense") in ("past", "future"):
+            meaning["tense"] = fact["tense"]
+        if fact.get("modal"):
+            meaning["modal"] = str(fact["modal"])
+        sure = fact.get("sure")
+        if isinstance(sure, (int, float)) and sure < 0.9:
+            meaning["hedge"] = "maybe" if sure < 0.6 else "probably"
+
     def _fact_meaning(self, fact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Turn a stored fact (subject / predicate / object) into a meaning to say."""
         pred = str(fact.get("predicate") or "").strip()
@@ -645,7 +657,8 @@ class LanguageGenerator:
         if not pred or not obj:
             return None
         owner = self._owner_for(str(fact.get("subject") or ""))
-        record = {"subject": fact.get("subject"), "predicate": pred, "object": obj}
+        record = {"subject": fact.get("subject"), "predicate": pred, "object": obj,
+                  "tense": fact.get("tense"), "modal": fact.get("modal"), "sure": fact.get("sure")}
         value = {"name": obj} if obj[:1].isupper() else None
         complement = {"entity": value} if value else {"phrase": obj}
         negated = pred.startswith("not_")
@@ -662,14 +675,16 @@ class LanguageGenerator:
                                           else {"noun": obj, "definite": False})}
             else:
                 verb, _, prep = core[2:].partition("@")
-                target = self._entity_for(obj)
                 meaning = {"subject": subject, "verb": verb}
-                if prep:
-                    meaning["modifiers"] = [{"prep": prep, "object": target}]
-                else:
-                    meaning["object"] = target
+                if obj != "(nothing)":  # "I can swim": the action alone
+                    target = self._entity_for(obj)
+                    if prep:
+                        meaning["modifiers"] = [{"prep": prep, "object": target}]
+                    else:
+                        meaning["object"] = target
             if negated:
                 meaning["negated"] = True
+            self._how_it_was_said(meaning, fact)
             meaning["_fact"] = record
             return meaning
         if pred == "name":
@@ -692,6 +707,7 @@ class LanguageGenerator:
         else:
             meaning = {"subject": {"noun": pred.replace("_", " "), "owner": owner},
                        "verb": "be", "complement": complement}
+        self._how_it_was_said(meaning, fact)
         meaning["_fact"] = record
         return meaning
 

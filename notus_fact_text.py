@@ -550,6 +550,8 @@ class FactText:
                 verb = ("do not " if plural_you else "does not ") + verb
             elif not plural_you:
                 verb = verb + ("es" if verb.endswith(("s", "x", "z", "ch", "sh", "o")) else "s")
+            if obj == "(nothing)":  # "I can swim": the action alone
+                return f"{sub} {verb}."
             return f"{sub} {verb} {prep + ' ' if prep else ''}{who(obj)}.".replace("  ", " ")
         if pred.endswith("_name"):
             noun = pred[:-5].replace("_", " ").strip() or "thing"

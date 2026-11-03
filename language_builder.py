@@ -553,6 +553,9 @@ class SentenceBuilder:
         finite, rest = self.verb_group(built, meaning, subject, invert=True)
         subj = self.noun_phrase(built, subject, "subject")
         tail = self._predicate_tail(built, meaning)
+        if finite.endswith(" not"):
+            # "Is Tom not tall?", not "Is not Tom tall?": only the helper moves.
+            finite, rest = finite[:-4], ("not " + rest).strip()
         return " ".join(p for p in (finite, subj, rest, tail) if p)
 
     def _greeting(self, built: Built, meaning: Dict[str, Any]) -> str:
@@ -597,6 +600,9 @@ class SentenceBuilder:
         else:
             text, end = self._statement(built, meaning), "."
         text = re.sub(r"\s+", " ", text).strip()
+        hedge = str((meaning or {}).get("hedge") or "").strip()
+        if text and hedge and act == "state":
+            text = f"{hedge} {text}"  # "maybe Lily is sick": as sure as he was
         built.sentence = (text[:1].upper() + text[1:] + end) if text else ""
         if not text:
             built.problems.append("nothing built")
