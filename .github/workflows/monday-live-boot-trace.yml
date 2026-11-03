@@ -1,4 +1,4 @@
-name: Monday live boot trace
+name: Monday autonomous thinking live audit
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  monday-live-boot:
+  autonomous-thinking-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -17,44 +17,68 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install runtime prerequisites
+      - name: Install live core prerequisites
         run: python -m pip install --disable-pip-version-check numpy wn vaderSentiment scikit-learn joblib
-      - name: Boot real Monday core and capture trace
+      - name: Run Monday with natural autonomous intervals
         shell: bash
         env:
-          MONDAY_RUNTIME_DIR: ${{ runner.temp }}/monday_runtime
-          MONDAY_NOTUS_SQLITE: ${{ runner.temp }}/monday_runtime/notus_memory.sqlite3
-          MONDAY_TRACE: ${{ runner.temp }}/monday_runtime/trace.jsonl
+          MONDAY_RUNTIME_DIR: ${{ runner.temp }}/monday_auto_runtime
+          MONDAY_NOTUS_SQLITE: ${{ runner.temp }}/monday_auto_runtime/notus_memory.sqlite3
+          MONDAY_TRACE: ${{ runner.temp }}/monday_auto_runtime/trace.jsonl
+          PYTHONUNBUFFERED: "1"
         run: |
           mkdir -p "$MONDAY_RUNTIME_DIR"
-          set +e
-          timeout --signal=INT --kill-after=15s 150s python -u run_abin.py > "$RUNNER_TEMP/monday-boot.log" 2>&1 <<'MONDAY_MESSAGES'
-          Hi
-          How are you doing?
-          MONDAY_MESSAGES
-          code=$?
-          echo "MONDAY_BOOT_EXIT_CODE=$code"
-          echo "========== ACTUAL BOOT OUTPUT =========="
-          tail -c 20000 "$RUNNER_TEMP/monday-boot.log"
-          echo ""
-          if [[ -f "$MONDAY_TRACE" ]]; then
-            echo "========== ACTUAL TRACE REPORT =========="
-            python trace_report.py "$MONDAY_TRACE" || true
-            echo "========== TRACE FILE SUMMARY =========="
-            wc -l "$MONDAY_TRACE"
+          python -u - <<'PY' > "$RUNNER_TEMP/monday-autonomous-audit.log" 2>&1
+          import json, time, traceback
+          from run_abin import create_core_systems, shutdown_core_systems
+          def show(label, value):
+              print("AUDIT_JSON " + json.dumps({"label":label,"value":value},default=str,ensure_ascii=False),flush=True)
+          systems = None
+          try:
+              show("boot_start",{"t":time.time()})
+              systems=create_core_systems(enable_autonomous=True)
+              auto=systems["autonomous"]
+              show("booted",{"registered_lobes":list(systems["thalamus"].lobe_handlers.keys()),"thread_alive":bool(auto._thinking_thread and auto._thinking_thread.is_alive()),"normal_intervals":[auto.min_think_interval,auto.max_think_interval],"user_present":auto.user_present})
+              # Test A: no user message whatsoever; do not simulate thoughts.
+              for i in range(5):
+                  time.sleep(25)
+                  show("idle_tick",{"elapsed_sec":(i+1)*25,"thought_count":len(auto.thought_traces),"thread_alive":bool(auto._thinking_thread and auto._thinking_thread.is_alive()),"newest":auto.thought_traces[-1] if auto.thought_traces else None})
+              show("idle_complete",{"thought_count":len(auto.thought_traces),"traces":list(auto.thought_traces)})
+              # Test B: a single everyday statement, then no more messages.
+              msg="I noticed a bright blue bird outside this morning."
+              show("one_user_message",msg)
+              reply=systems["thalamus"].process_user_input(msg,user_id="autonomous_audit")
+              show("reply_to_message",reply)
+              baseline=len(auto.thought_traces)
+              for i in range(5):
+                  time.sleep(22)
+                  show("after_message_tick",{"elapsed_sec":(i+1)*22,"thought_count":len(auto.thought_traces),"new_thoughts_since_message":len(auto.thought_traces)-baseline,"thread_alive":bool(auto._thinking_thread and auto._thinking_thread.is_alive()),"newest":auto.thought_traces[-1] if auto.thought_traces else None})
+              show("all_thoughts",list(auto.thought_traces))
+              show("final_state",{"thread_alive":bool(auto._thinking_thread and auto._thinking_thread.is_alive()),"thought_count":len(auto.thought_traces),"queue_count":len(auto.thought_queue),"user_present":auto.user_present,"current_focus":auto.current_focus,"last_user_text":auto.last_user_text})
+          except BaseException as exc:
+              show("audit_exception",{"type":type(exc).__name__,"message":str(exc),"traceback":traceback.format_exc()})
+          finally:
+              if systems is not None:
+                  try: shutdown_core_systems(systems)
+                  except BaseException as exc: show("shutdown_exception",repr(exc))
+          PY
+          echo "========== AUTONOMOUS AUDIT OBSERVATIONS =========="
+          grep 'AUDIT_JSON ' "$RUNNER_TEMP/monday-autonomous-audit.log" || true
+          echo "========== AUTONOMOUS THINKING PRINTED OUTPUT =========="
+          grep -E '^💭|^💬|^🧠|^🛑|^✅|^⚠|Traceback|Error|Exception' "$RUNNER_TEMP/monday-autonomous-audit.log" | tail -n 80 || true
+          if [[ -s "$MONDAY_TRACE" ]]; then
+            echo "========== TRACE REPORT =========="
+            python trace_report.py "$MONDAY_TRACE" | tail -n 140 || true
           else
-            echo "NO_TRACE_FILE: Monday did not initialize the tracer."
+            echo "NO LIVE TRACE FILE CREATED"
           fi
-          echo "$code" > "$RUNNER_TEMP/monday-boot-exit-code.txt"
-          exit 0
-      - name: Save raw trace and startup output
+      - name: Preserve original evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: monday-live-boot-trace
+          name: monday-autonomous-audit-evidence
           path: |
-            ${{ runner.temp }}/monday_runtime/trace.jsonl
-            ${{ runner.temp }}/monday-boot.log
-            ${{ runner.temp }}/monday-boot-exit-code.txt
+            ${{ runner.temp }}/monday_auto_runtime/trace.jsonl
+            ${{ runner.temp }}/monday-autonomous-audit.log
+          retention-days: 7
           if-no-files-found: warn
-          retention-days: 3
