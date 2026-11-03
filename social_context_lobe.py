@@ -71,17 +71,103 @@ def _social_move_of(synset_id: str, pos: str) -> Optional[str]:
 class SocialContextLobe:
     """Track interlocutor social stance/cues; distribute compact context."""
 
-    RETURNED_IN_KIND = ("greeting", "goodbye")
-
-    def __init__(self, thalamus: Any = None, storage_path: Optional[str] = None) -> None:
+    def __init__(self, thalamus: Any = None, storage_path: Optional[str] = None,
+                 beliefs_file: Optional[str] = None) -> None:
         self.thalamus = thalamus
         # Per-user state, kept across restarts (who someone is to her).
         self.storage_path = storage_path
         self._users: Dict[str, Dict[str, Any]] = self._load()
+        # What she believes each social move calls for: Matthew's file of
+        # starting beliefs plus what she has been taught since. Beliefs, not
+        # rules: each has how sure she is, and teaching changes them.
+        from pathlib import Path
+        if beliefs_file is None and storage_path:
+            beliefs_file = str(Path(storage_path).with_name("social_beliefs.txt"))
+        self.beliefs_file = beliefs_file
+        self.beliefs: Dict[str, Dict[str, Any]] = {}
+        self._read_beliefs_file()
+        self.beliefs.update(self._learned_beliefs)
         self.context_state: Dict[str, Any] = {}  # last distributed snapshot
         self.social_cues: List[Any] = []  # legacy flat cue log (bounded)
         self.last_context: Optional[Dict[str, Any]] = None
         self._observe_count: int = 0
+
+    # --- what social moves call for ------------------------------------------
+
+    _PLACEHOLDER = """# Monday's starting social beliefs: what a social move calls for.
+# One per line:  <move> -> <what she does> (sure 0.0-1.0)
+#   <what she does> is a move answered in kind (greeting, goodbye) or words in quotes.
+# Moves are named as the dictionary names them (greeting, goodbye, thanks, apology).
+# PLACEHOLDERS written because no file existed. Matthew: change or add your own.
+# She also learns new ones when taught: "when I say thanks, say you're welcome".
+greeting -> greeting (sure 0.9)
+goodbye -> goodbye (sure 0.9)
+thanks -> "you're welcome" (sure 0.7)
+apology -> "it's okay" (sure 0.6)
+"""
+
+    def _read_beliefs_file(self) -> None:
+        import re
+        from pathlib import Path
+        if not self.beliefs_file:
+            return
+        path = Path(self.beliefs_file)
+        try:
+            if not path.is_file():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(self._PLACEHOLDER, encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
+        except Exception as exc:
+            print(f"⚠️  Social context: could not read {path}: {exc}")
+            return
+        placeholder = "PLACEHOLDERS" in text
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = re.match(r'^([a-z_ ]+?)\s*->\s*(?:"([^"]+)"|([a-z_]+))\s*(?:\(\s*sure\s*([01](?:\.\d+)?|\.\d+)\s*\))?\s*$',
+                         line, re.I)
+            if not m:
+                print(f"⚠️  Social context: can't read belief line: {line!r}")
+                continue
+            move = m.group(1).strip().casefold()
+            self.beliefs[move] = {"say": m.group(2), "in_kind": (m.group(3) or "").casefold() or None,
+                                  "sure": float(m.group(4)) if m.group(4) else 0.5,
+                                  "source": "placeholder" if placeholder else "matthew"}
+
+    @staticmethod
+    def _said_as(words: str) -> str:
+        import re
+        return " ".join(re.findall(r"[a-z']+", (words or "").casefold().strip('"')))
+
+    @property
+    def _learned_beliefs(self) -> Dict[str, Dict[str, Any]]:
+        stored = getattr(self, "_stored_beliefs", None)
+        return dict(stored or {})
+
+    def _taught(self, user_input: str) -> Optional[Dict[str, Any]]:
+        """"When I say thanks, say you're welcome": a social move and what she
+        should do for it. The move is read from the dictionary, like any move."""
+        import re
+        m = re.match(r"^\s*when\s+(?:i|you|someone|somebody|people)\s+(?:say|says|tell|tells)\s+(.+?)"
+                     r"\s*,?\s+(?:you\s+)?(?:should\s+)?(?:say|reply|answer)\s+(.+?)[.!]?\s*$",
+                     user_input or "", re.I)
+        if not m:
+            return None
+        # The move as the dictionary names it, or else the words themselves
+        # ("sorry" isn't filed as an apology in the dictionary).
+        move = self._extract_cue(m.group(1), {}) or self._said_as(m.group(1))
+        if not move:
+            return None
+        words = m.group(2).strip().strip('"')
+        in_kind = self._extract_cue(words, {})
+        belief = {"say": None if in_kind == move else words, "in_kind": move if in_kind == move else None,
+                  "sure": 0.9, "source": "taught"}
+        self.beliefs[move] = belief
+        stored = dict(getattr(self, "_stored_beliefs", None) or {})
+        stored[move] = belief
+        self._stored_beliefs = stored
+        return {"move": move, **belief}
 
     # --- remembering people across restarts -------------------------------
 
@@ -94,6 +180,8 @@ class SocialContextLobe:
             path = Path(self.storage_path)
             if path.is_file():
                 data = json.loads(path.read_text(encoding="utf-8"))
+                self._stored_beliefs = {str(k): dict(v) for k, v in (data.get("beliefs") or {}).items()
+                                        if isinstance(v, dict)}
                 return {str(k): dict(v) for k, v in (data.get("people") or {}).items() if isinstance(v, dict)}
         except Exception as exc:
             print(f"⚠️  Social context: could not load {self.storage_path}: {exc}")
@@ -108,7 +196,8 @@ class SocialContextLobe:
             path = Path(self.storage_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"people": self._users}, indent=1, default=str), encoding="utf-8")
+            tmp.write_text(json.dumps({"people": self._users, "beliefs": getattr(self, "_stored_beliefs", None) or {}},
+                                      indent=1, default=str), encoding="utf-8")
             tmp.replace(path)
         except Exception as exc:
             print(f"⚠️  Social context: could not save {self.storage_path}: {exc}")
@@ -309,7 +398,10 @@ class SocialContextLobe:
         """Update per-user social state from this turn; return distributed envelope."""
         state = self._user_state(user_id)
         understanding = understanding if isinstance(understanding, dict) else {}
-        cue = self._extract_cue(user_input, understanding)
+        taught = self._taught(user_input)
+        cue = None if taught else self._extract_cue(user_input, understanding)
+        if not taught and self._said_as(user_input) in self.beliefs:
+            cue = self._said_as(user_input)  # words she was taught a reply for ("sorry")
         greeted_before = bool(state.get("already_greeted"))
         is_social = cue is not None
         continuity = self._continuity_label(state, cue, greeted_before=greeted_before)
@@ -356,10 +448,15 @@ class SocialContextLobe:
         snap = self._snapshot(
             state, cue=cue, continuity=continuity, is_social_turn=is_social
         )
-        # The social expectation this move sets up: a greeting is answered with
-        # a greeting, a goodbye with a goodbye (meeting and parting are returned
-        # in kind). Moves whose answer she hasn't learned set none.
-        snap["expects"] = cue if cue in self.RETURNED_IN_KIND else None
+        # What this move calls for, from what she believes (her starting social
+        # beliefs and what she's been taught): a greeting back, a goodbye back,
+        # or words ("you're welcome"). A move she has no belief about sets none.
+        belief = self.beliefs.get(cue or "") or {}
+        snap["expects"] = belief.get("in_kind")
+        snap["expected_reply"] = belief.get("say")
+        snap["belief_sure"] = belief.get("sure")
+        if taught:
+            snap["taught"] = taught
         snap["move"] = cue
         snap["said"] = user_input
         self.context_state = dict(snap)

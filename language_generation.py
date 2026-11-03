@@ -511,6 +511,24 @@ class LanguageGenerator:
         read = (self.__dict__.get("_social_reads") or {}).get(user_id) or {}
         return read if str(read.get("said") or "").strip() == user_input.strip() else {}
 
+    def _meaning_from_words(self, words: str) -> Optional[Dict[str, Any]]:
+        """Words social context believes fit ("you're welcome", "it's okay")
+        turned into a meaning she can say: Language reads them like any words."""
+        reading = self.comprehension.analyze(words)
+        tokens = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        if not tokens:
+            return None
+        who = {"you": {"ref": "addressee"}, "i": {"ref": "speaker"}, "me": {"ref": "speaker"},
+               "it": {"pronoun": "it"}, "we": {"pronoun": "we"}, "they": {"pronoun": "they"}}
+        subject = who.get(str(tokens[0].get("lemma") or "").casefold())
+        complement = reading.get("predicative_complement") or {}
+        if subject and complement.get("kind") == "adjective" and complement.get("lemma"):
+            return {"subject": subject, "verb": "be", "act": "state", "_purpose": "social_reply",
+                    "complement": {"adjectives": [str(complement["lemma"]).casefold()]}}
+        # Not a sentence she can build ("no problem", "me too"): she says it the
+        # way she was taught it, as a whole.
+        return {"act": "phrase", "words": words, "_purpose": "social_reply"}
+
     @classmethod
     def _his_words(cls, pieces: Any, out: Optional[set] = None) -> set:
         """(part of speech, word) for every word in what he said and what she
@@ -545,6 +563,8 @@ class LanguageGenerator:
             return "greeting"
         if expects == "goodbye":
             return "farewell"
+        if heard.get("expected_reply") or social.get("expected_reply"):
+            return "social_reply"
         # Greetings and goodbyes are Social Context's call (above), not Language's.
         social_now = social.get("last_cue") if social.get("is_social_turn") else None
         if understanding.get("speech_act") == "question" or str(semantic_input.get("user_input", "")).strip().endswith("?"):
@@ -681,7 +701,8 @@ class LanguageGenerator:
     # decides whether she replies isn't built yet, so for now she always tries.
     _FORMS = ("state", "ask", "greet", "farewell")
     FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
-    _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing")
+    _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing",
+                    "expected_reply")
 
     # Pronouns he uses for other people and things, turned to her point of view.
     # ("I", "me", "you" are the two of them and come in as subject choices already.)
@@ -774,6 +795,10 @@ class LanguageGenerator:
         kind = builder._choose(plan, f"plan_piece@{ctx}", available)
         if kind == "memory":
             meaning = dict(rng.choice(pieces["memory"]))
+        elif kind == "expected_reply":
+            meaning = dict(pieces["expected_reply"][0])
+            if meaning.get("act") == "phrase":
+                return meaning  # said as taught, never turned into a question
         elif kind == "not_knowing":
             meaning = {"subject": me, "verb": "know", "negated": True, "_purpose": "admit_unknown"}
         else:
@@ -809,6 +834,7 @@ class LanguageGenerator:
     _FEEDBACK = {
         "use_memory": ({"plan_form@": {"state"}, "plan_piece@": {"memory"}}, {}),
         "say_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"not_knowing"}}, {}),
+        "say_expected": ({"plan_form@": {"state"}, "plan_piece@": {"expected_reply"}}, {}),
         "say_own_feeling": ({"plan_form@": {"state"}, "plan_piece@": {"feeling"},
                              "plan_subject@": {"me"}}, {}),
         "other_fact_or_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"memory", "not_knowing"}}, {}),
@@ -849,9 +875,16 @@ class LanguageGenerator:
         user_input = str(semantic_input.get("user_input") or understanding.get("raw_text") or "")
         situation = self._situation(semantic_input)
         resolved_input = self._resolved_text(user_input, user_id) if user_input else user_input
+        # What social context believes this moment calls for, in words ("you're welcome").
+        social_now = self._social_for(user_id, user_input) or semantic_input.get("social_context") or {}
+        expected_reply = str(social_now.get("expected_reply") or "").strip()
         if resolved_input != user_input:
             self._trace("references_resolved", heard=user_input, means=resolved_input)
         pieces = self._pieces(semantic_input, user_id, resolved_input)
+        if expected_reply:
+            said = self._meaning_from_words(expected_reply)
+            if said:
+                pieces["expected_reply"].append(said)
         ctx = self._context_key(semantic_input, pieces)
         feeling_words = [e.get("surface") for e in (understanding.get("affect") or {}).get("evidence") or []
                          if e.get("surface")]
@@ -890,6 +923,7 @@ class LanguageGenerator:
                     "resolved_input": resolved_input,
                     "her_feeling": (pieces.get("feeling") or [None])[0],
                     "expected_move": situation if situation in ("greeting", "farewell") else None,
+                    "expected_reply": expected_reply or None,
                 })
                 if not review:
                     last_reason = "reasoning did not review the reply"

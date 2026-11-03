@@ -1184,6 +1184,13 @@ class DirectReasoningAdapter:
         if situation == "farewell":
             if act != "farewell" or self._FAREWELL_SENSE not in first_senses:
                 return no("he said goodbye and the reply doesn't say goodbye back", "farewell_back")
+        if situation == "social_reply":
+            # Social context's belief says what this moment calls for.
+            expected = str(payload.get("expected_reply") or "")
+            want = self._content_lemmas(self._analyze(expected)) if expected else set()
+            if want and (self._content_lemmas(reply) != want or reply_is_question):
+                return no(f"he made a social move; what she believes fits is '{expected}'", "say_expected")
+            return {"ok": True, "reason": f"it's what she believes fits ('{expected}')"}
         if situation == "statement":
             said = self._content_lemmas(reply)
             his = self._content_lemmas(self._analyze(user_input))

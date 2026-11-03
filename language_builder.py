@@ -591,6 +591,9 @@ class SentenceBuilder:
             text, end = self._parting(built, meaning), "!"
         elif act == "ask":
             text, end = self._question(built, meaning), "?"
+        elif act == "phrase":
+            # Words she was taught as a whole ("no problem"), said as taught.
+            text, end = str(meaning.get("words") or "").strip().rstrip(".!"), "."
         else:
             text, end = self._statement(built, meaning), "."
         text = re.sub(r"\s+", " ", text).strip()
