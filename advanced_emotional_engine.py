@@ -1397,6 +1397,14 @@ class EmotionalProcess:
                     'user_affect': snap.get('user_affect'),
                 }
 
+            elif msg_type == 'appraise':
+                # How something would affect her, without changing her mood
+                # (other lobes ask: social context, to tell a compliment).
+                text = str(message.get('text') or '')
+                delta = appraise(self.engine._read(text), self.engine.word_feelings)
+                return {'status': 'success', 'content': {'about': delta.about, 'valence': delta.dv,
+                                                         'arousal': delta.da, 'reason': delta.reason}}
+
             elif msg_type == 'adjust_word_feeling':
                 # A belief about how a word feels, changed (by experience or by Matthew).
                 word = str(message.get('word') or '').strip()

@@ -2026,6 +2026,16 @@ class DirectNotusProcess:
         return f"{owner}'s {head}" if owner else head
 
     def _file(self, subject: str, predicate: str, obj: str, negative: bool, user_id: str) -> List[Dict[str, Any]]:
+        if obj[:1].isupper() and not negative:
+            # A new name for it replaces one saved the old way ("dog_name = Rex"
+            # before "my dog is named Max").
+            with self._lock:
+                connection = self._require_connection()
+                connection.execute(
+                    "UPDATE brain_facts SET is_contradicted = 1 WHERE user_id = ? AND subject = ? "
+                    "AND predicate = ? AND object != ? AND is_contradicted = 0",
+                    (user_id, subject, predicate.replace(" ", "_") + "_name", obj))
+                connection.commit()
         try:
             fact = self.store_brain_fact(subject, ("not_" if negative else "") + predicate, obj,
                                          confidence=0.8, user_id=user_id)

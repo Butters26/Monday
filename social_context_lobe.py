@@ -104,6 +104,7 @@ greeting -> greeting (sure 0.9)
 goodbye -> goodbye (sure 0.9)
 thanks -> "you're welcome" (sure 0.7)
 apology -> "it's okay" (sure 0.6)
+compliment -> "thank you" (sure 0.7)
 """
 
     def _read_beliefs_file(self) -> None:
@@ -117,6 +118,14 @@ apology -> "it's okay" (sure 0.6)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(self._PLACEHOLDER, encoding="utf-8")
             text = path.read_text(encoding="utf-8")
+            if "PLACEHOLDERS" in text:
+                # Still only placeholders: add any placeholder lines it's missing.
+                have = {l.split("->", 1)[0].strip() for l in text.splitlines() if "->" in l and not l.startswith("#")}
+                extra = [l for l in self._PLACEHOLDER.splitlines()
+                         if "->" in l and not l.startswith("#") and l.split("->", 1)[0].strip() not in have]
+                if extra:
+                    text = text.rstrip("\n") + "\n" + "\n".join(extra) + "\n"
+                    path.write_text(text, encoding="utf-8")
         except Exception as exc:
             print(f"⚠️  Social context: could not read {path}: {exc}")
             return
@@ -250,9 +259,16 @@ apology -> "it's okay" (sure 0.6)
         share is kept as it reads it."""
         understanding = understanding if isinstance(understanding, dict) else {}
         intent = str(understanding.get("intent") or "").strip().lower()
+        reading = self._read(user_input if isinstance(user_input, str) else "")
+        if reading.get("speech_act") != "question":
+            # Something said about her that is good or bad for her: a
+            # compliment or an insult (not him sharing his own feelings).
+            # Emotion is the part that knows that.
+            felt = self._ask_emotion(user_input)
+            if felt.get("about") == "her" and abs(float(felt.get("valence") or 0)) > 0.1:
+                return "compliment" if float(felt["valence"]) > 0 else "insult"
         if intent == "emotional_share":
             return "emotional_share"
-        reading = self._read(user_input if isinstance(user_input, str) else "")
         for token in reading.get("tokens") or []:
             for sense in token.get("senses") or []:
                 move = _social_move_of(str(sense.get("synset_id") or ""), str(sense.get("pos") or ""))
@@ -263,6 +279,19 @@ apology -> "it's okay" (sure 0.6)
                 for t in reading.get("tokens") or []):
             return "check_in"  # a question put to her, about her
         return _INTENT_TO_CUE.get(intent)
+
+    def _ask_emotion(self, text: str) -> Dict[str, Any]:
+        send = getattr(self.thalamus, "send_message", None)
+        if not callable(send) or not text.strip():
+            return {}
+        try:
+            response = send("emotion", "appraise", {"text": text}, source="social_context")
+        except Exception:
+            return {}
+        if not isinstance(response, dict) or response.get("status") != "success":
+            return {}
+        body = response.get("content")
+        return body if isinstance(body, dict) else {}
 
     def _cue_nearby_count(self, state: Dict[str, Any], cue: str, window: int = 4) -> int:
         recent = list(state.get("recent_cues") or [])

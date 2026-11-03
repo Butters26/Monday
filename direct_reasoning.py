@@ -836,6 +836,8 @@ class DirectReasoningAdapter:
                 and str(words[-1].get("lemma") or "") == "have":
             verbs = ["have"]  # "what does Sam have?": have is the verb asked about
         asked_verb = verbs[-1] if verbs else ""
+        if words and words[0].get("kind") == "auxiliary" and str(words[0].get("lemma") or "") == "be":
+            asked_verb = ""  # "is Mary tired?" asks what Mary is, not what she does
         if not verbs and len(words) > 1 and str(words[0].get("lemma") or "").casefold() == "who" \
                 and str(words[1].get("lemma") or "") == "be" \
                 and str(fact.get("predicate") or "").startswith(("v:", "not_v:")):
@@ -1201,11 +1203,19 @@ class DirectReasoningAdapter:
             return {"ok": True, "reason": f"it's what she believes fits ('{expected}')"}
         if situation == "statement":
             said = self._content_lemmas(reply)
-            his = self._content_lemmas(self._analyze(user_input))
+            his = self._content_lemmas(self._analyze(str(payload.get("resolved_input") or user_input)))
             used = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
             if act == "state":
                 # Saying back what he just told her shows she took it in; any other
                 # claim is something she doesn't know is true.
+                if purpose == "own_feeling" and self._topic(self._analyze(user_input), turn=True) in ("i", "me"):
+                    # He said something about her ("you are stupid"); how she feels
+                    # about it is hers to say, and true.
+                    return {"ok": True, "reason": "she says how what he said about her makes her feel"}
+                if self._topic(reply) in ("i", "me") and purpose != "own_feeling":
+                    # "You are stupid" -> "I am stupid." would be her claiming it
+                    # about herself on his word.
+                    return no("saying it back would be her claiming it about herself", "not_about_herself")
                 resolved = str(payload.get("resolved_input") or "")
                 said_back = self._says_back(reply, self._analyze(user_input)) or (
                     bool(resolved) and resolved != user_input
@@ -1213,8 +1223,14 @@ class DirectReasoningAdapter:
                 if not said_back and (not used or not self._fact_fits(used, user_input)):
                     return no("she's claiming something she doesn't know; she can say back what he "
                               "told her or ask about it", "restate_or_ask")
-            elif act == "ask" and his and not (his & said):
+            elif act == "ask" and his and not (said <= his):
+                # Asking back uses what he just said, nothing else ("Ben is not
+                # tall" -> not "Is Ben a pilot?").
                 return no("the question isn't about what he said", "about_what_he_said")
+            elif act == "ask" and self._analyze(user_input).get("tense") != reply.get("tense") \
+                    and self._analyze(user_input).get("tense") in ("past", "future"):
+                # "I went to Denver": asking back keeps it in the past ("Did you go...?").
+                return no("the question changes when it happened", "about_what_he_said")
             elif act == "ask":
                 # Asking back is about the one he talked about ("Is Cleo a
                 # painter?"), not someone else ("Are you Cleo?").

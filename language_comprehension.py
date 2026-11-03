@@ -515,6 +515,10 @@ class LanguageComprehensionEngine:
         ]
         while raw and raw[0].lower() in _PREPOSITIONS:
             raw.pop(0)
+        # "maybe she", "probably Lily": a sentence word like maybe isn't part of who.
+        while len(raw) > 1 and self._pos_set(raw[0]) == {"r"}:
+            raw.pop(0)
+            start += 1
         while raw and raw[-1].lower() in _PREPOSITIONS:
             raw.pop()
         if not raw:
@@ -1499,7 +1503,10 @@ class LanguageComprehensionEngine:
         if isinstance(verb_idx, int) and 0 <= verb_idx < len(lexical):
             entry = lexical[verb_idx]
             surface, lemma = str(entry.get("surface") or ""), str(entry.get("lemma") or "")
-            if entry.get("kind") == "verb" and surface != lemma and not surface.endswith(("s", "ing")):
+            helper_now = any(str(e.get("surface")) in ("is", "are", "am", "has", "have")
+                             for e in lexical[:verb_idx] if e.get("kind") == "auxiliary")
+            if entry.get("kind") == "verb" and surface != lemma and not surface.endswith(("s", "ing")) \
+                    and not helper_now:  # "is named", "has gone": not the past
                 return "past"
         return None
 
@@ -1543,6 +1550,24 @@ class LanguageComprehensionEngine:
             if adjective:
                 entry.update({"kind": "adjective", "lemma": entry["surface"], "senses": adjective,
                               "sense_count": len(adjective), "read_as": "describing the noun after it"})
+
+    def _degree_before_describing(self, lexical: List[Dict[str, Any]]) -> None:
+        """After "is/are", a word that can be an adverb followed by one that can
+        be an adjective is a degree word and what it describes: "very kind",
+        "really tall" (not "a very" of a "kind")."""
+        for idx in range(1, len(lexical) - 1):
+            before, entry, after = lexical[idx - 1], lexical[idx], lexical[idx + 1]
+            if before.get("kind") != "auxiliary" or before.get("lemma") != "be":
+                continue
+            if not any(x.get("pos") == "r" for x in self._lookup(entry["surface"])):
+                continue
+            adjective = [x for x in self._lookup(after["surface"]) if x.get("pos") in ("a", "s")]
+            if not adjective or (idx + 2 < len(lexical) and lexical[idx + 2].get("kind") in ("noun", "proper_noun")):
+                continue
+            entry.update({"kind": "adverb", "lemma": entry["surface"],
+                          "senses": [x for x in self._lookup(entry["surface"]) if x.get("pos") == "r"]})
+            after.update({"kind": "adjective", "lemma": after["surface"], "senses": adjective,
+                          "sense_count": len(adjective), "read_as": "describing after a degree word"})
 
     def _describing_after_be(self, lexical: List[Dict[str, Any]]) -> None:
         """Right after "is/are/was", a word the dictionary also knows as an
@@ -1607,6 +1632,7 @@ class LanguageComprehensionEngine:
                 unknown_words.append(token)
 
         self._describing_before_noun(lexical)
+        self._degree_before_describing(lexical)
         self._describing_after_be(lexical)
         self._action_after_subject(lexical)
         self._lexical_now = lexical

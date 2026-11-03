@@ -511,6 +511,120 @@ class LanguageGenerator:
         read = (self.__dict__.get("_social_reads") or {}).get(user_id) or {}
         return read if str(read.get("said") or "").strip() == user_input.strip() else {}
 
+    # His words for the two of them, turned to her side.
+    _TURN = {"i": {"ref": "addressee"}, "me": {"ref": "addressee"}, "myself": {"ref": "addressee"},
+             "you": {"ref": "speaker"}, "we": {"ref": "addressee"}, "us": {"ref": "addressee"},
+             "he": {"pronoun": "he"}, "him": {"pronoun": "he"}, "she": {"pronoun": "she"},
+             "her": {"pronoun": "she"}, "it": {"pronoun": "it"}, "they": {"pronoun": "they"},
+             "them": {"pronoun": "they"}}
+    _OWNER = {"my": {"ref": "addressee"}, "our": {"ref": "addressee"}, "your": {"ref": "speaker"},
+              "his": {"pronoun": "he"}, "her": {"pronoun": "she"}, "their": {"pronoun": "they"},
+              "its": {"pronoun": "it"}}
+
+    def _mention_entity(self, mention: Dict[str, Any], tokens: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Who or what a mention in his sentence is, as she'd say it."""
+        if not isinstance(mention, dict):
+            return None
+        if mention.get("refers_to"):
+            ref = mention["refers_to"]
+            if ref.get("name") or ref.get("names"):
+                name = ref.get("name") or " and ".join(ref["names"])
+                return {"name": name, "count": "many"} if ref.get("names") else {"name": name}
+        start, end = mention.get("start"), mention.get("end")
+        inside = [t for t in tokens if isinstance(start, int) and isinstance(end, int)
+                  and start <= int(t.get("index", -1)) < end]
+        if mention.get("pronoun"):
+            word = str((mention.get("properties") or {}).get("pronoun") or mention.get("surface") or "").casefold()
+            return dict(self._TURN.get(word) or {}) or None
+        names = [t for t in inside if t.get("kind") == "proper_noun"]
+        if names:
+            words = [str(t.get("surface") or "") for t in names]
+            name = " and ".join(w[:1].upper() + w[1:] for w in words)
+            return {"name": name, "count": "many"} if len(words) > 1 else {"name": name}
+        nouns = [t for t in inside if t.get("kind") == "noun"]
+        if not nouns:
+            return None
+        head = nouns[-1]
+        surface, lemma = str(head.get("surface") or ""), str(head.get("lemma") or "")
+        entity: Dict[str, Any] = {"noun": lemma.casefold()}
+        adjectives = [str(t.get("lemma") or "").casefold() for t in inside if t.get("kind") == "adjective"]
+        if adjectives:
+            entity["adjectives"] = adjectives
+        first = str(inside[0].get("surface") or "").casefold() if inside else ""
+        if first in self._OWNER:
+            entity["owner"] = dict(self._OWNER[first])
+        elif inside and inside[0].get("kind") == "possessive":
+            owner = str(inside[0].get("lemma") or "")
+            entity["owner"] = {"name": owner[:1].upper() + owner[1:]}
+        elif first == "the":
+            entity["definite"] = True
+        many = surface.casefold() != lemma.casefold() and surface.casefold().endswith("s")
+        entity["count"] = "many" if many else ("one" if first in ("a", "an") or entity.get("owner")
+                                               or entity.get("definite") else "mass")
+        if first in ("a", "an"):
+            entity["definite"] = False
+        return entity
+
+    def _statement_meaning(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """His sentence as a whole meaning, from her side: who, did what, to
+        what, when, whether not, and how sure. Language reads it; nothing here
+        is a sentence shape."""
+        if not reading or reading.get("speech_act") not in ("declarative", "statement", None):
+            return None
+        clauses = reading.get("clauses") or []
+        if not clauses:
+            return None
+        clause = clauses[0]
+        roles = clause.get("roles") or {}
+        tokens = [t for t in reading.get("tokens") or [] if isinstance(t, dict)]
+        mentions = {m.get("mention_id"): m for m in reading.get("mentions") or [] if isinstance(m, dict)}
+        copular = bool(clause.get("copular"))
+        subject_id = (roles.get("theme") or roles.get("agent")) if copular else (
+            roles.get("agent") or roles.get("experiencer") or roles.get("theme"))
+        subject = self._mention_entity(mentions.get(subject_id), tokens)
+        if not subject:
+            return None
+        meaning: Dict[str, Any] = {"subject": subject, "act": "state", "_purpose": "say_back"}
+        complement = reading.get("predicative_complement") or clause.get("predicative_complement") or {}
+        if copular:
+            meaning["verb"] = "be"
+            if complement.get("kind") == "adjective" and complement.get("lemma"):
+                meaning["complement"] = {"adjectives": [str(complement["lemma"]).casefold()]}
+            else:
+                target = self._mention_entity(mentions.get(complement.get("mention_id") or roles.get("attribute")), tokens)
+                if not target:
+                    return None
+                meaning["complement"] = {"entity": target} if target.get("name") or target.get("owner") else \
+                    {"noun": target["noun"], "definite": False, "adjectives": target.get("adjectives") or []}
+        else:
+            verb = str(clause.get("predicate_surface") or "").casefold()
+            if not verb or verb in ("be",):
+                return None
+            meaning["verb"] = verb
+            other = next((roles[r] for r in ("theme", "patient") if roles.get(r) and roles[r] != subject_id), None)
+            if other:
+                target = self._mention_entity(mentions.get(other), tokens)
+                if target:
+                    meaning["object"] = target
+            mods = []
+            for role, mention_id in roles.items():
+                if role.startswith("prep_"):
+                    target = self._mention_entity(mentions.get(mention_id), tokens)
+                    if target:
+                        mods.append({"prep": role[5:], "object": target})
+            if mods:
+                meaning["modifiers"] = mods
+        if (clause.get("qualifiers") or {}).get("polarity") == "negative":
+            meaning["negated"] = True
+        if reading.get("tense") in ("past", "future"):
+            meaning["tense"] = reading["tense"]
+        if reading.get("modal"):
+            meaning["modal"] = reading["modal"]
+        sure = (reading.get("certainty") or {}).get("sure")
+        if isinstance(sure, (int, float)) and sure < 0.9:
+            meaning["hedge"] = "maybe" if sure < 0.6 else "probably"
+        return meaning
+
     def _meaning_from_words(self, words: str) -> Optional[Dict[str, Any]]:
         """Words social context believes fit ("you're welcome", "it's okay")
         turned into a meaning she can say: Language reads them like any words."""
@@ -579,6 +693,21 @@ class LanguageGenerator:
         if about_self and (social_now == "emotional_share" or (understanding.get("affect") or {}).get("present")):
             return "emotional_share"
         return "statement"
+
+    def _facts_for_this(self, text: str, user_id: str) -> List[Dict[str, Any]]:
+        """What memory brings up, the ones that share the most of his words
+        first ("do I like tea?" -> the tea fact before the cats one), newest
+        first among equals ("where did I go?" -> the latest trip)."""
+        facts = self._user_facts(text, user_id)
+        reading = self.comprehension.analyze(text)
+        his = {str(t.get("lemma") or "").casefold() for t in reading.get("tokens") or []
+               if t.get("kind") in ("noun", "proper_noun", "verb", "adjective", "possessive")}
+        def shared(fact: Dict[str, Any]) -> int:
+            words = set(re.findall(r"[a-z]+", " ".join(str(fact.get(k) or "") for k in
+                                                       ("subject", "predicate", "object")).casefold()))
+            words |= {w[:-1] for w in words if w.endswith("s")}
+            return len(his & words)
+        return sorted(facts, key=lambda f: (shared(f), int(f.get("id") or 0)), reverse=True)
 
     def _user_facts(self, query: str, user_id: str) -> List[Dict[str, Any]]:
         body = self._ask("notus", "query_facts", {"query": query, "user_id": user_id, "limit": 10})
@@ -718,7 +847,7 @@ class LanguageGenerator:
     _FORMS = ("state", "ask", "greet", "farewell")
     FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
     _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing",
-                    "expected_reply")
+                    "expected_reply", "what_he_said")
 
     # Pronouns he uses for other people and things, turned to her point of view.
     # ("I", "me", "you" are the two of them and come in as subject choices already.)
@@ -762,7 +891,7 @@ class LanguageGenerator:
                 pieces["heard_verb"].append(lemma.casefold())
             elif kind == "adjective":
                 pieces["heard_adjective"].append(lemma.casefold())
-        for fact in self._user_facts(user_input, user_id)[:5]:
+        for fact in self._facts_for_this(user_input, user_id)[:5]:
             meaning = self._fact_meaning(fact)
             if meaning:
                 pieces["memory"].append(meaning)
@@ -810,7 +939,10 @@ class LanguageGenerator:
             return None
         kind = builder._choose(plan, f"plan_piece@{ctx}", available)
         if kind == "memory":
-            meaning = dict(rng.choice(pieces["memory"]))
+            # Answering, she uses what fits best (newest first); otherwise any.
+            meaning = dict(pieces["memory"][0] if ctx.startswith("question") else rng.choice(pieces["memory"]))
+        elif kind == "what_he_said":
+            meaning = dict(rng.choice(pieces["what_he_said"]))
         elif kind == "expected_reply":
             meaning = dict(pieces["expected_reply"][0])
             if meaning.get("act") == "phrase":
@@ -856,7 +988,7 @@ class LanguageGenerator:
         "other_fact_or_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"memory", "not_knowing"}}, {}),
         "answer_not_ask": ({}, {"plan_form@": {"ask"}}),
         "state_not_ask": ({"plan_form@": {"state"}}, {}),
-        "not_about_herself": ({}, {"plan_subject@": {"me"}}),
+        "not_about_herself": ({}, {"plan_subject@": {"me"}, "plan_piece@": {"what_he_said"}}),
         "greet_back": ({"plan_form@": {"greet"}}, {}),
         "respond_to_feeling": ({"plan_piece@": {"heard_adjective", "feeling"}}, {}),
         "about_him": ({"plan_subject@": {"you"}}, {}),
@@ -897,6 +1029,13 @@ class LanguageGenerator:
         if resolved_input != user_input:
             self._trace("references_resolved", heard=user_input, means=resolved_input)
         pieces = self._pieces(semantic_input, user_id, resolved_input)
+        # What he said, as a whole meaning, from Language's own reading of it
+        # (each part of a two-part sentence on its own).
+        his = self.comprehension.analyze(resolved_input or "")
+        for part in his.get("parts") or [resolved_input]:
+            said = self._statement_meaning(self.comprehension.analyze(part) if his.get("parts") else his)
+            if said:
+                pieces["what_he_said"].append(said)
         if expected_reply:
             said = self._meaning_from_words(expected_reply)
             if said:
