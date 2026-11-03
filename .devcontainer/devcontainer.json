@@ -1,0 +1,10 @@
+{
+  "name": "Talk to Monday",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "postCreateCommand": "pip install --quiet numpy wn vaderSentiment && python -c \"from lexicon.oewn_offline import get_wordnet; get_wordnet()\"",
+  "postStartCommand": "nohup bash .devcontainer/start_monday.sh > /tmp/monday_start.log 2>&1 &",
+  "forwardPorts": [8765],
+  "portsAttributes": {
+    "8765": {"label": "Talk to Monday", "onAutoForward": "openBrowser"}
+  }
+}
