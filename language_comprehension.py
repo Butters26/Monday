@@ -1741,6 +1741,8 @@ class LanguageComprehensionEngine:
                     evidence.append(e)
         affect = dict(main.get("affect") or {})
         affect["evidence"] = evidence
+        affect["present"] = bool(evidence) or any(
+            (self.analyze(part).get("affect") or {}).get("present") for part in reading.get("parts") or [])
         reading["affect"] = affect
         # Words she doesn't know: the ones in its statements, not a misreading of the whole.
         unknown: List[str] = []
@@ -2326,7 +2328,30 @@ class LanguageComprehensionEngine:
         }
         if reading["parts"]:
             self._whole_from_parts(reading, statements.get("positions") or [])
+        reading["asks_her"] = self._asks_her(reading)
         return reading
+
+    def _asks_her(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """"Tell me about my brother", "describe my sister", "explain why I am
+        sad": he's asking her to say something. A request (no subject) whose
+        verb the dictionary files under communicating, about something."""
+        if reading.get("speech_act") != "imperative":
+            return None
+        clause = (reading.get("clauses") or [{}])[0]
+        verb = str(clause.get("predicate_surface") or "")
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            senses = list(get_wordnet().synsets(verb, pos="v"))[:3]
+        except Exception:
+            senses = []
+        if not any(str(x.lexfile()) == "verb.communication" for x in senses):
+            return None
+        roles = clause.get("roles") or {}
+        target = roles.get("about") or roles.get("patient") or roles.get("theme")
+        mention = next((m for m in reading.get("mentions") or [] if m.get("mention_id") == target), None)
+        if not mention:
+            return None
+        return {"verb": verb, "about": str(mention.get("surface") or "")}
 
 
 __all__ = ["LanguageComprehensionEngine", "LinguisticMention"]

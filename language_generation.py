@@ -488,10 +488,13 @@ class LanguageGenerator:
             return text
         reading = self._resolve_references(reading, {**context, "user_id": user_id})
         words = [str(t.get("surface") or "") for t in reading.get("tokens") or []]
+        as_written = self.comprehension.tokenize(text)
+        if len(as_written) == len(words):
+            words = list(as_written)  # keep his spelling ("Texas", not "texas")
         for ref in reading.get("references") or []:
             idx = ref.get("index")
-            if not ref.get("sure") or not isinstance(idx, int) or idx >= len(words):
-                continue
+            if not ref.get("sure") or not ref.get("label") or not isinstance(idx, int) or idx >= len(words):
+                continue  # ("it rains": a placeholder "it" means nothing; it stays "it")
             label = str(ref.get("label") or "")  # in his own words ("my brother")
             words[idx] = label + ("'s" if ref.get("pronoun") in self._POSSESSIVE_PRONOUNS else "")
         out = " ".join(w for w in words if w)
@@ -766,8 +769,10 @@ class LanguageGenerator:
                 from direct_notus import DirectNotusProcess
                 words |= set(DirectNotusProcess._verb_kinds(predicate.split("v:", 1)[1].split("@", 1)[0]))
             subject = str(fact.get("subject") or "").casefold()
-            about_them = 2 if who and (subject == who or subject.startswith(who + "'s")) else 0
-            return len(his & words) + about_them
+            about_them = 2 if who and subject == who else (1 if who and subject.startswith(who + "'s") else 0)
+            # "what is my dog named?" asks for a name: a fact that is one comes first.
+            name = 2 if his & {"name", "named", "call", "called"} and str(fact.get("object") or "")[:1].isupper() else 0
+            return len(his & words) + about_them + name
         return sorted(facts, key=lambda f: (shared(f), int(f.get("id") or 0)), reverse=True)
 
     def _user_facts(self, query: str, user_id: str) -> List[Dict[str, Any]]:
@@ -1170,6 +1175,16 @@ class LanguageGenerator:
         user_input = str(semantic_input.get("user_input") or understanding.get("raw_text") or "")
         situation = self._situation(semantic_input)
         resolved_input = self._resolved_text(user_input, user_id) if user_input else user_input
+        asks_her = understanding.get("asks_her") or self.comprehension.analyze(resolved_input or "").get("asks_her")
+        if asks_her and asks_her.get("about"):
+            # "Tell me about my brother" asks what she knows about him: answered
+            # like that question, from what she knows.
+            about = str(asks_her["about"]).strip()
+            resolved_input = (about + "?") if about.split()[0].casefold() in ("why", "how", "what", "where", "who", "when") \
+                else f"what do you know about {about}?"
+            situation = "question"
+            understanding = dict(understanding, speech_act="question")
+            semantic_input = dict(semantic_input, language_understanding=understanding)
         # What social context believes this moment calls for, in words ("you're welcome").
         social_now = self._social_for(user_id, user_input) or semantic_input.get("social_context") or {}
         expected_reply = str(social_now.get("expected_reply") or "").strip()
@@ -1187,9 +1202,23 @@ class LanguageGenerator:
         # What he said, as a whole meaning, from Language's own reading of it
         # (each part of a two-part sentence on its own).
         his = self.comprehension.analyze(resolved_input or "")
-        for part in his.get("parts") or [resolved_input]:
-            said = self._statement_meaning(self.comprehension.analyze(part) if his.get("parts") else his)
-            if said:
+        said_parts = [self._statement_meaning(self.comprehension.analyze(part)) for part in his.get("parts") or []] \
+            if his.get("parts") else [self._statement_meaning(his)]
+        attached = set()
+        for link in his.get("links") or []:
+            # A statement that says when, why, on what condition or despite what
+            # another is true goes with that one ("we will stay home if it rains").
+            a, b = link.get("from"), link.get("to")
+            if link.get("kind") in ("when", "why", "on_condition", "unless", "despite") and isinstance(a, int) \
+                    and isinstance(b, int) and a < len(said_parts) and b < len(said_parts) \
+                    and said_parts[a] and said_parts[b]:
+                if link.get("kind") == "why":
+                    said_parts[a]["because"] = said_parts[b]
+                else:
+                    said_parts[a]["linked"] = {"word": link.get("word"), "meaning": said_parts[b]}
+                attached.add(b)
+        for n, said in enumerate(said_parts):
+            if said and n not in attached:
                 pieces["what_he_said"].append(said)
         if expected_reply:
             said = self._meaning_from_words(expected_reply)

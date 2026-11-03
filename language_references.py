@@ -244,7 +244,12 @@ def _weather_it(tokens: List[Dict[str, Any]], token: Dict[str, Any]) -> bool:
     except Exception:
         return False
     # Used the "It ----s" way: the verb has that frame and nothing comes after it.
-    nothing_after = not [t for t in after[1:] if t.get("kind") not in ("adverb", "temporal")]
+    rest = []
+    for t in after[1:]:
+        if t.get("kind") in ("conjunction", "subordinator", "punctuation", "pronoun"):
+            break  # "if it rains we will stay home": the next statement starts
+        rest.append(t)
+    nothing_after = not [t for t in rest if t.get("kind") not in ("adverb", "temporal")]
     return nothing_after and any(f.strip().startswith("It ") for f in frames)
 
 

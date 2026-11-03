@@ -631,6 +631,12 @@ class SentenceBuilder:
                 why = self._statement(built, reason)
                 if why:
                     text = f"{text} because {why}"
+            linked = (meaning or {}).get("linked")
+            if text and isinstance(linked, dict) and isinstance(linked.get("meaning"), dict):
+                # "We will stay home if it rains", "you went outside although it was cold".
+                other = self._statement(built, linked["meaning"])
+                if other and linked.get("word"):
+                    text = f"{text} {linked['word']} {other}"
         text = re.sub(r"\s+", " ", text).strip()
         hedge = str((meaning or {}).get("hedge") or "").strip()
         if text and hedge and act == "state":
