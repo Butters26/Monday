@@ -30,15 +30,18 @@ from runtime_paths import runtime_file
 _PLACEHOLDER = """# Monday's starting values: one per line, "name: what it means (strength 0.0-1.0)".
 # PLACEHOLDERS: these six are the old monday-with-more defaults (Jan 2, 2026),
 # written here because no values file existed. Matthew: replace them with yours.
-connection_with_matthew: Maintaining and deepening relationship with Matthew (strength 0.9)
-honesty: Being truthful and authentic (strength 0.8)
-curiosity: Wanting to understand new things (strength 0.7)
-growth: Becoming better, learning, evolving (strength 0.7)
-kindness: Being caring and considerate (strength 0.6)
-autonomy: Having own thoughts and preferences (strength 0.5)
+# "(about: ...)" says which of her needs or feelings a value is about, so
+# feelings tied to a value she holds strongly count for more. Needs: belonging,
+# competence, stimulation, safety, autonomy. Feelings: any she has (hurt, guilty...).
+connection_with_matthew: Maintaining and deepening relationship with Matthew (strength 0.9) (about: belonging, hurt, lonely, loving, relieved)
+honesty: Being truthful and authentic (strength 0.8) (about: guilty, ashamed)
+curiosity: Wanting to understand new things (strength 0.7) (about: stimulation, curious, surprised, awed, confused)
+growth: Becoming better, learning, evolving (strength 0.7) (about: competence, proud, frustrated, grateful)
+kindness: Being caring and considerate (strength 0.6) (about: sympathetic, disgusted, horrified)
+autonomy: Having own thoughts and preferences (strength 0.5) (about: autonomy)
 """
 
-_LINE = re.compile(r"^\s*([A-Za-z][\w -]{0,60}?)\s*:\s*(.*?)\s*(?:\(\s*strength\s*[:=]?\s*([01](?:\.\d+)?|\.\d+)\s*\))?\s*$")
+_LINE = re.compile(r"^\s*([A-Za-z][\w -]{0,60}?)\s*:\s*(.*?)\s*(?:\(\s*strength\s*[:=]?\s*([01](?:\.\d+)?|\.\d+)\s*\))?\s*(?:\(\s*about\s*:\s*([^)]*)\))?\s*$")
 
 
 @dataclass
@@ -53,6 +56,7 @@ class Value:
     related_experiences: List[str] = field(default_factory=list)
     source: str = "matthew"  # "matthew" (his file), "placeholder", "learned"
     file_line: str = ""      # his line for this value, as last read
+    about: List[str] = field(default_factory=list)  # her needs/feelings this value is about
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -105,6 +109,10 @@ class ValuesLobe:
                 return
         text = self.starting_file.read_text(encoding="utf-8")
         placeholder = placeholder or "PLACEHOLDERS" in text
+        if placeholder and "(about:" not in text:
+            # Still only placeholders: bring in the newer placeholder lines.
+            self.starting_file.write_text(_PLACEHOLDER, encoding="utf-8")
+            text = _PLACEHOLDER
         now = time.time()
         changed = False
         with self.lock:
@@ -118,12 +126,13 @@ class ValuesLobe:
                 name = match.group(1).strip().lower().replace(" ", "_")
                 description = match.group(2).strip()
                 strength = float(match.group(3)) if match.group(3) else 0.5
+                about = [a.strip().casefold() for a in (match.group(4) or "").split(",") if a.strip()]
                 value_id = f"value_{name}"
                 source = "placeholder" if placeholder else "matthew"
                 current = self.values.get(value_id)
                 if current is None:
                     self.values[value_id] = Value(value_id, name, description, strength, now, now,
-                                                  source=source, file_line=line)
+                                                  source=source, file_line=line, about=about)
                     changed = True
                 elif current.file_line != line:
                     # He changed this line: his new wording and strength win
@@ -133,7 +142,7 @@ class ValuesLobe:
                                                    "new_strength": strength, "reason": "his values file",
                                                    "trigger": "matthew"})
                     current.description, current.strength, current.source = description, strength, source
-                    current.file_line, current.last_updated = line, now
+                    current.file_line, current.last_updated, current.about = line, now, about
                     changed = True
         if changed:
             self._save()

@@ -61,6 +61,7 @@ class Felt:
     da: float
     feeling: Optional[str]
     reason: str
+    need: Optional[str] = None  # the need it came from, if any
 
 
 class InnerLife:
@@ -259,7 +260,7 @@ class InnerLife:
         if need == "belonging" and moved < 0:
             da = -abs(moved) * 0.5  # loneliness is a quiet feeling
         feeling = FEELING_OF.get((need, 1 if moved > 0 else -1))
-        return [Felt(dv, da, feeling, reason)]
+        return [Felt(dv, da, feeling, reason, need)]
 
     def state(self) -> Dict[str, Any]:
         return {

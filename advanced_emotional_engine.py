@@ -312,7 +312,16 @@ class AdvancedEmotionalEngine:
         """What happened moves her core affect; the strongest named feeling is
         what she feels now."""
         strongest = None
+        values = getattr(self, "_values_now", None) or []
         for f in felt or []:
+            # A feeling tied to a value she holds strongly counts for more.
+            touched = [v for v in values if (f.need and f.need in v.get("about", []))
+                       or (f.feeling and f.feeling in v.get("about", []))]
+            if touched:
+                weight = 1.0 + (max(float(v.get("strength") or 0.5) for v in touched) - 0.5)
+                f.dv, f.da = f.dv * weight, f.da * weight
+                if abs(f.dv) > 0.08:
+                    self._tell_values(touched, f)
             # The more she already leans one way, the less more of the same moves
             # her (she can't be pushed past the edge; the other way moves her fully).
             v, a = self.core_affect.valence, self.core_affect.arousal
@@ -362,6 +371,28 @@ class AdvancedEmotionalEngine:
         except Exception:
             return 0.0
 
+    def _tell_values(self, touched: List[Dict[str, Any]], f: Any) -> None:
+        """What she went through, for her values to change with it."""
+        tell = getattr(self.thalamus, "tell", None)
+        if not callable(tell):
+            return
+        try:
+            tell("values", "apply_experience", {
+                # A strong feeling tied to a value shows the value matters to her
+                # (guilt shows she cares about honesty; hurt from Matthew shows the
+                # connection matters), so it is reported as the value mattering.
+                "values": [v.get("name") for v in touched], "valence": 1.0,
+                "intensity": min(1.0, abs(f.dv)), "emotion": f.feeling or "", "experience_id": f.reason[:60],
+            }, "emotion")
+        except Exception:
+            pass
+
+    def _load_values(self) -> None:
+        """Her values, as the values lobe holds them now (once per moment)."""
+        response = self._query_lobe('values', {'type': 'get_values'}) or {}
+        found = response.get('values') or (response.get('content') or {}).get('values') or []
+        self._values_now = [v for v in found if isinstance(v, dict)]
+
     def _settle_for_time(self) -> None:
         """Her mood settles back toward calm with time, not with turns."""
         now = time.time()
@@ -395,6 +426,7 @@ class AdvancedEmotionalEngine:
         # Her feelings come from her needs and what happens to her, not from
         # the words themselves (Matthew, Nov 3). First, time has passed.
         self._settle_for_time()
+        self._load_values()
         self.feel(self.inner.pass_time())
 
         # What just happened: social context read the moment (a greeting, an
