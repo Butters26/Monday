@@ -653,12 +653,40 @@ class SentenceBuilder:
             built.problems.append("nothing built")
         return built
 
+    @staticmethod
+    def _pronoun_for(entity: Dict[str, Any]) -> Optional[str]:
+        """Which pronoun stands for someone already named: by what the
+        dictionary says they are (a brother is a he, a dog an it)."""
+        if not isinstance(entity, dict) or entity.get("ref") or entity.get("pronoun"):
+            return None
+        if entity.get("group") or entity.get("count") == "many":
+            return "they"
+        noun = str(entity.get("noun") or "")
+        if not noun:
+            return None  # a name: she can't tell he or she from the name alone
+        try:
+            from language_references import noun_kind
+            kind, sex = noun_kind(noun)
+        except Exception:
+            return None
+        if kind == "person":
+            return sex  # None when the dictionary doesn't say
+        return "it"
+
     def build_many(self, meanings: Sequence[Dict[str, Any]]) -> Built:
         """Several facts; same-subject statements may be joined with 'and'."""
         combined = Built("", meaning=list(meanings), learner=self.learner)
         sentences: List[str] = []
         i = 0
-        meanings = list(meanings)
+        # What's said about the same one goes together ("Your brother is tall...
+        # He works at a bank"), in the order they first come up.
+        order: List[str] = []
+        for m in meanings:
+            key = repr(m.get("subject"))
+            if key not in order:
+                order.append(key)
+        meanings = sorted(meanings, key=lambda m: order.index(repr(m.get("subject"))))
+        last_subject = None
         while i < len(meanings):
             first = meanings[i]
             j = i + 1
@@ -666,7 +694,15 @@ class SentenceBuilder:
                    and meanings[j].get("act", "state") == "state"
                    and meanings[j].get("subject") == first.get("subject")):
                 j += 1
-            group = meanings[i:j]
+            group = [dict(m) for m in meanings[i:j]]
+            subject = group[0].get("subject")
+            if subject and subject == last_subject:
+                # Said about the same one as the sentence before: "he", "she", "it", "they".
+                pronoun = self._pronoun_for(subject)
+                if pronoun and self._choose(combined, "same_one_again", ["pronoun", "repeat"]) == "pronoun":
+                    for m in group:
+                        m["subject"] = {"pronoun": pronoun}
+            last_subject = subject
             if len(group) > 1 and self._choose(combined, "join_same_subject", ["join", "separate"]) == "join":
                 head = self.build(group[0])
                 tails = []
@@ -686,7 +722,10 @@ class SentenceBuilder:
                 else:
                     sentences.append(f"{body}, {', '.join(tails[:-1])}, and {tails[-1]}.")
             else:
-                for m in group:
+                pronoun = self._pronoun_for(group[0].get("subject"))
+                for n, m in enumerate(group):
+                    if n and pronoun and self._choose(combined, "same_one_again", ["pronoun", "repeat"]) == "pronoun":
+                        m = {**m, "subject": {"pronoun": pronoun}}  # "Your brother is tall. He works..."
                     b = self.build(m)
                     combined.choices.extend(b.choices)
                     combined.problems.extend(b.problems)
