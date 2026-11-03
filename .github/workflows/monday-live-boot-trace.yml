@@ -1,0 +1,60 @@
+name: Monday live boot trace
+
+on:
+  push:
+    branches:
+      - assistant-monday-live-boot-2026-11-03
+
+permissions:
+  contents: read
+
+jobs:
+  monday-live-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install runtime prerequisites
+        run: python -m pip install --disable-pip-version-check numpy wn vaderSentiment scikit-learn joblib
+      - name: Boot real Monday core and capture trace
+        shell: bash
+        env:
+          MONDAY_RUNTIME_DIR: ${{ runner.temp }}/monday_runtime
+          MONDAY_NOTUS_SQLITE: ${{ runner.temp }}/monday_runtime/notus_memory.sqlite3
+          MONDAY_TRACE: ${{ runner.temp }}/monday_runtime/trace.jsonl
+        run: |
+          mkdir -p "$MONDAY_RUNTIME_DIR"
+          set +e
+          timeout --signal=INT --kill-after=15s 150s python -u run_abin.py > "$RUNNER_TEMP/monday-boot.log" 2>&1 <<'MONDAY_MESSAGES'
+          Hello Monday, can you hear me?
+          What did you understand from my greeting?
+          MONDAY_MESSAGES
+          code=$?
+          echo "MONDAY_BOOT_EXIT_CODE=$code"
+          echo "========== ACTUAL BOOT OUTPUT =========="
+          tail -c 20000 "$RUNNER_TEMP/monday-boot.log"
+          echo ""
+          if [[ -f "$MONDAY_TRACE" ]]; then
+            echo "========== ACTUAL TRACE REPORT =========="
+            python trace_report.py "$MONDAY_TRACE" || true
+            echo "========== TRACE FILE SUMMARY =========="
+            wc -l "$MONDAY_TRACE"
+          else
+            echo "NO_TRACE_FILE: Monday did not initialize the tracer."
+          fi
+          echo "$code" > "$RUNNER_TEMP/monday-boot-exit-code.txt"
+          exit 0
+      - name: Save raw trace and startup output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monday-live-boot-trace
+          path: |
+            ${{ runner.temp }}/monday_runtime/trace.jsonl
+            ${{ runner.temp }}/monday-boot.log
+            ${{ runner.temp }}/monday-boot-exit-code.txt
+          if-no-files-found: warn
+          retention-days: 3
