@@ -983,7 +983,7 @@ class Thalamus:
         ctx = self._content(memory_context)
 
         emotion = self.send_and_wait(
-            "emotion", "process_input", {"user_input": user_input}
+            "emotion", "process_input", {"user_input": user_input, "user_id": user_id}
         )
         if emotion.get("status") != "success":
             return ""

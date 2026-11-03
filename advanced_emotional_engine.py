@@ -33,7 +33,8 @@ from typing import Dict, List, Optional, Tuple, Any, Callable
 from threading import Lock
 from thalamus import get_thalamus
 from monday_core_affect import MondayCoreAffect, label_from_va, THIN_LABELS
-from monday_appraisal import WordFeelings, appraise, INTERNAL as _INTERNAL_SCALE
+from monday_appraisal import WordFeelings
+from monday_inner_life import InnerLife
 
 # ------------------------------
 # Core Enums & Dataclasses
@@ -48,6 +49,11 @@ class EmotionalState(Enum):
     CALM = "calm"
     WORRIED = "worried"
     SCARED = "scared"
+    # Feelings that come from her needs and what happens to her (inner life).
+    LONELY = "lonely"
+    HURT = "hurt"
+    GLAD = "glad"
+    BORED = "bored"
     # UNUSED/legacy — kept for persisted state + feel_emotion compat.
     # NOT produced by live CoreAffect readout; do not treat as live mood labels.
     CURIOUS = "curious"          # UNUSED/legacy
@@ -59,7 +65,7 @@ class EmotionalState(Enum):
     CONTEMPT = "contempt"        # UNUSED/legacy
     NOSTALGIC = "nostalgic"      # UNUSED/legacy
     ANXIOUS = "anxious"          # UNUSED/legacy
-    FRUSTRATED = "frustrated"    # UNUSED/legacy
+    FRUSTRATED = "frustrated"  # from her inner life
     EUPHORIC = "euphoric"        # UNUSED/legacy
     MELANCHOLIC = "melancholic"  # UNUSED/legacy
     PLAYFUL = "playful"          # UNUSED/legacy
@@ -348,6 +354,9 @@ class AdvancedEmotionalEngine:
         self.autonomy_level: float = 0.85  # 0 mirror ↔ 1 fully internal
         self.attachment = AttachmentModel()
         self.needs = InternalNeeds()
+        # Where her feelings come from: her needs and what happens to her.
+        self.inner = InnerLife(self.needs, self.attachment)
+        self._feeling_since = 0.0
         self.internal = InternalState()
         self.expression = ExpressionState()
         self._time_on_task: float = 0.0
@@ -433,6 +442,49 @@ class AdvancedEmotionalEngine:
         except Exception:
             pass
 
+    def feel(self, felt: List[Any]) -> None:
+        """What happened moves her core affect; the strongest named feeling is
+        what she feels now."""
+        strongest = None
+        for f in felt or []:
+            self.core_affect.apply_delta(f.dv, f.da, f.reason)
+            self._last_self_impact_reason = f.reason
+            if f.feeling and (strongest is None or abs(f.dv) + abs(f.da) > abs(strongest.dv) + abs(strongest.da)):
+                strongest = f
+        if strongest is not None and abs(strongest.dv) + abs(strongest.da) > 0.06:
+            self.inner.last_feeling, self.inner.last_reason = strongest.feeling, strongest.reason
+            self._feeling_since = time.time()
+
+    def _feeling_shape(self, name: str):
+        """How good/bad and how stirred up a named feeling is (its place on her
+        two dials), so a remembered feeling can be felt again."""
+        try:
+            emotion = EmotionalState(name)
+        except ValueError:
+            return None
+        proto = self._PAD_PROTOS.get(emotion)
+        if proto:
+            return proto[0], proto[1]
+        shapes = {"lonely": (-0.4, -0.3), "hurt": (-0.5, 0.2), "glad": (0.4, 0.1), "bored": (-0.2, -0.4),
+                  "proud": (0.5, 0.3), "frustrated": (-0.4, 0.4), "curious": (0.3, 0.4), "relieved": (0.3, -0.2)}
+        return shapes.get(name)
+
+    def _settle_for_time(self) -> None:
+        """Her mood settles back toward calm with time, not with turns."""
+        now = time.time()
+        last = getattr(self, "_last_settle", now)
+        self._last_settle = now
+        minutes = max(0.0, (now - last) / 60.0)
+        self.core_affect.decay_toward_setpoint(min(4.0, 0.3 + minutes / 10.0))
+
+    def _social_read(self, text: str, user_id: str) -> Dict[str, Any]:
+        heard = (getattr(self, "_social_reads", {}) or {}).get(user_id) or {}
+        if str(heard.get("said") or "").strip() == text.strip():
+            return heard
+        response = self._query_lobe('social_context', {'type': 'get_context', 'user_id': user_id}) or {}
+        body = response.get('content') if isinstance(response.get('content'), dict) else {}
+        return body if str(body.get("said") or "").strip() == text.strip() else {}
+
     def _read(self, text: str) -> Dict[str, Any]:
         """Language reads the sentence; Emotion doesn't parse grammar itself."""
         if not text.strip():
@@ -445,7 +497,7 @@ class AdvancedEmotionalEngine:
         content = response.get('content') if isinstance(response.get('content'), dict) else response
         return content.get('understanding') or {}
 
-    def get_emotional_response(self, user_input: str) -> str:
+    def get_emotional_response(self, user_input: str, user_id: str = "default") -> str:
         """Live mood path: CoreAffect + appraisal only (not AppraisalEngine classifiers)."""
         # Query Notus for emotional memories (side channel; does not set her mood)
         try:
@@ -455,18 +507,30 @@ class AdvancedEmotionalEngine:
         except Exception:
             pass
 
-        # Quiet baseline first: decay toward setpoint (no RNG flip)
-        self.core_affect.decay_toward_setpoint(1.0)
+        # Her feelings come from her needs and what happens to her, not from
+        # the words themselves (Matthew, Nov 3). First, time has passed.
+        self._settle_for_time()
+        self.feel(self.inner.pass_time())
 
-        # Appraisal: how what he said affects HER (aimed at her moves her most;
-        # his own feelings move her for him, gently, without becoming hers).
-        delta = appraise(self._read(user_input or ""), self.word_feelings)
-        self._last_self_impact_reason = delta.reason
-        self.last_appraisal = {"about": delta.about, "dv": delta.dv, "da": delta.da,
-                               "reason": delta.reason, "words": delta.words}
-        if abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9:
-            self.core_affect.apply_delta(delta.dv, delta.da, delta.reason)
-
+        # What just happened: social context read the moment (a greeting, an
+        # insult, being thanked...); anything said is someone talking to her.
+        social = self._social_read(user_input or "", user_id)
+        move = str(social.get("move") or "")
+        kind = {"greeting": "greeting", "goodbye": "goodbye", "thanks": "thanks",
+                "compliment": "compliment", "insult": "insult"}.get(move, "contact")
+        if social.get("taught"):
+            kind = "taught"
+        felt = self.inner.happen(kind, who="he")
+        his = social.get("his_feeling") if isinstance(social.get("his_feeling"), dict) else {}
+        if his.get("good") is not None:
+            felt += self.inner.feel_for(float(his["good"]))
+        novelty = self._query_lobe('novelty', {'type': 'get_assessment'}) or {}
+        score = float(novelty.get('novelty_score') or (novelty.get('content') or {}).get('score') or 0.0)
+        if score > 0.6:
+            felt += self.inner.happen("novel", strength=score)
+        self.feel(felt)
+        self.last_appraisal = {"event": kind, "felt": [f.reason for f in felt],
+                               "inner": self.inner.state()}
         self._sync_from_core_affect(trigger=(user_input or "")[:80])
 
         # Compat: keep last_understanding/appraisal slots filled but gated —
@@ -523,9 +587,10 @@ class AdvancedEmotionalEngine:
             return
 
         # Gentle capped nudge — never full phrase-table slam
-        relevance = max(0.0, min(1.0, float(getattr(event, "relevance", 0.5) or 0.5)))
-        delta = appraise(self._read(event.content or ""), self.word_feelings,
-                         scale=_INTERNAL_SCALE * relevance * (0.5 if event.resolved else 1.0))
+        # Her own thoughts don't make her feel something from their words; the
+        # feelings they carry come back through memory (remembered moments).
+        from monday_appraisal import Appraisal
+        delta = Appraisal(0.0, 0.0, "thought noted", "none", [])
 
         if abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9:
             self.core_affect.apply_delta(delta.dv, delta.da, delta.reason)
@@ -606,6 +671,7 @@ class AdvancedEmotionalEngine:
             'core_affect': self.core_affect.to_dict(),
             'last_self_impact_reason': getattr(self, '_last_self_impact_reason', ''),
             'learned_word_feelings': dict(self.word_feelings.learned),
+            'inner_life': {**self.inner.state(), 'last_time': self.inner.last_time},
             'attachment': asdict(self.attachment),
             'needs': asdict(self.needs),
             'internal': asdict(self.internal),
@@ -701,6 +767,9 @@ class AdvancedEmotionalEngine:
             self.needs = InternalNeeds(**{
                 k: float(needs[k]) for k in InternalNeeds.__dataclass_fields__ if k in needs
             })
+        # Her inner life works on the needs and attachment just loaded.
+        self.inner.needs, self.inner.attachment = self.needs, self.attachment
+        self.inner.load(obj.get('inner_life') or {})
         internal = obj.get('internal')
         if isinstance(internal, dict):
             self.internal = InternalState(**{
@@ -777,6 +846,13 @@ class AdvancedEmotionalEngine:
         """Publish CoreAffect into legacy fields consumers already read."""
         label = self.core_affect.label()
         intensity = self.core_affect.intensity()
+        named = getattr(getattr(self, "inner", None), "last_feeling", None)
+        shape = self._feeling_shape(named) if named else None
+        fits = shape is None or abs(self.core_affect.valence) < 0.15 or \
+            (shape[0] >= 0) == (self.core_affect.valence >= 0)
+        if named and fits and time.time() - getattr(self, "_feeling_since", 0.0) < 3600 and (
+                label != "calm" or abs(self.core_affect.valence - self.core_affect.setpoint_v) > 0.05):
+            label = named  # what she feels, named by what caused it (lonely, hurt, proud...)
         try:
             emo = EmotionalState(label)
         except ValueError:
@@ -1141,6 +1217,14 @@ class MondayAffect(AdvancedEmotionalEngine):
 class EmotionalProcess:
     """Emotional/Personality engine as independent process (HARDENED)"""
     
+    def on_joined(self, name: str) -> None:
+        """On the team: hear what social context makes of each moment and what
+        memory brings back."""
+        listen = getattr(self.thalamus, "listen", None)
+        if callable(listen):
+            listen(name, "social_read")
+            listen(name, "remembered")
+
     def __init__(self, state_file=None, thalamus=None):
         self.thalamus = thalamus or get_thalamus()
         self.engine = MondayAffect("Monday", thalamus=self.thalamus)
@@ -1352,7 +1436,8 @@ class EmotionalProcess:
                 # FIX: validate input type
                 if not isinstance(user_input, str):
                     return {'status': 'error', 'message': 'user_input must be a string'}
-                response = self.engine.get_emotional_response(user_input)
+                response = self.engine.get_emotional_response(
+                    user_input, str(message.get('user_id') or 'default'))
                 
                 # Check if this is a strong emotional response to something novel
                 intensity = self.engine.emotional_intensity
@@ -1397,13 +1482,39 @@ class EmotionalProcess:
                     'user_affect': snap.get('user_affect'),
                 }
 
-            elif msg_type == 'appraise':
-                # How something would affect her, without changing her mood
-                # (other lobes ask: social context, to tell a compliment).
-                text = str(message.get('text') or '')
-                delta = appraise(self.engine._read(text), self.engine.word_feelings)
-                return {'status': 'success', 'content': {'about': delta.about, 'valence': delta.dv,
-                                                         'arousal': delta.da, 'reason': delta.reason}}
+            elif msg_type == 'social_read':
+                # Social context's read of each moment (what kind of move it was).
+                read = message.get('content') if isinstance(message.get('content'), dict) else message
+                self.engine.__dict__.setdefault('_social_reads', {})[str(read.get('user_id') or 'default')] = dict(read)
+                return {'status': 'success', 'content': {'heard': True}}
+
+            elif msg_type == 'reply_outcome':
+                # Language says whether she managed to reply: doing things right
+                # or failing is part of how she feels.
+                if message.get('failed'):
+                    kind = 'reply_failed'
+                elif message.get('used_memory'):
+                    kind = 'answered_from_memory'
+                else:
+                    kind = 'reply_ok'
+                self.engine.feel(self.engine.inner.happen(kind))
+                self.engine._sync_from_core_affect(trigger=kind)
+                return {'status': 'success', 'content': {'felt': self.engine.inner.last_feeling}}
+
+            elif msg_type == 'remembered':
+                # A memory came back with the feeling it had: she feels some of it again.
+                body = message.get('content') if isinstance(message.get('content'), dict) else message
+                felt = []
+                for memory in (body.get('memories') or [])[:3]:
+                    for past in (memory.get('feelings') or [])[-1:]:
+                        proto = self.engine._feeling_shape(str(past.get('emotion') or ''))
+                        if proto:
+                            felt += self.engine.inner.remember_feeling(
+                                proto[0] * float(past.get('intensity') or 0.5),
+                                proto[1] * float(past.get('intensity') or 0.5),
+                                str(memory.get('content') or ''))
+                self.engine.feel(felt)
+                return {'status': 'success', 'content': {'remembered_feelings': len(felt)}}
 
             elif msg_type == 'adjust_word_feeling':
                 # A belief about how a word feels, changed (by experience or by Matthew).

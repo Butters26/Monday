@@ -647,6 +647,15 @@ class LanguageGenerator:
         # way she was taught it, as a whole.
         return {"act": "phrase", "words": words, "_purpose": "social_reply"}
 
+    def _tell_emotion(self, failed: bool, used_memory: bool) -> None:
+        """Whether she managed to say something is part of how she feels."""
+        tell = getattr(self.thalamus, "tell", None)
+        if callable(tell):
+            try:
+                tell("emotion", "reply_outcome", {"failed": failed, "used_memory": used_memory}, "language")
+            except Exception:
+                pass
+
     @staticmethod
     def _fact_key(meaning: Dict[str, Any]) -> Tuple[str, str, str]:
         fact = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else {}
@@ -1157,6 +1166,7 @@ class LanguageGenerator:
                             plan=[f"{p}={o}" for p, o, _ in plan.choices])
                 if ok:
                     silence = None
+                    self._tell_emotion(failed=False, used_memory=bool(meaning.get("_fact")))
                     self._trace("reply_done", silence=silence, situation=situation, attempts=attempt,
                                 sentence=built.sentence, reason=last_reason)
                     return {"sentence": built.sentence, "silence": silence, "reason": last_reason,
@@ -1164,6 +1174,7 @@ class LanguageGenerator:
         finally:
             builder.explore_rate = base_explore
             builder.steer_only, builder.steer_avoid = {}, {}
+        self._tell_emotion(failed=True, used_memory=False)
         self._trace("reply_done", silence="failed", situation=situation, reason=last_reason,
                     attempts=self.MAX_REPLY_ATTEMPTS)
         return {"sentence": "", "silence": "failed", "reason": last_reason, "situation": situation,

@@ -1,4 +1,12 @@
-"""Appraisal: how what happens affects Monday herself.
+"""How words are meant (well or badly, and about whom).
+
+USED BY SOCIAL CONTEXT, NOT FOR HER FEELINGS (Matthew, Nov 3): her feelings
+come from her needs and what happens to her (monday_inner_life.py). Social
+context uses this to read what kind of move was made (a compliment, an
+insult, how he feels); Emotion then feels what that move means for her.
+
+Earlier description, kept for the record:
+Appraisal: how what happens affects Monday herself.
 
 This is the Emotion lobe's own job (its contract: "processes how situations and
 internal activity affect her emotionally"). It replaces SelfImpact's regex

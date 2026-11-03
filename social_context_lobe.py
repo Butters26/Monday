@@ -265,9 +265,9 @@ compliment -> "thank you" (sure 0.7)
             # Something said about her that is good or bad for her: a
             # compliment or an insult (not him sharing his own feelings).
             # Emotion is the part that knows that.
-            felt = self._ask_emotion(user_input)
-            if felt.get("about") == "her" and abs(float(felt.get("valence") or 0)) > 0.1:
-                return "compliment" if float(felt["valence"]) > 0 else "insult"
+            meant = self._how_meant(reading)
+            if meant.about == "her" and abs(meant.dv) > 0.1:
+                return "compliment" if meant.dv > 0 else "insult"
         if intent == "emotional_share":
             return "emotional_share"
         for token in reading.get("tokens") or []:
@@ -280,6 +280,18 @@ compliment -> "thank you" (sure 0.7)
                 for t in reading.get("tokens") or []):
             return "check_in"  # a question put to her, about her
         return _INTENT_TO_CUE.get(intent)
+
+    _meaning_beliefs = None
+
+    def _how_meant(self, reading: Dict[str, Any]):
+        """Whether what was said is meant well or badly, and about whom: social
+        context's knowledge of how words are meant (beliefs she can change),
+        read from Language's reading. This is understanding the move, not
+        feeling it; Emotion feels what the move means for her."""
+        from monday_appraisal import WordFeelings, appraise
+        if SocialContextLobe._meaning_beliefs is None:
+            SocialContextLobe._meaning_beliefs = WordFeelings()
+        return appraise(reading, SocialContextLobe._meaning_beliefs)
 
     def _ask_emotion(self, text: str) -> Dict[str, Any]:
         send = getattr(self.thalamus, "send_message", None)
@@ -481,10 +493,21 @@ compliment -> "thank you" (sure 0.7)
         # What this move calls for, from what she believes (her starting social
         # beliefs and what she's been taught): a greeting back, a goodbye back,
         # or words ("you're welcome"). A move she has no belief about sets none.
+        if cue == "emotional_share":
+            # How he feels, as social context reads it (good or bad), for Emotion.
+            meant = self._how_meant(self._read(user_input))
+            if meant.about == "him" and meant.words:
+                snap_his = {"words": [w for w, _ in meant.words],
+                            "good": sum(v for _, v in meant.words) / len(meant.words)}
+            else:
+                snap_his = None
+        else:
+            snap_his = None
         belief = self.beliefs.get(cue or "") or {}
         snap["expects"] = belief.get("in_kind")
         snap["expected_reply"] = belief.get("say")
         snap["belief_sure"] = belief.get("sure")
+        snap["his_feeling"] = snap_his
         if taught:
             snap["taught"] = taught
             # Saying back what she was taught shows she took it in.
@@ -590,7 +613,11 @@ compliment -> "thank you" (sure 0.7)
             return {"status": "success", "content": snap, "social_context": snap}
 
         if msg_type in ("get_context", "get_social_context"):
-            snap = self.get_context(str(content.get("user_id") or "default"))
+            uid = str(content.get("user_id") or "default")
+            last = self.last_context or {}
+            # Its full read of the latest moment with this person, if there is one.
+            snap = dict(last) if str(last.get("user_id") or "default") == uid and last.get("said") \
+                else self.get_context(uid)
             return {"status": "success", "content": snap, "social_context": snap}
 
         if msg_type == "update_context":
