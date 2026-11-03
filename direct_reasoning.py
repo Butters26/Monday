@@ -777,6 +777,16 @@ class DirectReasoningAdapter:
         return (getattr(self, "_remembered", {}) or {}).get((user_id, user_input.strip().casefold())) or {}
 
     @staticmethod
+    def _is_number_word(word: str) -> bool:
+        """A word the dictionary files first as a quantity ("two", "twelve")."""
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            synsets = list(get_wordnet().synsets(word))
+        except Exception:
+            return False
+        return bool(synsets) and str(synsets[0].lexfile()) == "noun.quantity"
+
+    @staticmethod
     def _fact_words(fact: Dict[str, Any]) -> set:
         """What a fact is about: its relation ("dog name"), and who it's about
         unless that's him ("user" is the person asking: "my")."""
@@ -787,7 +797,12 @@ class DirectReasoningAdapter:
         predicate = predicate.replace("@", " ").replace("_", " ")
         subject = str(fact.get("subject") or "")
         subject = "" if subject.casefold() == "user" else subject.replace("user's ", "")
-        return FactText._content_tokens(f"{predicate} {subject}")
+        words = FactText._content_tokens(f"{predicate} {subject}")
+        if not words:
+            # "You are tired", "you have two cats": only what it says is left.
+            obj = str(fact.get("object") or "")
+            words = FactText._content_tokens(obj if obj != "(nothing)" else "")
+        return words
 
     def _fact_fits(self, fact: Dict[str, Any], question: str) -> bool:
         """Is this fact about what he asked? Both ways: every word the fact is
@@ -800,6 +815,14 @@ class DirectReasoningAdapter:
         if any(str(t.get("lemma") or "").casefold() == "who" for t in reading.get("tokens") or []):
             asked |= FactText._alias_set("name")
         about = self._fact_words(fact)
+        lows = [str(t.get("surface") or "").casefold() for t in reading.get("tokens") or []]
+        if any(a == "how" and b in ("many", "much") for a, b in zip(lows, lows[1:])):
+            # "How many cats?" asks for the number: the fact's number is the answer.
+            about = {w for w in about if not (w.isdigit() or self._is_number_word(w))}
+        if lows and lows[0] == "why" and not str(fact.get("because") or "").strip():
+            return False  # "why?" is only answered by a fact that has a reason
+        if lows and lows[0] == "when" and not str(fact.get("when_said") or "").strip():
+            return False  # "when?" is only answered by a fact that says when
         # The time asked about must be the fact's time: "where will I go?" isn't
         # answered by where he went.
         q = ((reading.get("clauses") or [{}])[0].get("qualifiers") or {})
@@ -825,7 +848,7 @@ class DirectReasoningAdapter:
             return False
         # What he asked about may also be what the fact says ("Is Lily brave?").
         about_all = FactText._expand_tokens(about | FactText._content_tokens(
-            str(fact.get("object") or "") + " " + str(fact.get("value") or "")))
+            str(fact.get("object") or "") + " " + str(fact.get("value") or "").replace(":", " ")))
         if str(fact.get("object") or "")[:1].isupper():
             about_all |= FactText._alias_set("name")  # "my cat is Luna": Luna is the cat's name
         # What he asked someone does ("what does Sam have?") must be what the fact
@@ -1198,7 +1221,12 @@ class DirectReasoningAdapter:
             # Social context's belief says what this moment calls for.
             expected = str(payload.get("expected_reply") or "")
             want = self._content_lemmas(self._analyze(expected)) if expected else set()
-            if want and (self._content_lemmas(reply) != want or reply_is_question):
+            if expected and not want:
+                # Words the dictionary doesn't have ("hey"): the words themselves.
+                same = re.findall(r"[a-z']+", expected.casefold()) == re.findall(r"[a-z']+", sentence.casefold())
+                if not same:
+                    return no(f"he made a social move; what she believes fits is '{expected}'", "say_expected")
+            elif want and (self._content_lemmas(reply) != want or reply_is_question):
                 return no(f"he made a social move; what she believes fits is '{expected}'", "say_expected")
             return {"ok": True, "reason": f"it's what she believes fits ('{expected}')"}
         if situation == "statement":

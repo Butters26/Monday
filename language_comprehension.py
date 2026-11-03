@@ -74,10 +74,13 @@ _DETERMINERS = {
 _PREPOSITIONS = {
     "to", "from", "with", "at", "in", "on", "into", "onto", "for", "of", "by",
     "about", "under", "over", "inside", "outside", "across", "through", "between",
+    "than",  # "older than me": what it's compared with
 }
 _NEGATION = {"not", "never", "no"}
 # Joining words (grammar, like the sets above): "Ariana and Cleo", "tea or coffee".
-_CONJUNCTIONS = {"and", "or", "but", "nor"}
+_CONJUNCTIONS = {"and", "or", "but", "nor", "because"}
+# Counting words (grammar): "how many cats", "some dogs".
+_QUANTIFIERS = {"many", "much", "few", "several", "some", "any", "more", "most"}
 _WH = {"who", "what", "when", "where", "why", "how", "which"}
 _DEMONSTRATIVES = {"this", "that", "these", "those"}
 _PROFORMS = {"one"}  # nominal pro-form ("the one on the shelf")
@@ -771,6 +774,9 @@ class LanguageComprehensionEngine:
                 continue
             if not self._has_pos(token, "v"):
                 continue
+            if idx > 0 and (lows[idx - 1] in _NUMBER_WORDS or lows[idx - 1] in _QUANTIFIERS
+                            or re.fullmatch(r"\d+", lows[idx - 1])):
+                continue  # "two cats": a thing after a number, never the verb
             lemma = self.lemma(token, prefer_pos="v")
             if lemma in _AUX_LEMMAS:
                 continue
@@ -1510,10 +1516,18 @@ class LanguageComprehensionEngine:
                 return "past"
         return None
 
-    def _parts(self, lexical: List[Dict[str, Any]], original: str) -> List[str]:
+    def _parts(self, lexical: List[Dict[str, Any]], original: str, joins: List[str]) -> List[str]:
         """A sentence that joins two statements ("I like cats and I hate dogs")
         split into each one. Only where the joining word starts a new subject
         that has its own verb."""
+        # Separate sentences ("I am tired. I worked all day.") are separate statements.
+        sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", original.strip()) if x.strip()]
+        if len(sentences) > 1:
+            out: List[str] = []
+            for sentence in sentences:
+                inner = self.analyze(sentence).get("parts") or []
+                out += inner or [sentence.rstrip(".!")]
+            return out
         words = original.split()
         if len(words) != len([e for e in lexical if e.get("kind") != "punctuation"]) or len(lexical) < 4:
             return []
@@ -1528,6 +1542,7 @@ class LanguageComprehensionEngine:
                     for e in content[i + 2:]) and any(
                     e.get("kind") in ("verb", "auxiliary", "modal") for e in content[:i]):
                 cuts.append(i)
+        joins[:] = [str(content[c].get("surface") or "").casefold() for c in cuts]
         if not cuts:
             return []
         parts, start = [], 0
@@ -1536,6 +1551,17 @@ class LanguageComprehensionEngine:
             start = cut + 1
         parts.append(" ".join(words[start:]).strip(" ,"))
         return [p for p in parts if p]
+
+    def _thing_after_number(self, lexical: List[Dict[str, Any]]) -> None:
+        """After a number ("two cats", "3 dogs") comes a thing, not a verb."""
+        for idx in range(1, len(lexical)):
+            entry, before = lexical[idx], lexical[idx - 1]
+            counting = before.get("kind") == "number" or str(before.get("surface")) in _QUANTIFIERS
+            if counting and entry.get("kind") in ("verb", "adjective"):
+                nouns = self._lookup(entry["surface"], pos="n")
+                if nouns:
+                    entry.update({"kind": "noun", "lemma": self.lemma(entry["surface"], prefer_pos="n"),
+                                  "senses": nouns, "read_as": "a thing after a number"})
 
     def _describing_before_noun(self, lexical: List[Dict[str, Any]]) -> None:
         """Between "the/a/my" and a noun, a word the dictionary also knows as an
@@ -1631,10 +1657,12 @@ class LanguageComprehensionEngine:
             if kind == "unknown" and token.isalpha() and token not in unknown_words:
                 unknown_words.append(token)
 
+        self._thing_after_number(lexical)
         self._describing_before_noun(lexical)
         self._degree_before_describing(lexical)
         self._describing_after_be(lexical)
         self._action_after_subject(lexical)
+        joins: List[str] = []  # how the reading's parts are joined ("and", "because")
         self._lexical_now = lexical
         try:
             verb_idx, predicate, passive, predicate_known = self._find_main_verb(tokens)
@@ -1644,7 +1672,7 @@ class LanguageComprehensionEngine:
                 and lexical[verb_idx].get("kind") in ("noun", "verb") and predicate \
                 and predicate != "be" and self._lookup(lexical[verb_idx]["surface"], pos="v") \
                 and self.lemma(lexical[verb_idx]["surface"], prefer_pos="v") == predicate \
-                and not (verb_idx > 0 and lexical[verb_idx - 1].get("kind") == "determiner"):
+                and not (verb_idx > 0 and lexical[verb_idx - 1].get("kind") in ("determiner", "number")):
             # (After "a/the/my" a word is never the verb: "is a doctor".)
             # The word chosen as the verb is read as one; things after it that
             # can be nouns are what it acts on ("play games").
@@ -2113,7 +2141,8 @@ class LanguageComprehensionEngine:
             "tense": self._tense(lexical, verb_idx),
             "modal": next((str(e.get("surface")) for e in lexical if e.get("kind") == "modal"
                            and str(e.get("surface")) not in ("will", "shall", "'ll")), None),
-            "parts": self._parts(lexical, original),
+            "parts": self._parts(lexical, original, joins),
+            "joins": joins,
             "unresolved_references": unresolved_references,
             "ambiguous_words": ambiguous_words,
             "speech_act": speech_act,

@@ -467,7 +467,8 @@ class SentenceBuilder:
                 do = self._negate(built, do)
             return do, verb
         if tense == "past":
-            return self._past(verb)[0], ""
+            heard = str(meaning.get("past_form") or "")
+            return (heard or self._past(verb)[0]), ""  # his own form first ("worked")
         if pn == ("3", "sg"):
             irregular = _IRREGULAR_HELPERS.get(verb, {}).get("third")
             return (irregular or third_person_s(verb)), ""
@@ -495,9 +496,10 @@ class SentenceBuilder:
             body = f"{pre} {noun}".strip()
             return f"{indefinite_article(body)} {body}" if not comp.get("definite") else f"the {body}"
         if adjectives:
-            if len(adjectives) == 1:
-                return adjectives[0]
-            return ", ".join(adjectives[:-1]) + " and " + adjectives[-1]
+            words = adjectives[0] if len(adjectives) == 1 else ", ".join(adjectives[:-1]) + " and " + adjectives[-1]
+            if comp.get("than"):
+                words += " than " + self.noun_phrase(built, comp["than"], "object")  # "older than you"
+            return words
         built.problems.append("empty complement")
         return ""
 
@@ -525,7 +527,8 @@ class SentenceBuilder:
         subj = self.noun_phrase(built, subject, "subject")
         finite, rest = self.verb_group(built, meaning, subject)
         tail = self._predicate_tail(built, meaning)
-        return " ".join(p for p in (subj, finite, rest, tail) if p)
+        when = str(meaning.get("when") or "").strip()  # "yesterday", "next week"
+        return " ".join(p for p in (subj, finite, rest, tail, when) if p)
 
     def _question(self, built: Built, meaning: Dict[str, Any]) -> str:
         subject = meaning.get("subject") or {}
@@ -599,6 +602,11 @@ class SentenceBuilder:
             text, end = str(meaning.get("words") or "").strip().rstrip(".!"), "."
         else:
             text, end = self._statement(built, meaning), "."
+            reason = (meaning or {}).get("because")
+            if text and isinstance(reason, dict):
+                why = self._statement(built, reason)
+                if why:
+                    text = f"{text} because {why}"
         text = re.sub(r"\s+", " ", text).strip()
         hedge = str((meaning or {}).get("hedge") or "").strip()
         if text and hedge and act == "state":

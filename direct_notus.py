@@ -259,6 +259,10 @@ class DirectNotusProcess:
             "tense": "TEXT",
             "modal": "TEXT",
             "sure": "REAL",
+            # Why, as he said it ("my dog died" for "I am sad because my dog died").
+            "because": "TEXT",
+            # When, in his words ("yesterday", "next week"), true as of created_at.
+            "when_said": "TEXT",
         }
         for name, declaration in additions.items():
             if name not in columns:
@@ -1221,6 +1225,8 @@ class DirectNotusProcess:
                 "tense": row["tense"] if "tense" in row.keys() else None,
                 "modal": row["modal"] if "modal" in row.keys() else None,
                 "sure": row["sure"] if "sure" in row.keys() else None,
+                "because": row["because"] if "because" in row.keys() else None,
+                "when_said": row["when_said"] if "when_said" in row.keys() else None,
                 "match_score": float(score),
                 "role": "fact",
                 "content": readable,
@@ -1938,6 +1944,18 @@ class DirectNotusProcess:
         return reading if isinstance(reading, dict) else {}
 
     @staticmethod
+    def _compared_with(tokens: List[Dict[str, Any]]) -> Optional[str]:
+        """Who or what comes after "than" ("than me" -> user)."""
+        words = [t for t in tokens if t.get("kind") != "punctuation"]
+        for i, token in enumerate(words[:-1]):
+            if str(token.get("surface") or "").casefold() == "than":
+                after = words[i + 1]
+                word = str(after.get("surface") or "")
+                return {"me": "user", "i": "user", "you": "monday"}.get(word.casefold()) or (
+                    word[:1].upper() + word[1:] if after.get("kind") == "proper_noun" else word.casefold())
+        return None
+
+    @staticmethod
     def _is_time_word(noun: str) -> bool:
         """A word the dictionary files as a time (week, morning, Monday)."""
         try:
@@ -2078,7 +2096,13 @@ class DirectNotusProcess:
         modal = reading.get("modal") or (None if q.get("modality") in (None, "future")
                                          else str(q.get("modality_text") or q.get("modality")))
         sure = (reading.get("certainty") or {}).get("sure")
-        return {"tense": tense, "modal": modal, "sure": sure}
+        when = q.get("event_time_text")
+        tokens = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        if not when and len(tokens) >= 2 and tokens[-1].get("kind") == "noun" \
+                and self._is_time_word(str(tokens[-1].get("lemma") or "")) \
+                and tokens[-2].get("kind") in ("adjective", "determiner"):
+            when = f"{tokens[-2].get('surface')} {tokens[-1].get('surface')}"  # "next week"
+        return {"tense": tense, "modal": modal, "sure": sure, "when_said": when}
 
     def _mark(self, facts: List[Dict[str, Any]], how: Dict[str, Any]) -> List[Dict[str, Any]]:
         # Always written: saying it again plainly ("Lily is sick") makes a
@@ -2089,8 +2113,9 @@ class DirectNotusProcess:
             connection = self._require_connection()
             for fact in facts:
                 if isinstance(fact, dict) and fact.get("id"):
-                    connection.execute("UPDATE brain_facts SET tense = ?, modal = ?, sure = ? WHERE id = ?",
-                                       (how["tense"], how["modal"], how["sure"], fact["id"]))
+                    connection.execute("UPDATE brain_facts SET tense = ?, modal = ?, sure = ?, when_said = ? "
+                                       "WHERE id = ?", (how["tense"], how["modal"], how["sure"],
+                                                        how.get("when_said"), fact["id"]))
                     fact.update(how)
             connection.commit()
         return facts
@@ -2099,9 +2124,22 @@ class DirectNotusProcess:
         reading = self._read(text, user_id)
         if reading.get("parts"):
             # "I like cats and I hate dogs": each statement on its own.
+            # "I am sad because my dog died": the first one's reason is the second.
             learned: List[Dict[str, Any]] = []
-            for part in reading["parts"]:
-                learned += self._learn_one(part, user_id, self._read(part, user_id))
+            parts, joins = reading["parts"], reading.get("joins") or []
+            per_part = [self._learn_one(part, user_id, self._read(part, user_id)) for part in parts]
+            for i, join in enumerate(joins):
+                if join == "because" and i + 1 < len(parts) and per_part[i]:
+                    with self._lock:
+                        connection = self._require_connection()
+                        for fact in per_part[i]:
+                            if fact.get("id"):
+                                connection.execute("UPDATE brain_facts SET because = ? WHERE id = ?",
+                                                   (parts[i + 1], fact["id"]))
+                                fact["because"] = parts[i + 1]
+                        connection.commit()
+            for facts in per_part:
+                learned += facts
             return learned
         return self._learn_one(text, user_id, reading)
 
@@ -2147,7 +2185,13 @@ class DirectNotusProcess:
                 and str(t.get("lemma") or "").casefold() == str(complement.get("lemma") or "").casefold()
                 for t in tokens)
             if describing:
-                facts.append(("is", str(complement.get("lemma") or ""), None))
+                compared = self._compared_with(tokens)
+                if compared:
+                    # "My sister is older than me": older (as he said it), than him.
+                    facts.append(("is", str(complement.get("surface") or complement.get("lemma") or ""),
+                                  f"than:{compared}"))
+                else:
+                    facts.append(("is", str(complement.get("lemma") or ""), None))
             elif complement.get("kind") == "nominal":
                 target = mentions.get(complement.get("mention_id")) or {}
                 owned = self._who(target, tokens, reading.get("references")) if target else None
@@ -2198,6 +2242,11 @@ class DirectNotusProcess:
             if not facts:
                 # "I can swim", "Tom sleeps": the action alone, with nothing after it.
                 facts.append((f"v:{verb}", self.NOTHING, None))
+            # The verb as he said it ("worked", "went"), kept so she says it his way.
+            said_verb = next((str(t.get("surface") or "") for t in tokens if t.get("kind") == "verb"
+                              and str(t.get("lemma") or "").casefold() == verb), None)
+            if said_verb and said_verb != verb:
+                facts = [(p, o, v if v is not None else f"said:{said_verb}") for p, o, v in facts]
         # Keep things on the other side as he said them ("a castle", "rain"),
         # names as names.
         def as_said(mention_id: Any) -> Optional[str]:

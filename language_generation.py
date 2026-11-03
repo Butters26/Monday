@@ -618,6 +618,10 @@ class LanguageGenerator:
             meaning["negated"] = True
         if reading.get("tense") in ("past", "future"):
             meaning["tense"] = reading["tense"]
+            heard_verb = next((str(t.get("surface") or "") for t in tokens if t.get("kind") == "verb"
+                               and str(t.get("lemma") or "").casefold() == meaning.get("verb")), "")
+            if reading["tense"] == "past" and heard_verb and heard_verb != meaning.get("verb"):
+                meaning["past_form"] = heard_verb  # "worked", as he said it
         if reading.get("modal"):
             meaning["modal"] = reading["modal"]
         sure = (reading.get("certainty") or {}).get("sure")
@@ -642,6 +646,11 @@ class LanguageGenerator:
         # Not a sentence she can build ("no problem", "me too"): she says it the
         # way she was taught it, as a whole.
         return {"act": "phrase", "words": words, "_purpose": "social_reply"}
+
+    @staticmethod
+    def _fact_key(meaning: Dict[str, Any]) -> Tuple[str, str, str]:
+        fact = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else {}
+        return (str(fact.get("subject")), str(fact.get("predicate")), str(fact.get("object")))
 
     @classmethod
     def _his_words(cls, pieces: Any, out: Optional[set] = None) -> set:
@@ -702,11 +711,22 @@ class LanguageGenerator:
         reading = self.comprehension.analyze(text)
         his = {str(t.get("lemma") or "").casefold() for t in reading.get("tokens") or []
                if t.get("kind") in ("noun", "proper_noun", "verb", "adjective", "possessive")}
+        # Who he's asking about: "am I tired?" -> him; "is Kate tired?" -> Kate.
+        who = ""
+        for t in reading.get("tokens") or []:
+            if t.get("kind") == "pronoun" and str(t.get("lemma")).casefold() in ("i", "me", "my"):
+                who = "user"
+                break
+            if t.get("kind") == "proper_noun":
+                who = str(t.get("surface") or "").casefold()
+                break
         def shared(fact: Dict[str, Any]) -> int:
             words = set(re.findall(r"[a-z]+", " ".join(str(fact.get(k) or "") for k in
                                                        ("subject", "predicate", "object")).casefold()))
             words |= {w[:-1] for w in words if w.endswith("s")}
-            return len(his & words)
+            subject = str(fact.get("subject") or "").casefold()
+            about_them = 2 if who and (subject == who or subject.startswith(who + "'s")) else 0
+            return len(his & words) + about_them
         return sorted(facts, key=lambda f: (shared(f), int(f.get("id") or 0)), reverse=True)
 
     def _user_facts(self, query: str, user_id: str) -> List[Dict[str, Any]]:
@@ -768,16 +788,37 @@ class LanguageGenerator:
         return {"name": sub}
 
     @staticmethod
+    def _said_today(fact: Dict[str, Any]) -> bool:
+        import datetime as _dt
+        when = str(fact.get("created_at") or "")
+        try:
+            said = _dt.datetime.fromisoformat(when.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        now = _dt.datetime.now(said.tzinfo) if said.tzinfo else _dt.datetime.now()
+        return said.date() == now.date()
+
+    @staticmethod
     def _how_it_was_said(meaning: Dict[str, Any], fact: Dict[str, Any]) -> None:
         """Keep a fact's tense, its "can", and how sure he was: "I went" stays
         past, "I can swim" keeps can, "maybe Lily is sick" keeps maybe."""
         if fact.get("tense") in ("past", "future"):
             meaning["tense"] = fact["tense"]
+        value = str(fact.get("value") or "")
+        if value.startswith("said:") and fact.get("tense") == "past":
+            meaning["past_form"] = value[5:]  # "worked", as he said it
         if fact.get("modal"):
             meaning["modal"] = str(fact["modal"])
         sure = fact.get("sure")
         if isinstance(sure, (int, float)) and sure < 0.9:
             meaning["hedge"] = "maybe" if sure < 0.6 else "probably"
+        when = str(fact.get("when_said") or "").strip()
+        if when and LanguageGenerator._said_today(fact):
+            # "yesterday" is only still true the day he said it.
+            meaning["when"] = when
+        because = str(fact.get("because") or "").strip()
+        if because:
+            meaning["_because_text"] = because  # turned into a meaning by Language when used
 
     def _fact_meaning(self, fact: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Turn a stored fact (subject / predicate / object) into a meaning to say."""
@@ -786,8 +827,10 @@ class LanguageGenerator:
         if not pred or not obj:
             return None
         owner = self._owner_for(str(fact.get("subject") or ""))
-        record = {"subject": fact.get("subject"), "predicate": pred, "object": obj,
-                  "tense": fact.get("tense"), "modal": fact.get("modal"), "sure": fact.get("sure")}
+        record = {"subject": fact.get("subject"), "predicate": pred, "object": obj, "value": fact.get("value"),
+                  "tense": fact.get("tense"), "modal": fact.get("modal"), "sure": fact.get("sure"),
+                  "because": fact.get("because"), "when_said": fact.get("when_said"),
+                  "created_at": fact.get("created_at")}
         value = {"name": obj} if obj[:1].isupper() else None
         complement = {"entity": value} if value else {"phrase": obj}
         negated = pred.startswith("not_")
@@ -797,6 +840,9 @@ class LanguageGenerator:
             subject = self._entity_for(str(fact.get("subject") or ""))
             if core == "is":
                 meaning = {"subject": subject, "verb": "be", "complement": {"adjectives": [obj]}}
+                value = str(fact.get("value") or "")
+                if value.startswith("than:"):
+                    meaning["complement"]["than"] = self._entity_for(value[5:])  # "older than you"
             elif core == "is_a":
                 whose = str(fact.get("value") or "").strip()
                 meaning = {"subject": subject, "verb": "be",
@@ -940,7 +986,15 @@ class LanguageGenerator:
         kind = builder._choose(plan, f"plan_piece@{ctx}", available)
         if kind == "memory":
             # Answering, she uses what fits best (newest first); otherwise any.
-            meaning = dict(pieces["memory"][0] if ctx.startswith("question") else rng.choice(pieces["memory"]))
+            # One Reasoning sent back this turn isn't tried again.
+            skip = self.__dict__.get("_sent_back_facts") or set()
+            fresh = [m for m in pieces["memory"] if self._fact_key(m) not in skip] or pieces["memory"]
+            meaning = dict(fresh[0] if ctx.startswith("question") else rng.choice(fresh))
+            if meaning.get("_because_text"):
+                # "...because your dog died": his reason, read and turned to her side.
+                reason = self._statement_meaning(self.comprehension.analyze(meaning["_because_text"]))
+                if reason:
+                    meaning["because"] = reason
         elif kind == "what_he_said":
             meaning = dict(rng.choice(pieces["what_he_said"]))
         elif kind == "expected_reply":
@@ -1048,6 +1102,7 @@ class LanguageGenerator:
         base_explore = builder.explore_rate
         last_reason = ""
         builder.steer_only, builder.steer_avoid = {}, {}
+        self._sent_back_facts = set()
         # His words stay his words: saying back what he said (or what he told
         # her before), she keeps the words he used instead of a dictionary
         # synonym that may mean something else ("hold" for "have").
@@ -1089,6 +1144,8 @@ class LanguageGenerator:
                 builder.feedback(built, ok, last_reason)
                 if not ok:
                     sent_back.add(built.sentence)
+                    if meaning.get("_fact"):
+                        self.__dict__.setdefault("_sent_back_facts", set()).add(self._fact_key(meaning))
                     self._take_feedback(builder, str(review.get("wanted") or ""))
                 self._trace("reply_attempt", ok=ok, sentence=built.sentence,
                             reason=last_reason, context=ctx, attempt=attempt,
