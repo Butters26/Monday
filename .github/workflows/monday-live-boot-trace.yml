@@ -29,8 +29,8 @@ jobs:
           mkdir -p "$MONDAY_RUNTIME_DIR"
           set +e
           timeout --signal=INT --kill-after=15s 150s python -u run_abin.py > "$RUNNER_TEMP/monday-boot.log" 2>&1 <<'MONDAY_MESSAGES'
-          Hello Monday, can you hear me?
-          What did you understand from my greeting?
+          Hi
+          How are you doing?
           MONDAY_MESSAGES
           code=$?
           echo "MONDAY_BOOT_EXIT_CODE=$code"
