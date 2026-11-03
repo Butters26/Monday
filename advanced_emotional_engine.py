@@ -53,6 +53,25 @@ class EmotionalState(Enum):
     HURT = "hurt"
     GLAD = "glad"
     BORED = "bored"
+    AWED = "awed"
+    AMUSED = "amused"
+    CONFUSED = "confused"
+    GRATEFUL = "grateful"
+    LOVING = "loving"
+    HOPEFUL = "hopeful"
+    ADMIRING = "admiring"
+    HORRIFIED = "horrified"
+    SYMPATHETIC = "sympathetic"
+    APPRECIATIVE = "appreciative"
+    JEALOUS = "jealous"
+    ENVIOUS = "envious"
+    GUILTY = "guilty"
+    ASHAMED = "ashamed"
+    EMBARRASSED = "embarrassed"
+    AWKWARD = "awkward"
+    CONTEMPTUOUS = "contemptuous"
+    SATISFIED = "satisfied"
+    LONGING = "longing"
     # UNUSED/legacy — kept for persisted state + feel_emotion compat.
     # NOT produced by live CoreAffect readout; do not treat as live mood labels.
     CURIOUS = "curious"          # UNUSED/legacy
@@ -439,18 +458,32 @@ class AdvancedEmotionalEngine:
         except Exception:
             pass
 
-    def feel(self, felt: List[Any]) -> None:
+    def feel(self, felt: List[Any], main: bool = False) -> None:
         """What happened moves her core affect; the strongest named feeling is
         what she feels now."""
         strongest = None
         for f in felt or []:
-            self.core_affect.apply_delta(f.dv, f.da, f.reason)
+            # The more she already leans one way, the less more of the same moves
+            # her (she can't be pushed past the edge; the other way moves her fully).
+            v, a = self.core_affect.valence, self.core_affect.arousal
+            dv = f.dv * (1.0 - max(0.0, v if f.dv > 0 else -v))
+            da = f.da * (1.0 - max(0.0, a if f.da > 0 else -a))
+            self.core_affect.apply_delta(dv, da, f.reason)
             self._last_self_impact_reason = f.reason
             if f.feeling and (strongest is None or abs(f.dv) + abs(f.da) > abs(strongest.dv) + abs(strongest.da)):
                 strongest = f
         if strongest is not None and abs(strongest.dv) + abs(strongest.da) > 0.06:
-            self.inner.last_feeling, self.inner.last_reason = strongest.feeling, strongest.reason
-            self._feeling_since = time.time()
+            size = abs(strongest.dv) + abs(strongest.da)
+            # A smaller feeling doesn't cover a bigger one from moments ago.
+            held = getattr(self, "_feeling_size", 0.0) * max(0.0, 1.0 - (time.time() - self._feeling_since) / 600.0)
+            # The moment's own feeling takes over unless much smaller; one that
+            # comes after (how her reply went, not understanding) must be bigger.
+            if main or size >= held:
+                self.inner.last_feeling, self.inner.last_reason = strongest.feeling, strongest.reason
+                self._feeling_since, self._feeling_size = time.time(), size
+                history = self.__dict__.setdefault("_recent_feelings", [])
+                history.append((time.time(), strongest.feeling))
+                del history[:-8]
 
     def _feeling_shape(self, name: str):
         """How good/bad and how stirred up a named feeling is (its place on her
@@ -459,12 +492,25 @@ class AdvancedEmotionalEngine:
             emotion = EmotionalState(name)
         except ValueError:
             return None
-        proto = self._PAD_PROTOS.get(emotion)
-        if proto:
-            return proto[0], proto[1]
         shapes = {"lonely": (-0.4, -0.3), "hurt": (-0.5, 0.2), "glad": (0.4, 0.1), "bored": (-0.2, -0.4),
-                  "proud": (0.5, 0.3), "frustrated": (-0.4, 0.4), "curious": (0.3, 0.4), "relieved": (0.3, -0.2)}
-        return shapes.get(name)
+                  "proud": (0.5, 0.3), "frustrated": (-0.4, 0.4), "curious": (0.3, 0.4), "relieved": (0.3, -0.2),
+                  **{'awed': (0.5, 0.6), 'amused': (0.5, 0.4), 'confused': (-0.1, 0.3), 'grateful': (0.6, 0.2), 'loving': (0.7, 0.2), 'hopeful': (0.4, 0.3), 'admiring': (0.5, 0.3), 'horrified': (-0.7, 0.8), 'sympathetic': (-0.3, 0.0), 'appreciative': (0.5, 0.1), 'disgusted': (-0.6, 0.4), 'jealous': (-0.3, 0.4), 'envious': (-0.3, 0.3), 'guilty': (-0.5, 0.2), 'ashamed': (-0.6, 0.1), 'embarrassed': (-0.3, 0.5), 'awkward': (-0.2, 0.3), 'contemptuous': (-0.4, 0.2), 'anxious': (-0.4, 0.5), 'satisfied': (0.4, -0.1), 'nostalgic': (0.3, -0.2), 'longing': (-0.2, 0.2), 'surprised': (0.0, 0.6)}}
+        if name in shapes:
+            return shapes[name]
+        proto = self._PAD_PROTOS.get(emotion)
+        return (proto[0], proto[1]) if proto else None
+
+    @staticmethod
+    def _days_ago(when: Any) -> float:
+        import datetime as _dt
+        try:
+            if isinstance(when, (int, float)):
+                return max(0.0, (time.time() - float(when)) / 86400.0)
+            said = _dt.datetime.fromisoformat(str(when).replace("Z", "+00:00"))
+            now = _dt.datetime.now(said.tzinfo) if said.tzinfo else _dt.datetime.now()
+            return max(0.0, (now - said).total_seconds() / 86400.0)
+        except Exception:
+            return 0.0
 
     def _settle_for_time(self) -> None:
         """Her mood settles back toward calm with time, not with turns."""
@@ -525,7 +571,14 @@ class AdvancedEmotionalEngine:
         score = float(novelty.get('novelty_score') or (novelty.get('content') or {}).get('score') or 0.0)
         if score > 0.6:
             felt += self.inner.happen("novel", strength=score)
-        self.feel(felt)
+        # The rest of human feeling: what kind of moment this is.
+        moment = {k: social.get(k) for k in ("meant", "about_someone_else", "other_person", "tense", "funny",
+                                             "correcting", "verbs", "her_to_him")}
+        moment.update({"kind": kind, "novelty": score, "valence": self.core_affect.valence,
+                       "didnt_understand": bool(getattr(self, "_didnt_understand", {}).get(user_input)),
+                       "just_replied": bool(getattr(self, "_replied_last", False))})
+        felt += self.inner.moment_feelings(moment)
+        self.feel(felt, main=True)
         self.last_appraisal = {"event": kind, "felt": [f.reason for f in felt],
                                "inner": self.inner.state()}
         self._sync_from_core_affect(trigger=(user_input or "")[:80])
@@ -840,9 +893,18 @@ class AdvancedEmotionalEngine:
         label = self.core_affect.label()
         intensity = self.core_affect.intensity()
         named = getattr(getattr(self, "inner", None), "last_feeling", None)
-        shape = self._feeling_shape(named) if named else None
-        fits = shape is None or abs(self.core_affect.valence) < 0.15 or \
-            (shape[0] >= 0) == (self.core_affect.valence >= 0)
+        def _fits(name):
+            shape = self._feeling_shape(name) if name else None
+            return shape is None or abs(self.core_affect.valence) < 0.15 or \
+                (shape[0] >= 0) == (self.core_affect.valence >= 0)
+        fits = _fits(named)
+        if named and not fits:
+            # A good moment while she's still upset: she's still feeling the last
+            # thing that fits her mood (not a made-up "angry").
+            for when, earlier in reversed(getattr(self, "_recent_feelings", [])):
+                if time.time() - when < 3600 and _fits(earlier):
+                    named, fits = earlier, True
+                    break
         if named and fits and time.time() - getattr(self, "_feeling_since", 0.0) < 3600 and (
                 label != "calm" or abs(self.core_affect.valence - self.core_affect.setpoint_v) > 0.05):
             label = named  # what she feels, named by what caused it (lonely, hurt, proud...)
@@ -1490,15 +1552,32 @@ class EmotionalProcess:
                     kind = 'answered_from_memory'
                 else:
                     kind = 'reply_ok'
-                self.engine.feel(self.engine.inner.happen(kind))
+                felt = self.engine.inner.happen(kind)
+                felt += self.engine.inner.moment_feelings(
+                    {"kind": kind, "social_move": bool(message.get('social_move'))})
+                self.engine.feel(felt)
+                self.engine._replied_last = not message.get('failed')
                 self.engine._sync_from_core_affect(trigger=kind)
+                return {'status': 'success', 'content': {'felt': self.engine.inner.last_feeling}}
+
+            elif msg_type == 'didnt_understand':
+                # Language couldn't make sense of what he said.
+                # (Language reads after Emotion has felt the moment, so she feels it now.)
+                felt = self.engine.inner.moment_feelings({"didnt_understand": True})
+                self.engine.feel(felt)
+                self.engine._sync_from_core_affect(trigger="didnt_understand")
                 return {'status': 'success', 'content': {'felt': self.engine.inner.last_feeling}}
 
             elif msg_type == 'remembered':
                 # A memory came back with the feeling it had: she feels some of it again.
                 body = message.get('content') if isinstance(message.get('content'), dict) else message
                 felt = []
-                for memory in (body.get('memories') or [])[:3]:
+                # Only memories from before this conversation bring their feeling
+                # back, and only the first one: otherwise what she felt a minute
+                # ago comes back and feeds on itself.
+                older = [m for m in (body.get('memories') or [])
+                         if self.engine._days_ago(m.get('timestamp')) * 1440 > 10][:1]
+                for memory in older:
                     for past in (memory.get('feelings') or [])[-1:]:
                         proto = self.engine._feeling_shape(str(past.get('emotion') or ''))
                         if proto:
@@ -1506,6 +1585,9 @@ class EmotionalProcess:
                                 proto[0] * float(past.get('intensity') or 0.5),
                                 proto[1] * float(past.get('intensity') or 0.5),
                                 str(memory.get('content') or ''))
+                            days = self.engine._days_ago(memory.get('timestamp'))
+                            felt += self.engine.inner.memory_feelings(
+                                proto[0], days, memory.get('role') == 'user')
                 self.engine.feel(felt)
                 return {'status': 'success', 'content': {'remembered_feelings': len(felt)}}
 

@@ -647,12 +647,13 @@ class LanguageGenerator:
         # way she was taught it, as a whole.
         return {"act": "phrase", "words": words, "_purpose": "social_reply"}
 
-    def _tell_emotion(self, failed: bool, used_memory: bool) -> None:
+    def _tell_emotion(self, failed: bool, used_memory: bool, social_move: bool = False) -> None:
         """Whether she managed to say something is part of how she feels."""
         tell = getattr(self.thalamus, "tell", None)
         if callable(tell):
             try:
-                tell("emotion", "reply_outcome", {"failed": failed, "used_memory": used_memory}, "language")
+                tell("emotion", "reply_outcome", {"failed": failed, "used_memory": used_memory,
+                                                  "social_move": social_move}, "language")
             except Exception:
                 pass
 
@@ -1096,6 +1097,14 @@ class LanguageGenerator:
         expected_reply = str(social_now.get("expected_reply") or "").strip()
         if resolved_input != user_input:
             self._trace("references_resolved", heard=user_input, means=resolved_input)
+        if understanding.get("unknown_words") or [u for u in understanding.get("unresolved_references") or []]:
+            # She couldn't make sense of some of it: Emotion feels that.
+            tell = getattr(self.thalamus, "tell", None)
+            if callable(tell):
+                try:
+                    tell("emotion", "didnt_understand", {"text": user_input}, "language")
+                except Exception:
+                    pass
         pieces = self._pieces(semantic_input, user_id, resolved_input)
         # What he said, as a whole meaning, from Language's own reading of it
         # (each part of a two-part sentence on its own).
@@ -1166,7 +1175,7 @@ class LanguageGenerator:
                             plan=[f"{p}={o}" for p, o, _ in plan.choices])
                 if ok:
                     silence = None
-                    self._tell_emotion(failed=False, used_memory=bool(meaning.get("_fact")))
+                    self._tell_emotion(failed=False, used_memory=bool(meaning.get("_fact")) and situation == "question")
                     self._trace("reply_done", silence=silence, situation=situation, attempts=attempt,
                                 sentence=built.sentence, reason=last_reason)
                     return {"sentence": built.sentence, "silence": silence, "reason": last_reason,
@@ -1174,7 +1183,8 @@ class LanguageGenerator:
         finally:
             builder.explore_rate = base_explore
             builder.steer_only, builder.steer_avoid = {}, {}
-        self._tell_emotion(failed=True, used_memory=False)
+        self._tell_emotion(failed=True, used_memory=False,
+                           social_move=situation in ("greeting", "farewell", "social_reply"))
         self._trace("reply_done", silence="failed", situation=situation, reason=last_reason,
                     attempts=self.MAX_REPLY_ATTEMPTS)
         return {"sentence": "", "silence": "failed", "reason": last_reason, "situation": situation,

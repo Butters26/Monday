@@ -705,6 +705,9 @@ class LanguageComprehensionEngine:
             len(raw_before) == 1
             and raw_before[0].lower() in (_DEMONSTRATIVES | _PRONOUNS | _WH)
             and raw_before[0].lower() not in {"me", "him", "her", "us", "them"}
+            # "that joke was...": a word followed by is/was is what "that" points to.
+            and not (raw_before[0].lower() in _DEMONSTRATIVES and idx + 1 < len(tokens)
+                     and tokens[idx + 1].lower() in _AUX_RAW)
         )
         has_subject_material = any(
             t.lower() in _DETERMINERS

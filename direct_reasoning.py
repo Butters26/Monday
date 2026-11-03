@@ -1189,7 +1189,10 @@ class DirectReasoningAdapter:
         if not reply:
             return no("could not read the reply to check it")
         names = self._names_in(meaning)
-        unknown = [w for w in reply.get("unknown_words") or [] if w.casefold() not in names]
+        taught = set(re.findall(r"[a-z']+", str(payload.get("expected_reply") or "").casefold()))
+        # Words she was taught to say ("hey") aren't gibberish even if the dictionary lacks them.
+        unknown = [w for w in reply.get("unknown_words") or [] if w.casefold() not in names
+                   and w.casefold() not in taught]
         if unknown:
             return no("gibberish: unknown word(s) " + ", ".join(unknown))
 

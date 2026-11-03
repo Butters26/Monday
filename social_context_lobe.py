@@ -295,6 +295,40 @@ compliment -> "thank you" (sure 0.7)
             SocialContextLobe._meaning_beliefs = WordFeelings(self._stored_meanings())
         return appraise(reading, SocialContextLobe._meaning_beliefs)
 
+    def _what_kind_of_moment(self, text: str) -> Dict[str, Any]:
+        """More of what social context reads about a moment, for Emotion: how
+        it's meant and about whom, whether it's about someone else, when, whether
+        he's correcting her, and whether it's meant to be funny (the dictionary's
+        own definitions: "arousing laughter", "humorous")."""
+        reading = self._read(text)
+        tokens = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        meant = self._how_meant(reading)
+        other_person = any(t.get("kind") == "proper_noun" for t in tokens) or any(
+            t.get("kind") == "noun" and self._is_person(str(t.get("lemma") or "")) for t in tokens)
+        funny = any(any(w in str(sense.get("definition") or "").casefold() for w in ("laugh", "humor", "amus"))
+                    for t in tokens for sense in (t.get("senses") or [])[:2])
+        first = str(tokens[0].get("surface") or "").casefold() if tokens else ""
+        verbs = [str(t.get("lemma") or "").casefold() for t in tokens if t.get("kind") == "verb"]
+        objects = [str(t.get("surface") or "").casefold() for t in tokens if t.get("kind") == "pronoun"]
+        plain = sum(v for _, v in meant.words) / len(meant.words) if meant.words else 0.0
+        if meant.words and meant.dv * plain < 0:
+            plain = -plain  # "not good": the reading's negation flipped it
+        return {"meant": {"about": meant.about, "good": plain, "words": [w for w, _ in meant.words]},
+                "about_someone_else": bool(other_person and meant.about == "other"),
+                "other_person": bool(other_person),
+                "tense": reading.get("tense"), "funny": funny,
+                "correcting": first in ("no", "wrong") or "wrong" in [str(t.get("lemma")) for t in tokens],
+                "verbs": verbs, "her_to_him": bool(objects[:1] == ["you"] and "me" in objects[1:])}
+
+    @staticmethod
+    def _is_person(noun: str) -> bool:
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            synsets = list(get_wordnet().synsets(noun, pos="n"))
+        except Exception:
+            return False
+        return bool(synsets) and str(synsets[0].lexfile()) == "noun.person"
+
     def _stored_meanings(self) -> Dict[str, float]:
         return {str(k): float(v) for k, v in (getattr(self, "_meanings_changed", None) or {}).items()}
 
@@ -500,6 +534,7 @@ compliment -> "thank you" (sure 0.7)
         snap["expected_reply"] = belief.get("say")
         snap["belief_sure"] = belief.get("sure")
         snap["his_feeling"] = snap_his
+        snap.update(self._what_kind_of_moment(user_input))
         if taught:
             snap["taught"] = taught
             # Saying back what she was taught shows she took it in.
