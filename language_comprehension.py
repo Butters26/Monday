@@ -1666,6 +1666,20 @@ class LanguageComprehensionEngine:
                 continue
             size, phrase, senses = found
             pos = senses[0].get("pos")
+            after = lexical[i + size] if i + size < len(lexical) else None
+            if pos == "v" and after is not None and after.get("kind") in (
+                    "determiner", "possessive", "noun", "proper_noun", "pronoun", "number"):
+                # "lived in Ohio": "live in" (living where one works) takes nothing
+                # after it, so here it's "live" + "in Ohio". "work on cars" takes something.
+                try:
+                    from lexicon.oewn_offline import get_wordnet
+                    frames = [str(f) for x in senses for sense in get_wordnet().synset(x["synset_id"]).senses()
+                              for f in sense.frames()]
+                except Exception:
+                    frames = []
+                if frames and not any("something" in f or "somebody" in f.split("----", 1)[-1] for f in frames):
+                    i += 1
+                    continue
             phrases.append({"phrase": phrase, "start": i, "end": i + size, "pos": pos,
                             "meaning": senses[0].get("definition"), "senses": senses})
             lexical[i]["phrase"] = phrase

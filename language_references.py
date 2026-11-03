@@ -46,7 +46,48 @@ _kind_cache: Dict[str, Tuple[str, Optional[str]]] = {}
 _kind_lock = threading.Lock()
 
 
-def noun_kind(noun: str) -> Tuple[str, Optional[str]]:
+def _sex_words() -> Dict[str, str]:
+    """The dictionary's own words for female and male persons ("female",
+    "female person", "male"...), from the two meanings above."""
+    out: Dict[str, str] = {}
+    try:
+        wn = _wordnet()
+        for ids, sex in ((_FEMALE, "she"), (_MALE, "he")):
+            for i in ids:
+                for lemma in wn.synset(i).lemmas():
+                    out[str(lemma).casefold()] = sex
+    except Exception:
+        pass
+    return out
+
+
+def _sex_from_meaning(synset: Any, depth: int) -> Optional[str]:
+    """He or she from how the dictionary words the meaning itself: "female
+    parent" (mother), "the father of your father or mother" (grandfather)."""
+    words = _sex_words()
+    for one in [synset] + list(synset.hypernyms()):
+        # Its own names and what it's a kind of: mom -> mother ("female parent").
+        for lemma in one.lemmas():
+            for w in str(lemma).casefold().split():
+                if w in words:
+                    return words[w]
+    if depth > 0:
+        return None
+    definition = [w.strip(".,;()'") for w in str(synset.definition() or "").casefold().split()]
+    wn = _wordnet()
+    for w in definition:
+        if w in words:
+            return words[w]
+        if not (w.isalpha() and wn.synsets(w, pos="n")):
+            continue
+        # The first thing-word of the meaning is what it is a kind of ("the
+        # FATHER of your father"): he or she as that one is, or not known.
+        kind, sex = noun_kind(w, _depth=1)
+        return sex if kind == "person" else None
+    return None
+
+
+def noun_kind(noun: str, _depth: int = 0) -> Tuple[str, Optional[str]]:
     """("person"|"animal"|"thing", "she"|"he"|None) for a noun, from the dictionary."""
     key = noun.casefold()
     with _kind_lock:
@@ -65,7 +106,7 @@ def noun_kind(noun: str) -> Tuple[str, Optional[str]]:
         first = str(synsets[0].lexfile())
         kind = {"noun.person": "person", "noun.animal": "animal"}.get(first, "thing")
         votes = {"she": 0, "he": 0}
-        for synset in synsets[:4]:
+        for synset in synsets[:1]:  # its first, ordinary meaning ("nurse" is not a nursemaid)
             if str(synset.lexfile()) != first:
                 continue
             seen, stack = set(), [synset]
@@ -81,6 +122,10 @@ def noun_kind(noun: str) -> Tuple[str, Optional[str]]:
                 votes["he"] += 1
         if votes["she"] != votes["he"]:
             sex = "she" if votes["she"] > votes["he"] else "he"
+        elif kind == "person":
+            # Only when its meanings agree ("mom", "grandpa"), never from one
+            # meaning of several ("nurse" isn't a she).
+            sex = _sex_from_meaning(synsets[0], _depth)
     with _kind_lock:
         _kind_cache[key] = (kind, sex)
     return kind, sex

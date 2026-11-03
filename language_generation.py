@@ -1086,7 +1086,10 @@ class LanguageGenerator:
             # One Reasoning sent back this turn isn't tried again.
             skip = self.__dict__.get("_sent_back_facts") or set()
             fresh = [m for m in pieces["memory"] if self._fact_key(m) not in skip] or pieces["memory"]
-            if len(fresh) > 1 and builder._choose(plan, f"plan_how_much@{ctx}.memory", ["one", "several"]) == "several":
+            # A question asks one thing; "tell me about..." asks for all she knows.
+            may_say_several = not ctx.startswith("question") or bool(self.__dict__.get("_asked_about"))
+            if may_say_several and len(fresh) > 1 \
+                    and builder._choose(plan, f"plan_how_much@{ctx}.memory", ["one", "several"]) == "several":
                 # More than one thing she knows about it, said together.
                 chosen = [dict(m) for m in fresh[:6]]
                 for m in chosen:
@@ -1259,6 +1262,7 @@ class LanguageGenerator:
         # synonym that may mean something else ("hold" for "have").
         for pos, word in self._his_words(pieces):
             builder.steer_only[f"word_{pos}_{word}"] = {word}
+        self._asked_about = bool(asks_her and asks_her.get("about") and not asks_her.get("say"))
         if asks_her and asks_her.get("about") and not asks_her.get("say") and len(pieces.get("memory") or []) > 1:
             # "Tell me about my brother" asks for what she knows about him, all of it.
             builder.steer_only["plan_how_much@"] = {"several"}

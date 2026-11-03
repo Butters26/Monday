@@ -248,11 +248,18 @@ class SentenceStructure:
             for k in range(first_verb + 1, len(rest)):
                 if self._starts_statement(rest[k:]) and rest[k].get("kind") in _NOMINAL:
                     a, b = rest[:k], rest[k:]
-                    options.append((-(self.shapes.seen(a) + self.shapes.seen(b)), k, a, b))
+                    # The condition is one statement: no second one inside it
+                    # ("when I was a kid | I lived in Ohio but now I live...").
+                    if any(_word(e) in COORDINATORS | SUBORDINATORS for e in a) or any(
+                            self._starts_statement(a[x:]) and a[x].get("kind") in _NOMINAL
+                            for x in range(first_verb + 1, len(a))):
+                        continue
+                    options.append((k, -(self.shapes.seen(a) + self.shapes.seen(b)), a, b))
             if not options:
                 return None
-            options.sort(key=lambda o: (o[0], o[1]))
-            _, cut, condition, main = options[0]
+            # Where the pieces have shapes she has seen most; the first place it can end among equals.
+            options.sort(key=lambda o: (o[1], o[0]))
+            cut, _, condition, main = options[0]
         kind = {"because": "why", "since": "why", "if": "on_condition", "unless": "unless",
                 "although": "despite", "though": "despite", "whereas": "despite"}.get(word, "when")
         return main, condition, {"word": word, "kind": kind}
