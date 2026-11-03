@@ -857,6 +857,17 @@ class DirectReasoningAdapter:
         about = self._fact_words(fact)
         lows = [str(t.get("surface") or "").casefold() for t in reading.get("tokens") or []]
         subject = str(fact.get("subject") or "")
+        clause = (reading.get("clauses") or [{}])[0]
+        about_at = next((int(t.get("index", -1)) for t in reading.get("tokens") or []
+                         if str(t.get("surface") or "").casefold() == "about"), None)
+        if str(clause.get("predicate_surface") or "") == "know" and about_at is not None:
+            # "What do you know about my brother?": everything she knows about him.
+            mention = next((m for m in reading.get("mentions") or []
+                            if isinstance(m.get("end"), int) and m["end"] > about_at), {})
+            wanted = FactText._content_tokens(str(mention.get("surface") or "")) - {"my", "user"}
+            filed = FactText._content_tokens(subject.replace("user's ", ""))
+            return bool(wanted) and wanted <= filed and ("my" not in str(mention.get("surface") or "").split()
+                                                          or subject.startswith("user's "))
         names = FactText._alias_set("name")
         if any(w in names for w in lows) and not (about & names) and not str(fact.get("object") or "")[:1].isupper():
             return False  # "what is my dog named?" asks for a name, not that the dog is loud
@@ -1153,6 +1164,9 @@ class DirectReasoningAdapter:
         (his "I" is her "you"), the same content words, the same yes/no."""
         if not reply or not his:
             return False
+        if reply.get("parts"):
+            # Her reply says several things: each must be something he said.
+            return all(self._says_back(self._analyze(part), his) for part in reply["parts"])
         if his.get("parts"):
             # A long sentence is several statements: saying back is saying one of them.
             return any(self._says_back(reply, self._analyze(part)) for part in his["parts"])
@@ -1350,7 +1364,9 @@ class DirectReasoningAdapter:
                 # painter?"), not someone else ("Are you Cleo?").
                 his_reading = self._analyze(str(payload.get("resolved_input") or user_input))
                 parts = his_reading.get("parts") or []
-                if parts and not any(said <= self._content_lemmas(self._analyze(p)) for p in parts):
+                asked_parts = [self._content_lemmas(self._analyze(q)) for q in reply.get("parts") or []] or [said]
+                if parts and not all(any(a <= self._content_lemmas(self._analyze(p)) for p in parts)
+                                     for a in asked_parts):
                     # "I like cats and I hate dogs": not "Do you like dogs?"
                     return no("the question mixes two different things he said", "about_what_he_said")
                 asked_about, talked_about = self._topic(reply), self._topic(his_reading, turn=True)
@@ -1369,6 +1385,10 @@ class DirectReasoningAdapter:
             if reply_is_question:
                 return no("he asked a question and the reply asks another question instead of answering", "answer_not_ask")
             used = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
+            for other in meaning.get("_facts") or []:
+                if isinstance(other, dict) and not self._fact_fits(other, question):
+                    return no("one of the things in the reply is about something else ("
+                              + " ".join(sorted(self._fact_words(other))) + "), not what he asked", "about_what_he_asked")
             if used and not self._fact_fits(used, question):
                 return no("the fact in the reply is about something else ("
                           + " ".join(sorted(self._fact_words(used))) + "), not what he asked",

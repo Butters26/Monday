@@ -165,7 +165,8 @@ def _candidates(reading: Dict[str, Any], people: Dict[str, List[str]], beliefs: 
                 if s:
                     break
             sex = sex or beliefs.pronoun_for(user_id, name)
-            entry = {"entity": {"name": name}, "kind": kind, "sex": sex, "plural": False, "label": name}
+            entry = {"entity": {"name": name}, "kind": kind, "sex": sex, "plural": False, "label": name,
+                     "at": int(token.get("index", pos))}
             found.append(entry)
             names_here.append(entry)
             continue
@@ -183,7 +184,8 @@ def _candidates(reading: Dict[str, Any], people: Dict[str, List[str]], beliefs: 
             plural = surface.casefold() != lemma and surface.casefold().endswith("s") and token.get("kind") == "noun"
             entity = {"noun": lemma, "owner": owner} if owner else {"noun": lemma, "definite": True}
             label = (f"{'my' if owner == 'user' else 'your' if owner == 'monday' else (owner + chr(39) + 's') if owner else 'the'} {surface}")
-            found.append({"entity": entity, "kind": kind, "sex": sex, "plural": plural, "label": label})
+            found.append({"entity": entity, "kind": kind, "sex": sex, "plural": plural, "label": label,
+                          "at": int(token.get("index", pos))})
     found = _same_ones(reading, found)
     names_here = [c for c in found if "name" in c["entity"]]
     if len(names_here) >= 2:
@@ -210,12 +212,13 @@ def _same_ones(reading: Dict[str, Any], found: List[Dict[str, Any]]) -> List[Dic
     # ("... is a painter").
     for i in range(len(found) - 1):
         if "noun" in found[i]["entity"] and "name" in found[i + 1]["entity"] \
-                and found[i]["kind"] in ("person", "animal"):
+                and found[i]["kind"] in ("person", "animal") and found[i + 1]["kind"] != "thing" \
+                and found[i + 1].get("at") == found[i].get("at", -9) + 1:  # right next to each other
             merge(found[i + 1], found[i])
     left = [c for c in found if not any(c is m for m in merged)]
     names = [c for c in left if "name" in c["entity"]]
     nouns = [c for c in left if "noun" in c["entity"]]
-    if copular and len(names) == 1 and len(nouns) == 1:
+    if copular and len(names) == 1 and len(nouns) == 1 and names[0]["kind"] != "thing":
         merge(names[0], nouns[0])
     elif copular and not names and len(nouns) == 2:
         # "My mom is a nurse": one person, known by what he called her first.

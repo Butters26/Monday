@@ -607,6 +607,12 @@ class SentenceBuilder:
     # ---- public --------------------------------------------------------------
 
     def build(self, meaning: Dict[str, Any]) -> Built:
+        if isinstance(meaning, dict) and meaning.get("several"):
+            # Several things to say: each built, joined where they share who
+            # they're about ("You got a new job and are happy").
+            built = self.build_many([m for m in meaning["several"] if isinstance(m, dict)])
+            built.meaning = meaning
+            return built
         built = Built("", meaning=meaning, learner=self.learner)
         act = (meaning or {}).get("act", "state")
         if act == "greet":
@@ -655,7 +661,8 @@ class SentenceBuilder:
                     b = Built("", learner=self.learner)
                     finite, rest = self.verb_group(b, m, m.get("subject") or {})
                     tail = self._predicate_tail(b, m)
-                    tails.append(" ".join(p for p in (finite, rest, tail) if p))
+                    when = str(m.get("when") or "").strip()
+                    tails.append(" ".join(p for p in (finite, rest, tail, when) if p))
                     combined.choices.extend(b.choices)
                     combined.problems.extend(b.problems)
                 combined.choices.extend(head.choices)

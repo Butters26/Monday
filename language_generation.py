@@ -1064,14 +1064,23 @@ class LanguageGenerator:
             # One Reasoning sent back this turn isn't tried again.
             skip = self.__dict__.get("_sent_back_facts") or set()
             fresh = [m for m in pieces["memory"] if self._fact_key(m) not in skip] or pieces["memory"]
-            meaning = dict(fresh[0] if ctx.startswith("question") else rng.choice(fresh))
-            if meaning.get("_because_text"):
-                # "...because your dog died": his reason, read and turned to her side.
-                reason = self._statement_meaning(self.comprehension.analyze(meaning["_because_text"]))
-                if reason:
-                    meaning["because"] = reason
+            if len(fresh) > 1 and builder._choose(plan, f"plan_how_much@{ctx}.memory", ["one", "several"]) == "several":
+                # More than one thing she knows about it, said together.
+                chosen = [dict(m) for m in fresh[:3]]
+                for m in chosen:
+                    self._add_reason(m)
+                meaning = {"several": chosen, "_fact": chosen[0].get("_fact"),
+                           "_facts": [m.get("_fact") for m in chosen if m.get("_fact")]}
+            else:
+                meaning = dict(fresh[0] if ctx.startswith("question") else rng.choice(fresh))
+                self._add_reason(meaning)
         elif kind == "what_he_said":
-            meaning = dict(rng.choice(pieces["what_he_said"]))
+            said = pieces["what_he_said"]
+            if len(said) > 1 and builder._choose(plan, f"plan_how_much@{ctx}.what_he_said", ["one", "several"]) == "several":
+                # Everything he said in his long sentence, from her side.
+                meaning = {"several": [dict(m) for m in said]}
+            else:
+                meaning = dict(rng.choice(said))
         elif kind == "expected_reply":
             meaning = dict(pieces["expected_reply"][0])
             if meaning.get("act") == "phrase":
@@ -1104,7 +1113,16 @@ class LanguageGenerator:
                            "complement": {"entity": noun} if noun.get("name")
                            else {"noun": noun["noun"], "definite": False}}
         meaning["act"] = "ask" if form == "ask" else "state"
+        for part in meaning.get("several") or []:
+            part["act"] = meaning["act"]
         return meaning
+
+    def _add_reason(self, meaning: Dict[str, Any]) -> None:
+        if meaning.get("_because_text"):
+            # "...because your dog died": his reason, read and turned to her side.
+            reason = self._statement_meaning(self.comprehension.analyze(meaning["_because_text"]))
+            if reason:
+                meaning["because"] = reason
 
     # What kind of reply Reasoning said would fit, and how Language narrows its
     # next try to fit it (it still chooses, and still learns from what's kept).

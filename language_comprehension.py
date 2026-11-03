@@ -1742,6 +1742,13 @@ class LanguageComprehensionEngine:
         affect = dict(main.get("affect") or {})
         affect["evidence"] = evidence
         reading["affect"] = affect
+        # Words she doesn't know: the ones in its statements, not a misreading of the whole.
+        unknown: List[str] = []
+        for part in reading.get("parts") or []:
+            for w in self.analyze(part).get("unknown_words") or []:
+                if w not in unknown:
+                    unknown.append(w)
+        reading["unknown_words"] = unknown
         for key in ("assertion", "topic_head", "predicative_complement", "tense", "modal", "certainty"):
             reading[key] = main.get(key)
         if isinstance(reading.get("assertion"), dict):
@@ -1818,6 +1825,9 @@ class LanguageComprehensionEngine:
                     entry.update({"kind": "noun", "lemma": self.lemma(entry["surface"], prefer_pos="n"),
                                   "senses": self._lookup(entry["surface"], pos="n")})
             for entry in lexical[verb_idx + 1:]:
+                if entry.get("kind") in ("conjunction", "subordinator", "wh") \
+                        or str(entry.get("surface")) in (",", ";", "that", "who", "which"):
+                    break  # "... and he works at a bank": the next statement has its own verb
                 if entry.get("kind") == "verb" and self._lookup(entry["surface"], pos="n"):
                     entry.update({"kind": "noun", "lemma": self.lemma(entry["surface"], prefer_pos="n"),
                                   "senses": self._lookup(entry["surface"], pos="n")})
@@ -2314,8 +2324,8 @@ class LanguageComprehensionEngine:
             },
             "boundary": self.HARD_BOUNDARY,
         }
-        if reading["parts"] and statements.get("positions"):
-            self._whole_from_parts(reading, statements["positions"])
+        if reading["parts"]:
+            self._whole_from_parts(reading, statements.get("positions") or [])
         return reading
 
 
