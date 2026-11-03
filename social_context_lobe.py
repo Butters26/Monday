@@ -192,6 +192,7 @@ compliment -> "thank you" (sure 0.7)
                 data = json.loads(path.read_text(encoding="utf-8"))
                 self._stored_beliefs = {str(k): dict(v) for k, v in (data.get("beliefs") or {}).items()
                                         if isinstance(v, dict)}
+                self._meanings_changed = {str(k): float(v) for k, v in (data.get("word_meanings") or {}).items()}
                 return {str(k): dict(v) for k, v in (data.get("people") or {}).items() if isinstance(v, dict)}
         except Exception as exc:
             print(f"⚠️  Social context: could not load {self.storage_path}: {exc}")
@@ -206,7 +207,8 @@ compliment -> "thank you" (sure 0.7)
             path = Path(self.storage_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"people": self._users, "beliefs": getattr(self, "_stored_beliefs", None) or {}},
+            tmp.write_text(json.dumps({"people": self._users, "beliefs": getattr(self, "_stored_beliefs", None) or {},
+                                       "word_meanings": getattr(self, "_meanings_changed", None) or {}},
                                       indent=1, default=str), encoding="utf-8")
             tmp.replace(path)
         except Exception as exc:
@@ -290,21 +292,11 @@ compliment -> "thank you" (sure 0.7)
         feeling it; Emotion feels what the move means for her."""
         from monday_appraisal import WordFeelings, appraise
         if SocialContextLobe._meaning_beliefs is None:
-            SocialContextLobe._meaning_beliefs = WordFeelings()
+            SocialContextLobe._meaning_beliefs = WordFeelings(self._stored_meanings())
         return appraise(reading, SocialContextLobe._meaning_beliefs)
 
-    def _ask_emotion(self, text: str) -> Dict[str, Any]:
-        send = getattr(self.thalamus, "send_message", None)
-        if not callable(send) or not text.strip():
-            return {}
-        try:
-            response = send("emotion", "appraise", {"text": text}, source="social_context")
-        except Exception:
-            return {}
-        if not isinstance(response, dict) or response.get("status") != "success":
-            return {}
-        body = response.get("content")
-        return body if isinstance(body, dict) else {}
+    def _stored_meanings(self) -> Dict[str, float]:
+        return {str(k): float(v) for k, v in (getattr(self, "_meanings_changed", None) or {}).items()}
 
     def _cue_nearby_count(self, state: Dict[str, Any], cue: str, window: int = 4) -> int:
         recent = list(state.get("recent_cues") or [])
@@ -611,6 +603,20 @@ compliment -> "thank you" (sure 0.7)
                 user_id=str(content.get("user_id") or "default"),
             )
             return {"status": "success", "content": snap, "social_context": snap}
+
+        if msg_type == "adjust_word_meaning":
+            # How a word is meant (well or badly), changed by experience or by Matthew.
+            word = str(content.get("word") or "").strip()
+            if not word or "good" not in content:
+                return {"status": "error", "message": "adjust_word_meaning needs a word and good (-1..1)"}
+            from monday_appraisal import WordFeelings
+            if SocialContextLobe._meaning_beliefs is None:
+                SocialContextLobe._meaning_beliefs = WordFeelings(self._stored_meanings())
+            old = SocialContextLobe._meaning_beliefs.feel(word)
+            new = SocialContextLobe._meaning_beliefs.adjust(word, float(content["good"]))
+            self._meanings_changed = dict(SocialContextLobe._meaning_beliefs.learned)
+            self._save()
+            return {"status": "success", "content": {"word": word, "old": old, "new": new}}
 
         if msg_type in ("get_context", "get_social_context"):
             uid = str(content.get("user_id") or "default")

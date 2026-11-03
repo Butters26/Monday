@@ -3,7 +3,7 @@
 Advanced Emotional Engine — Monday emotion lobe (live mood path).
 
 LIVE mood driver (design lock 2026-09-25):
-  MondayCoreAffect (valence/arousal + decay) + appraisal (monday_appraisal.py: Language reading + word-feeling beliefs)
+  MondayCoreAffect (valence/arousal + decay) driven by her inner life (monday_inner_life.py: needs, attachment, what happens)
   → thin label readout (calm/happy/sad/angry/worried/scared/excited).
 
 Honesty:
@@ -33,7 +33,6 @@ from typing import Dict, List, Optional, Tuple, Any, Callable
 from threading import Lock
 from thalamus import get_thalamus
 from monday_core_affect import MondayCoreAffect, label_from_va, THIN_LABELS
-from monday_appraisal import WordFeelings
 from monday_inner_life import InnerLife
 
 # ------------------------------
@@ -332,8 +331,6 @@ class AdvancedEmotionalEngine:
         self.pad: PAD = PAD(0.0, 0.0, 0.0)
         # LIVE mood substrate (design lock 2026-09-25). Classifiers no longer drive her mood.
         self.core_affect = MondayCoreAffect()
-        # How what happens affects her: Language's reading + her word-feeling beliefs.
-        self.word_feelings = WordFeelings()
         self._last_self_impact_reason: str = "init"
         self.last_appraisal: Dict[str, Any] = {}
         self._last_primary: EmotionalState = EmotionalState.CALM
@@ -589,8 +586,8 @@ class AdvancedEmotionalEngine:
         # Gentle capped nudge — never full phrase-table slam
         # Her own thoughts don't make her feel something from their words; the
         # feelings they carry come back through memory (remembered moments).
-        from monday_appraisal import Appraisal
-        delta = Appraisal(0.0, 0.0, "thought noted", "none", [])
+        from monday_inner_life import Felt
+        delta = Felt(0.0, 0.0, None, "thought noted")
 
         if abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9:
             self.core_affect.apply_delta(delta.dv, delta.da, delta.reason)
@@ -670,7 +667,6 @@ class AdvancedEmotionalEngine:
             'pad': {'v': self.pad.v, 'a': self.pad.a, 'd': self.pad.d},
             'core_affect': self.core_affect.to_dict(),
             'last_self_impact_reason': getattr(self, '_last_self_impact_reason', ''),
-            'learned_word_feelings': dict(self.word_feelings.learned),
             'inner_life': {**self.inner.state(), 'last_time': self.inner.last_time},
             'attachment': asdict(self.attachment),
             'needs': asdict(self.needs),
@@ -753,9 +749,6 @@ class AdvancedEmotionalEngine:
                 arousal=float(pad_obj.get('a', -0.10)),
             )
         self._last_self_impact_reason = str(obj.get('last_self_impact_reason', 'loaded'))
-        learned = obj.get('learned_word_feelings')
-        if isinstance(learned, dict):
-            self.word_feelings = WordFeelings({str(k): float(v) for k, v in learned.items()})
         self._sync_from_core_affect(trigger="load")
         att = obj.get('attachment')
         if isinstance(att, dict):
@@ -1516,16 +1509,6 @@ class EmotionalProcess:
                 self.engine.feel(felt)
                 return {'status': 'success', 'content': {'remembered_feelings': len(felt)}}
 
-            elif msg_type == 'adjust_word_feeling':
-                # A belief about how a word feels, changed (by experience or by Matthew).
-                word = str(message.get('word') or '').strip()
-                if not word or 'feeling' not in message:
-                    return {'status': 'error', 'message': 'adjust_word_feeling needs a word and a feeling (-1..1)'}
-                old_value = self.engine.word_feelings.feel(word)
-                new_value = self.engine.word_feelings.adjust(word, float(message['feeling']))
-                self._atomic_save_state()
-                return {'status': 'success', 'content': {'word': word, 'old': old_value, 'new': new_value}}
-                
             elif msg_type == 'feel_emotion':
                 # Canonical live contract matches AdvancedEmotionalEngine.feel_emotion:
                 #   emotion   (required): EmotionalState value string

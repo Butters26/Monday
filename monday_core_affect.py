@@ -4,8 +4,8 @@ MondayCoreAffect — live mood substrate for the emotion lobe.
 
 Design lock: _emotion_what_we_must_build.txt
 - Continuous valence/arousal with decay toward setpoint; additive deltas; clamp.
-- What moves her core affect is appraisal (monday_appraisal.py): Language's
-  reading of who it's about + her beliefs about how words feel.
+- What moves her core affect is her inner life (monday_inner_life.py): her
+  needs and what happens to her. No word ratings.
   (The old regex SelfImpact lists are in legacy/self_impact_regex_legacy.py.)
 - Thin label readout from (v,a); no intensity hardcode 0.8; no RNG identity.
 """
