@@ -639,6 +639,16 @@ compliment -> "thank you" (sure 0.7)
             )
             return {"status": "success", "content": snap, "social_context": snap}
 
+        if msg_type == "how_meant":
+            # How some words are meant (well or badly, and about whom), read the
+            # way social context reads his: used by Reasoning on her own reply.
+            text = str(content.get("text") or "")
+            meant = self._how_meant(self._read(text)) if text.strip() else None
+            if meant is None:
+                return {"status": "success", "content": {"text": text, "about": "none", "good": 0.0}}
+            return {"status": "success", "content": {"text": text, "about": meant.about, "good": float(meant.dv),
+                                                     "words": [w for w, _ in meant.words]}}
+
         if msg_type == "adjust_word_meaning":
             # How a word is meant (well or badly), changed by experience or by Matthew.
             word = str(content.get("word") or "").strip()

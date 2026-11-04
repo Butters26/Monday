@@ -752,6 +752,57 @@ class DirectReasoningAdapter:
         listen = getattr(self.thalamus, "listen", None)
         if callable(listen):
             listen(name, "remembered")
+            listen(name, "social_read")  # what social context makes of each moment
+
+    def _hear_social(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self.__dict__.setdefault("_social_reads", {})[str(payload.get("user_id") or "default")] = dict(payload)
+        return {"status": "success", "content": {"heard": True}}
+
+    def _ask_lobe(self, lobe: str, msg_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self.thalamus is None:
+            return {}
+        try:
+            response = self.thalamus.send_message(lobe, msg_type, payload, source="reasoning")
+        except Exception:
+            return {}
+        if not isinstance(response, dict) or response.get("status") not in ("success", None):
+            return {}
+        body = response.get("content") if isinstance(response.get("content"), dict) else response
+        return body if isinstance(body, dict) else {}
+
+    def _understand_moment(self, user_input: str, user_id: str, direct_input: Dict[str, Any]) -> Dict[str, Any]:
+        """What's going on, from what every lobe knows, and what follows
+        (reasoning_understanding.py). Conclusions go to memory as concluded;
+        the whole understanding is announced for any lobe that listens."""
+        from reasoning_understanding import Understanding
+        if not user_input.strip():
+            return {}
+        social = (self.__dict__.get("_social_reads") or {}).get(user_id) or {}
+        if str(social.get("said") or "").strip() != user_input.strip():
+            social = self._ask_lobe("social_context", "get_context", {"user_id": user_id})
+            if str(social.get("said") or "").strip() != user_input.strip():
+                social = {}
+        facts = self._facts_for(user_input, user_id)
+        emotion = direct_input.get("emotion_result") if isinstance(direct_input.get("emotion_result"), dict) else {}
+        if not emotion.get("monday_emotion"):
+            emotion = self._ask_lobe("emotion", "get_state", {}) or emotion
+        novelty_body = self._ask_lobe("novelty", "get_assessment", {})
+        novelty = novelty_body.get("novelty_score", novelty_body.get("score"))
+        attention = direct_input.get("attention") if isinstance(direct_input.get("attention"), dict) else {}
+        focus = (getattr(self, "_last_attention_focus", None) or {}).get("focus_text") or attention.get("focus_text")
+        understood = Understanding(self._ask_lobe).understand(
+            user_input, user_id, social, facts, emotion,
+            float(novelty) if isinstance(novelty, (int, float)) else None, focus)
+        for c in understood.get("conclusions") or []:
+            self._ask_lobe("notus", "store_conclusion", {**c, "user_id": user_id})
+        self.__dict__.setdefault("_understood", {})[user_id] = understood
+        announce = getattr(self.thalamus, "announce", None)
+        if callable(announce):
+            try:
+                announce("understood", understood, "reasoning")
+            except Exception:
+                pass
+        return understood
 
     def _hear_remembered(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         about = str(payload.get("about") or "").strip().casefold()
@@ -1247,6 +1298,14 @@ class DirectReasoningAdapter:
         noun = str(complement.get("noun") or "")
         person = subject.get("ref") in ("speaker", "addressee") or bool(subject.get("name")) \
             or subject.get("pronoun") in ("he", "she", "we")
+        if subject.get("name") and person:
+            # A name isn't always a person: what she knows about it says ("Rex is a dog").
+            from reasoning_understanding import kind_of
+            for fact in self._facts_for(str(subject["name"]), self.__dict__.get("_reviewing_for", "default")):
+                if str(fact.get("subject") or "").casefold() == str(subject["name"]).casefold() \
+                        and fact.get("predicate") == "is_a" and kind_of(str(fact.get("object") or "")) not in (None, "person"):
+                    person = False
+                    break
         if person and noun and not self._noun_is_person(noun):
             return f"a person isn't {noun}: the dictionary doesn't have '{noun}' as a kind of person"
         return None
@@ -1276,6 +1335,7 @@ class DirectReasoningAdapter:
         meaning = payload.get("meaning") if isinstance(payload.get("meaning"), dict) else {}
         user_input = str(payload.get("user_input") or "")
         user_id = str(payload.get("user_id") or "default")
+        self._reviewing_for = user_id
 
         def no(reason: str, wanted: str = "") -> Dict[str, Any]:
             # wanted: the kind of reply that would fit (never the words).
@@ -1323,6 +1383,27 @@ class DirectReasoningAdapter:
         reply_is_question = sentence.endswith("?") or reply.get("speech_act") == "question"
         purpose = str(meaning.get("_purpose") or "")
         act = str(meaning.get("act") or "")
+        understood = (self.__dict__.get("_understood") or {}).get(user_id) or {}
+        if understood.get("said", "").strip() != user_input.strip():
+            understood = {}
+        if act in ("state", "ask"):
+            # Is there a reason, in what's going on, to say something unkind to him?
+            hers = self._ask_lobe("social_context", "how_meant", {"text": sentence})
+            if hers.get("about") == "her" and float(hers.get("good") or 0.0) < -0.2:
+                social = (self.__dict__.get("_social_reads") or {}).get(user_id) or {}
+                feeling = understood.get("her_feeling") or {}
+                provoked = str(social.get("move") or "") == "insult" or (
+                    feeling.get("fits_now") and str(feeling.get("feeling") or "") in
+                    ("hurt", "angry", "frustrated", "contemptuous", "disgusted"))
+                if not provoked:
+                    return no("there's no reason to say something unkind to him: nothing he said or did "
+                              "calls for it" + (f" (he {social.get('move')})" if social.get("move") else ""))
+        her_feeling = str(payload.get("her_feeling") or "").strip()
+        if purpose == "own_feeling" and her_feeling:
+            said_feeling = {str(w).casefold() for w in words}
+            if her_feeling.casefold() not in said_feeling \
+                    and not self._feeling_words_meet({her_feeling.casefold()}, said_feeling):
+                return no(f"she doesn't feel that right now; she feels {her_feeling}", "say_own_feeling")
         first = next((t for t in reply.get("tokens") or [] if t.get("kind") != "punctuation"), {})
         first_senses = {str(s.get("synset_id")) for s in first.get("senses") or []}
         addressee = meaning.get("addressee") if isinstance(meaning.get("addressee"), dict) else {}
@@ -1421,6 +1502,11 @@ class DirectReasoningAdapter:
                     asked = self._content_lemmas(q)
                     match = next((st for st in statements if asked <= self._content_lemmas(st)), statements[0])
                     asked_who, said_who = self._subject_words(q), self._subject_words(match, turn=True)
+                    his_words = {str(t.get("surface") or "").casefold() for t in match.get("tokens") or []}
+                    if asked_who and all(w in his_words for w in asked_who) and any(
+                            str(t.get("kind")) == "proper_noun" and str(t.get("surface") or "").casefold() in asked_who
+                            for t in q.get("tokens") or []):
+                        continue  # "Is Rex a dog?" for "my dog is named Rex": Rex is his dog
                     if asked_who and said_who and asked_who != said_who:
                         return no(f"he talked about {' '.join(sorted(said_who))}, and the question is about "
                                   f"{' '.join(sorted(asked_who))}", "about_what_he_said")
@@ -1494,6 +1580,9 @@ class DirectReasoningAdapter:
             if str(fact.get("object", "")) != "(nothing)" \
                     and str(fact.get("object", "")).casefold() not in sentence.casefold():
                 return no(f"the reply leaves out the fact ({fact.get('object')})")
+        feeling = understood.get("her_feeling") or {}
+        if feeling.get("note"):
+            return {"ok": True, "reason": "makes sense; " + str(feeling["note"])}
         return {"ok": True, "reason": "makes sense"}
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -1510,6 +1599,13 @@ class DirectReasoningAdapter:
         if message.get("type") == "remembered":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return self._hear_remembered(payload)
+        if message.get("type") == "social_read":
+            payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
+            return self._hear_social(payload)
+        if message.get("type") == "get_understanding":
+            payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
+            return {"status": "success",
+                    "content": (self.__dict__.get("_understood") or {}).get(str(payload.get("user_id") or "default"), {})}
         if message.get("type") == "review_reply":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             verdict = self.review_reply(payload)
@@ -1525,6 +1621,10 @@ class DirectReasoningAdapter:
         direct_input["memory_context"] = self._prepare_memory_context(direct_input)
         user_input = direct_input.get("user_input", "")
         user_input = user_input if isinstance(user_input, str) else ""
+        try:
+            self._understand_moment(user_input, str(direct_input.get("user_id") or "default"), direct_input)
+        except Exception as error:
+            print(f"⚠️  Reasoning: couldn't put together what's going on ({error})")
         understanding = direct_input.get("understanding", {})
         understanding = understanding if isinstance(understanding, dict) else {}
         memory_context = direct_input.get("memory_context", {})

@@ -2755,6 +2755,24 @@ class DirectNotusProcess:
         if msg_type == "moment":
             return self.hear_moment(payload)
 
+        if msg_type == "store_conclusion":
+            # Something Reasoning worked out ("Rex is an animal"): kept apart from
+            # what he told her, as concluded, with why and how sure.
+            subject, predicate, obj = (str(payload.get(k) or "").strip() for k in ("subject", "predicate", "object"))
+            if not (subject and predicate and obj):
+                return {"status": "error", "message": "store_conclusion needs subject, predicate and object"}
+            user_id = str(payload.get("user_id") or "default")
+            fact = self.store_brain_fact(subject, predicate, obj, confidence=float(payload.get("sure") or 0.8),
+                                         user_id=user_id, single_valued=False)
+            if isinstance(fact, dict) and fact.get("id"):
+                with self._lock:
+                    connection = self._require_connection()
+                    connection.execute("UPDATE brain_facts SET held_by = ?, sure = ? WHERE id = ? AND held_by IS NULL",
+                                       ("concluded: " + str(payload.get("because") or "reasoning")[:200],
+                                        float(payload.get("sure") or 0.8), fact["id"]))
+                    connection.commit()
+            return {"status": "success", "content": {"stored": bool(fact), "fact": fact}}
+
         if msg_type == "store_belief":
             return self.store_belief(payload.get("statement"), sureness=payload.get("sureness", 0.6),
                                      source=str(payload.get("source") or "learned"))
