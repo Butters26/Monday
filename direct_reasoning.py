@@ -790,9 +790,17 @@ class DirectReasoningAdapter:
         novelty = novelty_body.get("novelty_score", novelty_body.get("score"))
         attention = direct_input.get("attention") if isinstance(direct_input.get("attention"), dict) else {}
         focus = (getattr(self, "_last_attention_focus", None) or {}).get("focus_text") or attention.get("focus_text")
-        understood = Understanding(self._ask_lobe).understand(
+        reading = self._analyze(user_input)
+        thinker = Understanding(self._ask_lobe)
+        understood = thinker.understand(
             user_input, user_id, social, facts, emotion,
-            float(novelty) if isinstance(novelty, (int, float)) else None, focus)
+            float(novelty) if isinstance(novelty, (int, float)) else None, focus,
+            patterns=direct_input.get("pattern_result") if isinstance(direct_input.get("pattern_result"), dict) else {},
+            reading=reading)
+        solved = thinker.solution_in(reading)
+        if solved:
+            # A way he found to fix something: kept, to suggest when it comes up again.
+            understood.setdefault("conclusions", []).append(solved)
         for c in understood.get("conclusions") or []:
             self._ask_lobe("notus", "store_conclusion", {**c, "user_id": user_id})
         self.__dict__.setdefault("_understood", {})[user_id] = understood
@@ -1602,6 +1610,28 @@ class DirectReasoningAdapter:
         if message.get("type") == "social_read":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return self._hear_social(payload)
+        if message.get("type") in ("work_out", "think_through"):
+            # Another lobe (Autonomous Thinking, Executive Control...) asks her to
+            # think something through: what she knows about it, what follows, why.
+            from reasoning_understanding import Understanding
+            payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
+            question = str(payload.get("question") or payload.get("text") or "").strip()
+            user_id = str(payload.get("user_id") or "default")
+            if not question:
+                return {"status": "error", "message": "work_out needs a question"}
+            facts = self._facts_for(question, user_id)
+            thinker = Understanding(self._ask_lobe)
+            thinker._user_id = user_id
+            reading = self._analyze(question)
+            result = {"question": question, "knows": [f.get("content") or f"{f.get('subject')} {f.get('predicate')} {f.get('object')}"
+                                                      for f in facts[:6]],
+                      "conclusions": thinker.conclude(facts), "explanations": thinker.explain(facts)}
+            problem = thinker.problem_in(reading, facts)
+            if problem:
+                result["problem"] = problem
+            if not facts:
+                result["unsure"] = "she doesn't know anything about this yet"
+            return {"status": "success", "content": result}
         if message.get("type") == "get_understanding":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return {"status": "success",

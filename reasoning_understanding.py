@@ -59,7 +59,10 @@ class Understanding:
     # ---- the moment -----------------------------------------------------------
     def understand(self, said: str, user_id: str, social: Dict[str, Any],
                    facts: List[Dict[str, Any]], emotion: Dict[str, Any],
-                   novelty: Optional[float], focus: Optional[str]) -> Dict[str, Any]:
+                   novelty: Optional[float], focus: Optional[str],
+                   patterns: Optional[Dict[str, Any]] = None,
+                   reading: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        self._user_id = user_id
         happened: List[Dict[str, Any]] = []
         move = str(social.get("move") or "")
         meant = social.get("meant") if isinstance(social.get("meant"), dict) else {}
@@ -90,8 +93,99 @@ class Understanding:
                           "sound (sarcasm?), a guess")
         if novelty is not None and novelty > 0.7 and not facts:
             unsure.append("this is new to her and she knows nothing about it yet; anything she says about it is a guess")
+        shown = self.what_patterns_show(patterns or {})
+        problem = self.problem_in(reading or {}, facts)
         return {"said": said, "user_id": user_id, "happened": happened, "conclusions": conclusions,
-                "explanations": explanations, "her_feeling": feeling, "unsure": unsure}
+                "explanations": explanations + shown, "her_feeling": feeling, "unsure": unsure,
+                **({"problem": problem} if problem else {})}
+
+    # ---- what patterns show ----------------------------------------------------
+    @staticmethod
+    def what_patterns_show(patterns: Dict[str, Any]) -> List[str]:
+        """What Pattern Recognition found, and what it does and doesn't show:
+        things coming up together isn't one causing the other."""
+        out: List[str] = []
+        for p in (patterns.get("strong_co_occurrences") or [])[:3]:
+            items = [str(i) for i in p.get("items") or []]
+            if len(items) == 2:
+                out.append(f"{items[0]} and {items[1]} keep coming up together ({p.get('count')} times); "
+                           "that alone doesn't show one causes the other")
+        for p in (patterns.get("reliable_sequences") or [])[:2]:
+            steps = [str(x) for x in p.get("steps") or []]
+            if len(steps) >= 2:
+                out.append(f"{' then '.join(steps)} keeps happening in that order; a guess that it will again")
+        for c in (patterns.get("contradictions") or [])[:2]:
+            out.append(f"he said things that don't agree: {c}")
+        return out
+
+    # ---- problems and how they were solved -------------------------------------
+    def problem_in(self, reading: Dict[str, Any], facts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """"My car won't start", "I can't find my keys": something he can't get
+        to happen. What solved something like it before is a possible way, a
+        guess; with nothing like it before she doesn't know a way yet."""
+        clause = (reading.get("clauses") or [{}])[0]
+        negative = (clause.get("qualifiers") or {}).get("polarity") == "negative"
+        modal = str(reading.get("modal") or "")
+        tokens = [str(t.get("surface") or "").casefold() for t in reading.get("tokens") or []]
+        if not negative or not (modal in ("can", "could", "would") or "will" in tokens or "wo" in tokens):
+            return None
+        verb = str(clause.get("predicate_surface") or "")
+        if not verb:
+            return None
+        roles = clause.get("roles") or {}
+        mentions = {m.get("mention_id"): m for m in reading.get("mentions") or []}
+        who = str((mentions.get(roles.get("agent") or roles.get("theme")) or {}).get("surface") or "")
+        thing = str((mentions.get(roles.get("patient") or roles.get("theme")) or {}).get("surface") or who)
+        head = thing.split()[-1].casefold() if thing else ""
+        if head:
+            # What she knows about the thing itself, ways that fixed it included.
+            more = self.ask("notus", "query_facts", {"query": head, "user_id": getattr(self, "_user_id", "default"),
+                                                      "limit": 20}) or {}
+            facts = list(facts) + [f for f in more.get("facts") or [] if isinstance(f, dict)]
+        ways = [f for f in facts if str(f.get("predicate") or "") == "solved_by"
+                and head and head in str(f.get("subject") or "").casefold()]
+        out: Dict[str, Any] = {"what": f"{who or 'something'} can't {verb}", "thing": thing}
+        if ways:
+            out["maybe"] = [f"last time, {w.get('object')} fixed {w.get('subject')} (it may work again)" for w in ways]
+        else:
+            out["unsure"] = "she doesn't know a way to fix this yet; she'd need to know more or be told"
+        return out
+
+    def solution_in(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """"I fixed my car by charging the battery": a way that solved
+        something, kept so it can be suggested next time."""
+        clause = (reading.get("clauses") or [{}])[0]
+        verb = str(clause.get("predicate_surface") or "")
+        raw = str(reading.get("raw_text") or "")
+        if " by " not in f" {raw.casefold()} " or not verb:
+            return None
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            wn = get_wordnet()
+            targets = {x.id for w in ("repair", "solve", "fix") for x in wn.synsets(w, pos="v")}
+            frontier = list(wn.synsets(verb, pos="v"))[:3]
+            fixes = False
+            for _ in range(3):
+                if {x.id for x in frontier} & targets:
+                    fixes = True
+                    break
+                frontier = [h for x in frontier for h in x.hypernyms()]
+        except Exception:
+            return None
+        if not fixes:
+            return None
+        roles = clause.get("roles") or {}
+        mentions = {m.get("mention_id"): m for m in reading.get("mentions") or []}
+        thing = str((mentions.get(roles.get("patient") or roles.get("theme")) or {}).get("surface") or "")
+        how = raw[raw.casefold().index(" by ") + 4:].strip(" .!")
+        thing = thing.split(" by ")[0].strip()  # "my car by charging..." -> "my car"
+        words = thing.split()
+        if words and words[0].casefold() in ("my", "our"):
+            thing = "user's " + " ".join(words[1:])  # filed the way memory files his things
+        if not thing or not how:
+            return None
+        return {"subject": thing, "predicate": "solved_by", "object": how, "sure": 0.8,
+                "because": f"he said: {raw.strip()}"}
 
     # ---- what follows ----------------------------------------------------------
     def conclude(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
