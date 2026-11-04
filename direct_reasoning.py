@@ -858,6 +858,10 @@ class DirectReasoningAdapter:
         lows = [str(t.get("surface") or "").casefold() for t in reading.get("tokens") or []]
         subject = str(fact.get("subject") or "")
         clause = (reading.get("clauses") or [{}])[0]
+        obj = str(fact.get("object") or "")
+        if lows and lows[0] in ("who", "what") and obj[:1].isupper() and obj.casefold() in lows:
+            # "Who is called Max?": the fact that has Max in it says who.
+            return True
         about_at = next((int(t.get("index", -1)) for t in reading.get("tokens") or []
                          if str(t.get("surface") or "").casefold() == "about"), None)
         if str(clause.get("predicate_surface") or "") == "know" and about_at is not None:
@@ -866,6 +870,10 @@ class DirectReasoningAdapter:
                             if isinstance(m.get("end"), int) and m["end"] > about_at), {})
             wanted = FactText._content_tokens(str(mention.get("surface") or "")) - {"my", "user"}
             filed = FactText._content_tokens(subject.replace("user's ", ""))
+            if subject == "user" and not str(fact.get("predicate") or "").startswith(("v:", "is", "not_")):
+                # "Your dog is Rex" is filed under him with "dog" as what it's about.
+                filed |= FactText._content_tokens(str(fact.get("predicate") or "").replace("_", " "))
+                subject = "user's " + str(fact.get("predicate") or "")
             return bool(wanted) and wanted <= filed and ("my" not in str(mention.get("surface") or "").split()
                                                           or subject.startswith("user's "))
         names = FactText._alias_set("name")
@@ -1110,6 +1118,35 @@ class DirectReasoningAdapter:
     # Who a sentence's doer is, seen from the other speaker's side.
     _TURNED = {"i": "you", "me": "you", "you": "i", "we": "you", "us": "you"}
 
+    # His words for who, said from her side ("my sister" -> "your sister"; his
+    # "we" is still "we": the two of them).
+    _HER_SIDE = {"i": "you", "me": "you", "my": "your", "mine": "yours", "you": "i", "your": "my",
+                 "we": "we", "us": "we", "our": "our"}
+
+    def _subject_words(self, reading: Dict[str, Any], turn: bool = False) -> set:
+        """Who a statement is about, as words: everything before its verb that
+        names someone ("my sister and I" -> {my, sister, i}), including whose."""
+        out = set()
+        tokens = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        while tokens and tokens[0].get("kind") in ("auxiliary", "modal", "wh", "negation"):
+            tokens = tokens[1:]  # a question: "Did your dog die?" -> "your dog"
+        has_head, before = False, ""
+        for token in tokens:
+            kind = token.get("kind")
+            if kind in ("verb", "auxiliary", "modal"):
+                break
+            if has_head and before != "and" and kind in ("determiner", "possessive", "pronoun", "proper_noun"):
+                break  # "Is your dog Rex?": "Rex" is what's asked, not who it's about
+            before = str(token.get("surface") or "").casefold()
+            if kind in ("pronoun", "noun", "proper_noun"):
+                has_head = True
+            word = str(token.get("surface") if kind in ("pronoun", "proper_noun", "determiner", "possessive")
+                       else token.get("lemma") or token.get("surface") or "").casefold()
+            if kind in ("pronoun", "noun", "proper_noun") or word in self._HER_SIDE \
+                    or kind == "possessive":
+                out.add(self._HER_SIDE.get(word, word) if turn else word)
+        return out - {"a", "an", "the", "and"}
+
     def _doer(self, reading: Dict[str, Any], turn: bool = False) -> str:
         for token in reading.get("tokens") or []:
             kind = token.get("kind")
@@ -1189,9 +1226,12 @@ class DirectReasoningAdapter:
                 break
             before_verb.append(str(t.get("surface") or "").casefold())
         both_of_them = bool({"i", "me"} & set(before_verb)) and "you" in before_verb
-        if self._doer(reply) != self._doer(his, turn=True) and \
-                self._topic(reply) != self._topic(his, turn=True) and not (
-                both_of_them and self._topic(reply) == "we"):  # "me and you have..." -> "We have..."
+        mine_who, his_who = self._subject_words(reply), self._subject_words(his, turn=True)
+        if both_of_them:
+            his_who = (his_who - {"i", "you", "me"}) | {"we"} if mine_who == {"we"} else his_who
+        if mine_who != his_who:
+            # Said back about the same one, the way he said it: "your dog", not
+            # "a dog" for "my dog"; "you and your sister" for "my sister and I".
             return False
         negative = lambda r: str((r.get("assertion") or {}).get("polarity") or "") == "negative" or any(
             t.get("kind") == "negation" for t in r.get("tokens") or [])
@@ -1215,8 +1255,8 @@ class DirectReasoningAdapter:
         """She reuses his verb without the someone/something he used it on
         ("I hate you" -> "You hate."): that's a different meaning of the verb."""
         verb = str(meaning.get("verb") or "").casefold()
-        if not verb or verb in ("be", "have", "do") or meaning.get("object"):
-            return None
+        if not verb or verb in ("be", "have", "do") or meaning.get("object") or meaning.get("complement"):
+            return None  # ("stay home": what came after the verb is still there, as a complement)
         tokens = [t for t in self._analyze(user_input).get("tokens") or [] if t.get("kind") != "punctuation"]
         for idx, token in enumerate(tokens[:-1]):
             if token.get("kind") == "verb" and str(token.get("lemma") or "").casefold() == verb \
@@ -1329,11 +1369,15 @@ class DirectReasoningAdapter:
             elif want and (self._content_lemmas(reply) != want or sentence.endswith("?")):
                 return no(f"he made a social move; what she believes fits is '{expected}'", "say_expected")
             return {"ok": True, "reason": f"it's what she believes fits ('{expected}')"}
-        if situation == "statement":
+        if situation in ("statement", "emotional_share"):
+            # (Sharing a feeling is also telling her something: what she says
+            # back or asks about it is checked the same way.)
             said = self._content_lemmas(reply)
             his = self._content_lemmas(self._analyze(str(payload.get("resolved_input") or user_input)))
             used = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
-            if act == "state":
+            if act == "state" and purpose == "own_feeling" and situation == "emotional_share":
+                pass  # how she feels about what he shared is hers to say (checked below)
+            elif act == "state":
                 # Saying back what he just told her shows she took it in; any other
                 # claim is something she doesn't know is true.
                 if purpose == "own_feeling" and self._topic(self._analyze(user_input), turn=True) in ("i", "me"):
@@ -1369,10 +1413,17 @@ class DirectReasoningAdapter:
                                      for a in asked_parts):
                     # "I like cats and I hate dogs": not "Do you like dogs?"
                     return no("the question mixes two different things he said", "about_what_he_said")
-                asked_about, talked_about = self._topic(reply), self._topic(his_reading, turn=True)
-                if asked_about and talked_about and asked_about != talked_about:
-                    return no(f"he talked about {talked_about}, and the question is about {asked_about}",
-                              "about_what_he_said")
+                # The question is about the one he said did it, said his way:
+                # "my dog died" -> "Did your dog die?", not "Do you die?" or "a dog".
+                questions = [self._analyze(q) for q in reply.get("parts") or []] or [reply]
+                statements = [self._analyze(p) for p in parts] or [his_reading]
+                for q in questions:
+                    asked = self._content_lemmas(q)
+                    match = next((st for st in statements if asked <= self._content_lemmas(st)), statements[0])
+                    asked_who, said_who = self._subject_words(q), self._subject_words(match, turn=True)
+                    if asked_who and said_who and asked_who != said_who:
+                        return no(f"he talked about {' '.join(sorted(said_who))}, and the question is about "
+                                  f"{' '.join(sorted(asked_who))}", "about_what_he_said")
         if situation == "greeting":
             if not self._has_greeting(reply):
                 return no("he greeted her and the reply does not greet him back", "greet_back")
