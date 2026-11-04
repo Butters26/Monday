@@ -1397,7 +1397,15 @@ class DirectReasoningAdapter:
         if act in ("state", "ask"):
             # Is there a reason, in what's going on, to say something unkind to him?
             hers = self._ask_lobe("social_context", "how_meant", {"text": sentence})
-            if hers.get("about") == "her" and float(hers.get("good") or 0.0) < -0.2:
+            his_now = self._analyze(str(payload.get("resolved_input") or user_input))
+            his_words = self._content_lemmas(his_now) | {str(t.get("surface") or "").casefold()
+                                                         for t in his_now.get("tokens") or []}
+            asked_words = {str(t.get("surface") or "").casefold() for t in reply.get("tokens") or []
+                           if t.get("kind") in self._CONTENT_KINDS}
+            said_back_his = self._says_back(reply, his_now) or (
+                act == "ask" and bool(asked_words) and asked_words <= his_words)  # "Are you tired?" for "I am tired"
+            if hers.get("about") == "her" and float(hers.get("good") or 0.0) < -0.2 and not said_back_his:
+                # (Saying back what he told her, "you are tired", isn't calling him anything.)
                 social = (self.__dict__.get("_social_reads") or {}).get(user_id) or {}
                 feeling = understood.get("her_feeling") or {}
                 provoked = str(social.get("move") or "") == "insult" or (
@@ -1484,7 +1492,12 @@ class DirectReasoningAdapter:
                 if not said_back and (not used or not self._fact_fits(used, user_input)):
                     return no("she's claiming something she doesn't know; she can say back what he "
                               "told her or ask about it", "restate_or_ask")
-            elif act == "ask" and his and not (said <= his):
+            elif act == "ask" and his and not (said <= his) and not (
+                    {str(t.get("surface") or "").casefold() for t in reply.get("tokens") or []
+                     if t.get("kind") in self._CONTENT_KINDS}
+                    <= {str(t.get("surface") or "").casefold()
+                        for t in self._analyze(str(payload.get("resolved_input") or user_input)).get("tokens") or []}):
+                # (the words as he wrote them count too: "tired" read two ways is still his word)
                 # Asking back uses what he just said, nothing else ("Ben is not
                 # tall" -> not "Is Ben a pilot?").
                 return no("the question isn't about what he said", "about_what_he_said")
@@ -1573,7 +1586,7 @@ class DirectReasoningAdapter:
                        for t in said_by_him.get("tokens") or []):
                 return no("he did not say he feels that; the feeling is about something else")
             felt = {str(w).casefold() for w in meaning.get("_feeling_words") or []}
-            if felt and not (felt & {w.casefold() for w in words}) \
+            if felt and purpose != "own_feeling" and not (felt & {w.casefold() for w in words}) \
                     and not self._feeling_words_meet(felt, {w.casefold() for w in words}):
                 return no("he shared a feeling and the reply does not respond to it", "respond_to_feeling")
             subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}

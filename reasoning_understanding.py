@@ -97,6 +97,9 @@ class Understanding:
         likened = self.like_what_she_knows(reading or {}, facts, user_id)
         unsure += [x for x in likened if x not in unsure]
         shown = self.what_patterns_show(patterns or {})
+        maybe_why = self.maybe_why(said, patterns or {}, facts)
+        if maybe_why:
+            unsure.append(maybe_why)
         problem = self.problem_in(reading or {}, facts)
         return {"said": said, "user_id": user_id, "happened": happened, "conclusions": conclusions,
                 "explanations": explanations + changed + shown, "her_feeling": feeling, "unsure": unsure,
@@ -159,12 +162,31 @@ class Understanding:
                            f"like {others[0]} in some ways (a guess)")
         return out
 
+    @staticmethod
+    def maybe_why(said: str, patterns: Dict[str, Any], facts: List[Dict[str, Any]]) -> Optional[str]:
+        """"Why am I tired?" with no reason he ever gave: what keeps coming up
+        with it is a possible reason, said as a guess, never as the cause."""
+        words = [w.strip("?.!,").casefold() for w in said.split()]
+        if not words or words[0] != "why" or any(str(f.get("because") or "").strip() for f in facts):
+            return None
+        if isinstance(patterns.get("significant_patterns"), dict):
+            patterns = patterns["significant_patterns"]
+        for p in patterns.get("strong_co_occurrences") or []:
+            items = [str(i).casefold() for i in p.get("items") or []]
+            if len(items) == 2 and (items[0] in words) != (items[1] in words):
+                asked, other = (items[0], items[1]) if items[0] in words else (items[1], items[0])
+                return (f"he never said why; {asked} keeps coming up with {other} ({p.get('count')} times), "
+                        f"so maybe it's because of {other}, a guess, not shown")
+        return None
+
     # ---- what patterns show ----------------------------------------------------
     @staticmethod
     def what_patterns_show(patterns: Dict[str, Any]) -> List[str]:
         """What Pattern Recognition found, and what it does and doesn't show:
         things coming up together isn't one causing the other."""
         out: List[str] = []
+        if isinstance(patterns.get("significant_patterns"), dict):
+            patterns = patterns["significant_patterns"]  # as Thalamus hands it over
         for p in (patterns.get("strong_co_occurrences") or [])[:3]:
             items = [str(i) for i in p.get("items") or []]
             if len(items) == 2:
