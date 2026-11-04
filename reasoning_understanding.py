@@ -93,11 +93,71 @@ class Understanding:
                           "sound (sarcasm?), a guess")
         if novelty is not None and novelty > 0.7 and not facts:
             unsure.append("this is new to her and she knows nothing about it yet; anything she says about it is a guess")
+        changed = self.what_changed(said, user_id)
+        likened = self.like_what_she_knows(reading or {}, facts, user_id)
+        unsure += [x for x in likened if x not in unsure]
         shown = self.what_patterns_show(patterns or {})
         problem = self.problem_in(reading or {}, facts)
         return {"said": said, "user_id": user_id, "happened": happened, "conclusions": conclusions,
-                "explanations": explanations + shown, "her_feeling": feeling, "unsure": unsure,
+                "explanations": explanations + changed + shown, "her_feeling": feeling, "unsure": unsure,
                 **({"problem": problem} if problem else {})}
+
+    # ---- what changed ---------------------------------------------------------
+    def what_changed(self, said: str, user_id: str) -> List[str]:
+        """Something he said before that a newer thing replaced (memory keeps
+        the old one as history): "his dog was Rex; now he says Max". It's
+        said as a change, not decided which is right."""
+        body = self.ask("notus", "get_contradictions", {"statement": said, "user_id": user_id}) or {}
+        out: List[str] = []
+        current = (self.ask("notus", "query_facts", {"query": said, "user_id": user_id, "limit": 20}) or {}).get("facts") or []
+        for c in (body.get("contradictions") or [])[:3]:
+            # What took its place: the current fact about the same thing.
+            new_obj = next((str(f.get("object")) for f in current
+                            if str(f.get("subject")) == str(c.get("subject"))
+                            and str(f.get("predicate")) == str(c.get("predicate"))
+                            and str(f.get("object")) != str(c.get("object"))), None)
+            subject = str(c.get("subject") or "")
+            subject = "his" if subject == "user" else subject.replace("user's", "his")
+            what = f"{subject} {str(c.get('predicate') or '').replace('v:', '').replace('_', ' ')}".strip()
+            if new_obj:
+                out.append(f"{what} was {c.get('object')} before; now it's {new_obj} (he changed it or corrected it)")
+                old = str(c.get("object") or "")
+                if old[:1].isupper():
+                    # What she concluded from the old one no longer follows.
+                    out.append(f"what she concluded about {old} from that (that {old} is his "
+                               f"{str(c.get('predicate') or '').replace('_', ' ')}) no longer follows")
+            else:
+                out.append(f"he said {what} {c.get('object')} before, and later something that doesn't agree")
+        return out
+
+    # ---- something new: what it's like ----------------------------------------
+    def like_what_she_knows(self, reading: Dict[str, Any], facts: List[Dict[str, Any]], user_id: str) -> List[str]:
+        """Something she knows nothing about ("my hamster"): what the dictionary
+        says it is, and what she knows about others of that kind ("a hamster is
+        an animal, like your dog"). Only a guess that it's like them."""
+        out: List[str] = []
+        # What she already knows something about: things facts are about (not
+        # just the line he said now, which memory has already filed).
+        known_words = " ".join(f"{f.get('subject')} {f.get('predicate')}" for f in facts
+                               if str(f.get("predicate")) not in ("v:get", "v:have", "v:buy")).casefold()
+        for token in reading.get("tokens") or []:
+            if token.get("kind") != "noun":
+                continue
+            noun = str(token.get("lemma") or "").casefold()
+            if not noun or noun in known_words:
+                continue
+            kind = kind_of(noun)
+            if not kind:
+                continue
+            same = self.ask("notus", "query_facts", {"query": kind, "user_id": user_id, "limit": 10}) or {}
+            others = [str(f.get("subject")) for f in same.get("facts") or []
+                      if str(f.get("predicate")) == "is_a" and str(f.get("object")).casefold() == kind
+                      and noun not in str(f.get("subject")).casefold()]
+            if others:
+                article = "an" if kind[:1] in "aeiou" else "a"
+                out.append(f"she doesn't know {noun}s yet; a {noun} is {article} {kind}, like {others[0]}, so it may be "
+                           f"like {others[0]} in some ways (a guess)")
+        return out
 
     # ---- what patterns show ----------------------------------------------------
     @staticmethod
