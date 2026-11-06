@@ -178,13 +178,13 @@ class Understanding:
 
     def engine(self):
         if Understanding._engine is None:
-            from reasoning_engine import Engine, RelationBeliefs
+            from reasoning_engine import Engine, RelationBeliefs, AmountBeliefs
             try:
                 from runtime_paths import runtime_file
-                path = runtime_file("reasoning_beliefs.txt")
+                path, amounts = runtime_file("reasoning_beliefs.txt"), runtime_file("reasoning_amounts.txt")
             except Exception:
-                path = None
-            Understanding._engine = Engine(family_kind, RelationBeliefs(path))
+                path = amounts = None
+            Understanding._engine = Engine(family_kind, RelationBeliefs(path), AmountBeliefs(amounts))
         return Understanding._engine
 
     # ---- does Language's reading make sense? -----------------------------------

@@ -744,7 +744,10 @@ class DirectReasoningAdapter:
                 fresh.append(c)
         understood["conclusions"] = fresh
         for c in understood.get("conclusions") or []:
-            if (c.get("value") and not str(c.get("value")).startswith("said:")) or c.get("modal"):
+            if (c.get("value") and not str(c.get("value")).startswith("said:")) or c.get("modal") \
+                    or c.get("keep") is False:
+                # (Amounts and time order are worked out again from what he said
+                # each time: filed, memory would take them as replacing what he said.)
                 # Memory's store_conclusion drops the value ("than Ben") and the
                 # "can", so it would file a different fact; she works these out
                 # again from what he told her instead (on Memory's list).

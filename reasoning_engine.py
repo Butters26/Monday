@@ -19,6 +19,16 @@ general forms of reasoning that work on whatever she knows:
    or passed on (someone's parent is their siblings' parent too).
 5. Rules he gives ("if it rains we stay home") are used when their first part
    comes true (in reasoning_understanding.py).
+6. Amounts: "I have 3 dogs", "I got 2 more" -> probably 5 dogs now; who has
+   more of something. Which words add and which take away comes from her
+   amounts file (reasoning_amounts.txt, editable) and the dictionary's
+   opposites (more -> fewer, buy -> sell); numbers written as words come from
+   the dictionary (three -> 3).
+7. Time order chains ("breakfast before work", "work before the gym" ->
+   breakfast before the gym).
+8. Why, more than one step: "tired because I didn't sleep", "didn't sleep
+   because I drank coffee" -> the coffee may be part of why he's tired. "If"
+   rules chain the same way (rain -> wet grass -> muddy dog).
 
 Every conclusion keeps how sure it is: never surer than what it rests on,
 less for each step. What he told her always beats what she concluded, and a
@@ -45,6 +55,22 @@ PLACEHOLDER_BELIEFS = """# How relations between people behave. Edit freely.
 sibling: shared (two of someone's siblings are each other's siblings) (sure 0.95)
 parent: passes to sibling (someone's parent is their siblings' parent too) (sure 0.9)
 """
+
+
+# How amounts change, until Matthew writes his own. Each can be edited or removed.
+PLACEHOLDER_AMOUNTS = """# How amounts change. Edit freely.
+# "<word>: says how many" -> "I have 3 dogs" says how many dogs he has.
+# "<word>: adds" -> "I got 2 dogs", "2 more dogs" adds to how many.
+# "<word>: takes away" -> "I sold 2 dogs" takes away.
+# A word the dictionary gives as the opposite of one that adds takes away
+# (more -> fewer, buy -> sell, find -> lose), so those needn't be written.
+have: says how many
+more: adds
+get: adds
+buy: adds
+find: adds
+"""
+_AMOUNT = re.compile(r"^\s*(?P<word>[a-z ]+?)\s*:\s*(?P<how>says how many|adds|takes away)\s*$", re.IGNORECASE)
 
 
 def _wn():
@@ -100,11 +126,11 @@ def dictionary_kinds(noun: str, depth: int = 6) -> List[str]:
     return out
 
 
-def opposites(adjective: str) -> List[str]:
-    """The dictionary's opposites of a describing word (tall -> short)."""
+def opposites(adjective: str, pos: str = "a") -> List[str]:
+    """The dictionary's opposites of a word (tall -> short, buy -> sell)."""
     out: List[str] = []
     try:
-        for x in _wn().synsets(adjective, pos="a")[:2]:
+        for x in _wn().synsets(adjective, pos=pos)[:3 if pos != "a" else 2]:
             for sense in x.senses():
                 if str(sense.word().lemma()) != adjective:
                     continue
@@ -115,6 +141,86 @@ def opposites(adjective: str) -> List[str]:
     except Exception:
         return []
     return out
+
+
+def number_in(word: str) -> Optional[int]:
+    """"3" -> 3, "three" -> 3, "dozen" -> 12: the dictionary writes each
+    number word with its digits."""
+    w = str(word or "").strip().casefold()
+    if w.isdigit():
+        return int(w)
+    try:
+        for x in _wn().synsets(w):
+            for lemma in x.lemmas():
+                if str(lemma).isdigit():
+                    return int(str(lemma))
+    except Exception:
+        return None
+    return None
+
+
+def word_lemmas(text: str) -> Set[str]:
+    """The dictionary forms of the words ("drank coffee" -> drink, coffee)."""
+    out: Set[str] = set()
+    for w in re.findall(r"[a-z']+", str(text or "").casefold().replace("_", " ")):
+        if w in ("not", "n't", "no", "never") or w.endswith("n't"):
+            continue
+        try:
+            from lexicon.oewn_offline import lemma_and_pos_candidates
+            forms = lemma_and_pos_candidates(w)
+        except Exception:
+            forms = []
+        verbs = [f["lemma"] for f in forms if f.get("pos") == "v"]
+        out.add((verbs or [f["lemma"] for f in forms] or [w])[0].casefold())
+    return out
+
+
+def is_negative(text: str) -> bool:
+    words = re.findall(r"[a-z']+", str(text or "").casefold())
+    return any(w in ("not", "no", "never") or w.endswith("n't") for w in words)
+
+
+def same_happening(a: Set[str], b: Set[str]) -> float:
+    """How much two happenings are the same, by their words (0..1)."""
+    if not a or not b:
+        return 0.0
+    # The words of the shorter one all in the longer one ("didn't sleep" in
+    # "I did not sleep") count fully; less shared, less the same.
+    return len(a & b) / min(len(a), len(b)) * (0.6 + 0.4 * len(a & b) / len(a | b))
+
+
+class AmountBeliefs:
+    """Her beliefs about which words say, add to or take away from how many (editable)."""
+
+    def __init__(self, path: Optional[str]) -> None:
+        self.how: Dict[str, str] = {}
+        text = PLACEHOLDER_AMOUNTS
+        if path:
+            p = Path(path)
+            try:
+                if not p.exists():
+                    p.write_text(PLACEHOLDER_AMOUNTS, encoding="utf-8")
+                text = p.read_text(encoding="utf-8")
+            except Exception as error:
+                print(f"⚠️  Reasoning: couldn't read her beliefs about amounts ({error}); using the placeholders")
+        for line in text.splitlines():
+            if not line.strip() or line.strip().startswith("#"):
+                continue
+            m = _AMOUNT.match(line)
+            if not m:
+                print(f"⚠️  Reasoning: didn't understand this amounts line, skipped: {line.strip()}")
+                continue
+            self.how[m.group("word").strip().casefold()] = m.group("how").casefold()
+
+    def of(self, word: str, pos: str) -> str:
+        """"says how many", "adds", "takes away", or "" for a word that doesn't change amounts."""
+        w = str(word or "").casefold()
+        if w in self.how:
+            return self.how[w]
+        for adds in [k for k, v in self.how.items() if v == "adds"]:
+            if w in opposites(adds, pos) or adds in opposites(w, pos):
+                return "takes away"
+        return ""
 
 
 class RelationBeliefs:
@@ -157,9 +263,11 @@ class Engine:
 
     MAX_ROUNDS = 3
 
-    def __init__(self, relation_kind: Callable[[str], Optional[str]], beliefs: RelationBeliefs) -> None:
+    def __init__(self, relation_kind: Callable[[str], Optional[str]], beliefs: RelationBeliefs,
+                 amounts: Optional[AmountBeliefs] = None) -> None:
         self.relation_kind = relation_kind
         self.beliefs = beliefs
+        self.amounts = amounts or AmountBeliefs(None)
 
     @staticmethod
     def _sure(fact: Dict[str, Any]) -> float:
@@ -187,7 +295,7 @@ class Engine:
     def _meaning_value(value: Any) -> str:
         """"said:flies" only keeps how he worded it; it doesn't change what it means."""
         v = str(value or "")
-        return "" if v.startswith("said:") else v
+        return "" if v.startswith(("said:", "via:")) else v
 
     @staticmethod
     def _negated(predicate: str) -> str:
@@ -201,7 +309,7 @@ class Engine:
         for _ in range(self.MAX_ROUNDS):
             new = []
             for c in self._names(known) + self._kinds(known) + self._comparisons(known) + self._opposites(known) \
-                    + self._relations(known):
+                    + self._relations(known) + self._amounts(known) + self._order(known) + self._why(known):
                 k = self._key(c)
                 negated = (k[0], self._negated(k[1]), k[2], k[3])
                 if k in seen or negated in told:
@@ -342,5 +450,175 @@ class Engine:
         return out
 
 
-__all__ = ["Engine", "RelationBeliefs", "PLACEHOLDER_BELIEFS", "dictionary_kinds", "opposites", "base_noun",
+    # 6. amounts --------------------------------------------------------------
+    @staticmethod
+    def _told_in_order(known: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        told = [f for f in known if not str(f.get("held_by") or "").startswith("concluded")
+                and isinstance(f.get("id"), int)]
+        return sorted(told, key=lambda f: f["id"])
+
+    def _amounts(self, known: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """"I have 3 dogs", then "I got 2 more dogs" -> probably 5 dogs now.
+        Who has more: "I have 3 dogs", "Ben has 5 dogs" -> Ben has 2 more."""
+        story: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for f in self._told_in_order(known):
+            predicate = str(f.get("predicate") or "")
+            if not predicate.startswith("v:"):
+                continue
+            verb = predicate[2:].split("@", 1)[0]
+            words = str(f.get("object") or "").split()
+            if len(words) < 2:
+                continue
+            n = number_in(words[0])
+            if n is None:
+                continue
+            rest = words[1:]
+            how = ""
+            if rest and self.amounts.of(rest[0], "a"):
+                how, rest = self.amounts.of(rest[0], "a"), rest[1:]  # "2 more dogs"
+            if not rest:
+                continue
+            how = how if how in ("adds", "takes away") else (self.amounts.of(verb, "v") or how)
+            noun = base_noun(" ".join(rest))
+            key = (str(f.get("subject") or ""), noun)
+            said_verb = str(f.get("value") or "")[5:] if str(f.get("value") or "").startswith("said:") else verb
+            line = story.setdefault(key, {"total": None, "said": [], "plural": " ".join(rest), "sure": 1.0,
+                                          "changed": False})
+            if how == "says how many":
+                line.update(total=n, said=[f"{'had' if verb == 'have' else said_verb} {' '.join(words)}"],
+                            changed=False)
+                if n != 1:
+                    line["plural"] = " ".join(rest)
+            elif how in ("adds", "takes away") and line["total"] is not None:
+                line["total"] += n if how == "adds" else -n
+                line["said"].append(f"{said_verb} {' '.join(words)}")
+                line["changed"] = True
+            else:
+                continue
+            line["sure"] *= self._sure(f)
+        out = []
+        for (who, noun), line in story.items():
+            if line["changed"] and line["total"] is not None and line["total"] >= 0:
+                total = line["total"]
+                out.append({"subject": who, "predicate": "v:have",
+                            "object": f"{total} {line['plural'] if total != 1 else noun}",
+                            "sure": round(line["sure"] * 0.9, 2),
+                            "keep": False,  # worked out again each time, from what he said
+                            "because": ("he" if who == "user" else who) + " " + ", then ".join(line["said"])
+                                       + f", so {total} now, unless some were missed"})
+        owners: Dict[str, List[Tuple[str, int, float, str]]] = {}
+        for (who, noun), line in story.items():
+            if line["total"] is not None:
+                owners.setdefault(noun, []).append((who, line["total"], line["sure"], line["plural"]))
+        for noun, have in owners.items():
+            for a in have:
+                for b in have:
+                    if a[0] != b[0] and a[1] > b[1]:
+                        name = lambda w: "he" if w == "user" else w
+                        out.append({"subject": a[0], "predicate": "v:have",
+                                    "object": f"{a[1] - b[1]} more {a[3] if a[1] - b[1] != 1 else noun}",
+                                    "value": f"than:{b[0]}", "sure": round(min(a[2], b[2]) * 0.9, 2),
+                                    "because": f"{name(a[0])} has {a[1]} and {name(b[0])} has {b[1]}"})
+        return out
+
+    # 7. time order -------------------------------------------------------------
+    def _order(self, known: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """"I ate breakfast before work", "I went to work before the gym" ->
+        breakfast came before the gym. ("after" is the same the other way.)"""
+        edges = []  # (earlier words, earlier text, later words, later text, fact, fact_is_earlier, sure)
+        for f in known:
+            obj = str(f.get("object") or "")
+            m = re.search(r"\s(before|after)\s", obj)
+            if not m:
+                continue
+            mine, other = obj[: m.start()].strip(), obj[m.end():].strip()
+            predicate = str(f.get("predicate") or "")
+            verb = predicate.split("v:", 1)[1].split("@", 1)[0] if "v:" in predicate else predicate
+            event_words = word_lemmas(f"{verb} {mine}")
+            prep = predicate.split("@", 1)[1] if "@" in predicate else ""
+            event_text = f"{self._said_verb(f, verb)} {prep} {mine}".replace("  ", " ").strip()
+            other_words = word_lemmas(other)
+            if m.group(1) == "before":
+                edges.append((event_words, event_text, other_words, other, f, True, self._sure(f)))
+            else:
+                edges.append((other_words, other, event_words, event_text, f, False, self._sure(f)))
+        out = []
+        for e1 in edges:
+            for e2 in edges:
+                if e1 is e2 or not e1[2] or not e2[0]:
+                    continue
+                if e1[2] <= e2[0] or e2[0] <= e1[2]:  # the later one of e1 is the earlier one of e2
+                    fact, earlier = (e1[4], True) if e1[5] else (e2[4], False) if not e2[5] else (None, None)
+                    if fact is None:
+                        continue
+                    mine = str(fact.get("object") or "")
+                    mine = mine[: re.search(r"\s(before|after)\s", mine).start()].strip()
+                    out.append({"subject": fact.get("subject"), "predicate": fact.get("predicate"),
+                                "object": f"{mine} before {e2[3]}" if earlier else f"{mine} after {e1[1]}",
+                                "value": fact.get("value"), "sure": round(e1[6] * e2[6] * 0.9, 2), "keep": False,
+                                "because": f"{e1[1]} before {e1[3]}, and {e2[1]} before {e2[3]}"})
+        return out
+
+    @staticmethod
+    def _said_verb(f: Dict[str, Any], verb: str) -> str:
+        value = str(f.get("value") or "")
+        return value[5:] if value.startswith("said:") else verb
+
+    # 8. why, more than one step --------------------------------------------------
+    def _happening(self, f: Dict[str, Any]) -> Tuple[str, Set[str], bool]:
+        """A fact as a happening: its words, and whether it's a "not"."""
+        who = "he" if str(f.get("subject")) == "user" else str(f.get("subject") or "")
+        predicate = str(f.get("predicate") or "")
+        negative = predicate.startswith("not_")
+        plain = predicate.replace("not_", "")
+        verb = plain.split("v:", 1)[1].split("@", 1)[0] if "v:" in plain else plain.replace("is_a", "is")
+        obj = str(f.get("object") or "").replace("(nothing)", "").replace("user's ", "his ")
+        said = self._said_verb(f, verb)
+        text = f"{who} {'didn' + chr(39) + 't ' + verb if negative else said} {obj}".strip()
+        return text, word_lemmas(f"{verb} {obj}"), negative
+
+    def _why(self, known: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """"I'm tired because I didn't sleep", "I didn't sleep because I drank
+        coffee" -> the coffee may be part of why he's tired. "If it rains the
+        grass gets wet", "if the grass gets wet the dog gets muddy" -> if it
+        rains the dog may get muddy."""
+        links = []  # (cause text, cause words, cause not, effect text, effect words, effect not, sure, is_rule)
+        for f in known:
+            # His own "because" (memory keeps it); a guess's "because" is only
+            # her explanation of how she got there, not a cause.
+            told = isinstance(f.get("id"), int) and not str(f.get("held_by") or "").startswith("concluded")
+            because = str(f.get("because") or "").strip() if told else ""
+            if because:
+                text, words, negative = self._happening(f)
+                links.append((because, word_lemmas(because), is_negative(because), text, words, negative,
+                              self._sure(f), False))
+            if str(f.get("predicate") or "") == "then":
+                a, b = str(f.get("subject") or ""), str(f.get("object") or "")
+                links.append((a, word_lemmas(a), is_negative(a), b, word_lemmas(b), is_negative(b),
+                              self._sure(f), True))
+        out = []
+        for first in links:        # cause -> middle
+            for second in links:   # middle -> effect
+                if first is second or first[5] != second[2]:
+                    continue
+                if same_happening(first[4], second[1]) < 0.6:
+                    continue
+                if same_happening(first[1], second[4]) >= 0.6:
+                    continue  # going round in a circle
+                sure = round(first[6] * second[6] * same_happening(first[4], second[1]) * 0.85, 2)
+                out.append({"subject": first[0], "predicate": "then", "object": second[3],
+                            "value": f"via:{first[3]}", "sure": sure,
+                            "because": f"{first[0]} led to {first[3]}, and {second[0]} led to {second[3]}; "
+                                       f"so maybe {first[0]} is part of why {second[3]}"
+                            if not (first[7] and second[7]) else
+                            f"if {first[0]} then {first[3]}, and if {second[0]} then {second[3]}"})
+        best: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for c in out:  # one way there is enough: the surest
+            k = (str(c["subject"]).casefold(), str(c["object"]).casefold())
+            if k not in best or c["sure"] > best[k]["sure"]:
+                best[k] = c
+        return list(best.values())
+
+
+__all__ = ["Engine", "RelationBeliefs", "AmountBeliefs", "PLACEHOLDER_BELIEFS", "number_in", "word_lemmas", "dictionary_kinds", "opposites", "base_noun",
            "is_kind_word"]
