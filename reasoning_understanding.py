@@ -26,7 +26,7 @@ Executive Control...).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 # The dictionary's own top groupings of things (its lexicographer files):
 # what kind of thing a noun is, said as the group's own word.
@@ -134,13 +134,16 @@ class Understanding:
                              "from": "memory"})
         if focus:
             happened.append({"what": f"in focus: {focus}", "from": "attention"})
-        conclusions = self.conclude(facts)
+        conclusions: List[Dict[str, Any]] = []
         said_relation = self.relation_in(reading or {})
         if said_relation:
             conclusions.append(said_relation)
-        for c in self.family(user_id, said_relation):
-            if c not in conclusions:
-                conclusions.append(c)
+        # Everything she knows that bears on this, and what follows from it all
+        # (reasoning_engine.py: kinds, comparisons, opposites, relations).
+        known = self.recall_around(said, facts, user_id) + ([said_relation] if said_relation else [])
+        conclusions += self.conclude(known, user_id)
+        # Guesses she made before that he has now said are wrong.
+        overruled = self.engine().overruled(known)
         rule = self.rule_in(reading or {})
         if rule:
             conclusions.append(rule)
@@ -160,7 +163,7 @@ class Understanding:
         changed = self.what_changed(said, user_id)
         likened = self.like_what_she_knows(reading or {}, facts, user_id)
         unsure += [x for x in likened if x not in unsure]
-        shown = self.what_patterns_show(patterns or {})
+        shown = self.what_patterns_show(patterns or {}, known)
         maybe_why = self.maybe_why(said, patterns or {}, facts)
         if maybe_why:
             unsure.append(maybe_why)
@@ -168,7 +171,107 @@ class Understanding:
         return {"said": said, "user_id": user_id, "happened": happened, "conclusions": conclusions,
                 "explanations": explanations + changed + shown, "her_feeling": feeling,
                 "unsure": unsure + follows,
+                **({"overruled": overruled} if overruled else {}),
                 **({"problem": problem} if problem else {})}
+
+    _engine = None
+
+    def engine(self):
+        if Understanding._engine is None:
+            from reasoning_engine import Engine, RelationBeliefs
+            try:
+                from runtime_paths import runtime_file
+                path = runtime_file("reasoning_beliefs.txt")
+            except Exception:
+                path = None
+            Understanding._engine = Engine(family_kind, RelationBeliefs(path))
+        return Understanding._engine
+
+    # ---- which of her memories are her own guesses ------------------------------
+    @staticmethod
+    def _concluded_path() -> Optional[str]:
+        try:
+            from runtime_paths import runtime_file
+            return runtime_file("reasoning_concluded.json")
+        except Exception:
+            return None
+
+    @classmethod
+    def concluded_ids(cls) -> Set[int]:
+        """Ids of the facts in memory that she worked out herself (not told)."""
+        import json, os
+        path = cls._concluded_path()
+        try:
+            if path and os.path.exists(path):
+                with open(path, encoding="utf-8") as fh:
+                    return {int(i) for i in json.load(fh)}
+        except Exception:
+            pass
+        return set()
+
+    @classmethod
+    def remember_concluded(cls, fact_id: Any) -> None:
+        import json
+        path = cls._concluded_path()
+        try:
+            ids = cls.concluded_ids() | {int(fact_id)}
+            if path:
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(sorted(ids), fh)
+        except Exception:
+            pass
+
+    def recall_around(self, said: str, facts: List[Dict[str, Any]], user_id: str) -> List[Dict[str, Any]]:
+        """What she knows around this: the facts about what he said, then the
+        facts about what those mention (a name, its kind, that kind's kind),
+        two steps out, the way one memory brings up the next."""
+        from reasoning_engine import base_noun
+        gathered: Dict[Any, Dict[str, Any]] = {}
+        for f in facts:
+            gathered[f.get("id") or id(f)] = f
+        asked = {said.strip().casefold()}
+        for _ in range(2):
+            words = set()
+            for f in list(gathered.values()):
+                for part in (f.get("subject"), f.get("object")):
+                    w = str(part or "").replace("user's ", "").strip()
+                    if w and w.casefold() not in ("user", "monday", "(nothing)"):
+                        words.add(base_noun(w) if not w[:1].isupper() else w)
+            for w in words - asked:
+                asked.add(w)
+                body = self.ask("notus", "query_facts", {"query": w, "user_id": user_id, "limit": 15}) or {}
+                for f in body.get("facts") or []:
+                    if isinstance(f, dict):
+                        gathered[f.get("id") or id(f)] = f
+        if "user" in " ".join(str(f.get("subject")) for f in gathered.values()):
+            body = self.ask("notus", "query_facts", {"query": "user", "user_id": user_id, "limit": 40}) or {}
+            for f in body.get("facts") or []:
+                if isinstance(f, dict):
+                    gathered[f.get("id") or id(f)] = f
+        return self._mark_mine(list(gathered.values()))
+
+    def conclude(self, known: List[Dict[str, Any]], user_id: str) -> List[Dict[str, Any]]:
+        """What follows from what she knows. Before trusting a guess about
+        something, she looks at what she knows about that thing itself
+        ("a penguin can't fly" beats "birds fly")."""
+        found = self.engine().infer(known)
+        looked = {str(f.get("subject") or "").casefold() for f in known}
+        more: List[Dict[str, Any]] = []
+        for c in found:
+            who = str(c.get("subject") or "")
+            if who.casefold() not in looked:
+                looked.add(who.casefold())
+                body = self.ask("notus", "query_facts", {"query": who, "user_id": user_id, "limit": 15}) or {}
+                more += [f for f in body.get("facts") or [] if isinstance(f, dict)]
+        if more:
+            have = {f.get("id") for f in known}
+            known = known + self._mark_mine([f for f in more if f.get("id") not in have])
+            found = self.engine().infer(known)
+        return found
+
+    def _mark_mine(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        mine = self.concluded_ids()
+        return [{**f, "held_by": "concluded"} if f.get("id") in mine and not f.get("held_by") else f for f in facts]
 
     # ---- who is whose ----------------------------------------------------------
     def relation_in(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -199,34 +302,6 @@ class Understanding:
             return None
         return {"subject": owner, "predicate": relative, "object": who[:1].upper() + who[1:], "sure": 0.95,
                 "because": f"he said: {reading.get('raw_text')}"}
-
-    def family(self, user_id: str, new: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """What follows about his family, from who is whose: two of his
-        siblings are each other's siblings; his parent is his siblings' parent
-        too. Each as sure as what it rests on, a little less."""
-        body = self.ask("notus", "query_facts", {"query": "user", "user_id": user_id, "limit": 50}) or {}
-        known = [f for f in body.get("facts") or [] if isinstance(f, dict)]
-        if new:
-            known.append(new)
-        relatives = [(str(f.get("subject")), str(f.get("predicate")), str(f.get("object")), fact_sure(f))
-                     for f in known if str(f.get("object") or "")[:1].isupper()
-                     and str(f.get("predicate") or "").isalpha() and kind_of(str(f.get("predicate"))) == "person"]
-        out: List[Dict[str, Any]] = []
-        for owner in {r[0] for r in relatives}:
-            siblings = [r for r in relatives if r[0] == owner and family_kind(r[1]) == "sibling"]
-            parents = [r for r in relatives if r[0] == owner and family_kind(r[1]) == "parent"]
-            whose = "his" if owner == "user" else f"{owner}'s"
-            for a in siblings:
-                for b in siblings:
-                    if a[2] != b[2]:
-                        out.append({"subject": b[2], "predicate": a[1], "object": a[2],
-                                    "sure": round(min(a[3], b[3]) * 0.95, 2),
-                                    "because": f"{a[2]} and {b[2]} are both {whose} siblings"})
-                for parent in parents:
-                    out.append({"subject": a[2], "predicate": parent[1], "object": parent[2],
-                                "sure": round(min(a[3], parent[3]) * 0.9, 2),
-                                "because": f"{parent[2]} is {whose} {parent[1]} and {a[2]} is {whose} {a[1]}"})
-        return out
 
     # ---- if this, then that ----------------------------------------------------
     def rule_in(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -342,10 +417,18 @@ class Understanding:
 
     # ---- what patterns show ----------------------------------------------------
     @staticmethod
-    def what_patterns_show(patterns: Dict[str, Any]) -> List[str]:
+    def what_patterns_show(patterns: Dict[str, Any], facts: Optional[List[Dict[str, Any]]] = None) -> List[str]:
         """What Pattern Recognition found, and what it does and doesn't show:
-        things coming up together isn't one causing the other."""
+        things coming up together isn't one causing the other. A run of steps
+        is only something happening when each step is a thing or doing she
+        knows about; a run of bare words ("penguin then can't then fly") is
+        just the order he said them in."""
         out: List[str] = []
+        things: Set[str] = set()
+        for f in facts or []:
+            predicate = str(f.get("predicate") or "")
+            for part in (f.get("subject"), f.get("object"), predicate.split("v:", 1)[1] if "v:" in predicate else ""):
+                things.update(w for w in str(part or "").casefold().replace("_", " ").split() if w)
         if isinstance(patterns.get("significant_patterns"), dict):
             patterns = patterns["significant_patterns"]  # as Thalamus hands it over
         for p in (patterns.get("strong_co_occurrences") or [])[:3]:
@@ -355,6 +438,8 @@ class Understanding:
                            "that alone doesn't show one causes the other")
         for p in (patterns.get("reliable_sequences") or [])[:2]:
             steps = [str(x) for x in p.get("steps") or []]
+            if facts is not None and not all(set(st.casefold().split()) & things for st in steps):
+                continue
             if len(steps) >= 2:
                 out.append(f"{' then '.join(steps)} keeps happening in that order; a guess that it will again")
         for c in (patterns.get("contradictions") or [])[:2]:
@@ -362,6 +447,7 @@ class Understanding:
         return out
 
     # ---- problems and how they were solved -------------------------------------
+
     def problem_in(self, reading: Dict[str, Any], facts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """"My car won't start", "I can't find my keys": something he can't get
         to happen. What solved something like it before is a possible way, a
@@ -379,6 +465,13 @@ class Understanding:
         mentions = {m.get("mention_id"): m for m in reading.get("mentions") or []}
         who = str((mentions.get(roles.get("agent") or roles.get("theme")) or {}).get("surface") or "")
         thing = str((mentions.get(roles.get("patient") or roles.get("theme")) or {}).get("surface") or who)
+        # "A penguin can't fly", "fish can't walk": what a whole kind is like,
+        # not something going wrong for him.
+        from reasoning_engine import is_kind_word, base_noun
+        first = who.split()[0].casefold() if who else ""
+        if first in ("a", "an") or (who and who[:1].islower() and is_kind_word(who) and len(who.split()) == 1
+                                    and who.casefold() != base_noun(who)):
+            return None
         head = thing.split()[-1].casefold() if thing else ""
         if head:
             # What she knows about the thing itself, ways that fixed it included.
@@ -454,41 +547,6 @@ class Understanding:
             return None
         return {"subject": thing, "predicate": "solved_by", "object": how, "sure": 0.8,
                 "because": f"he said: {raw.strip()}"}
-
-    # ---- what follows ----------------------------------------------------------
-    def conclude(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """New facts that follow from facts she has, with how sure and why."""
-        out: List[Dict[str, Any]] = []
-        known = {(str(f.get("subject")).casefold(), str(f.get("predicate")), str(f.get("object")).casefold())
-                 for f in facts}
-
-        def add(subject: str, predicate: str, obj: str, sure: float, why: str) -> None:
-            key = (subject.casefold(), predicate, obj.casefold())
-            if key in known or any((c["subject"].casefold(), c["predicate"], c["object"].casefold()) == key for c in out):
-                return
-            out.append({"subject": subject, "predicate": predicate, "object": obj, "sure": sure, "because": why})
-
-        for f in facts:
-            subject, predicate = str(f.get("subject") or ""), str(f.get("predicate") or "")
-            obj = str(f.get("object") or "")
-            if f.get("is_contradicted"):
-                continue
-            # "My dog is named Rex" is filed as (user, dog, Rex): Rex is a dog.
-            base = fact_sure(f)  # a conclusion is no surer than what it rests on
-            if subject == "user" and obj[:1].isupper() and predicate.isalpha() \
-                    and predicate not in ("is", "is_a", "name") and kind_of(predicate):
-                add(obj, "is_a", predicate, round(base * 0.98, 2), f"he said his {predicate} is {obj}")
-                kind = kind_of(predicate)
-                if kind and kind != "person":
-                    add(obj, "is_a", kind, round(base * 0.95, 2), f"{obj} is his {predicate}, and a {predicate} is an {kind}"
-                        if kind[:1] in "aeiou" else f"{obj} is his {predicate}, and a {predicate} is a {kind}")
-            # "Rex is a dog": a dog is an animal, so Rex is an animal.
-            if predicate == "is_a" and obj and not obj[:1].isupper():
-                kind = kind_of(obj.split()[-1])
-                if kind and kind != obj.casefold():
-                    add(subject, "is_a", kind, round(base * 0.95, 2),
-                        f"{subject} is a {obj}, and the dictionary puts a {obj} with {kind}s")
-        return out
 
     def explain(self, facts: List[Dict[str, Any]]) -> List[str]:
         """Why things are as they are, and what changed, from what she knows."""

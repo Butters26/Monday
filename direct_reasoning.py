@@ -720,8 +720,28 @@ class DirectReasoningAdapter:
         if solved:
             # A way he found to fix something: kept, to suggest when it comes up again.
             understood.setdefault("conclusions", []).append(solved)
+        # What follows from this moment: guesses she already made and said
+        # aren't new because she worked them out again.
+        before = self.__dict__.setdefault("_concluded_before", {}).setdefault(user_id, set())
+        fresh = []
         for c in understood.get("conclusions") or []:
-            self._ask_lobe("notus", "store_conclusion", {**c, "user_id": user_id})
+            k = (str(c.get("subject")).casefold(), c.get("predicate"), str(c.get("object")).casefold(), c.get("value"))
+            if k not in before:
+                before.add(k)
+                fresh.append(c)
+        understood["conclusions"] = fresh
+        for c in understood.get("conclusions") or []:
+            if (c.get("value") and not str(c.get("value")).startswith("said:")) or c.get("modal"):
+                # Memory's store_conclusion drops the value ("than Ben") and the
+                # "can", so it would file a different fact; she works these out
+                # again from what he told her instead (on Memory's list).
+                continue
+            kept = self._ask_lobe("notus", "store_conclusion", {**c, "user_id": user_id})
+            fact = kept.get("fact") if isinstance(kept.get("fact"), dict) else {}
+            same = all(str(fact.get(k) or "").casefold() == str(c.get(k) or "").casefold()
+                       for k in ("subject", "predicate", "object"))
+            if fact.get("id") is not None and same:
+                Understanding.remember_concluded(fact["id"])
         self.__dict__.setdefault("_understood", {})[user_id] = understood
         announce = getattr(self.thalamus, "announce", None)
         if callable(announce):
@@ -1211,6 +1231,20 @@ class DirectReasoningAdapter:
             # Said back about the same one, the way he said it: "your dog", not
             # "a dog" for "my dog"; "you and your sister" for "my sister and I".
             return False
+        if mine.get("copular"):
+            # What she says it is must be what he said it is: "Lily is Ben"
+            # doesn't say "Lily is older than Ben".
+            def what_it_is(r: Dict[str, Any]) -> str:
+                seen_verb = False
+                for t in r.get("tokens") or []:
+                    kind = t.get("kind")
+                    if kind in ("verb", "auxiliary"):
+                        seen_verb = True
+                    elif seen_verb and kind in ("noun", "proper_noun", "adjective", "adverb"):
+                        return str(t.get("lemma") or t.get("surface") or "").casefold()
+                return ""
+            if what_it_is(reply) != what_it_is(his):
+                return False
         negative = lambda r: str((r.get("assertion") or {}).get("polarity") or "") == "negative" or any(
             t.get("kind") == "negation" for t in r.get("tokens") or [])
         return negative(reply) == negative(his)
@@ -1517,8 +1551,9 @@ class DirectReasoningAdapter:
         if fact:
             if not self._fact_in_memory(fact, user_id):
                 return no("the reply states something memory does not hold")
-            if str(fact.get("object", "")) != "(nothing)" \
-                    and str(fact.get("object", "")).casefold() not in sentence.casefold():
+            # "user's key" is said to him as "your key".
+            thing = str(fact.get("object", "")).casefold().replace("user's ", "")
+            if thing != "(nothing)" and thing not in sentence.casefold():
                 return no(f"the reply leaves out the fact ({fact.get('object')})")
         feeling = understood.get("her_feeling") or {}
         if feeling.get("note"):
@@ -1555,9 +1590,10 @@ class DirectReasoningAdapter:
             thinker = Understanding(self._ask_lobe)
             thinker._user_id = user_id
             reading = self._analyze(question)
+            known = thinker.recall_around(question, facts, user_id)
             result = {"question": question, "knows": [f.get("content") or f"{f.get('subject')} {f.get('predicate')} {f.get('object')}"
                                                       for f in facts[:6]],
-                      "conclusions": thinker.conclude(facts), "explanations": thinker.explain(facts)}
+                      "conclusions": thinker.conclude(known, user_id), "explanations": thinker.explain(known)}
             problem = thinker.problem_in(reading, facts)
             if problem:
                 result["problem"] = problem
