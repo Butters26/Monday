@@ -50,6 +50,60 @@ def kind_of(noun: str) -> Optional[str]:
     return kind if kind and kind != str(noun).casefold() else None
 
 
+def _hypernym_ids(noun: str, depth: int = 6) -> set:
+    try:
+        from lexicon.oewn_offline import get_wordnet
+        wn = get_wordnet()
+        frontier = [x for x in wn.synsets(str(noun or "").casefold(), pos="n")
+                    if any(str(l) == str(noun).casefold() for l in x.lemmas())][:2]
+    except Exception:
+        return set()
+    seen = set()
+    for _ in range(depth):
+        seen |= {x.id for x in frontier}
+        frontier = [h for x in frontier for h in x.hypernyms()]
+    return seen
+
+
+def _ids_of(word: str) -> set:
+    try:
+        from lexicon.oewn_offline import get_wordnet
+        return {x.id for x in get_wordnet().synsets(word, pos="n")
+                if any(str(l) == word for l in x.lemmas())}
+    except Exception:
+        return set()
+
+
+def family_kind(noun: str) -> Optional[str]:
+    """Whether the dictionary puts a word under sibling or parent ("sister",
+    "brother" -> sibling, by way of "female sibling"; "mom", "father" ->
+    parent)."""
+    above = _hypernym_ids(noun)
+    try:
+        from lexicon.oewn_offline import get_wordnet
+        wn = get_wordnet()
+        words = {w for i in above for l in wn.synset(i).lemmas() for w in str(l).casefold().split()}
+    except Exception:
+        words = set()
+    for kind in ("sibling", "parent"):
+        if above & _ids_of(kind) or kind in words:
+            return kind
+    return None
+
+
+def fact_sure(fact: Dict[str, Any]) -> float:
+    """How sure she is of a fact: its own 'sure' if reasoning set one, else
+    how confident memory is in it."""
+    for key in ("sure", "confidence"):
+        try:
+            value = float(fact.get(key))
+            if 0.0 < value <= 1.0:
+                return value
+        except (TypeError, ValueError):
+            continue
+    return 0.8
+
+
 class Understanding:
     """Puts together what's going on in a moment, from what the lobes say."""
 
@@ -81,6 +135,16 @@ class Understanding:
         if focus:
             happened.append({"what": f"in focus: {focus}", "from": "attention"})
         conclusions = self.conclude(facts)
+        said_relation = self.relation_in(reading or {})
+        if said_relation:
+            conclusions.append(said_relation)
+        for c in self.family(user_id, said_relation):
+            if c not in conclusions:
+                conclusions.append(c)
+        rule = self.rule_in(reading or {})
+        if rule:
+            conclusions.append(rule)
+        follows = self.what_rules_say(said, reading or {}, user_id)
         explanations = self.explain(facts)
         feeling = self.her_feeling(emotion, move, meant)
         unsure: List[str] = []
@@ -102,8 +166,105 @@ class Understanding:
             unsure.append(maybe_why)
         problem = self.problem_in(reading or {}, facts)
         return {"said": said, "user_id": user_id, "happened": happened, "conclusions": conclusions,
-                "explanations": explanations + changed + shown, "her_feeling": feeling, "unsure": unsure,
+                "explanations": explanations + changed + shown, "her_feeling": feeling,
+                "unsure": unsure + follows,
                 **({"problem": problem} if problem else {})}
+
+    # ---- who is whose ----------------------------------------------------------
+    def relation_in(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """"Lily is my sister", "Tom is Lily's son": whose relative someone is,
+        filed the way memory files his family ("user", "sister", "Lily")."""
+        clause = (reading.get("clauses") or [{}])[0]
+        if not clause.get("copular"):
+            return None
+        tokens = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        names = [t for t in tokens if t.get("kind") == "proper_noun"]
+        be = next((i for i, t in enumerate(tokens) if t.get("kind") == "auxiliary"), None)
+        if be is None or not names or tokens[0].get("kind") != "proper_noun":
+            return None
+        who = str(tokens[0].get("surface") or "")
+        after = tokens[be + 1:]
+        if not after:
+            return None
+        relative = str(after[-1].get("lemma") or "").casefold()
+        if after[-1].get("kind") != "noun" or kind_of(relative) != "person":
+            return None
+        owner_word = str(after[0].get("surface") or "").casefold()
+        if owner_word in ("my", "our"):
+            owner = "user"
+        elif owner_word.endswith("'s") and owner_word[:-2]:
+            owner = str(after[0].get("surface"))[:-2]
+            owner = owner[:1].upper() + owner[1:]
+        else:
+            return None
+        return {"subject": owner, "predicate": relative, "object": who[:1].upper() + who[1:], "sure": 0.95,
+                "because": f"he said: {reading.get('raw_text')}"}
+
+    def family(self, user_id: str, new: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """What follows about his family, from who is whose: two of his
+        siblings are each other's siblings; his parent is his siblings' parent
+        too. Each as sure as what it rests on, a little less."""
+        body = self.ask("notus", "query_facts", {"query": "user", "user_id": user_id, "limit": 50}) or {}
+        known = [f for f in body.get("facts") or [] if isinstance(f, dict)]
+        if new:
+            known.append(new)
+        relatives = [(str(f.get("subject")), str(f.get("predicate")), str(f.get("object")), fact_sure(f))
+                     for f in known if str(f.get("object") or "")[:1].isupper()
+                     and str(f.get("predicate") or "").isalpha() and kind_of(str(f.get("predicate"))) == "person"]
+        out: List[Dict[str, Any]] = []
+        for owner in {r[0] for r in relatives}:
+            siblings = [r for r in relatives if r[0] == owner and family_kind(r[1]) == "sibling"]
+            parents = [r for r in relatives if r[0] == owner and family_kind(r[1]) == "parent"]
+            whose = "his" if owner == "user" else f"{owner}'s"
+            for a in siblings:
+                for b in siblings:
+                    if a[2] != b[2]:
+                        out.append({"subject": b[2], "predicate": a[1], "object": a[2],
+                                    "sure": round(min(a[3], b[3]) * 0.95, 2),
+                                    "because": f"{a[2]} and {b[2]} are both {whose} siblings"})
+                for parent in parents:
+                    out.append({"subject": a[2], "predicate": parent[1], "object": parent[2],
+                                "sure": round(min(a[3], parent[3]) * 0.9, 2),
+                                "because": f"{parent[2]} is {whose} {parent[1]} and {a[2]} is {whose} {a[1]}"})
+        return out
+
+    # ---- if this, then that ----------------------------------------------------
+    def rule_in(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """"If it rains we will stay home": a rule he gave, kept (as concluded,
+        not as anything having happened) to use when the first part comes true."""
+        links = [l for l in reading.get("links") or [] if l.get("kind") == "on_condition"]
+        parts = reading.get("parts") or []
+        if not links or not parts:
+            return None
+        a, b = links[0].get("from"), links[0].get("to")
+        if not (isinstance(a, int) and isinstance(b, int) and a < len(parts) and b < len(parts)):
+            return None
+        return {"subject": parts[b], "predicate": "then", "object": parts[a], "sure": 0.7,
+                "because": f"he said: {reading.get('raw_text')}"}
+
+    def what_rules_say(self, said: str, reading: Dict[str, Any], user_id: str) -> List[str]:
+        """A rule he gave whose first part is what he's saying now: what it says
+        follows, as a guess ("he said if it rains they stay home; it rains now,
+        so they'll probably stay home")."""
+        if reading.get("links") and any(l.get("kind") == "on_condition" for l in reading.get("links") or []):
+            return []  # this is the rule itself
+        words = {str(t.get("lemma") or "").casefold() for t in reading.get("tokens") or []
+                 if t.get("kind") in ("noun", "verb", "adjective", "proper_noun")}
+        if not words:
+            return []
+        body = self.ask("notus", "query_facts", {"query": said, "user_id": user_id, "limit": 30}) or {}
+        out = []
+        for f in body.get("facts") or []:
+            if str(f.get("predicate")) != "then":
+                continue
+            needed = {w.strip(".,!?").casefold() for w in str(f.get("subject") or "").split()} - {
+                "it", "i", "we", "you", "the", "a", "an", "is", "are", "will"}
+            lemmas_needed = {w[:-1] if w.endswith("s") else w for w in needed}
+            have = words | {w[:-1] if w.endswith("s") else w for w in words}
+            if needed and (needed <= have or lemmas_needed <= have):
+                out.append(f"he said if {f.get('subject')}, {f.get('object')}; that's happening now, so "
+                           f"probably {f.get('object')} (a guess, sure {round(fact_sure(f) * 0.9, 2)})")
+        return out
 
     # ---- what changed ---------------------------------------------------------
     def what_changed(self, said: str, user_id: str) -> List[str]:
@@ -150,8 +311,8 @@ class Understanding:
             if not noun or noun in known_words:
                 continue
             kind = kind_of(noun)
-            if not kind:
-                continue
+            if not kind or kind == "person":
+                continue  # ("brother", "teacher": who someone is to him, not a new kind of thing)
             same = self.ask("notus", "query_facts", {"query": kind, "user_id": user_id, "limit": 10}) or {}
             others = [str(f.get("subject")) for f in same.get("facts") or []
                       if str(f.get("predicate")) == "is_a" and str(f.get("object")).casefold() == kind
@@ -229,9 +390,34 @@ class Understanding:
         out: Dict[str, Any] = {"what": f"{who or 'something'} can't {verb}", "thing": thing}
         if ways:
             out["maybe"] = [f"last time, {w.get('object')} fixed {w.get('subject')} (it may work again)" for w in ways]
-        else:
+        parts = self.parts_of(head)
+        if parts:
+            # Working it out: what the thing is made of, any of which might be the trouble.
+            out.setdefault("maybe", []).append(
+                f"a {head} has parts ({', '.join(parts[:5])}); one of them may not be working (a guess)")
+        about = [f for f in facts if head and head in f"{f.get('subject')} {f.get('object')}".casefold()
+                 and str(f.get("predicate") or "") not in ("solved_by",)]
+        if about and verb in ("find", "locate"):
+            out.setdefault("maybe", []).append(
+                "what she knows about it: " + "; ".join(self._said(f) for f in about[:3]))
+        if not out.get("maybe"):
             out["unsure"] = "she doesn't know a way to fix this yet; she'd need to know more or be told"
         return out
+
+    @staticmethod
+    def parts_of(noun: str) -> List[str]:
+        """What the dictionary says a thing is made of (a car: engine, ...)."""
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            synsets = [x for x in get_wordnet().synsets(str(noun or "").casefold(), pos="n")
+                       if any(str(l) == str(noun).casefold() for l in x.lemmas())][:1]
+            out = []
+            for x in synsets:
+                for part in x.meronyms() if hasattr(x, "meronyms") else []:
+                    out.append(str(part.lemmas()[0]))
+            return out
+        except Exception:
+            return []
 
     def solution_in(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """"I fixed my car by charging the battery": a way that solved
@@ -288,18 +474,20 @@ class Understanding:
             if f.get("is_contradicted"):
                 continue
             # "My dog is named Rex" is filed as (user, dog, Rex): Rex is a dog.
+            base = fact_sure(f)  # a conclusion is no surer than what it rests on
             if subject == "user" and obj[:1].isupper() and predicate.isalpha() \
                     and predicate not in ("is", "is_a", "name") and kind_of(predicate):
-                add(obj, "is_a", predicate, 0.95, f"he said his {predicate} is {obj}")
+                add(obj, "is_a", predicate, round(base * 0.98, 2), f"he said his {predicate} is {obj}")
                 kind = kind_of(predicate)
                 if kind and kind != "person":
-                    add(obj, "is_a", kind, 0.9, f"{obj} is his {predicate}, and a {predicate} is an {kind}"
+                    add(obj, "is_a", kind, round(base * 0.95, 2), f"{obj} is his {predicate}, and a {predicate} is an {kind}"
                         if kind[:1] in "aeiou" else f"{obj} is his {predicate}, and a {predicate} is a {kind}")
             # "Rex is a dog": a dog is an animal, so Rex is an animal.
             if predicate == "is_a" and obj and not obj[:1].isupper():
                 kind = kind_of(obj.split()[-1])
                 if kind and kind != obj.casefold():
-                    add(subject, "is_a", kind, 0.9, f"{subject} is a {obj}, and the dictionary puts a {obj} with {kind}s")
+                    add(subject, "is_a", kind, round(base * 0.95, 2),
+                        f"{subject} is a {obj}, and the dictionary puts a {obj} with {kind}s")
         return out
 
     def explain(self, facts: List[Dict[str, Any]]) -> List[str]:

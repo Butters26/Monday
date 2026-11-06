@@ -1,8 +1,10 @@
-"""Direct envelope adapter for the live ReasoningLobe.
+"""Reasoning, on the team.
 
-Conclusion text still comes from ``ReasoningLobe.think_about`` (legacy alias
-``MaximumSophisticationReasoning`` kept for imports). This adapter translates
-the direct envelope and supplies user-scoped evidence.
+Reasoning is the explainer (Matthew, Nov 3): each moment it works out what's
+going on, what follows and why, from what the other lobes know, and tells
+them (reasoning_understanding.py); it judges Language's replies against what
+she knows and the situation (review_reply), and thinks things through when
+asked (work_out). The old 3,000-line engine (reasoning.py) is in legacy/.
 """
 
 from __future__ import annotations
@@ -10,7 +12,6 @@ from __future__ import annotations
 import re
 from typing import Tuple, Any, Callable, Dict, Iterable, List, Optional
 
-from reasoning import Fact, MaximumSophisticationReasoning, ReasoningLobe
 from direct_response import (
     answer_from_grounded_memories,
     content_tokens,
@@ -46,31 +47,17 @@ _NAME_QUESTION = re.compile(
 )
 _POISON_MARKERS = ("How it felt:", "What it meant:")
 _MERCY_ROLES = {"monday", "assistant", "abin", "mercy"}
-_BASELINE_EVIDENCE = (
-    "Gravity is the force of attraction between masses. It pulls objects toward each other, including objects toward Earth.",
-    "Photosynthesis is the process by which plants use light energy to turn water and carbon dioxide into glucose, releasing oxygen.",
-    "Memory is information retained so it can be retrieved and used later.",
-)
 
 
 class DirectReasoningAdapter:
     """Make the full legacy reasoner safe and usable on the prompted path."""
 
-    def __init__(
-        self,
-        thalamus: Any = None,
-        reasoner_factory: Callable[..., ReasoningLobe] = ReasoningLobe,
-    ) -> None:
+    def __init__(self, thalamus: Any = None, reasoner_factory: Any = None) -> None:
+        # (The old 3,000-line engine, reasoning.py, is in legacy/ since Nov 6:
+        # presets and hacks, outside reasoning's job. reasoner_factory is
+        # accepted and ignored so old callers still start.)
         self.running = True
         self.thalamus = thalamus
-        self.reasoner = reasoner_factory(thalamus=thalamus)
-        # The legacy reasoner otherwise sends its internal composition directly
-        # to Output.  The direct pipeline owns the one final language/output pass.
-        self.reasoner._direct_core = True
-        for evidence in _BASELINE_EVIDENCE:
-            self.reasoner.facts[evidence] = Fact(
-                content=evidence, confidence=1.0, source="direct_core_baseline"
-            )
 
     @staticmethod
     def _response_content(response: Dict[str, Any]) -> Dict[str, Any]:
@@ -446,74 +433,6 @@ class DirectReasoningAdapter:
             if len(parts) == 3 and "_" in parts[1]:
                 return True
         return False
-
-    @classmethod
-    def _usable_conclusion(
-        cls,
-        thinking: Dict[str, Any],
-        understanding: Dict[str, Any],
-        user_input: str = "",
-    ) -> Optional[str]:
-        composed = thinking.get("composed_response")
-        if not isinstance(composed, str) or not composed.strip():
-            return None
-        composed = composed.strip()
-        if cls._looks_like_raw_triple(composed):
-            return None
-        # Pattern sequence narration must not become the mouth via usable.
-        clow = composed.casefold()
-        if "sequence pattern" in clow or "cannot confidently infer" in clow or clow.startswith("i noticed the sequence"):
-            ask = (user_input or "").casefold()
-            asks_seq = (
-                any(
-                    cue in ask
-                    for cue in (
-                        "what comes next",
-                        "what's next",
-                        "whats next",
-                        "next in the",
-                        "next number",
-                        "what follows",
-                        "continue the",
-                        "what is next",
-                    )
-                )
-                or ("next" in ask and ("sequence" in ask or "pattern" in ask))
-            )
-            if not asks_seq:
-                return None
-        # Don't let an unrelated stored fact become the spoken answer to a
-        # check-in / social prompt.
-        social = re.search(
-            r"\b(?:are you okay|how are you|how(?:'s| is) it going|what(?:'s| is) up)\b",
-            user_input or "",
-            re.IGNORECASE,
-        )
-        if social and (
-            "name is" in composed.casefold() or composed.casefold().startswith("your ")
-        ):
-            return None
-        theories = thinking.get("theories", [])
-        grounded = any(
-            isinstance(theory, dict) and theory.get("components")
-            for theory in theories
-        )
-        if understanding.get("intent") == "greeting":
-            return composed
-        if grounded:
-            # Require overlap so an unrelated stored fact cannot hijack the answer.
-            q_tokens = content_tokens(user_input or "")
-            if q_tokens and relevance_score(user_input or "", composed) < 0.34:
-                if not (q_tokens & content_tokens(composed)):
-                    return None
-            attr = _attribute_asked(user_input or "")
-            if attr and not _fact_covers_attribute(composed, attr):
-                return None
-            return composed
-        # Legacy composition can turn an evidence-free question into a word bag;
-        # that is not a conclusion. Leave the semantic handoff empty.
-        return None
-
 
     @staticmethod
     def _significant_patterns(pattern_result: Any) -> Dict[str, Any]:
@@ -1717,60 +1636,11 @@ class DirectReasoningAdapter:
         pattern_result = direct_input.get("pattern_result", {})
         if not isinstance(pattern_result, dict):
             pattern_result = {}
-        legacy_input = {
-            "user_input": user_input,
-            "user_id": direct_input.get("user_id", "default"),
-            "perception_result": {"status": "success", "understanding": understanding},
-            "emotion_result": {"status": "success", **emotional_state},
-            "memory_result": {
-                "status": "success",
-                "context": {"memories": evidence},
-                "context_data": {"memories": evidence, "facts": evidence},
-            },
-            # Retain the direct envelope data for legacy routines that consume it.
-            "memory_context": {"memories": evidence},
-            "understanding": understanding,
-            "attention": attention_payload,
-            # Existing Reasoning interface — do not invent a parallel channel.
-            "pattern_result": pattern_result,
-            # SharedRepresentation substrate — satisfies dangling highly_active_concepts.
-            "representation_result": (
-                direct_input.get("representation_result")
-                if isinstance(direct_input.get("representation_result"), dict)
-                else {}
-            ),
-        }
         # Prefer teaching ack / fact answers over legacy composition noise.
         teaching = self._teaching_ack(user_input)
         fact_structures = structures_from_grounded_memories(user_input or "", evidence)
         fact_answer = None if fact_structures else self._answer_from_facts(evidence, user_input)
-        thinking = self.reasoner.think_about(legacy_input)
-        if not isinstance(thinking, dict):
-            thinking = {}
-        usable = self._usable_conclusion(thinking, understanding, user_input)
-        # Never echo prior user filler / chatter as the answer on non-questions.
-        if (
-            usable
-            and not looks_questionish(user_input)
-            and not teaching
-            and not looks_like_teaching_turn(user_input)
-        ):
-            # Drop near-duplicate prior user lines (filler soak failure mode).
-            u_low = usable.strip().casefold()
-            for mem in memories:
-                if str(mem.get("role", "")).lower() != "user":
-                    continue
-                prior = str(mem.get("content") or "").strip()
-                if prior and prior.casefold() == u_low:
-                    usable = None
-                    break
-                if prior and u_low and (
-                    prior.casefold() in u_low or u_low in prior.casefold()
-                ):
-                    # Same filler family ("Just chatting filler number N…")
-                    if "filler" in u_low or "weather is fine" in u_low:
-                        usable = None
-                        break
+        usable = None  # (no old-engine composition: Language builds every reply)
         # No canned comfort lines: Language builds every reply (Reasoning reviews it).
         empathic = None
         pattern_answer = None
@@ -1854,9 +1724,9 @@ class DirectReasoningAdapter:
         return {
             "status": "success",
             "content": {
-                "thinking": thinking,
+                "thinking": (self.__dict__.get("_understood") or {}).get(str(direct_input.get("user_id") or "default"), {}),
                 "semantic_input": semantic_input,
-                "composed_response": thinking.get("composed_response"),
+                "composed_response": None,
                 "native_semantics_finalized": True,
             },
             "native_semantics_finalized": True,
@@ -1864,9 +1734,6 @@ class DirectReasoningAdapter:
 
     def shutdown(self) -> None:
         self.running = False
-        shutdown = getattr(self.reasoner, "shutdown", None)
-        if callable(shutdown):
-            shutdown()
 
 
 # Legacy alias — old name was theater.
