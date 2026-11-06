@@ -187,6 +187,60 @@ class Understanding:
             Understanding._engine = Engine(family_kind, RelationBeliefs(path))
         return Understanding._engine
 
+    # ---- does Language's reading make sense? -----------------------------------
+    @staticmethod
+    def reading_problems(said: str, reading: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Reasoning hears the same words Language does, and checks Language's
+        reading of them against the words and the dictionary, the way a person
+        notices they misheard. A reading doesn't make sense when:
+        - an action ending in -s ("dogs", "barks") has nobody doing it: an -s
+          action always needs a doer, so a word the dictionary also has as a
+          thing is more likely the doer ("dogs bark": dogs are the ones barking);
+        - "can", "will" and the like are followed by a thing the dictionary
+          also has as an action ("birds can fly": fly is what they can do);
+        - someone ("I", "he"...) is followed by a thing the dictionary also has
+          as an action, with no action for them before the next part
+          ("I go to bed": go is what I do).
+        Each problem says which word, what it was read as, what fits better
+        and why. It's a guess: Language does the reading again."""
+        from reasoning_engine import _ordinary
+        tokens = [t for t in reading.get("tokens") or [] if isinstance(t, dict)]
+        clauses = reading.get("clauses") or [{}]
+        roles = (clauses[0] or {}).get("roles") or {}
+        out: List[Dict[str, Any]] = []
+        doers = ("i", "you", "he", "she", "we", "they", "it")
+        doing = ("verb", "auxiliary", "modal")
+        for n, t in enumerate(tokens):
+            surface = str(t.get("surface") or "").casefold()
+            lemma = str(t.get("lemma") or surface).casefold()
+            kind = t.get("kind")
+            before = tokens[n - 1] if n else {}
+            after = tokens[n + 1:]
+            if kind == "verb" and surface != lemma and surface in (lemma + "s", lemma + "es") \
+                    and not (roles.get("agent") or roles.get("theme")) \
+                    and not any(x.get("kind") in ("pronoun", "noun", "proper_noun") for x in tokens[:n]) \
+                    and _ordinary(lemma, "n"):
+                out.append({"word": t.get("surface"), "read_as": "an action", "fits_better": "a thing (the doer)",
+                            "why": f"'{t.get('surface')}' as an action would need someone doing it, and nobody "
+                                   f"is; the dictionary also has '{lemma}' as a thing, so '{t.get('surface')}' are "
+                                   f"probably the ones doing it"})
+            elif kind == "noun" and before.get("kind") == "modal" and _ordinary(lemma, "v"):
+                out.append({"word": t.get("surface"), "read_as": "a thing", "fits_better": "an action",
+                            "why": f"after '{before.get('surface')}' comes what can be done, and the dictionary "
+                                   f"has '{surface}' as an action"})
+            elif kind == "noun" and str(before.get("surface") or "").casefold() in doers \
+                    and before.get("kind") == "pronoun" and _ordinary(surface, "v"):
+                rest = []
+                for x in after:
+                    if x.get("kind") in ("pronoun", "subordinator", "conjunction", "preposition"):
+                        break
+                    rest.append(x)
+                if not any(x.get("kind") in doing for x in rest):
+                    out.append({"word": t.get("surface"), "read_as": "a thing", "fits_better": "an action",
+                                "why": f"'{before.get('surface')}' has nothing they do unless '{surface}' is it, "
+                                       f"and the dictionary has '{surface}' as an action"})
+        return out
+
     # ---- which of her memories are her own guesses ------------------------------
     @staticmethod
     def _concluded_path() -> Optional[str]:

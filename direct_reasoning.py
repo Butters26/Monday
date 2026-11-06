@@ -710,12 +710,25 @@ class DirectReasoningAdapter:
         attention = direct_input.get("attention") if isinstance(direct_input.get("attention"), dict) else {}
         focus = (getattr(self, "_last_attention_focus", None) or {}).get("focus_text") or attention.get("focus_text")
         reading = self._analyze(user_input)
+        # She hears the same words Language does: if Language's reading of them
+        # doesn't make sense, she says why and asks Language to read it again.
+        misread = Understanding.reading_problems(user_input, reading)
+        if misread:
+            again = self._ask_lobe("language", "read_again", {"text": user_input, "problems": misread})
+            better = again.get("understanding") if isinstance(again.get("understanding"), dict) else {}
+            if better.get("tokens") and not Understanding.reading_problems(user_input, better):
+                reading, misread = better, []
         thinker = Understanding(self._ask_lobe)
         understood = thinker.understand(
             user_input, user_id, social, facts, emotion,
             float(novelty) if isinstance(novelty, (int, float)) else None, focus,
             patterns=direct_input.get("pattern_result") if isinstance(direct_input.get("pattern_result"), dict) else {},
             reading=reading)
+        if misread:
+            understood["reading_problems"] = misread
+            understood.setdefault("unsure", []).extend(
+                f"Language read '{m['word']}' as {m['read_as']}, but it fits better as {m['fits_better']}: "
+                f"{m['why']}" for m in misread)
         solved = thinker.solution_in(reading)
         if solved:
             # A way he found to fix something: kept, to suggest when it comes up again.
@@ -1325,6 +1338,15 @@ class DirectReasoningAdapter:
         reply = self._analyze(sentence)
         if not reply:
             return no("could not read the reply to check it")
+        understood = (self.__dict__.get("_understood") or {}).get(user_id) or {}
+        misread = understood.get("reading_problems") if str(understood.get("said") or "").strip() \
+            == user_input.strip() else None
+        if misread and self._content_lemmas(reply) & self._content_lemmas(self._analyze(user_input)):
+            # Language misread what he said; built from that reading, the reply
+            # carries the mistake ("Does bark dog bark?" for "dogs bark").
+            return no("Language misread what he said (" + "; ".join(
+                f"'{m['word']}' is {m['fits_better']}, not {m['read_as']}" for m in misread)
+                + "), so a reply built from it repeats the mistake", "misheard")
         names = self._names_in(meaning)
         taught = set(re.findall(r"[a-z']+", str(payload.get("expected_reply") or "").casefold()))
         # Words she was taught to say ("hey") aren't gibberish even if the dictionary lacks them.
