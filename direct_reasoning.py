@@ -959,9 +959,11 @@ class DirectReasoningAdapter:
             "future" if q.get("modality") == "future" else None))
         # "When is my test?" asks about a test that's tomorrow: "is" said of a
         # thing that's set to happen takes a future "is".
-        scheduled = fact.get("tense") == "future" and asked_when in (None, "present") \
-            and str(fact.get("predicate") or "") == "is" and str(fact.get("when_said") or "").strip() \
-            and str(clause.get("predicate_surface") or "").casefold() in ("is", "are", "be", "'s")
+        # "What do I have next week?" names the fact's own time.
+        fact_when = str(fact.get("when_said") or "").strip().casefold()
+        scheduled = fact.get("tense") == "future" and asked_when in (None, "present") and fact_when \
+            and (str(clause.get("predicate_surface") or "").casefold() in ("is", "are", "be", "'s")
+                 or (" " + fact_when + " ") in (" " + " ".join(lows) + " "))
         if asked_when and fact.get("tense") in ("past", "future") and fact.get("tense") != asked_when \
                 and not scheduled:
             return False
@@ -983,6 +985,14 @@ class DirectReasoningAdapter:
                     # Only the person was left: what he asked about (the cat) has
                     # to be what the fact is about, checked below.
                     about = {"_who_"}
+        fact_verb = str(fact.get("predicate") or "").split("v:", 1)[-1].split("@", 1)[0] \
+            if str(fact.get("predicate") or "").startswith("v:") else ""
+        asked_verb = str(clause.get("predicate_lemma") or clause.get("predicate_surface") or "").casefold()
+        if lows and lows[0] == "what" and fact_verb and fact_verb == asked_verb \
+                and ("i" in lows or "my" in lows) == (str(fact.get("subject") or "").casefold() == "user"):
+            # "What do I have next week?": the thing he has is the answer, so
+            # the question needn't name it.
+            about = {"_who_"}
         if about == {"_who_"}:
             pass
         elif not about or not all(FactText._alias_set(word) & asked
@@ -993,6 +1003,7 @@ class DirectReasoningAdapter:
             str(fact.get("object") or "") + " " + str(fact.get("value") or "").replace(":", " ")))
         if str(fact.get("object") or "")[:1].isupper():
             about_all |= FactText._alias_set("name")  # "my cat is Luna": Luna is the cat's name
+        about_all |= FactText._content_tokens(fact_when)  # "next week" is when the fact is
         # What he asked someone does ("what does Sam have?") must be what the fact
         # says they do, not something else about them ("Sam is your friend").
         words = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]

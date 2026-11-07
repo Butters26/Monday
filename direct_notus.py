@@ -1101,6 +1101,12 @@ class DirectNotusProcess:
                 "ORDER BY rowid DESC LIMIT ?",
                 (match, self.FACT_CANDIDATES),
             ).fetchall()]
+            # Facts set at the time he asked about ("what do I have next week?").
+            for row in connection.execute(
+                    "SELECT id, when_said FROM brain_facts WHERE user_id = ? AND is_contradicted = 0 "
+                    "AND when_said IS NOT NULL ORDER BY id DESC LIMIT 400", (user_id,)).fetchall():
+                if FactText._content_tokens(str(row["when_said"] or "")) & query_tokens:
+                    ids.append(int(row["id"]))
             # Facts whose action is a kind of one he asked about ("where will I go?"
             # finds "visit Boston": visiting is a kind of going, in the dictionary).
             for row in connection.execute(
@@ -1182,6 +1188,9 @@ class DirectNotusProcess:
                 except Exception:
                     readable = fact_text
                 blob = f"{fact_text} {readable}".replace("_", " ")
+                when_said = str(row["when_said"] or "") if "when_said" in row.keys() else ""
+                if when_said:
+                    blob += " " + when_said  # "next week": found by "what do I have next week?"
                 if obj[:1].isupper() and predicate.replace("_", "").isalpha():
                     blob += " name"  # "my dog is Pixel": found by "what's my dog's name?"
                 if predicate.startswith(("v:", "not_v:")):
@@ -2996,7 +3005,12 @@ relocate to: live in
                             "predicate": fact.get("predicate"), "object": fact.get("object"),
                             "value": fact.get("value"), "usage_count": fact.get("usage_count"),
                             "from": "language's reading"})
-            for meant in self._also_means(subject, ("not_" if negative else "") + predicate, obj, user_id):
+            # "I moved to Boulder" means he lives there now; "I will move" or
+            # "I might move" doesn't mean that yet.
+            how = self._how_said(reading)
+            done = how.get("tense") == "past" and not how.get("modal")
+            for meant in (self._also_means(subject, ("not_" if negative else "") + predicate, obj, user_id)
+                          if done else []):
                 learned.append({"id": meant.get("id"), "subject": meant.get("subject"),
                                 "predicate": meant.get("predicate"), "object": meant.get("object"),
                                 "value": meant.get("value"), "usage_count": meant.get("usage_count"),
