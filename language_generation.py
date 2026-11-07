@@ -983,6 +983,8 @@ class LanguageGenerator:
         if isinstance(sure, (int, float)) and sure < 0.9:
             meaning["hedge"] = "maybe" if sure < 0.6 else "probably"
         when = str(fact.get("when_said") or "").strip()
+        if when.casefold() == str(fact.get("object") or "").strip().casefold():
+            when = ""  # "your test is tomorrow": the time is what's said, not added again
         if when and when.split()[0].casefold() in ("when", "after", "before", "while", "since", "until", "once"):
             # "when I was a kid": true whenever it's said, in her words ("when you were a kid").
             meaning["when"] = LanguageGenerator._from_her_side(when)
@@ -1101,7 +1103,13 @@ class LanguageGenerator:
                 if entity not in pieces["heard_noun"]:
                     pieces["heard_noun"].append(dict(entity))
             elif kind == "proper_noun":
-                pieces["heard_noun"].append({"name": surface[:1].upper() + surface[1:]})
+                name = {"name": surface[:1].upper() + surface[1:]}
+                index = int(token.get("index", -1))
+                before = next((t for t in understanding.get("tokens") or []
+                               if int(t.get("index", -2)) == index - 1), {})
+                if str(before.get("kind")) == "preposition":
+                    name["_prep"] = str(before.get("surface") or "").casefold()  # "in Denver", as he said it
+                pieces["heard_noun"].append(name)
             elif kind == "noun":
                 # Keep it the way he said it: "music" (no a/the) stays "music",
                 # "dogs" stays many, "a dog" one.
@@ -1292,7 +1300,12 @@ class LanguageGenerator:
             if kind == "heard_verb":
                 meaning = {"subject": subject, "verb": rng.choice(pieces["heard_verb"])}
                 if pieces["heard_noun"] and builder._choose(plan, f"plan_object@{ctx}", ["object", "none"]) == "object":
-                    meaning["object"] = rng.choice(pieces["heard_noun"])
+                    thing = dict(rng.choice(pieces["heard_noun"]))
+                    prep = thing.pop("_prep", None)
+                    if prep:
+                        meaning["modifiers"] = [{"prep": prep, "object": thing}]  # "live in Denver"
+                    else:
+                        meaning["object"] = thing
             elif kind == "heard_adjective":
                 meaning = {"subject": subject, "verb": "be",
                            "complement": {"adjectives": [rng.choice(pieces["heard_adjective"])]}}

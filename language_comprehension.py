@@ -878,8 +878,17 @@ class LanguageComprehensionEngine:
         known_candidates: List[Tuple[int, str, int]] = []
         hinted = {i: e.get("kind") for i, e in enumerate(lexical_now)
                   if str(e.get("read_as") or "").startswith("read again")} if len(lexical_now) == len(tokens) else {}
+        owning = {i for i, e in enumerate(lexical_now) if e.get("read_as") == "have: owning"} \
+            if len(lexical_now) == len(tokens) else set()
+        naming = {i for i, e in enumerate(lexical_now) if e.get("kind") == "participle"} \
+            if len(lexical_now) == len(tokens) else set()
         for idx, token in enumerate(tokens):
             low = token.lower()
+            if idx in owning:
+                known_candidates.append((idx, "have", 8))  # "I have a dog": owning is the action
+                continue
+            if idx in naming:
+                continue  # "a dog named Pixel": what it's called, not what's done
             if low in closed:
                 continue
             if hinted.get(idx) == "noun":
@@ -1646,7 +1655,24 @@ class LanguageComprehensionEngine:
     def _action_after_subject(self, lexical: List[Dict[str, Any]]) -> None:
         """Right after a subject ("I", "you", "they"...), a word the dictionary
         also knows as a verb is the action: "I hate you", "they love music".
-        (A word that can't be a verb keeps its reading.)"""
+        (A word that can't be a verb keeps its reading.)
+
+        "have" with a thing right after it is owning, not a helper word:
+        "I have a dog", "she has two cats". And a word like "named"/"called"
+        between a thing and a name says what the thing is called ("a dog named
+        Pixel"); it isn't what anyone does."""
+        for idx, entry in enumerate(lexical[:-1]):
+            nxt = lexical[idx + 1]
+            if entry.get("kind") == "auxiliary" and str(entry.get("lemma")) == "have" \
+                    and nxt.get("kind") in ("determiner", "noun", "number", "adjective", "proper_noun"):
+                entry.update({"kind": "verb", "read_as": "have: owning"})
+        for idx, entry in enumerate(lexical[1:-1], start=1):
+            before, nxt = lexical[idx - 1], lexical[idx + 1]
+            if entry.get("kind") == "verb" and before.get("kind") == "noun" and nxt.get("kind") == "proper_noun" \
+                    and str(entry.get("surface") or "").casefold() != str(entry.get("lemma") or "").casefold() \
+                    and self._names_something(str(entry.get("lemma") or "")):
+                entry.update({"kind": "participle", "read_as": "says what the thing before it is called",
+                              "names": True})
         for idx, entry in enumerate(lexical):
             if idx == 0 or entry.get("kind") != "noun":
                 continue
@@ -1660,6 +1686,20 @@ class LanguageComprehensionEngine:
                 continue
             entry.update({"kind": "verb", "lemma": self.lemma(entry["surface"], prefer_pos="v"),
                           "senses": verb, "sense_count": len(verb), "read_as": "action after its subject"})
+
+    def _names_something(self, verb: str) -> bool:
+        """"name", "call", "dub": the dictionary files these with "name" as
+        what they do (giving or having a name)."""
+        if verb.casefold() == "name":
+            return True
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            for x in list(get_wordnet().synsets(verb, pos="v"))[:3]:
+                if "name" in {str(l).casefold() for l in x.lemmas()}:
+                    return True
+        except Exception:
+            return False
+        return False
 
     def _verb_after_subject(self, tokens: Sequence[str]) -> Optional[int]:
         """Index of the verb in a sentence that opens with its subject ("my
@@ -2653,6 +2693,8 @@ class LanguageComprehensionEngine:
         """"Tell me about my brother", "describe my sister", "explain why I am
         sad": he's asking her to say something. A request (no subject) whose
         verb the dictionary files under communicating, about something."""
+        if reading.get("speech_act") == "question":
+            return self._asks_what_she_knows(reading)
         if reading.get("speech_act") != "imperative":
             return None
         clause = (reading.get("clauses") or [{}])[0]
@@ -2683,6 +2725,33 @@ class LanguageComprehensionEngine:
             return None
         return {"verb": verb, "about": str(mention.get("surface") or "")}
 
+
+    def _asks_what_she_knows(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """"Do you remember anything about me?", "what do you know about Sam?":
+        asked what she knows (a verb the dictionary files under knowing and
+        thinking) about something. Same as "tell me about me"."""
+        clause = (reading.get("clauses") or [{}])[0]
+        roles = clause.get("roles") or {}
+        mentions = {m.get("mention_id"): m for m in reading.get("mentions") or [] if isinstance(m, dict)}
+        tokens = reading.get("tokens") or []
+        if not any(str(t.get("surface") or "").casefold() == "you" for t in tokens):
+            return None
+        about_id = roles.get("about") or next((mid for r, mid in roles.items() if r == "prep_about"), None)
+        if not about_id:
+            # "what do you know about me": "about me" may be read as what's known.
+            about_at = next((int(t.get("index", -1)) for t in tokens if str(t.get("surface") or "").casefold() == "about"), None)
+            about_id = next((mid for mid, m in mentions.items() if about_at is not None and m.get("start") == about_at + 1), None)
+        if not about_id:
+            return None
+        verb = str(clause.get("predicate_surface") or "")
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            knowing = any(x.lexfile() == "verb.cognition" for x in list(get_wordnet().synsets(verb, pos="v"))[:3])
+        except Exception:
+            knowing = False
+        if not knowing:
+            return None
+        return {"verb": "tell", "about": str((mentions.get(about_id) or {}).get("surface") or "")}
 
     def _asks_her_to_do(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """"Can you help me?", "could you remind me", "will you call Sam?": he

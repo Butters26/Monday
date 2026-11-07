@@ -575,9 +575,10 @@ class FactText:
         # "Ariana / dog / Rex": a name for something of hers ("my dog is Rex" is filed
         # the same way for him), so its words include "name".
         named = obj[:1].isupper() and pred.replace("_", "").isalpha() and pred != "name"  # (not "your name's name")
+        # (Once: "Your sister is Ariana." The search also finds it by "name"; that's
+        # added where memory searches, not said twice.)
         if self_sub:
-            return f"Your {pred.replace('_', ' ')} is {obj}." + (
-                f" Your {pred.replace('_', ' ')}'s name is {obj}." if named else "")
+            return f"Your {pred.replace('_', ' ')} is {obj}."
         if named:
-            return f"{subject}'s {pred.replace('_', ' ')} is {obj}. {subject}'s {pred.replace('_', ' ')}'s name is {obj}."
+            return f"{subject}'s {pred.replace('_', ' ')} is {obj}."
         return f"{subject} {pred.replace('_', ' ')} {obj}".strip()

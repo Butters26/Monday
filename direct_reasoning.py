@@ -901,8 +901,9 @@ class DirectReasoningAdapter:
         subject = str(fact.get("subject") or "")
         # "Are you tired?" asks about her; what she knows about him doesn't answer it.
         asked_of = self._subject_words(reading)
-        if asked_of == {"you"} and subject.casefold() in ("user",) or \
-                asked_of in ({"i"}, {"me"}) and subject.casefold() == "monday":
+        asked_about_her = str((reading.get("asks_her") or {}).get("about") or "").strip()
+        if not asked_about_her and (asked_of == {"you"} and subject.casefold() in ("user",) or
+                                    asked_of in ({"i"}, {"me"}) and subject.casefold() == "monday"):
             return False
         clause = (reading.get("clauses") or [{}])[0]
         obj = str(fact.get("object") or "")
@@ -911,7 +912,11 @@ class DirectReasoningAdapter:
             return True
         about_at = next((int(t.get("index", -1)) for t in reading.get("tokens") or []
                          if str(t.get("surface") or "").casefold() == "about"), None)
-        if str(clause.get("predicate_surface") or "") == "know" and about_at is not None:
+        asked_about = str((reading.get("asks_her") or {}).get("about") or "").casefold().strip()
+        if asked_about in ("me", "myself"):
+            # "Do you remember anything about me?": anything about him, or his, answers it.
+            return subject.casefold() == "user" or subject.casefold().startswith("user's ")
+        if (str(clause.get("predicate_surface") or "") == "know" or asked_about) and about_at is not None:
             # "What do you know about my brother?": everything she knows about him.
             mention = next((m for m in reading.get("mentions") or []
                             if isinstance(m.get("end"), int) and m["end"] > about_at), {})
@@ -952,9 +957,15 @@ class DirectReasoningAdapter:
         q = ((reading.get("clauses") or [{}])[0].get("qualifiers") or {})
         asked_when = reading.get("tense") or ("past" if q.get("temporal_relation") == "before_now" else (
             "future" if q.get("modality") == "future" else None))
-        if asked_when and fact.get("tense") in ("past", "future") and fact.get("tense") != asked_when:
+        # "When is my test?" asks about a test that's tomorrow: "is" said of a
+        # thing that's set to happen takes a future "is".
+        scheduled = fact.get("tense") == "future" and asked_when in (None, "present") \
+            and str(fact.get("predicate") or "") == "is" and str(fact.get("when_said") or "").strip() \
+            and str(clause.get("predicate_surface") or "").casefold() in ("is", "are", "be", "'s")
+        if asked_when and fact.get("tense") in ("past", "future") and fact.get("tense") != asked_when \
+                and not scheduled:
             return False
-        if not asked_when and fact.get("tense") in ("past", "future") \
+        if not asked_when and fact.get("tense") in ("past", "future") and not scheduled \
                 and reading.get("speech_act") == "question":
             return False  # "where do I live?" isn't answered by where he lived
         if asked_when == "past" and not fact.get("tense") \
@@ -1243,6 +1254,18 @@ class DirectReasoningAdapter:
                 if question:
                     break  # "Are you Cleo?": the one asked about comes first
         return self._TURNED.get(found, found) if turn else found
+
+    def _fact_is_what_he_said(self, fact: Dict[str, Any], user_input: str) -> bool:
+        """Every word of the fact (its who, what and name) is in what he just said."""
+        his = {str(t.get("lemma") or "").casefold() for t in self._analyze(user_input).get("tokens") or []} | {
+            str(t.get("surface") or "").casefold() for t in self._analyze(user_input).get("tokens") or []}
+        his |= {"user"} if his & {"i", "my", "me"} else set()
+        words = set()
+        for key in ("subject", "predicate", "object"):
+            text = str(fact.get(key) or "").replace("(nothing)", "")
+            text = text.split("v:", 1)[-1].split("@", 1)[0] if key == "predicate" else text
+            words |= {w for w in re.findall(r"[a-z]+", text.casefold().replace("_", " ")) if w not in ("s", "is", "a")}
+        return bool(words) and words <= his
 
     def _tense_of_matching_part(self, reply: Dict[str, Any], user_input: str) -> Optional[str]:
         """When he said it, for the part of what he said the reply is about
@@ -1644,6 +1667,9 @@ class DirectReasoningAdapter:
             return no("she understood what he said; asking what he means doesn't fit", "about_what_he_said")
         if purpose == "own_feeling" and (act == "ask" or reply_is_question):
             return no("she knows how she feels; asking him about it doesn't make sense", "state_not_ask")
+        if purpose == "own_feeling" and (self._analyze(user_input).get("asks_her") or {}).get("about"):
+            # "Do you remember anything about me?" asks what she knows, not how she feels.
+            return no("he asked what she knows about something; how she feels doesn't answer it", "use_memory")
         if act == "greet" and situation != "greeting":
             return no("he didn't greet her, so greeting him doesn't fit", "not_greeting")
         if act == "farewell" and situation != "farewell":
@@ -1701,6 +1727,10 @@ class DirectReasoningAdapter:
                 said_back = self._says_back(reply, self._analyze(user_input)) or (
                     bool(resolved) and resolved != user_input
                     and self._says_back(reply, self._analyze(resolved)))  # "Tom loves the dog" for "he loves it"
+                if not said_back and used and self._fact_is_what_he_said(used, user_input):
+                    # "Your dog is Pixel." for "I have a dog named Pixel": his own
+                    # words, as memory filed them.
+                    said_back = True
                 if not said_back and (not used or not self._fact_fits(used, user_input)):
                     return no("she's claiming something she doesn't know; she can say back what he "
                               "told her or ask about it", "restate_or_ask")

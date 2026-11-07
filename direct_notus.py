@@ -1142,6 +1142,11 @@ class DirectNotusProcess:
         if not query:
             return []
         query_tokens = FactText._content_tokens(query)
+        words = re.findall(r"[a-z']+", query.casefold())
+        if not query_tokens and any(w in ("me", "i", "myself", "my") for w in words):
+            # "What do you know about me?": everything about him (and what's his),
+            # newest first. "me" in his words is him.
+            return self._all_about("user", user_id, normalized_limit)
         if not query_tokens:
             return []
 
@@ -1177,6 +1182,8 @@ class DirectNotusProcess:
                 except Exception:
                     readable = fact_text
                 blob = f"{fact_text} {readable}".replace("_", " ")
+                if obj[:1].isupper() and predicate.replace("_", "").isalpha():
+                    blob += " name"  # "my dog is Pixel": found by "what's my dog's name?"
                 if predicate.startswith(("v:", "not_v:")):
                     # "visit" is a kind of "go": findable by the more general word.
                     blob += " " + " ".join(self._verb_kinds(predicate.split("v:", 1)[1].split("@", 1)[0]))
@@ -2342,6 +2349,22 @@ class DirectNotusProcess:
             return named
         return self._talking_with or named or "default"
 
+    def _all_about(self, who: str, user_id: str, limit: int) -> List[Dict[str, Any]]:
+        from notus_fact_text import FactText
+        with self._lock:
+            rows = self._require_connection().execute(
+                "SELECT * FROM brain_facts WHERE user_id = ? AND is_contradicted = 0 "
+                "AND (subject = ? OR subject LIKE ?) AND (held_by IS NULL OR held_by NOT LIKE 'concluded%') "
+                "ORDER BY id DESC LIMIT ?", (user_id, who, f"{who}'s %", int(limit))).fetchall()
+        out = []
+        for row in rows:
+            out.append({"id": int(row["id"]), "user_id": row["user_id"], "subject": row["subject"],
+                        "predicate": row["predicate"], "object": row["object"], "value": row["value"],
+                        "content": FactText.format_personal_fact(row["subject"], row["predicate"], row["object"]),
+                        "held_by": row["held_by"], "came_from": row["came_from"], "tense": row["tense"],
+                        "modal": row["modal"], "sure": row["sure"], "used_to_be": [], "match_score": 1.0})
+        return out
+
     def _came_from(self, fact_ids: List[Any], where: str) -> None:
         """Note where these facts came from (only where it isn't noted yet:
         the first source stays)."""
@@ -2411,6 +2434,49 @@ corrected: wait
 corrected: i mean
 corrected: sorry
 """
+
+    PLACEHOLDER_MEANS = """# What some things he says mean for what she knows (editable).
+# "<what he said>: <what it means>": "I moved to Boulder" means he lives in Boulder now.
+move to: live in
+move into: live in
+relocate to: live in
+"""
+
+    def _what_it_means(self) -> Dict[str, str]:
+        try:
+            from runtime_paths import runtime_file
+            path = Path(runtime_file("memory_what_it_means.txt"))
+            if not path.exists():
+                path.write_text(self.PLACEHOLDER_MEANS, encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            text = self.PLACEHOLDER_MEANS
+        out = {}
+        for line in text.splitlines():
+            if line.strip().startswith("#") or ":" not in line:
+                continue
+            said, _, means = line.partition(":")
+            if said.strip() and means.strip():
+                out[said.strip().casefold()] = means.strip().casefold()
+        return out
+
+    def _also_means(self, subject: str, predicate: str, obj: str, user_id: str) -> List[Dict[str, Any]]:
+        """"I moved to Boulder": he lives in Boulder now (from her what-it-means
+        file); filed too, as what he told her."""
+        if predicate.startswith("not_") or not predicate.startswith("v:"):
+            return []
+        said = predicate[2:].replace("@", " ").replace("_", " ").casefold()
+        means = self._what_it_means().get(said)
+        if not means:
+            return []
+        verb, _, prep = means.partition(" ")
+        new_predicate = f"v:{verb}@{prep}" if prep else f"v:{verb}"
+        try:
+            fact = self.store_brain_fact(subject, new_predicate, obj, confidence=0.8, user_id=user_id,
+                                         single_valued=self._one_at_a_time(subject, new_predicate))
+        except ValueError:
+            return []
+        return [fact] if isinstance(fact, dict) else []
 
     def _one_at_a_time_lines(self) -> Tuple[set, set]:
         path = None
@@ -2571,6 +2637,8 @@ corrected: sorry
                 and self._is_time_word(str(tokens[-1].get("lemma") or "")) \
                 and tokens[-2].get("kind") in ("adjective", "determiner"):
             when = f"{tokens[-2].get('surface')} {tokens[-1].get('surface')}"  # "next week"
+            if not tense and str(tokens[-2].get("surface") or "").casefold() in ("next", "last"):
+                tense = "future" if str(tokens[-2].get("surface")).casefold() == "next" else "past"
         return {"tense": tense, "modal": modal, "sure": sure, "when_said": when}
 
     def _mark(self, facts: List[Dict[str, Any]], how: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -2581,7 +2649,16 @@ corrected: sorry
         with self._lock:
             connection = self._require_connection()
             for fact in facts:
+                if isinstance(fact, dict) and str(fact.get("from") or "").startswith("what "):
+                    continue  # "moved to Boulder" (past) means he lives there now: no "past" on that
                 if isinstance(fact, dict) and fact.get("id"):
+                    when = str(how.get("when_said") or "").strip()
+                    obj = str(fact.get("object") or "")
+                    if when and obj.casefold().endswith(" " + when.casefold()):
+                        # "an interview next week": the time is when, not part of the thing.
+                        obj = obj[:-len(when)].strip()
+                        connection.execute("UPDATE brain_facts SET object = ? WHERE id = ?", (obj, fact["id"]))
+                        fact["object"] = obj
                     connection.execute("UPDATE brain_facts SET tense = ?, modal = ?, sure = ?, when_said = ? "
                                        "WHERE id = ?", (how["tense"], how["modal"], how["sure"],
                                                         how.get("when_said"), fact["id"]))
@@ -2724,6 +2801,19 @@ corrected: sorry
             return []
         extra = self._what_a_name_is(mentions.get(subject_id), tokens, negative=False, user_id=user_id)
         predicate_lemma = str(clause.get("predicate") or clause.get("predicate_surface") or "").casefold()
+        # "I have a dog named Pixel", "Ben has a son called Tom": whose it is (who
+        # has it), what it is, and its name.
+        if predicate_lemma == "have" and not clause.get("copular"):
+            had = mentions.get(roles.get("patient") or roles.get("theme")) or {}
+            inside = sorted((t for t in tokens if isinstance(had.get("start"), int) and isinstance(had.get("end"), int)
+                             and had["start"] <= int(t.get("index", -1)) < had["end"]),
+                            key=lambda t: int(t.get("index", 0)))
+            at = next((n for n, t in enumerate(inside) if t.get("kind") == "participle" and t.get("names")), None)
+            if at is not None and at >= 1 and at + 1 < len(inside) and inside[at - 1].get("kind") == "noun" \
+                    and inside[at + 1].get("kind") == "proper_noun":
+                thing = str(inside[at - 1].get("lemma") or inside[at - 1].get("surface") or "").casefold()
+                name = str(inside[at + 1].get("surface") or "")
+                return extra + self._file(subject, thing, name[:1].upper() + name[1:], negative, user_id)
         if predicate_lemma in ("name", "named", "call", "called"):
             # "My cat is named Luna" / "her dog is called Rex": the thing's name.
             named = [t for t in tokens if t.get("kind") == "proper_noun"
@@ -2906,6 +2996,11 @@ corrected: sorry
                             "predicate": fact.get("predicate"), "object": fact.get("object"),
                             "value": fact.get("value"), "usage_count": fact.get("usage_count"),
                             "from": "language's reading"})
+            for meant in self._also_means(subject, ("not_" if negative else "") + predicate, obj, user_id):
+                learned.append({"id": meant.get("id"), "subject": meant.get("subject"),
+                                "predicate": meant.get("predicate"), "object": meant.get("object"),
+                                "value": meant.get("value"), "usage_count": meant.get("usage_count"),
+                                "from": f"what '{predicate[2:].replace('@', ' ')}' means"})
         return learned
 
     def _bring_up(self, text: str, user_id: str, recognition_id: str, *, exclude_id: Any = None) -> None:
