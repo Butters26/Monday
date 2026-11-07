@@ -105,6 +105,24 @@ class ShapeMemory:
             if self._unsaved >= 5:
                 self.save()
 
+    def note_style(self, point: str, option: str) -> None:
+        """How he says something one of several ways ("didn't" or "did not")."""
+        key = f"style {point}: {option}"
+        with self.lock:
+            self.counts[key] = self.counts.get(key, 0) + 1
+            self._unsaved += 1
+            if self._unsaved >= 5:
+                self.save()
+
+    def his_way(self, point: str) -> Optional[str]:
+        """The way he says it most, once he clearly has one (twice as often as any other)."""
+        ways = {k.split(": ", 1)[1]: v for k, v in self.counts.items() if k.startswith(f"style {point}: ")}
+        if not ways:
+            return None
+        best = max(ways, key=ways.get)
+        rest = max([v for k, v in ways.items() if k != best] or [0])
+        return best if ways[best] >= 2 and ways[best] >= 2 * rest else None
+
     def save(self) -> None:
         if not self.path:
             return

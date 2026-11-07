@@ -1612,6 +1612,16 @@ class DirectReasoningAdapter:
         if act == "ask" and subject.get("ref") == "speaker" and purpose != "admit_unknown":
             return no("she's asking him about herself, which he can't know better than she does",
                       "not_about_herself")
+        if purpose == "say_back_request":
+            to_do = self._analyze(user_input).get("asks_her_to_do") or {}
+            if to_do and act == "state" and to_do.get("do") and to_do["do"] in sentence.casefold():
+                return {"ok": True, "reason": f"she says back what he asks her to do ({to_do['do']})"}
+            return no("it isn't what he asked her to do", "about_what_he_said")
+        if purpose == "ask_what_he_needs":
+            to_do = self._analyze(user_input).get("asks_her_to_do") or {}
+            if to_do and not to_do.get("what"):
+                return {"ok": True, "reason": f"he asked her to {to_do.get('do')} without saying with what; she asks"}
+            return no("he didn't ask her to do something without saying what", "about_what_he_said")
         if purpose == "ask_what_he_means":
             now = understood if str(understood.get("said") or "").strip() == user_input.strip() else {}
             if now.get("didnt_get"):

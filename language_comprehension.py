@@ -2646,6 +2646,7 @@ class LanguageComprehensionEngine:
         if reading["parts"]:
             self._whole_from_parts(reading, statements.get("positions") or [])
         reading["asks_her"] = self._asks_her(reading)
+        reading["asks_her_to_do"] = self._asks_her_to_do(reading)
         return reading
 
     def _asks_her(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -2681,6 +2682,30 @@ class LanguageComprehensionEngine:
         if not mention:
             return None
         return {"verb": verb, "about": str(mention.get("surface") or "")}
+
+
+    def _asks_her_to_do(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """"Can you help me?", "could you remind me", "will you call Sam?": he
+        asks her to do something. Who she'd do it for, and to what, as he said
+        it (what she does about it isn't Language's to decide)."""
+        tokens = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        if len(tokens) < 3:
+            return None
+        first, second = tokens[0], tokens[1]
+        if first.get("kind") != "modal" or str(second.get("surface") or "").casefold() != "you":
+            return None  # ("do you like dogs?" asks about her, not for something)
+        verb = next((t for t in tokens[2:] if t.get("kind") == "verb"), None)
+        if verb is None:
+            return None
+        rest = [t for t in tokens if int(t.get("index", -1)) > int(verb.get("index", -1))]
+        what = " ".join((str(t.get("surface") or "").capitalize() if t.get("kind") == "proper_noun"
+                         else str(t.get("surface") or "")) for t in rest
+                        if str(t.get("surface") or "").casefold() not in ("me", "us", "please"))
+        for_him = any(str(t.get("surface") or "").casefold() in ("me", "us") for t in rest)
+        if not for_him:
+            return None  # "can you swim?" asks what she can do, not for something
+        return {"do": str(verb.get("lemma") or verb.get("surface") or "").casefold(),
+                "for_him": True, "what": what.strip()}
 
 
 __all__ = ["LanguageComprehensionEngine", "LinguisticMention"]

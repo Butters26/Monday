@@ -670,9 +670,17 @@ class LanguageGenerator:
                 return None
             meaning["verb"] = verb
             verb_token = next((t for t in tokens if t.get("kind") == "verb" and t.get("phrase")
-                               and str(t.get("lemma") or "").casefold() == verb), None)
+                               and str(t.get("lemma") or "").casefold() == verb), None) or next(
+                (t for t in tokens if t.get("kind") == "verb" and t.get("phrase")
+                 and (verb in str(t["phrase"]).split()[1:] or any(
+                     str(u.get("lemma") or "").casefold() == verb and str(u.get("surface") or "").casefold()
+                     in str(t["phrase"]).split()[1:] for u in tokens))), None)  # "got married": get married
             particle = ""
             inside: set = set()
+            if verb_token:
+                verb = str(verb_token.get("lemma") or verb).casefold()
+                if not meaning.get("verb") or str(verb_token["phrase"]).split()[0] == verb:
+                    meaning["verb"] = verb
             if verb_token and str(verb_token["phrase"]).split()[0] == verb:
                 # "gave up", "work on", "kicked the bucket": the phrase is the action.
                 meaning["verb"] = str(verb_token["phrase"])
@@ -1103,6 +1111,20 @@ class LanguageGenerator:
         if understanding.get("speech_act") == "question":
             # Asked something, she can always say she doesn't know it.
             pieces["not_knowing"].append(True)
+        to_do = understanding.get("asks_her_to_do") or self.comprehension.analyze(user_input).get("asks_her_to_do")
+        if to_do and not to_do.get("what"):
+            # "Can you help me?" with nothing said about what: she asks what he needs.
+            pieces["what_he_means"].append({"ask_about": "object", "subject": {"ref": "addressee"},
+                                             "verb": "need", "_word_chosen": True,
+                                             "_purpose": "ask_what_he_needs"})
+        elif to_do:
+            # "Could you remind me to call Sam?": she says back what he asks of her
+            # ("You want me to remind you to call Sam."). Whether she does it is
+            # Executive Control's to decide, not Language's.
+            asked = " ".join(w for w in [to_do["do"], "you", self._from_her_side(to_do["what"])] if w)
+            pieces["what_he_said"].append({"subject": {"ref": "addressee"}, "verb": "want", "_word_chosen": True,
+                                           "object": {"ref": "speaker"}, "how": "to " + asked,
+                                           "_purpose": "say_back_request", "act": "state"})
         self._didnt_get = None
         pieces["understood"] = self._understood_pieces(user_id, user_input,
                                                        understanding.get("speech_act") == "question")
@@ -1260,6 +1282,23 @@ class LanguageGenerator:
         for part in meaning.get("several") or []:
             part["act"] = meaning["act"]
         return meaning
+
+    def _use_his_ways(self, builder: Any, user_input: str) -> None:
+        """The shapes she has read, used in her own sentences: how he puts a
+        "not" ("didn't" or "did not") is counted from what he says, and once he
+        clearly has a way, she says it his way too."""
+        try:
+            shapes = self.comprehension._structure().shapes
+        except Exception:
+            return
+        low = user_input.casefold()
+        if re.search(r"n't\b|\bwon't\b|\bcan't\b", low):
+            shapes.note_style("negation_style", "contracted")
+        elif re.search(r"\b(not|cannot)\b", low):
+            shapes.note_style("negation_style", "full")
+        way = shapes.his_way("negation_style")
+        if way:
+            builder.steer_only["negation_style"] = {way}
 
     def _tell_pattern_how_built(self, reading: Dict[str, Any], user_id: str) -> None:
         """Send Pattern Recognition how his sentence was built (the shape of
@@ -1431,6 +1470,15 @@ class LanguageGenerator:
             builder.steer_only["plan_how_much@"] = {"several"}
             builder.steer_only["plan_form@"] = {"state"}
             builder.steer_only["plan_piece@"] = {"memory"}
+        self._use_his_ways(builder, user_input)
+        if any(p.get("_purpose") == "say_back_request" for p in pieces.get("what_he_said") or []):
+            # He asked her to do something: she shows she got what he asks.
+            builder.steer_only["plan_piece@"] = {"what_he_said"}
+            builder.steer_only["plan_form@"] = {"state"}
+        if any(p.get("_purpose") == "ask_what_he_needs" for p in pieces.get("what_he_means") or []):
+            # He asked her to do something without saying what: what he needs comes first.
+            builder.steer_only["plan_piece@"] = {"what_he_means"}
+            builder.steer_only["plan_form@"] = {"ask"}
         sent_back: set = set()
         self._said_back_failed = self._said_back_several_failed = False
         try:
@@ -1470,7 +1518,8 @@ class LanguageGenerator:
                     sent_back.add(built.sentence)
                     if meaning.get("_purpose") == "say_back" and meaning.get("act") == "state":
                         self._said_back_failed = True
-                    if any(p.get("_purpose") == "say_back" for p in meaning.get("several") or []):
+                    if meaning.get("act") == "state" and any(
+                            p.get("_purpose") == "say_back" for p in meaning.get("several") or []):
                         self._said_back_failed = self._said_back_several_failed = True
                     if meaning.get("_fact"):
                         self.__dict__.setdefault("_sent_back_facts", set()).add(self._fact_key(meaning))

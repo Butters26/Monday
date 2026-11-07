@@ -231,6 +231,20 @@ def _candidates(reading: Dict[str, Any], people: Dict[str, List[str]], beliefs: 
             label = (f"{'my' if owner == 'user' else 'your' if owner == 'monday' else (owner + chr(39) + 's') if owner else 'the'} {surface}")
             found.append({"entity": entity, "kind": kind, "sex": sex, "plural": plural, "label": label,
                           "at": int(token.get("index", pos))})
+    # What each one did in that sentence (the action right after it, when it
+    # comes first): "my car won't start" -> the car, start.
+    for cand in found:
+        at = cand.get("at")
+        if not isinstance(at, int):
+            continue
+        nominal_between = False
+        for t in [t for t in tokens if int(t.get("index", -1)) > at]:
+            if t.get("kind") == "verb":
+                if not nominal_between:
+                    cand["did"] = str(t.get("lemma") or "").casefold()
+                break
+            if t.get("kind") in ("noun", "proper_noun", "pronoun"):
+                nominal_between = True
     found = _same_ones(reading, found)
     names_here = [c for c in found if "name" in c["entity"]]
     if len(names_here) >= 2:
@@ -346,6 +360,10 @@ def resolve(reading: Dict[str, Any], context: List[str], people: Dict[str, List[
                                "sure": True, "placeholder": True, "candidates": []})
             continue
         here = _candidates(reading, people, beliefs, user_id, stop_at=int(token.get("index", 0)))
+        # What "it"/"he" does here: one he said does (or won't do) the same thing
+        # fits better ("my car won't start ... it started": the car).
+        its_verb = next((str(t.get("lemma") or "").casefold() for t in tokens
+                         if int(t.get("index", -1)) > int(token.get("index", 0)) and t.get("kind") == "verb"), "")
         scored = []
         for age, cands in [(0, here)] + earlier:
             for order, cand in enumerate(cands):
@@ -353,6 +371,8 @@ def resolve(reading: Dict[str, Any], context: List[str], people: Dict[str, List[
                 # "He loves it": two different pronouns in one sentence are two different ones.
                 if any(form != pronoun and label == cand["label"].casefold() for form, label in taken.items()):
                     fit = 0.0
+                if fit > 0 and its_verb and cand.get("did") == its_verb:
+                    fit *= 3
                 if fit > 0:
                     # Newer is more likely; later in the same line is more likely.
                     # (What he just said counts much more than a few lines back.)
