@@ -1962,7 +1962,45 @@ class DirectNotusProcess:
                     self._tell_what_it_changes(learned, user_id)
             self._bring_up(words.strip(), user_id, recognition_id,
                            exclude_id=(result.get("content") or {}).get("id"))
+        elif result.get("status") == "success" and role == "sensed":
+            # What she sensed herself: she experienced it; nobody told her.
+            seen = self._learn_from_senses(words.strip(), sense, user_id)
+            if seen:
+                result.setdefault("content", {})["facts_learned"] = seen
         return result
+
+    def _learn_from_senses(self, description: str, sense: str, user_id: str) -> List[Dict[str, Any]]:
+        """"a red train on the tracks" from her eyes: she saw a train, today.
+        Language reads the description; each thing in it is something she
+        sensed, filed as hers (experienced), with the day."""
+        reading = self._read(description, user_id)
+        tokens = reading.get("tokens") or []
+        verb = {"vision": "see", "video": "see", "camera": "see", "image": "see", "audio": "hear",
+                "sound": "hear", "touch": "feel"}.get(sense, "sense")
+        learned: List[Dict[str, Any]] = []
+        for mention in reading.get("mentions") or []:
+            if not isinstance(mention, dict) or mention.get("pronoun"):
+                continue
+            inside = [t for t in tokens if isinstance(mention.get("start"), int) and isinstance(mention.get("end"), int)
+                      and mention["start"] <= int(t.get("index", -1)) < mention["end"]]
+            words = [str(t.get("surface") or "") for t in inside if t.get("kind") in ("adjective", "noun", "number")]
+            if not words:
+                continue
+            try:
+                fact = self.store_brain_fact("monday", f"v:{verb}", " ".join(words), confidence=0.7,
+                                             user_id=user_id, single_valued=False)
+            except ValueError:
+                continue
+            learned.append(fact)
+        self._came_from([f.get("id") for f in learned], f"experienced ({sense})")
+        if learned:
+            day = datetime.now().date().isoformat()
+            with self._lock:
+                connection = self._require_connection()
+                connection.executemany("UPDATE brain_facts SET when_said = COALESCE(when_said, ?) WHERE id = ?",
+                                       [(day, int(f["id"])) for f in learned if f.get("id")])
+                connection.commit()
+        return learned
 
     # ------------------------------------------------------------------
     # Facts from any sentence: Language reads it (Language owns understanding
@@ -2343,6 +2381,111 @@ class DirectNotusProcess:
                 return words_plural(base_noun(words[0]))
         return subject
 
+    PLACEHOLDER_ONE_AT_A_TIME = """# Things that have one at a time: a new one makes the old one history.
+# Edit freely. Each line is a thing ("job") or an action with its little word
+# ("live in"). She adds to this herself when he says something changed
+# ("my job is X now", "I moved to Y"). Attributes the dictionary files as such
+# (favorite color, age, height) are already one at a time.
+one at a time: job
+one at a time: home
+one at a time: address
+one at a time: name
+one at a time: birthday
+one at a time: boss
+one at a time: phone number
+one at a time: live in
+one at a time: work at
+# Words that say something changed (editable): the new one replaces the old,
+# and she learns that thing is one at a time.
+changed: now
+changed: anymore
+changed: no longer
+changed: new
+changed: moved
+changed: changed
+changed: switched
+# Words that say he's correcting himself (editable): the new one replaces what
+# he just said, but that doesn't make it one at a time (two dogs are fine).
+corrected: actually
+corrected: wait
+corrected: i mean
+corrected: sorry
+"""
+
+    def _one_at_a_time_lines(self) -> Tuple[set, set]:
+        path = None
+        try:
+            from runtime_paths import runtime_file
+            path = Path(runtime_file("memory_one_at_a_time.txt"))
+            if not path.exists():
+                path.write_text(self.PLACEHOLDER_ONE_AT_A_TIME, encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            text = self.PLACEHOLDER_ONE_AT_A_TIME
+        ones, changes = set(), set()
+        self._correction_words = set()
+        for line in text.splitlines():
+            kind, _, word = line.partition(":")
+            word = word.strip().casefold()
+            if not word or line.strip().startswith("#"):
+                continue
+            if kind.strip() == "one at a time":
+                ones.add(word)
+            elif kind.strip() == "changed":
+                changes.add(word)
+            elif kind.strip() == "corrected":
+                self._correction_words.add(word)
+        return ones, changes
+
+    @staticmethod
+    def _slot_of(subject: str, predicate: str) -> Tuple[str, str]:
+        """("job", "") for "user's job"; ("", "live in") for v:live@in."""
+        head = subject.split("'s ", 1)[1] if "'s " in subject else ""
+        core = predicate.replace("not_", "")
+        action = core[2:].replace("@", " ").replace("_", " ") if core.startswith("v:") else ""
+        return head.casefold(), action.casefold()
+
+    def _one_at_a_time(self, subject: str, predicate: str) -> bool:
+        ones, _ = self._one_at_a_time_lines()
+        head, action = self._slot_of(subject, predicate)
+        return bool((head and head in ones) or (action and action in ones))
+
+    def _says_it_changed(self, tokens: List[Dict[str, Any]]) -> str:
+        """"changed" (it changed: learn it's one at a time), "corrected" (he's
+        correcting himself: replace this once), or "" ."""
+        _, changes = self._one_at_a_time_lines()
+        words = [str(t.get("surface") or "").casefold() for t in tokens]
+        joined = " ".join(words)
+        has = lambda found: any((" " in c and c in joined) or c in words for c in found)
+        if has(changes):
+            return "changed"
+        if has(self.__dict__.get("_correction_words") or set()):
+            return "corrected"
+        return ""
+
+    def _had_other(self, subject: str, predicate: str, obj: str, user_id: str) -> bool:
+        with self._lock:
+            row = self._require_connection().execute(
+                "SELECT 1 FROM brain_facts WHERE user_id = ? AND lower(subject) = lower(?) AND lower(predicate) = lower(?) "
+                "AND lower(object) != lower(?) AND is_contradicted = 0 LIMIT 1",
+                (user_id, subject, predicate, obj)).fetchone()
+        return bool(row)
+
+    def _learn_one_at_a_time(self, subject: str, predicate: str) -> None:
+        head, action = self._slot_of(subject, predicate)
+        word = head or action
+        if not word:
+            return
+        try:
+            from runtime_paths import runtime_file
+            path = Path(runtime_file("memory_one_at_a_time.txt"))
+            if not path.exists():
+                path.write_text(self.PLACEHOLDER_ONE_AT_A_TIME, encoding="utf-8")
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(f"one at a time: {word}\n")
+        except Exception as error:
+            print(f"⚠️  Memory: couldn't note that {word} is one at a time ({error})")
+
     @staticmethod
     def _is_attribute(subject: str) -> bool:
         """"favorite color", "age", "height": the dictionary files these as
@@ -2368,9 +2511,21 @@ class DirectNotusProcess:
                     "AND predicate = ? AND object != ? AND is_contradicted = 0",
                     (user_id, subject, predicate.replace(" ", "_") + "_name", obj))
                 connection.commit()
+        if self.__dict__.get("_changing_now") and " " in predicate:
+            # "my new school is Roosevelt": the school, and "new" says it changed.
+            _, change_words = self._one_at_a_time_lines()
+            predicate = " ".join(w for w in predicate.split() if w.casefold() not in change_words) or predicate
+        # Someone's sister, friend, dog: there can be more than one, unless it's
+        # one at a time ("boss") or he says it changed ("no wait, my dog is Max").
+        one = self._one_at_a_time(f"{subject}'s {predicate}", "is")
+        if not one and self.__dict__.get("_changing_now") and not negative \
+                and self._had_other(subject, predicate, obj, user_id):
+            if self.__dict__.get("_changing_now") == "changed":
+                self._learn_one_at_a_time(f"{subject}'s {predicate}", "is")  # it changed: one at a time
+            one = True
         try:
             fact = self.store_brain_fact(subject, ("not_" if negative else "") + predicate, obj,
-                                         confidence=0.8, user_id=user_id)
+                                         confidence=0.8, user_id=user_id, single_valued=one)
         except ValueError:
             return []
         return [fact] if isinstance(fact, dict) else []
@@ -2478,6 +2633,12 @@ class DirectNotusProcess:
 
     def _learn_from_reading_inner(self, text: str, user_id: str) -> List[Dict[str, Any]]:
         reading = self._read(text, user_id)
+        # (Judged on his words as he wrote them too: "no wait," can be left out of the reading.)
+        # (A correction opener counts for the whole line; a change word only for the
+        # part it's in: "I got a new job and I am happy" doesn't make happy replace tired.)
+        whole = self._says_it_changed([{"surface": w} for w in re.findall(r"[a-z']+", text.casefold())])
+        self._changing_now = whole if whole == "corrected" or not reading.get("parts") else \
+            self._says_it_changed(reading.get("tokens") or []) if not reading.get("parts") else ""
         links = [l for l in reading.get("links") or [] if isinstance(l, dict)]
         if any(l.get("kind") in ("on_condition", "unless") for l in links):
             # "If it rains we will stay home": neither has happened or is so;
@@ -2680,6 +2841,11 @@ class DirectNotusProcess:
                 return who
             surface = " ".join(w for w in str(mention.get("surface") or "").casefold().split()
                                if w not in ("my", "your", "our"))
+            # As he wrote it: "Target" (a store) keeps the capital he gave it (not
+            # a word capitalized only for starting the sentence).
+            raw_words = re.findall(r"[A-Za-z']+", str(reading.get("raw_text") or ""))
+            capital = {w.casefold(): w for n, w in enumerate(raw_words) if n and w[:1].isupper() and w != "I"}
+            surface = " ".join(capital.get(w, w) for w in surface.split())
             return surface or who
         facts = [(p, o if o == self.NOTHING else (as_said(roles[next(r for r in roles if r.startswith("prep_") and p.endswith("@" + r[5:]))])
                       if "@" in p else (as_said(next((roles[r] for r in ("theme", "patient")
@@ -2687,8 +2853,10 @@ class DirectNotusProcess:
                                         if p.startswith("v:") else o)) or o, v)
                  for p, o, v in facts]
         if 'particle_words' in locals() and particle_words:
-            # ("work on cars": "on" is part of "work on", so cars is what he works on.)
-            facts = [(p.split("@", 1)[0] if "@" in p and p.split("@", 1)[1] in particle_words else p, o, v)
+            # "work at Target", "work on cars": the little word goes with what follows
+            # (where he works, what he works on), so it's filed as work@at, not work_at@at.
+            facts = [(f"v:{p.split('@', 1)[0][2:].split('_', 1)[0]}@{p.split('@', 1)[1]}"
+                      if "@" in p and p.split("@", 1)[1] in particle_words else p, o, v)
                      for p, o, v in facts]
         if clause.get("copular") is False or not clause.get("copular"):
             if 'particle_words' in locals() and particle_words:
@@ -2709,15 +2877,29 @@ class DirectNotusProcess:
                 return learned
         learned = list(extra)
         # d. What an attribute is ("my favorite color", "my age") has one value at a
-        # time: a new one makes the old one history.
-        one_value = self._is_attribute(subject)
+        # time: a new one makes the old one history. So does anything in her
+        # one-at-a-time list (his job, where he lives), and anything he says has
+        # changed ("my job is X now", "I don't live there anymore").
+        changed = self._says_it_changed(tokens) or (self.__dict__.get("_changing_now") if not reading.get("parts") else "") or ""
+        if changed and "'s " in subject:
+            # "my new job": the job, and "new" says it changed.
+            _, change_words = self._one_at_a_time_lines()
+            whose, _, thing = subject.partition("'s ")
+            kept = " ".join(w for w in thing.split() if w.casefold() not in change_words)
+            subject = f"{whose}'s {kept}" if kept else subject
         for predicate, obj, value in facts:
             if not predicate or not obj:
                 continue
+            one_value = self._is_attribute(subject) or self._one_at_a_time(subject, predicate)
+            if changed and not one_value and self._had_other(subject, predicate, obj, user_id):
+                if changed == "changed":
+                    # He says it changed: that's how she learns this has one at a time.
+                    self._learn_one_at_a_time(subject, predicate)
+                one_value = True
             try:
                 fact = self.store_brain_fact(subject, ("not_" if negative else "") + predicate, obj,
                                              value=value, confidence=0.8, user_id=user_id,
-                                             single_valued=bool(one_value and predicate in ("is", "is_a")))
+                                             single_valued=bool(one_value and not negative))
             except ValueError:
                 continue
             learned.append({"id": fact.get("id"), "subject": fact.get("subject"),
