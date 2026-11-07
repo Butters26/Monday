@@ -1431,6 +1431,33 @@ class LanguageGenerator:
                 reading = self._resolve_references(reading, payload)
             return {'status': 'success', 'content': {'understanding': reading}}
 
+        if msg_type == 'read_again':
+            # Reasoning says the reading of what he said didn't make sense and
+            # which words fit better how. Read it again that way; from now on
+            # that sentence reads the new way (for the reply too), and anyone
+            # who filed the old reading hears about it.
+            text = str(payload.get('text') or '')
+            hints = [h for h in payload.get('problems') or [] if isinstance(h, dict)]
+            reading = self.comprehension.analyze(text, hints=hints)
+            if isinstance(payload.get('context'), list):
+                reading = self._resolve_references(reading, payload)
+            try:
+                import copy
+                self.comprehension.__dict__.setdefault('_readings', {})[text.strip()] = copy.deepcopy(reading)
+                kept = self.__dict__.setdefault('_read_again', {})
+                kept[text.strip()] = copy.deepcopy(reading)
+                while len(kept) > 50:
+                    kept.pop(next(iter(kept)))
+            except Exception:
+                pass
+            if self.thalamus is not None and hasattr(self.thalamus, 'announce'):
+                try:
+                    self.thalamus.announce('read_again', {'text': text, 'understanding': reading,
+                                                          'because': hints}, source='language')
+                except Exception as error:
+                    print(f"⚠️  Language: couldn't tell the others it read '{text}' again ({error})")
+            return {'status': 'success', 'content': {'understanding': reading}}
+
         if msg_type in {'generate', 'generate_grounded'}:
             semantic_input = payload.get('semantic_input', payload)
             semantic_input = dict(semantic_input) if isinstance(semantic_input, dict) else {}
@@ -1442,6 +1469,13 @@ class LanguageGenerator:
             if payload.get('user_id'):
                 semantic_input.setdefault('user_id', str(payload['user_id']))
             understanding = semantic_input.get('language_understanding')
+            again = (self.__dict__.get('_read_again') or {}).get(heard.strip()) if heard else None
+            if again:
+                # Reasoning had it read again: reply to what he meant.
+                import copy
+                understanding = copy.deepcopy(again)
+                understanding['user_id'] = semantic_input.get('user_id', 'default')
+                semantic_input['language_understanding'] = understanding
             if heard and not (isinstance(understanding, dict) and understanding.get('tokens')):
                 understanding = self.comprehension.analyze(heard)
                 understanding['user_id'] = semantic_input.get('user_id', 'default')

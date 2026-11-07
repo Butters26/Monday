@@ -27,6 +27,7 @@ Executive Control...).
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Set
+import re
 
 # The dictionary's own top groupings of things (its lexicographer files):
 # what kind of thing a noun is, said as the group's own word.
@@ -171,6 +172,7 @@ class Understanding:
         return {"said": said, "user_id": user_id, "happened": happened, "conclusions": conclusions,
                 "explanations": explanations + changed + shown, "her_feeling": feeling,
                 "unsure": unsure + follows,
+                "her_guesses": [f for f in known if str(f.get("held_by") or "").startswith("concluded")],
                 **({"overruled": overruled} if overruled else {}),
                 **({"problem": problem} if problem else {})}
 
@@ -239,6 +241,29 @@ class Understanding:
                     out.append({"word": t.get("surface"), "read_as": "a thing", "fits_better": "an action",
                                 "why": f"'{before.get('surface')}' has nothing they do unless '{surface}' is it, "
                                        f"and the dictionary has '{surface}' as an action"})
+        # Nothing is done at all: "cats like fish" read as three things. After
+        # the first thing, a word the dictionary has as an action is probably
+        # what that thing does. (Also after a word just said to be the doer.)
+        doers_now = {str(p["word"]).casefold() for p in out if "doer" in str(p.get("fits_better"))}
+        # ("do"/"can" only help an action: "do cats like fish?" still needs one.)
+        has_action = any(t.get("kind") == "verb" or (t.get("kind") == "auxiliary" and str(t.get("lemma")) in ("be", "have"))
+                         for t in tokens if str(t.get("surface") or "").casefold() not in doers_now)
+        if not has_action and not any(p.get("fits_better") == "an action" for p in out):
+            for n, t in enumerate(tokens[:-1]):
+                first = str(t.get("surface") or "").casefold()
+                if t.get("kind") in ("determiner", "possessive", "adjective", "number"):
+                    break  # "the big red ball": just naming something, no doer
+                if t.get("kind") in ("noun", "proper_noun") or first in doers_now:
+                    nxt = tokens[n + 1]
+                    word = str(nxt.get("surface") or "")
+                    if nxt.get("kind") in ("noun", "adjective") and _ordinary(
+                            str(nxt.get("lemma") or word).casefold(), "v") or (
+                            nxt.get("kind") == "noun" and _ordinary(word.casefold(), "v")):
+                        out.append({"word": word, "read_as": "a thing", "fits_better": "an action",
+                                    "why": f"nothing in it is being done unless '{word}' is it, and the "
+                                           f"dictionary has '{word}' as an action that '{t.get('surface')}' "
+                                           f"can be doing"})
+                    break
         return out
 
     # ---- which of her memories are her own guesses ------------------------------
@@ -321,11 +346,108 @@ class Understanding:
             have = {f.get("id") for f in known}
             known = known + self._mark_mine([f for f in more if f.get("id") not in have])
             found = self.engine().infer(known)
-        return found
+        wrong = self.rejected()
+        return [c for c in found if self._guess_key(c) not in wrong]
 
     def _mark_mine(self, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         mine = self.concluded_ids()
-        return [{**f, "held_by": "concluded"} if f.get("id") in mine and not f.get("held_by") else f for f in facts]
+        wrong = self.rejected()
+        marked = [{**f, "held_by": "concluded"} if f.get("id") in mine and not f.get("held_by") else f for f in facts]
+        # A guess of hers he said was wrong isn't something she knows any more.
+        return [f for f in marked if not (str(f.get("held_by") or "").startswith("concluded")
+                                          and self._guess_key(f) in wrong)]
+
+    # ---- when he says she's wrong -------------------------------------------------
+    @staticmethod
+    def _guess_key(f: Dict[str, Any]) -> str:
+        from reasoning_engine import Engine
+        return "|".join(Engine._key(f))
+
+    @classmethod
+    def _rejected_path(cls) -> Optional[str]:
+        try:
+            from runtime_paths import runtime_file
+            return runtime_file("reasoning_rejected.json")
+        except Exception:
+            return None
+
+    @classmethod
+    def rejected(cls) -> Set[str]:
+        """Guesses of hers he said were wrong; she doesn't make them again."""
+        import json, os
+        path = cls._rejected_path()
+        try:
+            if path and os.path.exists(path):
+                with open(path, encoding="utf-8") as fh:
+                    return {str(k) for k in json.load(fh)}
+        except Exception:
+            pass
+        return set()
+
+    @classmethod
+    def reject(cls, guesses: List[Dict[str, Any]]) -> None:
+        import json
+        path = cls._rejected_path()
+        if not path:
+            return
+        try:
+            keys = cls.rejected() | {cls._guess_key(g) for g in guesses}
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(sorted(keys), fh)
+        except Exception as error:
+            print(f"⚠️  Reasoning: couldn't keep what he said was wrong ({error})")
+
+    @staticmethod
+    def _true_words() -> List[str]:
+        """Her words for "true" (editable: reasoning_true_words.txt). Their
+        dictionary opposites are her words for "wrong"."""
+        placeholder = "# Words that mean something is true. Their opposites (false, wrong) come from the dictionary.\ntrue\ncorrect\nright\n"
+        text = placeholder
+        try:
+            from runtime_paths import runtime_file
+            from pathlib import Path
+            path = Path(runtime_file("reasoning_true_words.txt"))
+            if not path.exists():
+                path.write_text(placeholder, encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+        return [w.strip().casefold() for w in text.splitlines() if w.strip() and not w.strip().startswith("#")]
+
+    @classmethod
+    def is_denial(cls, said: str, reading: Dict[str, Any]) -> bool:
+        """He says what she said isn't so: "no", "that's wrong", "that isn't
+        true", "you're wrong", "no, Tweety can fly"."""
+        from reasoning_engine import opposites
+        words = re.findall(r"[a-z']+", said.casefold())
+        if not words:
+            return False
+        tokens = [t for t in reading.get("tokens") or [] if t.get("kind") != "punctuation"]
+        negative = lambda w: w in ("no", "not", "nope", "never") or w.endswith("n't")
+        if negative(words[0]) and (len(words) == 1 or "," in said.split()[0]):
+            return True  # "no" / "nope" / "no, ..."
+        true_words = cls._true_words()
+        false_words = {o.casefold() for w in true_words for o in opposites(w)}
+        if any(w in false_words for w in words) and len(words) <= 4:
+            return True  # "that's wrong", "you're wrong"
+        if any(w in true_words for w in words) and any(negative(w) for w in words) and len(words) <= 5:
+            return True  # "that isn't true", "not right"
+        return False
+
+    @staticmethod
+    def guesses_in(reply: str, guesses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Which of her guesses her reply said: its who and its what are both in it."""
+        said = set(re.findall(r"[a-z']+", str(reply or "").casefold()))
+        out = []
+        for g in guesses:
+            who = set(str(g.get("subject") or "").casefold().replace("user", "you").split())
+            predicate = str(g.get("predicate") or "").replace("not_", "")
+            what = set((predicate.split("v:", 1)[1].split("@")[0] if "v:" in predicate else "").split()) | \
+                set(str(g.get("object") or "").casefold().replace("(nothing)", "").split())
+            what = {w for w in what if len(w) > 2}
+            if who and who <= said and what and (what & said):
+                out.append(g)
+        return out
 
     # ---- who is whose ----------------------------------------------------------
     def relation_in(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:

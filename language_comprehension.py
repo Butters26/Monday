@@ -851,10 +851,23 @@ class LanguageComprehensionEngine:
                 lemma = self.lemma(tokens[next_idx], prefer_pos="v")
                 return next_idx, lemma, True, True
 
+        lexical_now = getattr(self, "_lexical_now", None) or []
+        if len(lexical_now) == len(tokens):
+            for idx, entry in enumerate(lexical_now):
+                if entry.get("measure"):
+                    # "Max is 10 years old": what's said of him is "old", by 10 years.
+                    return idx, str(entry.get("lemma") or tokens[idx]).lower(), False, True
         known_candidates: List[Tuple[int, str, int]] = []
+        hinted = {i: e.get("kind") for i, e in enumerate(lexical_now)
+                  if str(e.get("read_as") or "").startswith("read again")} if len(lexical_now) == len(tokens) else {}
         for idx, token in enumerate(tokens):
             low = token.lower()
             if low in closed:
+                continue
+            if hinted.get(idx) == "noun":
+                continue  # read again: Reasoning says this is a thing, not the action
+            if hinted.get(idx) == "verb":
+                known_candidates.append((idx, self.lemma(token, prefer_pos="v"), 9))
                 continue
             if not self._has_pos(token, "v"):
                 continue
@@ -1477,10 +1490,21 @@ class LanguageComprehensionEngine:
 
     _READINGS_KEPT = 256
 
-    def analyze(self, text: str) -> Dict[str, Any]:
+    def analyze(self, text: str, hints: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Read a sentence. The same sentence reads the same way, so recent
-        readings are kept (memory and reasoning both ask about each line)."""
+        readings are kept (memory and reasoning both ask about each line).
+        hints: what Reasoning says didn't make sense the first time, as
+        [{"word": "dogs", "fits_better": "a thing (the doer)"}] -> read again
+        with those words taken that way."""
         import copy
+        if hints:
+            self._hints_now = [h for h in hints if isinstance(h, dict) and h.get("word")]
+            try:
+                reading = self._analyze_uncached(text)
+            finally:
+                self._hints_now = None
+            reading["read_again_with"] = [str(h.get("word")) for h in hints if isinstance(h, dict)]
+            return reading
         key = str(text or "").strip()
         cache = self.__dict__.setdefault("_readings", {})
         if key in cache:
@@ -1505,6 +1529,23 @@ class LanguageComprehensionEngine:
         return False
 
     _SUBJECT_FORMS = ("i", "you", "he", "she", "we", "they")
+
+    def _take_hints(self, lexical: List[Dict[str, Any]]) -> None:
+        """Reading again: take the words Reasoning pointed out the way it says
+        they fit better ("a thing" or "an action"), if the dictionary has them so."""
+        for hint in getattr(self, "_hints_now", None) or []:
+            word = str(hint.get("word") or "").casefold()
+            better = str(hint.get("fits_better") or "")
+            pos, kind = ("n", "noun") if "thing" in better else ("v", "verb") if "action" in better else ("", "")
+            if not pos:
+                continue
+            for entry in lexical:
+                if str(entry.get("surface") or "").casefold() != word:
+                    continue
+                senses = self._lookup(entry["surface"], pos=pos)
+                if senses:
+                    entry.update({"kind": kind, "lemma": self.lemma(entry["surface"], prefer_pos=pos),
+                                  "senses": senses, "sense_count": len(senses), "read_as": "read again: " + better})
 
     def _action_after_subject(self, lexical: List[Dict[str, Any]]) -> None:
         """Right after a subject ("I", "you", "they"...), a word the dictionary
@@ -1666,7 +1707,23 @@ class LanguageComprehensionEngine:
         """Right after "is/are/was", a word the dictionary also knows as an
         adjective, with nothing after it for it to act on, describes the
         subject: "you are amazing", "he is boring", "you are stupid".
-        ("you are amazing me" keeps the verb: it has something to act on.)"""
+        ("you are amazing me" keeps the verb: it has something to act on.)
+        With a measure: "Max is 10 years old", "the wall is 6 feet tall": the
+        last word describes, and how much ("10 years") goes with it."""
+        for idx, entry in enumerate(lexical[:-2]):
+            if idx == 0 or entry.get("kind") != "number":
+                continue
+            before, unit, word = lexical[idx - 1], lexical[idx + 1], lexical[idx + 2]
+            if before.get("kind") != "auxiliary" or before.get("lemma") != "be" or unit.get("kind") != "noun":
+                continue
+            if idx + 3 < len(lexical) and lexical[idx + 3].get("kind") not in ("punctuation",):
+                continue
+            adjective = [x for x in self._lookup(word["surface"]) if x.get("pos") in ("a", "s")]
+            if adjective:
+                word.update({"kind": "adjective", "lemma": word["surface"], "senses": adjective,
+                             "sense_count": len(adjective), "read_as": "describing after be, with a measure",
+                             "measure": f"{entry['surface']} {unit['surface']}"})
+                unit["read_as"] = "measure"
         for idx, entry in enumerate(lexical):
             if idx == 0 or entry.get("kind") not in ("verb", "noun"):
                 continue
@@ -1944,6 +2001,8 @@ class LanguageComprehensionEngine:
         self._action_in_progress(lexical)
         self._action_after_to(lexical)
         self._action_after_subject(lexical)
+        self._take_hints(lexical)
+        self._measure_now = {i: e["measure"] for i, e in enumerate(lexical) if e.get("measure")}
         self._lexical_now = lexical
         try:
             verb_idx, predicate, passive, predicate_known = self._find_main_verb(tokens)
@@ -2036,6 +2095,11 @@ class LanguageComprehensionEngine:
                     "lemma": predicate,
                     "senses": predicate_senses,
                 }
+                measure = (getattr(self, "_measure_now", None) or {}).get(verb_idx)
+                if measure:
+                    # How much goes with it, kept as he said it: "10 years old".
+                    predicative_adjective.update(surface=f"{measure} {tokens[verb_idx]}",
+                                                 lemma=f"{measure} {predicate}", measure=measure)
             elif is_pred_nom:
                 predicative_nominal = True
                 # Copula predicate is be; complement keeps its noun senses on the mention.

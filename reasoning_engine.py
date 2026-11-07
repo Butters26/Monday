@@ -24,6 +24,8 @@ general forms of reasoning that work on whatever she knows:
    amounts file (reasoning_amounts.txt, editable) and the dictionary's
    opposites (more -> fewer, buy -> sell); numbers written as words come from
    the dictionary (three -> 3).
+6b. Measures: "Max is 10 years old", "Lily is 7 years old" -> Max is 3 years
+   older than Lily (the -er word is checked against the dictionary).
 7. Time order chains ("breakfast before work", "work before the gym" ->
    breakfast before the gym).
 8. Why, more than one step: "tired because I didn't sleep", "didn't sleep
@@ -141,6 +143,48 @@ def opposites(adjective: str, pos: str = "a") -> List[str]:
     except Exception:
         return []
     return out
+
+
+def _forms(word: str, pos: str) -> List[str]:
+    """The dictionary's own other forms of a word (foot -> feet, big -> bigger, biggest)."""
+    try:
+        from lexicon.oewn_offline import get_wordnet
+        for entry in get_wordnet().words(word, pos=pos):
+            if str(entry.lemma()).casefold() == word.casefold():
+                return [str(f) for f in entry.forms() if str(f).casefold() != word.casefold()]
+    except Exception:
+        pass
+    return []
+
+
+def _syllables(word: str) -> int:
+    return max(1, len(re.findall(r"[aeiouy]+", word.casefold().rstrip("e"))))
+
+
+def words_plural(noun: str) -> str:
+    """year -> years, inch -> inches, foot -> feet (the dictionary's own form if it lists one)."""
+    w = noun.casefold()
+    listed = _forms(w, "n")
+    if listed:
+        return listed[0]
+    if re.search(r"(s|x|z|ch|sh)$", w):
+        return w + "es"
+    if re.search(r"[^aeiou]y$", w):
+        return w[:-1] + "ies"
+    return w + "s"
+
+
+def singular(noun: str) -> str:
+    """years -> year, feet -> foot."""
+    w = noun.casefold()
+    try:
+        from lexicon.oewn_offline import lemma_and_pos_candidates
+        other = [c["lemma"] for c in lemma_and_pos_candidates(w) if c.get("pos") == "n" and c["lemma"] != w]
+        if other:
+            return other[0]
+    except Exception:
+        pass
+    return w
 
 
 def number_in(word: str) -> Optional[int]:
@@ -309,7 +353,7 @@ class Engine:
         for _ in range(self.MAX_ROUNDS):
             new = []
             for c in self._names(known) + self._kinds(known) + self._comparisons(known) + self._opposites(known) \
-                    + self._relations(known) + self._amounts(known) + self._order(known) + self._why(known):
+                    + self._relations(known) + self._amounts(known) + self._measures(known) + self._order(known) + self._why(known):
                 k = self._key(c)
                 negated = (k[0], self._negated(k[1]), k[2], k[3])
                 if k in seen or negated in told:
@@ -521,6 +565,51 @@ class Engine:
                                     "because": f"{name(a[0])} has {a[1]} and {name(b[0])} has {b[1]}"})
         return out
 
+    @staticmethod
+    def _more(describing: str) -> str:
+        """old -> older, big -> bigger, good -> better, careful -> more careful
+        (the dictionary's own form if it lists one)."""
+        w = describing.casefold()
+        listed = [f for f in _forms(w, "a") if not f.endswith("st")]
+        if listed:
+            return listed[0]
+        if _syllables(w) == 1:
+            if re.search(r"[^aeiou][aeiou][^aeiouwxy]$", w):
+                return w + w[-1] + "er"
+            return w + ("r" if w.endswith("e") else "er")
+        if _syllables(w) == 2 and w.endswith("y"):
+            return w[:-1] + "ier"
+        return f"more {w}"
+
+    def _measures(self, known: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """"Max is 10 years old", "Lily is 7 years old" -> Max is 3 years older than Lily."""
+        measured: Dict[Tuple[str, str], List[Tuple[str, int, float]]] = {}
+        for f in self._told_in_order(known):
+            if str(f.get("predicate") or "") != "is":
+                continue
+            words = str(f.get("object") or "").split()
+            if len(words) != 3:
+                continue
+            n = number_in(words[0])
+            if n is None:
+                continue
+            unit, describing = singular(words[1]), words[2].casefold()
+            mine = measured.setdefault((unit, describing), [])
+            mine[:] = [m for m in mine if m[0] != str(f.get("subject"))]  # the latest he said
+            mine.append((str(f.get("subject")), n, self._sure(f)))
+        out = []
+        for (unit, describing), them in measured.items():
+            for a in them:
+                for b in them:
+                    if a[0] != b[0] and a[1] > b[1]:
+                        d = a[1] - b[1]
+                        units = unit if d == 1 else (words_plural(unit))
+                        out.append({"subject": a[0], "predicate": "is",
+                                    "object": f"{d} {units} {self._more(describing)}", "value": f"than:{b[0]}",
+                                    "sure": round(min(a[2], b[2]) * 0.95, 2), "keep": False,
+                                    "because": f"{a[0]} is {a[1]} {words_plural(unit)} {describing} and {b[0]} is {b[1]}"})
+        return out
+
     # 7. time order -------------------------------------------------------------
     def _order(self, known: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """"I ate breakfast before work", "I went to work before the gym" ->
@@ -620,5 +709,5 @@ class Engine:
         return list(best.values())
 
 
-__all__ = ["Engine", "RelationBeliefs", "AmountBeliefs", "PLACEHOLDER_BELIEFS", "number_in", "word_lemmas", "dictionary_kinds", "opposites", "base_noun",
+__all__ = ["Engine", "RelationBeliefs", "AmountBeliefs", "words_plural", "PLACEHOLDER_BELIEFS", "number_in", "word_lemmas", "dictionary_kinds", "opposites", "base_noun",
            "is_kind_word"]
