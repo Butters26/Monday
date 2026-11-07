@@ -2222,6 +2222,16 @@ class DirectNotusProcess:
             owner = "user"
         elif surface and surface[0] in ("your",):
             owner = "monday"
+        if owner and isinstance(start, int) and isinstance(mention.get("end"), int):
+            # "my cat's name": the name is the cat's, and the cat is his.
+            # ("Lily's dog's name": past "Lily's", which says whose, the dog is hers.)
+            between = [t for t in tokens if start < int(t.get("index", -1)) < mention["end"] - 1
+                       and t.get("kind") == "possessive"]
+            for t in between:
+                thing = str(t.get("surface") or "").casefold()
+                thing = thing[:-2] if thing.endswith("'s") else thing.rstrip("'")
+                if thing:
+                    owner = f"{owner}'s {thing}"
         elif surface and surface[0] in ("his", "her", "their", "its"):
             # Whose? Only if Language worked out who "his/her/their" means.
             ref = next((r for r in references or [] if r.get("sure") and r.get("index") == start), None)
@@ -2891,6 +2901,10 @@ relocate to: live in
                 if named and "'s " in subject:
                     # "Her dog is Rex": Ariana's dog is called Rex -> Ariana / dog / Rex,
                     # filed the same way as "my dog is Rex".
+                    if subject.count("'s ") >= 2 and subject.endswith("'s name"):
+                        # "My cat's name is Luna": filed as his cat is Luna, the
+                        # same as "I have a cat named Luna".
+                        subject = subject[:-len("'s name")]
                     whose, thing = subject.split("'s ", 1)
                     name = str(named.get("surface") or "")
                     return self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
@@ -2994,6 +3008,10 @@ relocate to: live in
             if not predicate or not obj:
                 continue
             one_value = self._is_attribute(subject) or self._one_at_a_time(subject, predicate)
+            if self._how_said(reading).get("tense") in ("past", "future") or self._how_said(reading).get("modal"):
+                # "I used to live in Chicago", "I will live in Paris": not where he
+                # lives now, so it doesn't take the place of that.
+                one_value = False
             if changed and not one_value and self._had_other(subject, predicate, obj, user_id):
                 if changed == "changed":
                     # He says it changed: that's how she learns this has one at a time.

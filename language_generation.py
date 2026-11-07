@@ -846,6 +846,7 @@ class LanguageGenerator:
         reading = self.comprehension.analyze(text)
         his = {str(t.get("lemma") or "").casefold() for t in reading.get("tokens") or []
                if t.get("kind") in ("noun", "proper_noun", "verb", "adjective", "possessive")}
+        asked_tense = reading.get("tense") if reading.get("tense") in ("past", "future") else None
         # Who he's asking about: "am I tired?" -> him; "is Kate tired?" -> Kate.
         who = ""
         for t in reading.get("tokens") or []:
@@ -868,7 +869,9 @@ class LanguageGenerator:
             about_them = 2 if who and subject == who else (1 if who and subject.startswith(who + "'s") else 0)
             # "what is my dog named?" asks for a name: a fact that is one comes first.
             name = 2 if his & {"name", "named", "call", "called"} and str(fact.get("object") or "")[:1].isupper() else 0
-            return len(his & words) + about_them + name
+            # "where did I live?": what was so before comes first ("used to live in Chicago").
+            same_time = 1 if asked_tense and fact.get("tense") == asked_tense else 0
+            return len(his & words) + about_them + name + same_time
         return sorted(facts, key=lambda f: (shared(f), int(f.get("id") or 0)), reverse=True)
 
     def _user_facts(self, query: str, user_id: str) -> List[Dict[str, Any]]:

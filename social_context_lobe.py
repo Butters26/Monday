@@ -272,8 +272,14 @@ compliment -> "thank you" (sure 0.7)
                 return "compliment" if meant.dv > 0 else "insult"
         if intent == "emotional_share":
             return "emotional_share"
+        words = [t for t in reading.get("tokens") or [] if t.get("kind") not in ("punctuation", "proper_noun")]
         for token in reading.get("tokens") or []:
-            for sense in token.get("senses") or []:
+            for n, sense in enumerate(token.get("senses") or []):
+                # A word's main meaning counts ("hello", "thanks"). A side meaning
+                # only when the word is said on its own ("bye", "morning!"):
+                # "I hate mornings" is about mornings, not a greeting.
+                if n > 0 and len(words) > 2:
+                    break
                 move = _social_move_of(str(sense.get("synset_id") or ""), str(sense.get("pos") or ""))
                 if move:
                     return move

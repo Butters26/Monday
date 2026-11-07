@@ -478,6 +478,12 @@ class SentenceBuilder:
 
         if tense == "future" and not modal:
             modal = "will"
+        if modal == "used to":
+            # "you used to live in Chicago"; "did you use to?"; "you didn't use to".
+            if negated or invert:
+                do = self._negate(built, "did") if negated else "did"
+                return do, f"use to {verb}"
+            return "used to", verb
         if modal:
             aux = modal if modal in _MODALS else "can"
             if negated:

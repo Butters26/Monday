@@ -913,7 +913,8 @@ class DirectReasoningAdapter:
             return False
         clause = (reading.get("clauses") or [{}])[0]
         obj = str(fact.get("object") or "")
-        if lows and lows[0] in ("who", "what") and obj[:1].isupper() and obj.casefold() in lows:
+        if lows and (lows[0] == "who" or (lows[0] == "what" and FactText._alias_set("name") & set(lows))) \
+                and obj[:1].isupper() and obj.casefold() in lows:
             # "Who is called Max?": the fact that has Max in it says who.
             return True
         about_at = next((int(t.get("index", -1)) for t in reading.get("tokens") or []
@@ -951,6 +952,10 @@ class DirectReasoningAdapter:
                 "user" in members and any(w in ("we", "us", "our") for w in lows))
             if not named:
                 return False
+        object_words = FactText._content_tokens(str(fact.get("object") or ""))
+        if len(lows) > 1 and lows[0] == "how" and lows[1] in object_words:
+            # "How old am I?" asks for the amount: "35 years old" answers it.
+            about = {w for w in about if w == lows[1] or w not in object_words}
         if any(a == "how" and b in ("many", "much") for a, b in zip(lows, lows[1:])):
             # "How many cats?" asks for the number: the fact's number is the answer.
             about = {w for w in about if not (w.isdigit() or self._is_number_word(w))}
@@ -1028,15 +1033,29 @@ class DirectReasoningAdapter:
             predicate = str(fact.get("predicate") or "")
             predicate = predicate[4:] if predicate.startswith("not_") else predicate
             fact_verb = predicate[2:].split("@", 1)[0] if predicate.startswith("v:") else predicate
-            if fact_verb.casefold() != asked_verb and not self._is_a_kind_of(fact_verb, asked_verb):
+            # "Do I have a cat?": "his cat is Luna" (filed user / cat / Luna) is having one.
+            owned = asked_verb == "have" and not predicate.startswith(("v:", "is")) \
+                and str(fact.get("object") or "")[:1].isupper()
+            if not owned and fact_verb.casefold() != asked_verb and not self._is_a_kind_of(fact_verb, asked_verb):
                 return False
         for token in reading.get("tokens") or []:
             if token.get("kind") not in ("noun", "proper_noun", "possessive"):
                 continue
             for word in FactText._content_tokens(str(token.get("lemma") or "").replace("'s", "")):
-                if not (FactText._alias_set(word) & about_all):
+                if not (FactText._alias_set(word) & about_all) and not self._is_kind_of_thing(object_words, word):
                     return False
         return True
+
+    @staticmethod
+    def _is_kind_of_thing(words: set, kind: str) -> bool:
+        """Is one of these words a kind of `kind` in the dictionary? ("red" is a
+        color: "what color is my car?" is answered by "your car is red".)"""
+        try:
+            from reasoning_understanding import _hypernym_ids, _ids_of
+            wanted = _ids_of(kind)
+            return bool(wanted) and any(_hypernym_ids(w, depth=8) & wanted for w in words)
+        except Exception:
+            return False
 
     _POS = {"verb": "v", "noun": "n", "adjective": "a", "adverb": "r"}
 

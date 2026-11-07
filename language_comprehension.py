@@ -889,6 +889,13 @@ class LanguageComprehensionEngine:
                 continue
             if idx in naming:
                 continue  # "a dog named Pixel": what it's called, not what's done
+            if len(lexical_now) == len(tokens) and lexical_now[idx].get("read_as") in ("used to",
+                                                                                     "the kind asked about",
+                                                                                     "a name before is"):
+                continue  # "used to live": "used to" goes with the action; "what color": a thing
+            if len(lexical_now) == len(tokens) and idx > 0 and lexical_now[idx - 1].get("read_as") == "used to":
+                known_candidates.append((idx, self.lemma(token, prefer_pos="v"), 8))
+                continue  # "used to play guitar": play is what he did
             if low in closed:
                 continue
             if hinted.get(idx) == "noun":
@@ -938,6 +945,10 @@ class LanguageComprehensionEngine:
         # verb; a later verb-looking word is what it acts on ("likes cats",
         # "play games", "drives trucks").
         after_subject = self._verb_after_subject(tokens)
+        if after_subject is not None and len(lexical_now) == len(tokens) \
+                and lexical_now[after_subject].get("read_as") in ("used to", "the kind asked about",
+                                                                  "a name before is"):
+            after_subject = None  # "did I use to play": play is what he did
         if after_subject is not None and (known is None or known[0] < after_subject or (
                 known[0] > after_subject and self._has_pos(tokens[known[0]], "n"))):
             # (A "verb" picked inside the subject, like "Cleo", isn't one.)
@@ -1076,6 +1087,8 @@ class LanguageComprehensionEngine:
             low = tokens[idx].lower()
             if low in _MODALS or low in _AUX_RAW or low in _NEGATION:
                 end = min(end, idx)
+            elif low in ("used", "use") and idx + 2 == verb_idx and lows[idx + 1] == "to":
+                end = min(end, idx)  # "I used to live": "I" is who
         return end
 
     def _trim_object_end(self, tokens: Sequence[str], start: int) -> int:
@@ -1970,15 +1983,25 @@ class LanguageComprehensionEngine:
         "the work". ("her" is left alone: "I saw her run".)"""
         for idx in range(1, len(lexical)):
             entry, before = lexical[idx], lexical[idx - 1]
-            if entry.get("kind") != "verb" or entry.get("phrase") or entry.get("in_phrase"):
+            if entry.get("kind") not in ("verb", "noun") or entry.get("phrase") or entry.get("in_phrase"):
                 continue
+            after = lexical[idx + 1] if idx + 1 < len(lexical) else {}
+            if entry.get("kind") == "noun":
+                if str(before.get("surface") or "").casefold() in ("what", "which") and idx == 1 \
+                        and after.get("kind") in ("auxiliary", "modal"):
+                    entry["read_as"] = "the kind asked about"  # "what color is my car?"
+                continue
+            which = str(before.get("surface") or "").casefold() in ("what", "which") and idx == 1 \
+                and after.get("kind") in ("auxiliary", "modal")  # "what color is my car?"
             if str(before.get("surface") or "").casefold() not in ("my", "your", "his", "our", "their", "its",
-                                                                   "a", "an", "the"):
+                                                                   "a", "an", "the") and not which:
                 continue
             senses = self._lookup(str(entry.get("surface") or ""), pos="n")
             if senses:
                 entry.update({"kind": "noun", "lemma": self.lemma(str(entry["surface"]), prefer_pos="n"),
                               "senses": senses})
+                if which:
+                    entry["read_as"] = "the kind asked about"
 
     def _action_in_progress(self, lexical: List[Dict[str, Any]]) -> None:
         """After "is/are/was", an -ing word the dictionary knows as a verb is
@@ -1995,6 +2018,29 @@ class LanguageComprehensionEngine:
             if verb:
                 entry.update({"kind": "verb", "lemma": self.lemma(surface, prefer_pos="v"), "senses": verb,
                               "sense_count": len(verb), "read_as": "what is going on"})
+
+    def _used_to(self, lexical: List[Dict[str, Any]]) -> None:
+        """"I used to live in Chicago": "used to" before an action says he did it
+        before and doesn't now, the way "can" or "will" go with an action. The
+        action after it is what he did."""
+        for idx in range(len(lexical) - 2):
+            used, to, action = lexical[idx], lexical[idx + 1], lexical[idx + 2]
+            word = str(used.get("surface") or "").casefold()
+            if word not in ("used", "use") or str(to.get("surface") or "") != "to":
+                continue
+            senses = self._lookup(str(action.get("surface") or ""), pos="v")
+            if not senses or idx == 0 or lexical[idx - 1].get("kind") == "determiner":
+                continue
+            did = any(str(e.get("surface") or "").casefold() in ("did", "didn't") for e in lexical[:idx])
+            if (word == "use") != did or (word == "used" and lexical[idx - 1].get("kind") == "auxiliary"):
+                continue  # "it is used to cut": not a past habit; "use to" only after "did"
+            for e in (used, to):
+                e.pop("phrase", None)
+                e.pop("phrase_senses", None)
+                e.pop("in_phrase", None)
+                e.update({"kind": "modal", "read_as": "used to"})
+            action.update({"kind": "verb", "lemma": self.lemma(str(action["surface"]), prefer_pos="v"),
+                           "senses": senses, "sense_count": len(senses)})
 
     def _action_after_to(self, lexical: List[Dict[str, Any]]) -> None:
         """After "to", a word that is an action: "a lot to work on", "something
@@ -2158,6 +2204,14 @@ class LanguageComprehensionEngine:
             if kind == "unknown" and token.isalpha() and token not in unknown_words:
                 unknown_words.append(token)
 
+        if len(lexical) > 1 and lexical[0].get("kind") in ("verb", "noun") and original_tokens[:1] \
+                and self._lookup(str(lexical[0]["surface"]), pos="v") \
+                and original_tokens[0][:1].isupper() and not str(lexical[0]["surface"]).endswith("ing") \
+                and str(lexical[1].get("surface") or "") in ("is", "was", "has", "had", "'s"):
+            # "Rose is my mom": a capitalized word right before "is" is who, not an
+            # action ("rose" as in rising can't be followed by "is").
+            lexical[0].update({"kind": "proper_noun", "lemma": str(lexical[0]["surface"]), "senses": [],
+                               "sense_count": 0, "read_as": "a name before is"})
         phrases = self._set_phrases(lexical)
         self._time_now = {}
         self._how_now = set()
@@ -2167,6 +2221,7 @@ class LanguageComprehensionEngine:
         self._degree_before_describing(lexical)
         self._describing_after_be(lexical)
         self._action_in_progress(lexical)
+        self._used_to(lexical)
         self._action_after_to(lexical)
         self._thing_after_owner(lexical)
         self._action_after_subject(lexical)
@@ -2681,9 +2736,10 @@ class LanguageComprehensionEngine:
             "clauses": [clause] if clause else [],
             "unknown_words": unknown_words,
             "certainty": self._certainty(lexical),
-            "tense": self._tense(lexical, verb_idx),
-            "modal": next((str(e.get("surface")) for e in lexical if e.get("kind") == "modal"
-                           and str(e.get("surface")) not in ("will", "shall", "'ll")), None),
+            "tense": "past" if any(e.get("read_as") == "used to" for e in lexical) else self._tense(lexical, verb_idx),
+            "modal": "used to" if any(e.get("read_as") == "used to" for e in lexical) else next(
+                (str(e.get("surface")) for e in lexical if e.get("kind") == "modal"
+                 and str(e.get("surface")) not in ("will", "shall", "'ll")), None),
             "phrases": phrases,
             "parts": statements["parts"],
             "joins": statements["joins"],

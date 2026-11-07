@@ -297,14 +297,17 @@ class ConversationSystem:
         greeting_hit = False
         farewell_hit = False
         content_tokens = 0
+        alone = sum(1 for t in tokens if t.get("kind") not in ("punctuation", "proper_noun")) <= 2
         for tok in tokens:
             kind = tok.get("kind")
             if kind in _CLOSED_TOKEN_KINDS:
                 continue
             content_tokens += 1
-            for sense in tok.get("senses") or []:
+            for n, sense in enumerate(tok.get("senses") or []):
                 if not isinstance(sense, dict):
                     continue
+                if n > 0 and not alone:
+                    break  # "I hate mornings": a side meaning of "morning" isn't a greeting
                 definition = str(sense.get("definition") or "").lower()
                 if "expression of greeting" in definition:
                     greeting_hit = True
