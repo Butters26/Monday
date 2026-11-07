@@ -91,7 +91,8 @@ def test_prompted_core_path_order_and_output(tmp_path):
         assert context_indices, "expected Notus query/query_context on prompted path"
         assert store_idx < min(context_indices) < emotion_idx
 
-        memories = systems["notus"].retrieve_memories("Hello Monday", user_id="default")
+        # Said without saying who: filed as someone she doesn't know, never as Matthew.
+        memories = systems["notus"].retrieve_memories("Hello Monday", user_id="unknown person 1")
         assert any(
             memory.get("content") == "Hello Monday, explain memory?"
             for memory in memories

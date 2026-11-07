@@ -821,6 +821,10 @@ class Thalamus:
         """Sequence lobe-owned work without interpreting or repairing its meaning."""
         if not isinstance(user_input, str) or not user_input.strip():
             return ""
+        if not user_id or user_id == "default":
+            # Nobody said who is talking: someone she doesn't know, never assumed
+            # to be Matthew (every lobe gets the same name for them).
+            user_id = "unknown person 1"
 
         if perception_payload is None:
             perception_payload = {}

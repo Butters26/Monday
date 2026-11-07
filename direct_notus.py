@@ -10,6 +10,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from runtime_paths import runtime_file
@@ -266,6 +267,14 @@ class DirectNotusProcess:
             # Whose view it is, when it was said as someone's view ("I think
             # you are getting better" -> "user think"); none = said as so.
             "held_by": "TEXT",
+            # Where it came from: "told by <who>" (and how: "heard"/"read"),
+            # "concluded by <lobe>", "experienced (<sense>)", or "<lobe>" for a
+            # fact another lobe filed. Remembering it doesn't make it true.
+            "came_from": "TEXT",
+            # The day it's on, worked out from his words when he said it
+            # ("tomorrow" said on the 7th -> the 8th), and when she reminded him.
+            "on_date": "TEXT",
+            "reminded": "TEXT",
         }
         for name, declaration in additions.items():
             if name not in columns:
@@ -572,6 +581,10 @@ class DirectNotusProcess:
         if not self.running:
             raise RuntimeError("Cannot restart a closed Notus adapter")
         self.thalamus.register_lobe("notus", self)
+        if not self.__dict__.get("_watch"):
+            self._watch_stop = threading.Event()
+            self._watch = threading.Thread(target=self._keep_watch, name="notus-watch", daemon=True)
+            self._watch.start()
         return self
 
     def _memory_type_filter(self, memory_type: Any) -> Tuple[str, List[Any]]:
@@ -876,9 +889,14 @@ class DirectNotusProcess:
                   AND lower(subject) = lower(?)
                   AND lower(predicate) = lower(?)
                   AND lower(object) = lower(?)
+                  AND (? = '' OR lower(COALESCE(value, '')) = lower(?))
                 LIMIT 1
                 """,
-                (user_text, subject_text, predicate_text, object_text),
+                # (Compared with someone, who it's compared with is part of the fact:
+                # "older than Lily" and "older than Ben" are two facts.)
+                (user_text, subject_text, predicate_text, object_text,
+                 value_text if str(value_text or "").startswith("than:") else "",
+                 value_text if str(value_text or "").startswith("than:") else ""),
             ).fetchone()
 
             if existing is None:
@@ -982,6 +1000,8 @@ class DirectNotusProcess:
                 (json.dumps(conflict_ids) if conflict_ids else None, fact_id),
             )
             connection.commit()
+        if conflict_ids:
+            self._retire_guesses_from(conflict_ids, fact_id)
 
         item = {
             "id": fact_id,
@@ -1161,6 +1181,17 @@ class DirectNotusProcess:
                     # "visit" is a kind of "go": findable by the more general word.
                     blob += " " + " ".join(self._verb_kinds(predicate.split("v:", 1)[1].split("@", 1)[0]))
                 overlap = FactText._overlap_score(query_tokens, blob)
+                significant_now = FactText._significant_tokens(query_tokens)
+                things = FactText._content_tokens(f"{subject.split(chr(39) + 's ')[-1]} {obj}".replace("_", " "))
+                same_thing = len(query_tokens) >= 2 and any(
+                    FactText._alias_set(t) & FactText._expand_tokens(things)
+                    for t in query_tokens if t not in ("user", "monday") and "'" not in t)
+                if same_thing and overlap < 0.75:
+                    # Asked with a whole sentence ("my car won't start"), a fact about
+                    # the same thing ("your car was fixed by charging the battery") is
+                    # part of what it's about: the thing is what's shared.
+                    scored.append((min(max(overlap, FactText._MIN_RELEVANCE), 0.5), str(row["created_at"] or ""), row, readable))
+                    continue
                 if overlap < FactText._MIN_RELEVANCE:
                     continue
                 blob_tokens = FactText._content_tokens(blob)
@@ -1179,6 +1210,13 @@ class DirectNotusProcess:
                     # Joe is his uncle, Joe is a farmer); a fact sharing most of its
                     # words and one of its important ones is part of it.
                     part_of_it = covered >= 2 or (covered >= 1 and overlap >= 0.6)
+                    # Asked with a whole sentence ("my car won't start"), a fact about
+                    # the same thing ("your car was fixed by charging the battery") is
+                    # part of what it's about: the thing is what's shared.
+                    things = FactText._content_tokens(f"{subject.split(chr(39) + 's ')[-1]} {obj}".replace("_", " "))
+                    if any(FactText._alias_set(t) & FactText._expand_tokens(things) for t in significant
+                           if t not in ("user", "monday")):
+                        part_of_it = True
                     if len(significant) >= 2 and not sig_covered and overlap < 0.75 and not part_of_it:
                         continue
                     if overlap < max(FactText._MIN_RELEVANCE, 0.5) and not sig_covered:
@@ -1242,6 +1280,11 @@ class DirectNotusProcess:
                 "sure": row["sure"] if "sure" in row.keys() else None,
                 "because": row["because"] if "because" in row.keys() else None,
                 "when_said": row["when_said"] if "when_said" in row.keys() else None,
+                "held_by": row["held_by"] if "held_by" in row.keys() else None,
+                "came_from": row["came_from"] if "came_from" in row.keys() else None,
+                # What it replaced, kept as history ("it used to be blue").
+                "used_to_be": [f for f in self._facts_by_id(self._decode_conflicts(row["conflicts_with"]))
+                               if f.get("is_contradicted")],
                 "match_score": float(score),
                 "role": "fact",
                 "content": readable,
@@ -1870,14 +1913,25 @@ class DirectNotusProcess:
 
     def on_joined(self, name: str) -> None:
         listen = getattr(self.thalamus, "listen", None)
+        if not self.__dict__.get("_watch"):
+            self._watch_stop = threading.Event()
+            self._watch = threading.Thread(target=self._keep_watch, name="notus-watch", daemon=True)
+            self._watch.start()
         if callable(listen):
             listen(name, "moment")
+            listen(name, "read_again")  # Language read something again: file it the new way
 
     def hear_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
         recognition_id = str(payload.get("recognition_id") or moment.get("recognition_id") or "")
-        user_id = self._clean_text(payload.get("user_id") or moment.get("user_id")) or "default"
+        user_id = self._clean_text(payload.get("user_id") or moment.get("user_id"))
+        if not user_id or user_id == "default":
+            # Nobody said who this is: someone she doesn't know, never assumed to be
+            # Matthew. Kept in their own file until she learns who they are.
+            user_id = "unknown person 1"
         self._talking_with = user_id
+        self._last_moment_at = time.monotonic()
+        self._brought_up_while_quiet = False
         if recognition_id and recognition_id in self._saved_recognitions:
             return {"status": "success", "content": {"stored": False, "already_saved": recognition_id}}
         self._strengthened = set()  # a new moment: each memory can be strengthened once in it
@@ -1902,6 +1956,10 @@ class DirectNotusProcess:
                 learned = self._learn_from_reading(words.strip(), user_id)
                 if learned:
                     result.setdefault("content", {})["facts_learned"] = learned
+                    self._came_from([f.get("id") for f in learned],
+                                    f"told by {user_id} ({'heard' if sense == 'audio' else 'typed'})")
+                    self._note_day(learned, words.strip())
+                    self._tell_what_it_changes(learned, user_id)
             self._bring_up(words.strip(), user_id, recognition_id,
                            exclude_id=(result.get("content") or {}).get("id"))
         return result
@@ -1973,8 +2031,8 @@ class DirectNotusProcess:
         out: List[str] = []
         try:
             from lexicon.oewn_offline import get_wordnet
-            frontier = list(get_wordnet().synsets(verb, pos="v"))[:2]
-            for synset in frontier:  # the same meaning, other words (travel = go)
+            frontier = list(get_wordnet().synsets(verb.replace("_", " "), pos="v"))[:2]
+            for synset in frontier:  # the same meaning, other words (travel = go; give up = quit)
                 out += [str(l) for l in synset.lemmas() if " " not in str(l) and str(l) != verb]
             for _ in range(3):
                 nxt = []
@@ -2102,6 +2160,10 @@ class DirectNotusProcess:
             if before and before[0].get("kind") == "possessive":
                 lemma = str(before[0].get("lemma") or "")
                 owner = lemma[:1].upper() + lemma[1:]
+        if not owner and surface and surface[0].endswith("'s") and len(surface) > 1:
+            # "Lily's mom" at the very start: Lily, as a name.
+            whose = surface[0][:-2]
+            owner = whose[:1].upper() + whose[1:]
         if surface and surface[0] in ("my", "our"):
             owner = "user"
         elif surface and surface[0] in ("your",):
@@ -2113,6 +2175,187 @@ class DirectNotusProcess:
             if not owner:
                 return None
         return f"{owner}'s {head}" if owner else head
+
+    _DAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+    @classmethod
+    def day_from_words(cls, text: str, now: Optional[datetime] = None) -> Optional[str]:
+        """The day his words point to, from the day he said them: "today",
+        "tomorrow", "tonight", "yesterday", "on Friday" (the next one),
+        "next week", "in 3 days". None when they don't say a day."""
+        from datetime import timedelta
+        now = now or datetime.now()
+        words = re.findall(r"[a-z0-9]+", text.casefold())
+        joined = " ".join(words)
+        day = None
+        if "tomorrow" in words:
+            day = now + timedelta(days=1)
+        elif "today" in words or "tonight" in words:
+            day = now
+        elif "yesterday" in words:
+            day = now - timedelta(days=1)
+        elif "next week" in joined:
+            day = now + timedelta(days=7)
+        else:
+            m = re.search(r"\bin (\d+) days?\b", joined)
+            if m:
+                day = now + timedelta(days=int(m.group(1)))
+            else:
+                for n, name in enumerate(cls._DAY_NAMES):
+                    if name in words:
+                        ahead = (n - now.weekday()) % 7 or 7
+                        if "last" in words:
+                            ahead -= 7
+                        day = now + timedelta(days=ahead)
+                        break
+        return day.date().isoformat() if day else None
+
+    def _note_day(self, learned: List[Dict[str, Any]], text: str) -> None:
+        day = self.day_from_words(text)
+        if day:
+            with self._lock:
+                connection = self._require_connection()
+                connection.executemany("UPDATE brain_facts SET on_date = ? WHERE id = ?",
+                                       [(day, int(f["id"])) for f in learned if f.get("id")])
+                connection.commit()
+
+    def _tell_what_it_changes(self, learned: List[Dict[str, Any]], user_id: str) -> None:
+        """Something he just said goes against what she knew ("my dog is named
+        Max" after Rex): memory says so on its own, with both."""
+        announce = getattr(self.thalamus, "announce", None)
+        if not callable(announce):
+            return
+        for fact in learned:
+            replaced = [f for f in self._facts_by_id(self._replaced_ids(fact.get("id"))) if f.get("is_contradicted")]
+            if replaced:
+                announce("contradicts", {"user_id": user_id, "new": fact, "old": replaced}, source="notus")
+
+    def _replaced_ids(self, fact_id: Any) -> List[Any]:
+        if not fact_id:
+            return []
+        with self._lock:
+            row = self._require_connection().execute("SELECT conflicts_with FROM brain_facts WHERE id = ?",
+                                                     (int(fact_id),)).fetchone()
+        return self._decode_conflicts(row["conflicts_with"]) if row else []
+
+    def _keep_watch(self) -> None:
+        """Memory on its own, between moments: reminders when their day comes,
+        and, when nobody has said anything for a while, a memory coming up the
+        way memories do (the strongest ones, not the same one twice in a row)."""
+        wait = float(os.environ.get("MONDAY_MEMORY_WATCH_SECONDS") or 60)
+        quiet_after = float(os.environ.get("MONDAY_MEMORY_QUIET_SECONDS") or 600)
+        while not self._watch_stop.wait(wait):
+            try:
+                self._remind()
+                idle = time.monotonic() - self.__dict__.get("_last_moment_at", time.monotonic())
+                if idle >= quiet_after and not self.__dict__.get("_brought_up_while_quiet"):
+                    self._bring_up_while_quiet()
+            except Exception as error:
+                print(f"⚠️  Memory: keeping watch went wrong ({error})")
+
+    def _remind(self) -> None:
+        announce = getattr(self.thalamus, "announce", None)
+        if not callable(announce):
+            return
+        today = datetime.now().date().isoformat()
+        with self._lock:
+            connection = self._require_connection()
+            rows = connection.execute(
+                "SELECT * FROM brain_facts WHERE on_date = ? AND reminded IS NULL AND is_contradicted = 0",
+                (today,)).fetchall()
+            for row in rows:
+                connection.execute("UPDATE brain_facts SET reminded = ? WHERE id = ?",
+                                   (datetime.now(timezone.utc).isoformat(), int(row["id"])))
+            connection.commit()
+        for row in rows:
+            from notus_fact_text import FactText
+            # Said for today: "my test is tomorrow" (said yesterday) is today now.
+            obj = "today" if self.day_from_words(str(row["object"] or "")) else row["object"]
+            announce("reminder", {"user_id": row["user_id"], "today": today,
+                                  "fact": {k: row[k] for k in ("id", "subject", "predicate", "object", "value")},
+                                  "said": FactText.format_personal_fact(row["subject"], row["predicate"], obj)},
+                     source="notus")
+
+    def _bring_up_while_quiet(self) -> None:
+        announce = getattr(self.thalamus, "announce", None)
+        user_id = self._talking_with
+        if not callable(announce) or not user_id:
+            return
+        last = self.__dict__.get("_last_brought_up")
+        memories = [m for m in self.recent_memories(user_id, 40) if m.get("role") != "monday" and m.get("id") != last]
+        if not memories:
+            return
+        felt = self._feelings_for_memories([m["id"] for m in memories])
+        # The ones with a feeling tied to them, then the strongest, come up first.
+        memories.sort(key=lambda m: (bool(felt.get(m["id"])), float(m.get("strength") or 1.0)), reverse=True)
+        chosen = memories[0]
+        if felt.get(chosen["id"]):
+            chosen["feelings"] = felt[chosen["id"]]
+        self._last_brought_up = chosen.get("id")
+        self._brought_up_while_quiet = True
+        announce("remembered", {"user_id": user_id, "about": chosen.get("content"), "memories": [chosen],
+                                "facts": [], "beliefs": [], "while_quiet": True}, source="notus")
+
+    def _asked_about_who(self, payload: Dict[str, Any]) -> str:
+        """Who a lobe is asking about: the one it names, or (named "default" or
+        no one) whoever she is talking with now."""
+        named = self._clean_text(payload.get("user_id"))
+        if named and named != "default":
+            return named
+        return self._talking_with or named or "default"
+
+    def _came_from(self, fact_ids: List[Any], where: str) -> None:
+        """Note where these facts came from (only where it isn't noted yet:
+        the first source stays)."""
+        ids = [int(i) for i in fact_ids if i]
+        if not ids or not where:
+            return
+        with self._lock:
+            connection = self._require_connection()
+            connection.executemany("UPDATE brain_facts SET came_from = ? WHERE id = ? AND came_from IS NULL",
+                                   [(where, i) for i in ids])
+            connection.commit()
+
+    def _held_by(self, fact_id: Any) -> Optional[str]:
+        with self._lock:
+            row = self._require_connection().execute("SELECT held_by FROM brain_facts WHERE id = ?",
+                                                     (int(fact_id),)).fetchone()
+        return row["held_by"] if row else None
+
+    @staticmethod
+    def _as_kind(subject: str, mention: Dict[str, Any], tokens: List[Dict[str, Any]]) -> str:
+        """"a penguin" / "penguins" said about the whole kind -> "penguin"; "the
+        penguin" (one in particular), names and owned things stay as they are."""
+        words = subject.split()
+        if not words or subject[:1].isupper() or "'s " in subject or subject in ("user", "monday"):
+            return subject
+        try:
+            from reasoning_engine import base_noun, words_plural
+        except Exception:
+            return subject
+        # (Kept as the plural, "penguins", so it reads back as the whole kind.)
+        if words[0] in ("a", "an") and len(words) == 2:
+            return words_plural(base_noun(words[1]))
+        if len(words) == 1:
+            start = mention.get("start") if isinstance(mention, dict) else None
+            before = [t for t in tokens if isinstance(start, int) and t.get("index") == start - 1]
+            if not before or before[0].get("kind") not in ("determiner", "possessive"):
+                return words_plural(base_noun(words[0]))
+        return subject
+
+    @staticmethod
+    def _is_attribute(subject: str) -> bool:
+        """"favorite color", "age", "height": the dictionary files these as
+        attributes, things with one value at a time."""
+        head = subject.split("'s ", 1)[-1].split()[-1] if subject else ""
+        if not head:
+            return False
+        try:
+            from lexicon.oewn_offline import get_wordnet
+            senses = list(get_wordnet().synsets(head, pos="n"))[:2]
+            return bool(senses) and senses[0].lexfile() == "noun.attribute"
+        except Exception:
+            return False
 
     def _file(self, subject: str, predicate: str, obj: str, negative: bool, user_id: str) -> List[Dict[str, Any]]:
         if obj[:1].isupper() and not negative:
@@ -2191,7 +2434,49 @@ class DirectNotusProcess:
             connection.commit()
         return facts
 
+    def file_again(self, text: str, user_id: str) -> Dict[str, Any]:
+        """Language read this sentence again (the first reading didn't make
+        sense): what was filed from the first reading wasn't what he said, so
+        it goes, and the sentence is filed the new way."""
+        filed = (self.__dict__.get("_filed_from") or {}).pop((user_id, text.strip()), [])
+        if not filed:
+            # It may still be being filed (the moment and this arrive close
+            # together): re-file it as soon as that's done.
+            self.__dict__.setdefault("_read_again_pending", set()).add((user_id, text.strip()))
+            return {"status": "success", "content": {"refiled": False, "reason": "not filed yet; will re-file"}}
+        with self._lock:
+            connection = self._require_connection()
+            for fact_id, was_new in filed:
+                if was_new:
+                    # Only that wrong reading put it there; something he said before
+                    # too stays. Her guesses made from it go with it.
+                    row = connection.execute("SELECT subject FROM brain_facts WHERE id = ?", (fact_id,)).fetchone()
+                    connection.execute("DELETE FROM brain_facts WHERE id = ?", (fact_id,))
+                    if row and row["subject"]:
+                        connection.execute("DELETE FROM brain_facts WHERE lower(subject) = lower(?) "
+                                           "AND held_by LIKE 'concluded%'", (row["subject"],))
+            connection.commit()
+        learned = self._learn_from_reading(text, user_id)
+        self._came_from([f.get("id") for f in learned], f"told by {user_id} (read again)")
+        return {"status": "success", "content": {"refiled": True, "dropped": [i for i, new in filed if new],
+                                                 "learned": [f.get("id") for f in learned]}}
+
     def _learn_from_reading(self, text: str, user_id: str) -> List[Dict[str, Any]]:
+        learned = self._learn_from_reading_inner(text, user_id)
+        kept = self.__dict__.setdefault("_filed_from", {})
+        kept[(user_id, text.strip())] = [(f["id"], int(f.get("usage_count") or 1) <= 1)
+                                         for f in learned if f.get("id")]
+        while len(kept) > 100:
+            kept.pop(next(iter(kept)))
+        pending = self.__dict__.get("_read_again_pending") or set()
+        if (user_id, text.strip()) in pending:
+            pending.discard((user_id, text.strip()))
+            if learned:
+                again = self.file_again(text, user_id)
+                return self._facts_by_id((again.get("content") or {}).get("learned") or [])
+        return learned
+
+    def _learn_from_reading_inner(self, text: str, user_id: str) -> List[Dict[str, Any]]:
         reading = self._read(text, user_id)
         links = [l for l in reading.get("links") or [] if isinstance(l, dict)]
         if any(l.get("kind") in ("on_condition", "unless") for l in links):
@@ -2295,6 +2580,11 @@ class DirectNotusProcess:
             subject = " ".join(str(subject_mention.get("surface") or subject).split()) or subject
         facts: List[Tuple[str, str, Optional[str]]] = []
         complement = reading.get("predicative_complement") or clause.get("predicative_complement") or {}
+        when_words = str((clause.get("qualifiers") or {}).get("event_time_text") or "").strip()
+        if clause.get("copular") and not complement and when_words:
+            # "My test is tomorrow": when it is, as he said it (the day itself is
+            # worked out and kept with it).
+            facts.append(("is", when_words, None))
         if clause.get("copular") and complement:
             describing = complement.get("kind") == "adjective" or any(
                 t.get("kind") in ("adjective", "adverb")
@@ -2341,10 +2631,22 @@ class DirectNotusProcess:
                     name = str(named.get("surface") or "")
                     return self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
                 facts.append(("is_a", str(complement.get("lemma") or ""), owner))
+        elif facts:
+            pass  # "my test is tomorrow": when it is, filed above
         else:
             verb = str(clause.get("predicate_surface") or "").casefold()
             if not verb or verb == "be":
                 return []
+            # "won't turn on", "gave up smoking", "got married": the whole action,
+            # as Language reads it (the dictionary's phrase).
+            phrase_token = next((t for t in tokens if t.get("kind") == "verb" and t.get("phrase") and (
+                str(t.get("lemma") or "").casefold() == verb
+                or verb in str(t["phrase"]).split()[1:])), None)
+            particle_words: set = set()
+            if phrase_token:
+                phrase = str(phrase_token["phrase"]).casefold()
+                particle_words = set(phrase.split()[1:])
+                verb = phrase.replace(" ", "_")
             other_role = next((r for r in ("theme", "patient") if r in roles and roles[r] != subject_id), None)
             if other_role:
                 other = self._who(mentions.get(roles[other_role]), tokens, reading.get("references"))
@@ -2354,6 +2656,7 @@ class DirectNotusProcess:
                 if role.startswith("prep_"):
                     other = self._who(mentions.get(mention_id), tokens, reading.get("references"))
                     if other:
+                        # ("work on cars": "on" is part of "work on", so cars is what he works on.)
                         facts.append((f"v:{verb}@{role[5:]}", other, None))
             if not facts:
                 # "I can swim", "Tom sleeps": the action alone, with nothing after it.
@@ -2361,6 +2664,10 @@ class DirectNotusProcess:
             # The verb as he said it ("worked", "went"), kept so she says it his way.
             said_verb = next((str(t.get("surface") or "") for t in tokens if t.get("kind") == "verb"
                               and str(t.get("lemma") or "").casefold() == verb), None)
+            if phrase_token:
+                # ("gave" for "give up": the rest of the phrase is in the action itself.)
+                said = str(phrase_token.get("surface") or "")
+                said_verb = said if said.casefold() != str(phrase_token.get("lemma") or "").casefold() else None
             if said_verb and said_verb != verb:
                 facts = [(p, o, v if v is not None else f"said:{said_verb}") for p, o, v in facts]
         # Keep things on the other side as he said them ("a castle", "rain"),
@@ -2379,18 +2686,44 @@ class DirectNotusProcess:
                                                       if roles.get(r) and roles[r] != subject_id), None))
                                         if p.startswith("v:") else o)) or o, v)
                  for p, o, v in facts]
+        if 'particle_words' in locals() and particle_words:
+            # ("work on cars": "on" is part of "work on", so cars is what he works on.)
+            facts = [(p.split("@", 1)[0] if "@" in p and p.split("@", 1)[1] in particle_words else p, o, v)
+                     for p, o, v in facts]
+        if clause.get("copular") is False or not clause.get("copular"):
+            if 'particle_words' in locals() and particle_words:
+                # "up smoking" -> "smoking": the "up" belongs to "gave up".
+                facts = [(p, " ".join(w for w in o.split() if w.casefold() not in particle_words) or self.NOTHING
+                          if o != self.NOTHING else o, v) for p, o, v in facts]
+        # A kind as a whole ("a penguin", "penguins") is filed as the kind: penguin.
+        subject = self._as_kind(subject, subject_mention, tokens)
+        # c. "Lily is my sister", "Tom is Lily's son": who is whose, like "my sister is Lily".
+        relations = [(p, o, v) for p, o, v in facts if p == "is_a" and v and subject[:1].isupper()
+                     and " " not in subject and not negative]
+        if relations:
+            learned = list(extra)
+            for _, noun, owner in relations:
+                learned += self._file(owner, noun, subject, negative, user_id)
+            facts = [f for f in facts if f not in relations]
+            if not facts:
+                return learned
         learned = list(extra)
+        # d. What an attribute is ("my favorite color", "my age") has one value at a
+        # time: a new one makes the old one history.
+        one_value = self._is_attribute(subject)
         for predicate, obj, value in facts:
             if not predicate or not obj:
                 continue
             try:
                 fact = self.store_brain_fact(subject, ("not_" if negative else "") + predicate, obj,
-                                             value=value, confidence=0.8, user_id=user_id, single_valued=False)
+                                             value=value, confidence=0.8, user_id=user_id,
+                                             single_valued=bool(one_value and predicate in ("is", "is_a")))
             except ValueError:
                 continue
             learned.append({"id": fact.get("id"), "subject": fact.get("subject"),
                             "predicate": fact.get("predicate"), "object": fact.get("object"),
-                            "value": fact.get("value"), "from": "language's reading"})
+                            "value": fact.get("value"), "usage_count": fact.get("usage_count"),
+                            "from": "language's reading"})
         return learned
 
     def _bring_up(self, text: str, user_id: str, recognition_id: str, *, exclude_id: Any = None) -> None:
@@ -2658,15 +2991,73 @@ class DirectNotusProcess:
             blob = f"{r['subject']} {r['predicate']} {r['object']} {r['value'] or ''}".replace("_", " ")
             if query and not self._match_quality(query, blob):
                 continue
+            newer = self._facts_by_id(self._decode_conflicts(r["conflicts_with"]))
             out.append({"id": int(r["id"]), "subject": r["subject"], "predicate": r["predicate"],
                         "object": r["object"], "replaced_by": self._decode_conflicts(r["conflicts_with"]),
+                        # What replaced it, itself ("Max" for "Rex"), not just its id.
+                        "replaced_by_facts": [f for f in newer if not f.get("is_contradicted")],
                         "created_at": r["created_at"]})
         return out[:20]
+
+    def _facts_by_id(self, ids: List[Any]) -> List[Dict[str, Any]]:
+        out = []
+        with self._lock:
+            connection = self._require_connection()
+            for fact_id in ids or []:
+                try:
+                    row = connection.execute("SELECT * FROM brain_facts WHERE id = ?", (int(fact_id),)).fetchone()
+                except (TypeError, ValueError):
+                    row = None
+                if row:
+                    out.append({k: row[k] for k in ("id", "subject", "predicate", "object", "value",
+                                                     "held_by", "created_at")} | {"is_contradicted": bool(row["is_contradicted"])})
+        return out
+
+    def mark_wrong(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """One of her guesses he said is wrong: kept, marked wrong (not deleted),
+        so she doesn't go on as if it were so."""
+        user_id = str(payload.get("user_id") or self._talking_with or "default")
+        subject, predicate, obj = (str(payload.get(k) or "").strip() for k in ("subject", "predicate", "object"))
+        if not (subject and predicate):
+            return {"status": "error", "message": "mark_wrong needs subject and predicate"}
+        with self._lock:
+            connection = self._require_connection()
+            rows = connection.execute(
+                "SELECT id FROM brain_facts WHERE user_id = ? AND lower(subject) = lower(?) AND lower(predicate) = lower(?) "
+                "AND (? = '' OR lower(object) = lower(?)) AND held_by LIKE 'concluded%' AND is_contradicted = 0",
+                (user_id, subject, predicate, obj, obj)).fetchall()
+            for row in rows:
+                connection.execute("UPDATE brain_facts SET is_contradicted = 1, "
+                                   "held_by = held_by || ' (he said this is wrong)' WHERE id = ?", (int(row["id"]),))
+            connection.commit()
+        return {"status": "success", "content": {"marked_wrong": [int(r["id"]) for r in rows]}}
+
+    def _retire_guesses_from(self, old_ids: List[int], new_id: int) -> None:
+        """A fact was replaced ("Rex" -> "Max"): her guesses that came from the
+        old one ("Rex is a dog") no longer follow, so they're retired too, kept
+        as history like the fact itself."""
+        with self._lock:
+            connection = self._require_connection()
+            for old_id in old_ids:
+                old = connection.execute("SELECT * FROM brain_facts WHERE id = ?", (old_id,)).fetchone()
+                if not old:
+                    continue
+                name = str(old["object"] or "")
+                guesses = connection.execute(
+                    "SELECT id, subject, held_by FROM brain_facts WHERE user_id = ? AND is_contradicted = 0 "
+                    "AND held_by LIKE 'concluded%'", (old["user_id"],)).fetchall()
+                for g in guesses:
+                    why = str(g["held_by"] or "").casefold()
+                    if name and (str(g["subject"]).casefold() == name.casefold()
+                                 or re.search(rf"\b{re.escape(name.casefold())}\b", why)) and int(g["id"]) != new_id:
+                        connection.execute("UPDATE brain_facts SET is_contradicted = 1, conflicts_with = ? WHERE id = ?",
+                                           (json.dumps([new_id]), int(g["id"])))
+            connection.commit()
 
     def _answer_other_lobes(self, msg_type: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # Not every lobe says who it's asking about; then it's the person she's
         # talking with (whoever memory last heard a moment from).
-        user_id = self._clean_text(payload.get("user_id")) or self._talking_with or "default"
+        user_id = self._asked_about_who(payload)
         if msg_type in ("get_recent", "get_recent_memories", "get_conversation_history"):
             memories = self.recent_memories(user_id, payload.get("limit", 10))
             return {"status": "success", "memories": memories,
@@ -2728,6 +3119,7 @@ class DirectNotusProcess:
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         payload = self._payload(message)
+        self._asker = str(message.get("source") or message.get("from") or "") or None
 
         if msg_type == "health":
             identity = getattr(self, "notus_identity", None)
@@ -2752,6 +3144,10 @@ class DirectNotusProcess:
         if msg_type == "store":
             return self._store(payload)
 
+        if msg_type == "mark_wrong":
+            return self.mark_wrong(payload)
+        if msg_type == "read_again":
+            return self.file_again(str(payload.get("text") or ""), str(payload.get("user_id") or self._talking_with or "default"))
         if msg_type == "moment":
             return self.hear_moment(payload)
 
@@ -2762,15 +3158,26 @@ class DirectNotusProcess:
             if not (subject and predicate and obj):
                 return {"status": "error", "message": "store_conclusion needs subject, predicate and object"}
             user_id = str(payload.get("user_id") or "default")
-            fact = self.store_brain_fact(subject, predicate, obj, confidence=float(payload.get("sure") or 0.8),
+            value = str(payload.get("value") or "").strip() or None
+            if value and value.startswith(("said:", "via:")):
+                value = None if value.startswith("via:") else value
+            fact = self.store_brain_fact(subject, predicate, obj, value=value,
+                                         confidence=float(payload.get("sure") or 0.8),
                                          user_id=user_id, single_valued=False)
             if isinstance(fact, dict) and fact.get("id"):
-                with self._lock:
-                    connection = self._require_connection()
-                    connection.execute("UPDATE brain_facts SET held_by = ?, sure = ? WHERE id = ? AND held_by IS NULL",
-                                       ("concluded: " + str(payload.get("because") or "reasoning")[:200],
-                                        float(payload.get("sure") or 0.8), fact["id"]))
-                    connection.commit()
+                told_already = int(fact.get("usage_count") or 1) > 1 and not self._held_by(fact["id"])
+                if not told_already:
+                    # (Something he told her stays told even when she works it out too.)
+                    with self._lock:
+                        connection = self._require_connection()
+                        connection.execute(
+                            "UPDATE brain_facts SET held_by = ?, sure = ?, modal = COALESCE(?, modal) "
+                            "WHERE id = ? AND (held_by IS NULL OR held_by LIKE 'concluded%')",
+                            ("concluded: " + str(payload.get("because") or "reasoning")[:200],
+                             float(payload.get("sure") or 0.8), payload.get("modal") or None, fact["id"]))
+                        connection.commit()
+                    fact["held_by"] = "concluded"
+                    self._came_from([fact["id"]], f"concluded by {self.__dict__.get('_asker') or 'reasoning'}")
             return {"status": "success", "content": {"stored": bool(fact), "fact": fact}}
 
         if msg_type == "store_belief":
@@ -2817,6 +3224,8 @@ class DirectNotusProcess:
                     confidence=payload.get("confidence", 0.9),
                     user_id=payload.get("user_id", "default"),
                 )
+                self._came_from([fact.get("id")] if isinstance(fact, dict) else [],
+                                str(payload.get("came_from") or f"filed by {self.__dict__.get('_asker') or 'another lobe'}"))
             except ValueError as exc:
                 return {"status": "error", "message": str(exc)}
             return {
@@ -2833,13 +3242,16 @@ class DirectNotusProcess:
             )
             facts = self.query_brain_facts(
                 query,
-                self._clean_text(payload.get("user_id")) or "default",
+                self._asked_about_who(payload),
                 payload.get("limit", payload.get("max_results", 10)),
             )
             return {
                 "status": "success",
                 "content": {
                     "facts": facts,
+                    # Her own basic knowledge that bears on it, kept apart from what
+                    # people told her (beliefs, with how sure she is).
+                    "beliefs": self.beliefs_about(query, limit=5) if query else [],
                     "count": len(facts),
                 },
             }
@@ -2981,6 +3393,8 @@ class DirectNotusProcess:
 
     def shutdown(self) -> None:
         """Close once; repeat shutdown calls are harmless."""
+        if self.__dict__.get("_watch_stop") is not None:
+            self._watch_stop.set()
         with self._lock:
             self.running = False
             if self._connection is not None:

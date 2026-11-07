@@ -546,10 +546,13 @@ class FactText:
             if core == "is_a":
                 return f"{sub} {be} {'an' if obj[:1].lower() in 'aeiou' else 'a'} {obj}."
             verb, _, prep = core[2:].partition("@")
+            head, _, rest = verb.partition("_")  # "give_up": give, up ("gives up")
+            rest = rest.replace("_", " ")
             if negated:
-                verb = ("do not " if plural_you else "does not ") + verb
+                head = ("do not " if plural_you else "does not ") + head
             elif not plural_you:
-                verb = verb + ("es" if verb.endswith(("s", "x", "z", "ch", "sh", "o")) else "s")
+                head = head + ("es" if head.endswith(("s", "x", "z", "ch", "sh", "o")) else "s")
+            verb = f"{head} {rest}".strip()
             if obj == "(nothing)":  # "I can swim": the action alone
                 return f"{sub} {verb}."
             return f"{sub} {verb} {prep + ' ' if prep else ''}{who(obj)}.".replace("  ", " ")
@@ -571,7 +574,7 @@ class FactText:
             return f"{subject} works {prep} {obj}."
         # "Ariana / dog / Rex": a name for something of hers ("my dog is Rex" is filed
         # the same way for him), so its words include "name".
-        named = obj[:1].isupper() and pred.replace("_", "").isalpha()
+        named = obj[:1].isupper() and pred.replace("_", "").isalpha() and pred != "name"  # (not "your name's name")
         if self_sub:
             return f"Your {pred.replace('_', ' ')} is {obj}." + (
                 f" Your {pred.replace('_', ' ')}'s name is {obj}." if named else "")

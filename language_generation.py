@@ -687,8 +687,10 @@ class LanguageGenerator:
                 words = str(verb_token["phrase"]).split()
                 particle = words[-1] if len(words) == 2 else ""
                 start = int(verb_token.get("index", -99))
+                # (Only what lies wholly inside the phrase; "up smoking" still has smoking.)
                 inside = {mid for mid, m in mentions.items()
-                          if isinstance(m.get("start"), int) and start < m["start"] < start + len(words)}
+                          if isinstance(m.get("start"), int) and start < m["start"] < start + len(words)
+                          and int(m.get("end") or 0) <= start + len(words)}
                 roles = {r: mid for r, mid in roles.items() if mid not in inside}
             other = next((roles[r] for r in ("theme", "patient") if roles.get(r) and roles[r] != subject_id), None)
             if other:
@@ -1021,6 +1023,7 @@ class LanguageGenerator:
                                           else {"noun": obj, "definite": False})}
             else:
                 verb, _, prep = core[2:].partition("@")
+                verb = verb.replace("_", " ")  # memory files "work on" as work_on
                 meaning = {"subject": subject, "verb": verb}
                 if obj != "(nothing)":  # "I can swim": the action alone
                     target = self._entity_for(obj)
