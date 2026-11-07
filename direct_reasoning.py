@@ -898,6 +898,12 @@ class DirectReasoningAdapter:
             asked |= FactText._alias_set("name")
         about = self._fact_words(fact)
         lows = [str(t.get("surface") or "").casefold() for t in reading.get("tokens") or []]
+        if str(fact.get("predicate") or "") == "then":
+            # "What do I do when I am tired?" is answered by his rule "if I am
+            # tired I go to bed early": what he asks about is its "if" part.
+            condition = FactText._content_tokens(str(fact.get("subject") or ""))
+            return bool(condition) and bool({"if", "when", "whenever"} & set(lows)) and all(
+                FactText._alias_set(w) & asked for w in condition)
         subject = str(fact.get("subject") or "")
         # "Are you tired?" asks about her; what she knows about him doesn't answer it.
         asked_of = self._subject_words(reading)
@@ -1137,8 +1143,11 @@ class DirectReasoningAdapter:
         if not frames:
             return None
         subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}
+        group = [m for m in subject.get("group") or [] if isinstance(m, dict)]
         person = bool(subject.get("ref") in ("speaker", "addressee") or subject.get("name")
-                      or subject.get("pronoun") in ("he", "she", "they")
+                      or subject.get("pronoun") in ("he", "she", "they", "we")
+                      or (group and any(m.get("ref") in ("speaker", "addressee") or m.get("name")
+                                        or cls._noun_is_person(str(m.get("noun") or "")) for m in group))
                       or cls._noun_is_person(str(subject.get("noun") or "")))
         it = subject.get("pronoun") == "it"
         doers = {"it"} if it else ({"somebody"} if person else {"something"})
@@ -1618,8 +1627,12 @@ class DirectReasoningAdapter:
                                                          for t in his_now.get("tokens") or []}
             asked_words = {str(t.get("surface") or "").casefold() for t in reply.get("tokens") or []
                            if t.get("kind") in self._CONTENT_KINDS}
-            said_back_his = self._says_back(reply, his_now) or (
+            used_fact = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else {}
+            from_him = str(used_fact.get("came_from") or "").startswith("told by") or \
+                str(used_fact.get("held_by") or "").startswith("concluded: he said")
+            said_back_his = self._says_back(reply, his_now) or from_him or (
                 act == "ask" and bool(asked_words) and asked_words <= his_words)  # "Are you tired?" for "I am tired"
+            # (What he told her before, said back when he asks, is his words too.)
             if hers.get("about") == "her" and float(hers.get("good") or 0.0) < -0.2 and not said_back_his:
                 # (Saying back what he told her, "you are tired", isn't calling him anything.)
                 social = (self.__dict__.get("_social_reads") or {}).get(user_id) or {}
@@ -1726,6 +1739,12 @@ class DirectReasoningAdapter:
             elif act == "state":
                 # Saying back what he just told her shows she took it in; any other
                 # claim is something she doesn't know is true.
+                his_links = {str(l.get("kind")) for l in self._analyze(user_input).get("links") or []}
+                if his_links & {"on_condition", "unless"} and purpose != "own_feeling" \
+                        and not ({"if", "unless"} & {w.casefold() for w in words}):
+                    # "If I am tired I go to bed early" -> "You are tired.": he only
+                    # said if; the reply says it is so.
+                    return no("he only said what happens if; the reply says it is so", "about_what_he_said")
                 if purpose == "own_feeling" and self._topic(self._analyze(user_input), turn=True) in ("i", "me"):
                     # He said something about her ("you are stupid"); how she feels
                     # about it is hers to say, and true.
@@ -1875,7 +1894,14 @@ class DirectReasoningAdapter:
                 return no("the reply states something memory does not hold")
             # "user's key" is said to him as "your key".
             thing = str(fact.get("object", "")).casefold().replace("user's ", "")
-            if thing != "(nothing)" and thing not in sentence.casefold():
+            if str(fact.get("predicate") or "") == "then":
+                # His rule, said from her side ("I go to bed early" -> "you go to bed
+                # early"): what matters is that its words are all there.
+                from notus_fact_text import FactText
+                missing = FactText._content_tokens(thing) - FactText._content_tokens(sentence)
+                if missing:
+                    return no(f"the reply leaves out part of his rule ({' '.join(sorted(missing))})")
+            elif thing != "(nothing)" and thing not in sentence.casefold():
                 return no(f"the reply leaves out the fact ({fact.get('object')})")
         feeling = understood.get("her_feeling") or {}
         if feeling.get("note"):

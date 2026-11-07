@@ -66,6 +66,28 @@ def _hypernym_ids(noun: str, depth: int = 6) -> set:
     return seen
 
 
+def is_person_word(noun: str) -> bool:
+    """Whether a word's main sense, in the dictionary, is a kind of person
+    ("son", "friend", "boss"; not "cat", whose main sense is the animal).
+    Lowercase senses only: "Son" and "Friend" (capitalized) mean other things."""
+    word = str(noun or "").casefold().strip()
+    try:
+        from lexicon.oewn_offline import get_wordnet
+        wn = get_wordnet()
+        people = {x.id for w in ("person", "doer") for x in wn.synsets(w, pos="n")
+                  if any(str(l) == w for l in x.lemmas())}
+        frontier = [x for x in wn.synsets(word, pos="n") if any(str(l) == word for l in x.lemmas())][:1]
+    except Exception:
+        return False
+    seen: set = set()
+    while frontier:
+        if {x.id for x in frontier} & people:
+            return True
+        frontier = [h for x in frontier for h in x.hypernyms() if h.id not in seen]
+        seen |= {x.id for x in frontier}
+    return False
+
+
 def _ids_of(word: str) -> set:
     try:
         from lexicon.oewn_offline import get_wordnet
@@ -487,6 +509,8 @@ class Understanding:
         parts = reading.get("parts") or []
         if not links or not parts:
             return None
+        if reading.get("speech_act") == "question" or str(reading.get("raw_text") or "").rstrip().endswith("?"):
+            return None  # "what happens if I am tired?" asks; it gives no rule
         a, b = links[0].get("from"), links[0].get("to")
         if not (isinstance(a, int) and isinstance(b, int) and a < len(parts) and b < len(parts)):
             return None

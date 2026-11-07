@@ -128,11 +128,13 @@ def dictionary_kinds(noun: str, depth: int = 6) -> List[str]:
     return out
 
 
-def opposites(adjective: str, pos: str = "a") -> List[str]:
-    """The dictionary's opposites of a word (tall -> short, buy -> sell)."""
+def opposites(adjective: str, pos: str = "a", senses: Optional[int] = None) -> List[str]:
+    """The dictionary's opposites of a word (tall -> short, buy -> sell).
+    senses=1: only its main meaning ("green" the color has none; green as in
+    unripe isn't what he meant)."""
     out: List[str] = []
     try:
-        for x in _wn().synsets(adjective, pos=pos)[:3 if pos != "a" else 2]:
+        for x in _wn().synsets(adjective, pos=pos)[:senses or (3 if pos != "a" else 2)]:
             for sense in x.senses():
                 if str(sense.word().lemma()) != adjective:
                     continue
@@ -302,6 +304,15 @@ class RelationBeliefs:
             self.beliefs = beliefs
 
 
+def _is_person(word: str) -> bool:
+    """"Tom is Lily's son" says who Tom is to Lily, not what kind of thing he is."""
+    try:
+        from reasoning_understanding import is_person_word
+        return is_person_word(word)
+    except Exception:
+        return False
+
+
 class Engine:
     """Puts facts together into new ones, by a few general forms of reasoning."""
 
@@ -385,7 +396,7 @@ class Engine:
         for f in known:
             predicate, obj = str(f.get("predicate") or ""), str(f.get("object") or "")
             if obj[:1].isupper() and predicate.isalpha() and predicate not in ("is", "is_a", "then") \
-                    and _ordinary(predicate) and not self.relation_kind(predicate) \
+                    and _ordinary(predicate) and not self.relation_kind(predicate) and not _is_person(predicate) \
                     and predicate != "name" and not predicate.endswith("_name"):
                 # ("My name is Matthew": Matthew is his name, not a kind of thing.)
                 # (A relation isn't a kind: "his sister is Lily" says who she is to him.)
@@ -463,7 +474,7 @@ class Engine:
             adjective = str(f.get("object") or "").casefold()
             if not adjective.isalpha():
                 continue
-            for other in opposites(adjective)[:1]:
+            for other in opposites(adjective, senses=1)[:1]:
                 out.append({"subject": f.get("subject"), "predicate": "not_is", "object": other,
                             "sure": round(self._sure(f) * 0.9, 2),
                             "because": f"{f.get('subject')} is {adjective}, and {other} is its opposite"})

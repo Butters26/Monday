@@ -973,6 +973,10 @@ class LanguageComprehensionEngine:
             if re.fullmatch(r"[.!?,;:]", cand):
                 continue
             kind = self._predicative_complement_kind(cand)
+            now_lex = getattr(self, "_lexical_now", None) or []
+            if kind is None and next_idx < len(now_lex) and len(now_lex) == len(tokens) \
+                    and now_lex[next_idx].get("kind") == "proper_noun":
+                kind = "nominal"  # "my friend is Jake": a name the dictionary doesn't have
             if kind == "adjective":
                 lemma = self.lemma(cand, prefer_pos="a")
                 be_complement = (next_idx, lemma, "adjective")
@@ -1950,10 +1954,31 @@ class LanguageComprehensionEngine:
                             "meaning": senses[0].get("definition"), "senses": senses})
             lexical[i]["phrase"] = phrase
             lexical[i]["phrase_senses"] = senses
+            before = lexical[i - 1] if i > 0 else None
+            if pos == "v" and lexical[i].get("kind") == "noun" and before is not None \
+                    and before.get("kind") in ("pronoun", "proper_noun"):
+                # "I go to bed": right after who does it, the dictionary's verb
+                # phrase is the action, not a thing.
+                lexical[i]["kind"] = "verb"
             for e in lexical[i + 1:i + size]:
                 e["in_phrase"] = phrase
             i += size
         return phrases
+
+    def _thing_after_owner(self, lexical: List[Dict[str, Any]]) -> None:
+        """Right after "my", "the", "a" comes a thing, not an action: "my boss",
+        "the work". ("her" is left alone: "I saw her run".)"""
+        for idx in range(1, len(lexical)):
+            entry, before = lexical[idx], lexical[idx - 1]
+            if entry.get("kind") != "verb" or entry.get("phrase") or entry.get("in_phrase"):
+                continue
+            if str(before.get("surface") or "").casefold() not in ("my", "your", "his", "our", "their", "its",
+                                                                   "a", "an", "the"):
+                continue
+            senses = self._lookup(str(entry.get("surface") or ""), pos="n")
+            if senses:
+                entry.update({"kind": "noun", "lemma": self.lemma(str(entry["surface"]), prefer_pos="n"),
+                              "senses": senses})
 
     def _action_in_progress(self, lexical: List[Dict[str, Any]]) -> None:
         """After "is/are/was", an -ing word the dictionary knows as a verb is
@@ -2143,6 +2168,7 @@ class LanguageComprehensionEngine:
         self._describing_after_be(lexical)
         self._action_in_progress(lexical)
         self._action_after_to(lexical)
+        self._thing_after_owner(lexical)
         self._action_after_subject(lexical)
         self._take_hints(lexical)
         self._measure_now = {i: e["measure"] for i, e in enumerate(lexical) if e.get("measure")}
@@ -2226,7 +2252,7 @@ class LanguageComprehensionEngine:
                 and (
                     pred_kind == "nominal"
                     or "n" in pos_at_pred
-                    or pred_token_kind in {"noun", "unknown"}
+                    or pred_token_kind in {"noun", "unknown", "proper_noun"}
                 )
             )
             if is_pred_adj:

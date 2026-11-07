@@ -2725,6 +2725,10 @@ relocate to: live in
         whole = self._says_it_changed([{"surface": w} for w in re.findall(r"[a-z']+", text.casefold())])
         self._changing_now = whole if whole == "corrected" or not reading.get("parts") else \
             self._says_it_changed(reading.get("tokens") or []) if not reading.get("parts") else ""
+        if reading.get("speech_act") == "question" or text.rstrip().endswith("?"):
+            # "What do I do when I am tired?": asking says nothing is so, not even
+            # the part after "when".
+            return []
         links = [l for l in reading.get("links") or [] if isinstance(l, dict)]
         if any(l.get("kind") in ("on_condition", "unless") for l in links):
             # "If it rains we will stay home": neither has happened or is so;

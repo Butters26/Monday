@@ -522,6 +522,8 @@ class SentenceBuilder:
                 owner_np = self.noun_phrase(built, owner, "object")
                 article = "the" if comp.get("definite", True) else indefinite_article(pre or noun)
                 return f"{article} {pre + ' ' if pre else ''}{noun} of {owner_np}"
+            if comp.get("count") == "many" and not comp.get("definite"):
+                return f"{pre} {self._plural(noun)}".strip()  # "penguins are birds"
             body = f"{pre} {noun}".strip()
             return f"{indefinite_article(body)} {body}" if not comp.get("definite") else f"the {body}"
         if adjectives:

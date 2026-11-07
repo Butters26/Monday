@@ -689,8 +689,14 @@ class LanguageGenerator:
                 start = int(verb_token.get("index", -99))
                 # (Only what lies wholly inside the phrase; "up smoking" still has smoking.)
                 inside = {mid for mid, m in mentions.items()
-                          if isinstance(m.get("start"), int) and start < m["start"] < start + len(words)
-                          and int(m.get("end") or 0) <= start + len(words)}
+                          if isinstance(m.get("start"), int) and start < m["start"] < start + len(words)}
+                # "go to bed early": "bed early" starts inside the phrase; "early" is
+                # how it's done, kept as he said it.
+                after_phrase = [t for t in tokens if t.get("kind") == "adverb" and any(
+                    start + len(words) <= int(t.get("index", -1)) < int(mentions[mid].get("end") or 0)
+                    for mid in inside)]
+                if after_phrase:
+                    meaning["_how_in_phrase"] = " ".join(str(t.get("surface") or "") for t in after_phrase)
                 roles = {r: mid for r, mid in roles.items() if mid not in inside}
             other = next((roles[r] for r in ("theme", "patient") if roles.get(r) and roles[r] != subject_id), None)
             if other:
@@ -720,6 +726,9 @@ class LanguageGenerator:
         if reading.get("modal"):
             meaning["modal"] = reading["modal"]
         how = [str(t.get("surface") or "") for t in tokens if t.get("read_as") == "how, after the action"]
+        in_phrase_how = meaning.pop("_how_in_phrase", "")
+        if in_phrase_how and in_phrase_how not in how:
+            how.append(in_phrase_how)
         if how:
             meaning["how"] = " ".join(how)  # "you didn't sleep well"
         when = str((clause.get("qualifiers") or {}).get("event_time_text") or "").strip()
@@ -1005,7 +1014,18 @@ class LanguageGenerator:
         record = {"subject": fact.get("subject"), "predicate": pred, "object": obj, "value": fact.get("value"),
                   "tense": fact.get("tense"), "modal": fact.get("modal"), "sure": fact.get("sure"),
                   "because": fact.get("because"), "when_said": fact.get("when_said"),
-                  "created_at": fact.get("created_at")}
+                  "created_at": fact.get("created_at"), "came_from": fact.get("came_from"),
+                  "held_by": fact.get("held_by")}
+        if pred == "then":
+            # "If I am tired I go to bed early", kept as a rule: said back the way
+            # he put it, from her side ("you go to bed early if you are tired").
+            result = self._statement_meaning(self.comprehension.analyze(obj))
+            condition = self._statement_meaning(self.comprehension.analyze(str(fact.get("subject") or "")))
+            if not result or not condition:
+                return None
+            result["linked"] = {"word": "if", "meaning": condition}
+            result["_fact"] = record
+            return result
         value = {"name": obj} if obj[:1].isupper() else None
         complement = {"entity": value} if value else {"phrase": obj}
         negated = pred.startswith("not_")
@@ -1020,9 +1040,12 @@ class LanguageGenerator:
                     meaning["complement"]["than"] = self._entity_for(value[5:])  # "older than you"
             elif core == "is_a":
                 whose = str(fact.get("value") or "").strip()
+                kind = {"noun": obj, "definite": False}
+                if subject.get("count") == "many":
+                    kind["count"] = "many"  # "penguins are birds", not "a bird"
                 meaning = {"subject": subject, "verb": "be",
                            "complement": ({"entity": {"noun": obj, "owner": self._entity_for(whose)}} if whose
-                                          else {"noun": obj, "definite": False})}
+                                          else kind)}
             else:
                 verb, _, prep = core[2:].partition("@")
                 verb = verb.replace("_", " ")  # memory files "work on" as work_on
