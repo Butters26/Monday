@@ -797,7 +797,22 @@ class LanguageGenerator:
             return "farewell"
         if heard.get("expected_reply") or social.get("expected_reply"):
             return "social_reply"
-        # Greetings and goodbyes are Social Context's call (above), not Language's.
+        # Greetings and goodbyes are Social Context's call (above). When it has
+        # no read, what his words mean still counts: the dictionary files "good
+        # night" as an expression of farewell, "good morning" as a greeting.
+        said = re.sub(r"[^a-z' ]", "", str(semantic_input.get("user_input") or "").casefold()).strip()
+        if said and len(said.split()) <= 3 and not heard.get("expects") and not social.get("expects"):
+            try:
+                from lexicon.oewn_offline import get_wordnet
+                senses = list(get_wordnet().synsets(said, pos="n"))[:1]
+            except Exception:
+                senses = []
+            for x in senses:
+                above = {str(h.id) for h in x.hypernyms()} | {str(x.id)}
+                if self._GREETING_FAMILY & above:
+                    return "greeting"
+                if self._FAREWELL_FAMILY & above:
+                    return "farewell"
         social_now = social.get("last_cue") if social.get("is_social_turn") else None
         if understanding.get("speech_act") == "question" or str(semantic_input.get("user_input", "")).strip().endswith("?"):
             return "question"
@@ -1050,6 +1065,10 @@ class LanguageGenerator:
     # decides whether she replies isn't built yet, so for now she always tries.
     _FORMS = ("state", "ask", "greet", "farewell")
     FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
+    # The dictionary's groupings: greetings ("hello", "good morning") and
+    # farewells ("goodbye", "good night") are filed under these two.
+    _GREETING_FAMILY = {"oewn-06642524-n", "oewn-06645018-n"}
+    _FAREWELL_FAMILY = {"oewn-06641899-n", "oewn-06642117-n"}
     _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing",
                     "expected_reply", "what_he_said", "understood", "what_he_means")
 
@@ -1196,7 +1215,12 @@ class LanguageGenerator:
         rng = builder.rng
         you = {"ref": "addressee"}
         me = {"ref": "speaker"}
-        form = builder._choose(plan, f"plan_form@{ctx}", list(self._FORMS))
+        # Greeting or saying goodbye is something she does back when he does it;
+        # otherwise the forms are telling and asking.
+        forms = [f for f in self._FORMS if f not in ("greet", "farewell")
+                 or (f == "greet" and self.__dict__.get("_situation_now") == "greeting")
+                 or (f == "farewell" and self.__dict__.get("_situation_now") == "farewell")]
+        form = builder._choose(plan, f"plan_form@{ctx}", forms)
         if form in ("greet", "farewell"):
             options = [you] + [p for p in pieces["heard_noun"] if p.get("name")]
             names = [f for f in self._user_facts("name", user_id) if f.get("predicate") == "name"]
@@ -1204,7 +1228,10 @@ class LanguageGenerator:
                 options.append({"name": names[0]["object"]})
             target = builder._choose(plan, f"plan_{form}_who@{ctx}", ["you", "a_name"])
             named = [o for o in options if o.get("name")]
-            return {"act": form, "addressee": rng.choice(named) if target == "a_name" and named else you}
+            his = re.sub(r"[^a-z' ]", "", str(self.__dict__.get("_heard_now") or "").casefold()).strip()
+            # His own greeting or goodbye ("good night") can be said back as he said it.
+            return {"act": form, "addressee": rng.choice(named) if target == "a_name" and named else you,
+                    "his_words": [his] if his and len(his.split()) <= 3 else []}
         available = [k for k in self._PIECE_KINDS if pieces[k]]
         if not available:
             return None
@@ -1384,6 +1411,8 @@ class LanguageGenerator:
         user_id = str(understanding.get("user_id") or semantic_input.get("user_id") or "default")
         user_input = str(semantic_input.get("user_input") or understanding.get("raw_text") or "")
         situation = self._situation(semantic_input)
+        self._situation_now = situation
+        self._heard_now = user_input
         resolved_input = self._resolved_text(user_input, user_id) if user_input else user_input
         asks_her = understanding.get("asks_her") or self.comprehension.analyze(resolved_input or "").get("asks_her")
         if asks_her and asks_her.get("about") and not asks_her.get("say"):
@@ -1458,6 +1487,11 @@ class LanguageGenerator:
         # synonym that may mean something else ("hold" for "have").
         for pos, word in self._his_words(pieces):
             builder.steer_only[f"word_{pos}_{word}"] = {word}
+        whole = re.sub(r"[^a-z' ]", "", user_input.casefold()).strip()
+        if whole:
+            # "good night" back for his "good night".
+            builder.steer_only.setdefault("greeting_word", set()).update({whole, whole.replace(" ", "_")})
+            builder.steer_only.setdefault("farewell_word", set()).update({whole, whole.replace(" ", "_")})
         for token in his.get("tokens") or []:
             # "hello" back for his "hello", "bye" for "bye": his greeting word, if it is one.
             word = str(token.get("surface") or "").casefold()

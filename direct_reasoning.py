@@ -1259,10 +1259,13 @@ class DirectReasoningAdapter:
         if reply.get("parts"):
             return any(self._asks_back_what_he_said(self._analyze(q), user_input) for q in reply["parts"])
         his = self._analyze(user_input)
-        for part in [self._analyze(p) for p in his.get("parts") or []] or [his]:
-            same = self._who_did_what(reply) == self._who_did_what(part, turn=True) and all(self._who_did_what(reply))
-            if (same or self._content_lemmas(reply) == self._content_lemmas(part)) \
-                    and self._content_lemmas(reply) <= self._content_lemmas(part) | {"so", "very"} \
+        if any(t.get("kind") == "wh" for t in reply.get("tokens") or []):
+            return False  # "what do you need?" asks for something new
+        for part in [self._analyze(p) for p in his.get("parts") or []] or [his, ]:
+            # A yes/no question made only of what he just said ("Is Sam your
+            # friend?" after "my friend Sam is a teacher") asks nothing new.
+            asked = self._content_lemmas(reply)
+            if asked and asked <= self._content_lemmas(his) | self._content_lemmas(part) \
                     and not self._keeps_who_and_what(reply, part):
                 negative = lambda r: any(t.get("kind") == "negation" for t in r.get("tokens") or [])
                 if negative(reply) == negative(part):
@@ -1367,6 +1370,11 @@ class DirectReasoningAdapter:
         mine_who, his_who = self._subject_words(reply), self._subject_words(his, turn=True)
         if both_of_them:
             his_who = (his_who - {"i", "you", "me"}) | {"we"} if mine_who == {"we"} else his_who
+        named_in_subject = {str(t.get("surface") or "").casefold() for t in his.get("tokens") or []
+                            if t.get("kind") == "proper_noun"
+                            and str(t.get("surface") or "").casefold() in before_verb}
+        if mine_who and mine_who <= named_in_subject:
+            his_who = mine_who  # "Sam is a teacher" for "my friend Sam is a teacher": Sam is the friend
         if mine_who != his_who:
             # Said back about the same one, the way he said it: "your dog", not
             # "a dog" for "my dog"; "you and your sister" for "my sister and I".
@@ -1473,6 +1481,7 @@ class DirectReasoningAdapter:
         return result
 
     def _review_reply(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        act_is_social = lambda m: str((m or {}).get("act") or "") in ("greet", "farewell")
         sentence = str(payload.get("sentence") or "").strip()
         situation = str(payload.get("situation") or "statement")
         meaning = payload.get("meaning") if isinstance(payload.get("meaning"), dict) else {}
@@ -1496,6 +1505,12 @@ class DirectReasoningAdapter:
             return {"ok": True, "reason": "staying quiet fits here"}
         if not sentence:
             return no("nothing was said")
+        his_words_only = re.sub(r"[^a-z' ]", "", user_input.casefold()).strip()
+        mine_only = re.sub(r"[^a-z' ]", "", sentence.casefold()).strip()
+        if situation in ("greeting", "farewell") and his_words_only and act_is_social(meaning) and (
+                mine_only == his_words_only or mine_only.startswith(his_words_only + " ")):
+            # "Good night" back for his "good night" (with his name or not).
+            return {"ok": True, "reason": f"she says his {situation} back the way he said it"}
         problems = [str(p) for p in payload.get("problems") or []]
         if problems:
             return no("the sentence is incomplete: " + "; ".join(problems))
@@ -1698,7 +1713,8 @@ class DirectReasoningAdapter:
                 # Asking back uses what he just said, nothing else ("Ben is not
                 # tall" -> not "Is Ben a pilot?").
                 return no("the question isn't about what he said", "about_what_he_said")
-            elif act == "ask" and self._asks_back_what_he_said(reply, user_input):
+            elif act == "ask" and (self._asks_back_what_he_said(reply, user_input) or (
+                    payload.get("resolved_input") and self._asks_back_what_he_said(reply, str(payload["resolved_input"])))):
                 # "Is your brother Ben?" right after "my brother is Ben": he just told her.
                 return no("he just told her that; asking it back adds nothing", "restate_or_ask")
             elif act == "ask" and self._tense_of_matching_part(reply, user_input) != reply.get("tense") \

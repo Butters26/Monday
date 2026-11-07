@@ -593,7 +593,7 @@ class SentenceBuilder:
         return " ".join(p for p in (finite, subj, rest, tail) if p)
 
     def _greeting(self, built: Built, meaning: Dict[str, Any]) -> str:
-        words = self.lexicon.sense_words(GREETING_SENSE)
+        words = list(self.lexicon.sense_words(GREETING_SENSE)) + list(meaning.get("his_words") or [])
         if not words:
             built.problems.append("no greeting words: dictionary unavailable")
             return ""
@@ -606,7 +606,7 @@ class SentenceBuilder:
         return word
 
     def _parting(self, built: Built, meaning: Dict[str, Any]) -> str:
-        words = self.lexicon.sense_words(FAREWELL_SENSE)
+        words = list(self.lexicon.sense_words(FAREWELL_SENSE)) + list(meaning.get("his_words") or [])
         if not words:
             built.problems.append("no farewell words: dictionary unavailable")
             return ""
