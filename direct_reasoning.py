@@ -588,7 +588,7 @@ class DirectReasoningAdapter:
     _FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
     _CONTENT_KINDS = {"noun", "proper_noun", "verb", "adjective", "adverb", "possessive"}
     _NOT_CONTENT = {"be", "do", "have", "can", "will", "would", "could", "should", "may",
-                    "might", "must", "shall", "not"}
+                    "might", "must", "shall", "not", "then"}
 
     def _analyze(self, text: str) -> Dict[str, Any]:
         """Ask Language to read a sentence (Language owns understanding words).
@@ -614,9 +614,13 @@ class DirectReasoningAdapter:
     @classmethod
     def _content_lemmas(cls, analysis: Dict[str, Any]) -> set:
         out = set()
-        for token in analysis.get("tokens") or []:
+        tokens = analysis.get("tokens") or []
+        for n, token in enumerate(tokens):
             lemma = str(token.get("lemma") or "").casefold()
             kind = token.get("kind")
+            nxt = tokens[n + 1] if n + 1 < len(tokens) else {}
+            if kind == "adverb" and nxt.get("kind") in ("adjective", "adverb"):
+                continue  # "so happy", "very tired": how much, not what it's about
             if lemma.endswith("'s"):
                 lemma = lemma[:-2]  # "dog's" is about the dog (read as unknown by comprehension)
                 if kind == "unknown":
@@ -726,6 +730,7 @@ class DirectReasoningAdapter:
             patterns=direct_input.get("pattern_result") if isinstance(direct_input.get("pattern_result"), dict) else {},
             reading=reading)
         if misread:
+            understood["didnt_get"] = "what he said doesn't make sense the way it reads"
             understood["reading_problems"] = misread
             understood.setdefault("unsure", []).extend(
                 f"Language read '{m['word']}' as {m['read_as']}, but it fits better as {m['fits_better']}: "
@@ -749,10 +754,11 @@ class DirectReasoningAdapter:
                 understood.setdefault("explanations", []).extend(
                     f"he said she was wrong that {w.get('subject')} {w.get('predicate')} {w.get('object')}; "
                     f"she won't think it again unless he tells her" for w in wrong)
-            elif earlier.get("reply"):
+            else:
                 understood.setdefault("unsure", []).append(
                     "he says something is wrong, but nothing she said was a guess of hers; maybe he means "
                     "something else, or what she asked")
+                understood["didnt_get"] = "he says something is wrong, and she can't tell what"
         last[user_id] = {"reply": "", "guesses": list(understood.get("conclusions") or [])
                          + list(understood.get("her_guesses") or [])}
         # What follows from this moment: guesses she already made and said
@@ -893,6 +899,11 @@ class DirectReasoningAdapter:
         about = self._fact_words(fact)
         lows = [str(t.get("surface") or "").casefold() for t in reading.get("tokens") or []]
         subject = str(fact.get("subject") or "")
+        # "Are you tired?" asks about her; what she knows about him doesn't answer it.
+        asked_of = self._subject_words(reading)
+        if asked_of == {"you"} and subject.casefold() in ("user",) or \
+                asked_of in ({"i"}, {"me"}) and subject.casefold() == "monday":
+            return False
         clause = (reading.get("clauses") or [{}])[0]
         obj = str(fact.get("object") or "")
         if lows and lows[0] in ("who", "what") and obj[:1].isupper() and obj.casefold() in lows:
@@ -1109,7 +1120,8 @@ class DirectReasoningAdapter:
                       or cls._noun_is_person(str(subject.get("noun") or "")))
         it = subject.get("pronoun") == "it"
         doers = {"it"} if it else ({"somebody"} if person else {"something"})
-        has_object = bool(meaning.get("object"))
+        # "What do you mean?": the "what" asked about is what's meant.
+        has_object = bool(meaning.get("object")) or meaning.get("ask_about") == "object"
         has_place = bool(meaning.get("modifiers"))
         fitting_doer = [rest for doer, rest in frames if doer in doers]
         if not fitting_doer:
@@ -1232,6 +1244,31 @@ class DirectReasoningAdapter:
                     break  # "Are you Cleo?": the one asked about comes first
         return self._TURNED.get(found, found) if turn else found
 
+    def _tense_of_matching_part(self, reply: Dict[str, Any], user_input: str) -> Optional[str]:
+        """When he said it, for the part of what he said the reply is about
+        ("I drank coffee and I am tired": "are you tired?" is about now)."""
+        his = self._analyze(user_input)
+        asked = self._content_lemmas(reply)
+        for part in his.get("parts") or []:
+            reading = self._analyze(part)
+            if asked and asked <= self._content_lemmas(reading):
+                return reading.get("tense")
+        return his.get("tense")
+
+    def _asks_back_what_he_said(self, reply: Dict[str, Any], user_input: str) -> bool:
+        if reply.get("parts"):
+            return any(self._asks_back_what_he_said(self._analyze(q), user_input) for q in reply["parts"])
+        his = self._analyze(user_input)
+        for part in [self._analyze(p) for p in his.get("parts") or []] or [his]:
+            same = self._who_did_what(reply) == self._who_did_what(part, turn=True) and all(self._who_did_what(reply))
+            if (same or self._content_lemmas(reply) == self._content_lemmas(part)) \
+                    and self._content_lemmas(reply) <= self._content_lemmas(part) | {"so", "very"} \
+                    and not self._keeps_who_and_what(reply, part):
+                negative = lambda r: any(t.get("kind") == "negation" for t in r.get("tokens") or [])
+                if negative(reply) == negative(part):
+                    return True
+        return False
+
     _NOMINAL = ("pronoun", "noun", "proper_noun")
 
     def _who_did_what(self, reading: Dict[str, Any], turn: bool = False) -> Tuple[str, str, str]:
@@ -1239,11 +1276,19 @@ class DirectReasoningAdapter:
         (cat, like, fish); "Do you like fish?" -> (you, like, fish); "Is Max
         10 years old?" -> (max, be, 10). His side is turned to hers (I -> you)."""
         who = action = what = ""
-        for t in reading.get("tokens") or []:
+        tokens = reading.get("tokens") or []
+        first_verb = next((n for n, t in enumerate(tokens) if t.get("kind") in ("verb", "auxiliary")), len(tokens))
+        before = [str(t.get("surface") or "").casefold() for t in tokens[:first_verb] if t.get("kind") == "pronoun"]
+        sides = {self._HER_SIDE.get(w, w) if turn else w for w in before}
+        if {"i", "you"} <= sides or {"me", "you"} <= sides or "we" in sides or "us" in sides:
+            who = "we"  # "me and you" said by him is "we" said by her
+        for t in tokens:
             kind = str(t.get("kind") or "")
             word = str(t.get("lemma") or t.get("surface") or "").casefold()
             surface = str(t.get("surface") or "").casefold()
             if kind in ("determiner", "possessive", "punctuation", "negation", "modal"):
+                continue
+            if who == "we" and kind in self._NOMINAL and not action:
                 continue
             if not who and kind in self._NOMINAL:
                 who = self._HER_SIDE.get(surface, surface) if turn else surface
@@ -1278,6 +1323,8 @@ class DirectReasoningAdapter:
         his_things = {self._base(self._HER_SIDE.get(str(t.get("surface") or "").casefold(),
                                                       str(t.get("surface") or "").casefold()))
                       for t in his.get("tokens") or [] if t.get("kind") in self._NOMINAL}
+        if his_who == "we" and her_who and her_who != "we":
+            return f"he talked about the two of them, not just {her_who}"
         if her_who and his_who and her_who != his_who:
             if her_who not in his_things:
                 return f"he talked about {his_who}, not {her_who}"
@@ -1329,10 +1376,14 @@ class DirectReasoningAdapter:
             # doesn't say "Lily is older than Ben".
             def what_it_is(r: Dict[str, Any]) -> str:
                 seen_verb = False
-                for t in r.get("tokens") or []:
+                toks = r.get("tokens") or []
+                for n, t in enumerate(toks):
                     kind = t.get("kind")
+                    nxt = toks[n + 1] if n + 1 < len(toks) else {}
                     if kind in ("verb", "auxiliary"):
                         seen_verb = True
+                    elif kind == "adverb" and nxt.get("kind") in ("adjective", "adverb"):
+                        continue  # "so happy": happy is what he is
                     elif seen_verb and kind in ("noun", "proper_noun", "adjective", "adverb"):
                         return str(t.get("lemma") or t.get("surface") or "").casefold()
                 return ""
@@ -1393,6 +1444,34 @@ class DirectReasoningAdapter:
             said["reply"] = (str(said.get("reply") or "") + " " + str(payload["sentence"])).strip()
         return verdict
 
+    def _work_out(self, question: str, user_id: str) -> Dict[str, Any]:
+        """Think a question through: what she knows about it, what follows,
+        why, and which of her guesses answer it."""
+        from reasoning_understanding import Understanding
+        facts = self._facts_for(question, user_id)
+        thinker = Understanding(self._ask_lobe)
+        thinker._user_id = user_id
+        reading = self._analyze(question)
+        known = thinker.recall_around(question, facts, user_id)
+        result = {"question": question, "knows": [f.get("content") or f"{f.get('subject')} {f.get('predicate')} {f.get('object')}"
+                                                  for f in facts[:6]],
+                  "conclusions": thinker.conclude(known, user_id), "explanations": thinker.explain(known)}
+        # Her guesses that answer it ("why am I tired?" -> maybe the coffee;
+        # "who is Ben's mom?" -> probably Sarah).
+        answers = []
+        for c in result["conclusions"] + [f for f in known if str(f.get("held_by") or "").startswith("concluded")]:
+            # (A guess she made before and kept is still a guess: "probably Sarah".)
+            about = c.get("explains") if isinstance(c.get("explains"), dict) else c
+            if self._fact_fits(about, question) and c not in answers:
+                answers.append(c)
+        result["answers"] = sorted(answers, key=lambda c: -float(c.get("sure") or 0))
+        problem = thinker.problem_in(reading, facts)
+        if problem:
+            result["problem"] = problem
+        if not facts:
+            result["unsure"] = "she doesn't know anything about this yet"
+        return result
+
     def _review_reply(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         sentence = str(payload.get("sentence") or "").strip()
         situation = str(payload.get("situation") or "statement")
@@ -1429,7 +1508,8 @@ class DirectReasoningAdapter:
         his_words = re.findall(r"[a-z']+", user_input.casefold())
         for part in re.split(r"[.!?]+", sentence.casefold()):
             mine = re.findall(r"[a-z']+", part)
-            twice = [w for w in set(mine) if len(w) > 2 and mine.count(w) > 1 and his_words.count(w) == 1]
+            twice = [w for w in set(mine) if len(w) > 2 and mine.count(w) > 1 and his_words.count(w) == 1
+                     and w not in self._HER_SIDE and w not in ("because", "and", "but", "then")]
             if twice:
                 return no(f"she uses his word '{twice[0]}' twice in one sentence; he said it once", "about_what_he_said")
 
@@ -1448,6 +1528,11 @@ class DirectReasoningAdapter:
         understood =(self.__dict__.get("_understood") or {}).get(user_id) or {}
         misread = understood.get("reading_problems") if str(understood.get("said") or "").strip() \
             == user_input.strip() else None
+        didnt_get = understood.get("didnt_get") if str(understood.get("said") or "").strip() == user_input.strip() else None
+        if didnt_get and not misread and payload.get("meaning", {}).get("_purpose") != "ask_what_he_means" \
+                and self._content_lemmas(reply) & self._content_lemmas(self._analyze(user_input)):
+            # She didn't get what he meant; saying or asking his words back doesn't show she did.
+            return no(f"she didn't get what he meant ({didnt_get}); saying his words back doesn't fit", "misheard")
         if misread and self._content_lemmas(reply) & self._content_lemmas(self._analyze(user_input)):
             # Language misread what he said; built from that reading, the reply
             # carries the mistake ("Does bark dog bark?" for "dogs bark").
@@ -1527,6 +1612,11 @@ class DirectReasoningAdapter:
         if act == "ask" and subject.get("ref") == "speaker" and purpose != "admit_unknown":
             return no("she's asking him about herself, which he can't know better than she does",
                       "not_about_herself")
+        if purpose == "ask_what_he_means":
+            now = understood if str(understood.get("said") or "").strip() == user_input.strip() else {}
+            if now.get("didnt_get"):
+                return {"ok": True, "reason": f"she asks what he means: {now['didnt_get']}"}
+            return no("she understood what he said; asking what he means doesn't fit", "about_what_he_said")
         if purpose == "own_feeling" and (act == "ask" or reply_is_question):
             return no("she knows how she feels; asking him about it doesn't make sense", "state_not_ask")
         if act == "greet" and situation != "greeting":
@@ -1560,6 +1650,15 @@ class DirectReasoningAdapter:
             said = self._content_lemmas(reply)
             his = self._content_lemmas(self._analyze(str(payload.get("resolved_input") or user_input)))
             used = meaning.get("_fact") if isinstance(meaning.get("_fact"), dict) else None
+            corrected = understood.get("corrected") if str(understood.get("said") or "").strip() == user_input.strip() else None
+            if act == "state" and purpose == "take_correction" and used and corrected and any(
+                    str(used.get("subject")).casefold() == str(w.get("subject")).casefold()
+                    and str(used.get("object")).casefold() == str(w.get("object")).casefold()
+                    and str(used.get("predicate")).replace("not_", "") == str(w.get("predicate")).replace("not_", "")
+                    and str(used.get("predicate")) != str(w.get("predicate")) for w in corrected):
+                # He said her guess was wrong; saying it the other way round takes
+                # his correction ("Ben is short, then").
+                return {"ok": True, "reason": "she takes his correction"}
             if act == "state" and purpose == "own_feeling" and situation == "emotional_share":
                 pass  # how she feels about what he shared is hers to say (checked below)
             elif act == "state":
@@ -1589,8 +1688,11 @@ class DirectReasoningAdapter:
                 # Asking back uses what he just said, nothing else ("Ben is not
                 # tall" -> not "Is Ben a pilot?").
                 return no("the question isn't about what he said", "about_what_he_said")
-            elif act == "ask" and self._analyze(user_input).get("tense") != reply.get("tense") \
-                    and self._analyze(user_input).get("tense") in ("past", "future"):
+            elif act == "ask" and self._asks_back_what_he_said(reply, user_input):
+                # "Is your brother Ben?" right after "my brother is Ben": he just told her.
+                return no("he just told her that; asking it back adds nothing", "restate_or_ask")
+            elif act == "ask" and self._tense_of_matching_part(reply, user_input) != reply.get("tense") \
+                    and self._tense_of_matching_part(reply, user_input) in ("past", "future"):
                 # "I went to Denver": asking back keeps it in the past ("Did you go...?").
                 return no("the question changes when it happened", "about_what_he_said")
             elif act == "ask":
@@ -1664,6 +1766,13 @@ class DirectReasoningAdapter:
                     and not known and self._asks_how(user_input):
                 return no(f"he asked how she is and she knows how she feels ({her_feeling})",
                           "say_own_feeling")
+            if purpose == "admit_unknown" and not known:
+                guesses = self._work_out(question, user_id).get("answers") or []
+                if guesses:
+                    # She doesn't know for sure, but she has worked out a guess:
+                    # saying it, as a guess, answers him better than "I don't know".
+                    return no("she has a guess about this (" + str(guesses[0].get("because") or "")
+                              + "); say it as a guess", "use_memory")
             if not meaning.get("_fact") and purpose not in ("admit_unknown", "own_feeling"):
                 # Answering needs knowing: use what she remembers, or say she doesn't know.
                 return no("she doesn't know the answer, and the reply makes something up instead of saying so",
@@ -1684,6 +1793,11 @@ class DirectReasoningAdapter:
                     and not self._feeling_words_meet(felt, {w.casefold() for w in words}):
                 return no("he shared a feeling and the reply does not respond to it", "respond_to_feeling")
             subject = meaning.get("subject") if isinstance(meaning.get("subject"), dict) else {}
+            if meaning.get("several"):
+                # "You drank coffee and are tired": the part that has his feeling is about him.
+                holder = next((p.get("subject") for p in meaning["several"] if isinstance(p, dict) and felt & set(
+                    str(a).casefold() for a in ((p.get("complement") or {}).get("adjectives") or []))), None)
+                subject = holder if isinstance(holder, dict) else (meaning["several"][0].get("subject") or {})
             if subject.get("ref") != "addressee" and felt & {w.casefold() for w in words}:
                 who = "her" if subject.get("ref") == "speaker" else "something else"
                 return no(f"the reply puts his feeling on {who}; it should be about him", "about_him")
@@ -1727,20 +1841,8 @@ class DirectReasoningAdapter:
             user_id = str(payload.get("user_id") or "default")
             if not question:
                 return {"status": "error", "message": "work_out needs a question"}
-            facts = self._facts_for(question, user_id)
-            thinker = Understanding(self._ask_lobe)
-            thinker._user_id = user_id
-            reading = self._analyze(question)
-            known = thinker.recall_around(question, facts, user_id)
-            result = {"question": question, "knows": [f.get("content") or f"{f.get('subject')} {f.get('predicate')} {f.get('object')}"
-                                                      for f in facts[:6]],
-                      "conclusions": thinker.conclude(known, user_id), "explanations": thinker.explain(known)}
-            problem = thinker.problem_in(reading, facts)
-            if problem:
-                result["problem"] = problem
-            if not facts:
-                result["unsure"] = "she doesn't know anything about this yet"
-            return {"status": "success", "content": result}
+            return {"status": "success", "content": self._work_out(question, user_id)}
+
         if message.get("type") == "get_understanding":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return {"status": "success",

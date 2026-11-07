@@ -385,7 +385,9 @@ class Engine:
         for f in known:
             predicate, obj = str(f.get("predicate") or ""), str(f.get("object") or "")
             if obj[:1].isupper() and predicate.isalpha() and predicate not in ("is", "is_a", "then") \
-                    and _ordinary(predicate) and not self.relation_kind(predicate):
+                    and _ordinary(predicate) and not self.relation_kind(predicate) \
+                    and predicate != "name" and not predicate.endswith("_name"):
+                # ("My name is Matthew": Matthew is his name, not a kind of thing.)
                 # (A relation isn't a kind: "his sister is Lily" says who she is to him.)
                 whose = "his" if str(f.get("subject")) == "user" else f"{f.get('subject')}'s"
                 out.append({"subject": obj, "predicate": "is_a", "object": predicate,
@@ -474,9 +476,11 @@ class Engine:
                      and str(f.get("predicate") or "").isalpha() and self.relation_kind(str(f.get("predicate")))]
         out = []
         for belief in self.beliefs.beliefs:
-            for owner in {r[0] for r in relatives}:
-                whose = "his" if owner == "user" else f"{owner}'s"
-                mine = [r for r in relatives if r[0] == owner and self.relation_kind(r[1]) == belief["kind"]]
+            for owner in {r[0].casefold() for r in relatives}:
+                # ("lily" and "Lily" are the same person.)
+                shown = next((r[0] for r in relatives if r[0].casefold() == owner and r[0][:1].isupper()), owner)
+                whose = "his" if owner == "user" else f"{shown}'s"
+                mine = [r for r in relatives if r[0].casefold() == owner and self.relation_kind(r[1]) == belief["kind"]]
                 if belief["how"] == "shared":
                     for a in mine:
                         for b in mine:
@@ -485,7 +489,7 @@ class Engine:
                                             "sure": round(min(a[3], b[3]) * belief["sure"], 2),
                                             "because": f"{a[2]} and {b[2]} are both {whose} {belief['kind']}s"})
                 else:
-                    others = [r for r in relatives if r[0] == owner and self.relation_kind(r[1]) == belief["to"]]
+                    others = [r for r in relatives if r[0].casefold() == owner and self.relation_kind(r[1]) == belief["to"]]
                     for a in mine:
                         for o in others:
                             out.append({"subject": o[2], "predicate": a[1], "object": a[2],
@@ -680,11 +684,11 @@ class Engine:
             if because:
                 text, words, negative = self._happening(f)
                 links.append((because, word_lemmas(because), is_negative(because), text, words, negative,
-                              self._sure(f), False))
+                              self._sure(f), False, f))
             if str(f.get("predicate") or "") == "then":
                 a, b = str(f.get("subject") or ""), str(f.get("object") or "")
                 links.append((a, word_lemmas(a), is_negative(a), b, word_lemmas(b), is_negative(b),
-                              self._sure(f), True))
+                              self._sure(f), True, None))
         out = []
         for first in links:        # cause -> middle
             for second in links:   # middle -> effect
@@ -697,6 +701,8 @@ class Engine:
                 sure = round(first[6] * second[6] * same_happening(first[4], second[1]) * 0.85, 2)
                 out.append({"subject": first[0], "predicate": "then", "object": second[3],
                             "value": f"via:{first[3]}", "sure": sure,
+                            # What it explains (as he told it) and the first cause, in his words.
+                            "explains": second[8], "first_cause": first[0],
                             "because": f"{first[0]} led to {first[3]}, and {second[0]} led to {second[3]}; "
                                        f"so maybe {first[0]} is part of why {second[3]}"
                             if not (first[7] and second[7]) else

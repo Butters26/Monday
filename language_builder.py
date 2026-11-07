@@ -400,17 +400,21 @@ class SentenceBuilder:
                 head = self._plural(head)
             adjectives = [self._word(built, a, "a") for a in entity.get("adjectives", [])]
             body = " ".join(adjectives + [head])
+            if entity.get("number"):
+                body = f"{entity['number']} {body}"  # "7 dogs", "2 more dogs", as he said it
             if entity.get("owner"):
                 phrase = self.possessive(built, entity["owner"]) + " " + body
             elif entity.get("definite"):
                 phrase = "the " + body
-            elif count == "one":
+            elif count == "one" and not entity.get("number"):
                 phrase = indefinite_article(body) + " " + body
             else:
                 phrase = body
         else:
             built.problems.append(f"empty {case}")
             return ""
+        if entity.get("tail"):
+            phrase += " " + str(entity["tail"])  # "a lot to work on"
         for mod in entity.get("modifiers", []):
             inner = self.noun_phrase(built, mod.get("object"), "object")
             if inner and mod.get("prep"):
@@ -545,6 +549,8 @@ class SentenceBuilder:
             inner = self.noun_phrase(built, mod.get("object"), "object")
             if inner and mod.get("prep"):
                 parts.append(f"{mod['prep']} {inner}")
+        if meaning.get("how"):
+            parts.append(str(meaning["how"]))  # "well", "so much", as he said it
         return " ".join(p for p in parts if p)
 
     def _statement(self, built: Built, meaning: Dict[str, Any]) -> str:

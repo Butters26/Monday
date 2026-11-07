@@ -430,7 +430,7 @@ class LanguageGenerator:
     # redoes it. Silence is only ever her choice, and is reported as such.
     # ------------------------------------------------------------------
 
-    MAX_REPLY_ATTEMPTS = 7
+    MAX_REPLY_ATTEMPTS = 10
     GREETING_SENSE = "oewn-06645018-n"  # dictionary sense: "an expression of greeting"
 
     def generate(self, semantic_input: Dict[str, Any]) -> str:
@@ -496,6 +496,15 @@ class LanguageGenerator:
             if not ref.get("sure") or not ref.get("label") or not isinstance(idx, int) or idx >= len(words):
                 continue  # ("it rains": a placeholder "it" means nothing; it stays "it")
             label = str(ref.get("label") or "")  # in his own words ("my brother")
+            nxt = words[idx + 1].casefold() if idx + 1 < len(words) else ""
+            name = str((ref.get("refers_to") or {}).get("name") or "")
+            if name and ref.get("pronoun") in self._POSSESSIVE_PRONOUNS and nxt in ("name", "names"):
+                # "what is his name?" after "my dog is named Rex": Rex is the name; it
+                # asks about the one with that name, his dog.
+                named = [f for f in self._user_facts(name, user_id) if str(f.get("object") or "") == name
+                         and str(f.get("subject") or "") == "user" and str(f.get("predicate") or "").isalpha()]
+                if named:
+                    label = "my " + str(named[-1]["predicate"]).replace("_", " ")
             words[idx] = label + ("'s" if ref.get("pronoun") in self._POSSESSIVE_PRONOUNS else "")
         out = " ".join(w for w in words if w)
         return re.sub(r"\s+([?.!,])", r"\1", out)
@@ -539,7 +548,7 @@ class LanguageGenerator:
                 return {"name": name, "count": "many"} if ref.get("names") else {"name": name}
         start, end = mention.get("start"), mention.get("end")
         inside = [t for t in tokens if isinstance(start, int) and isinstance(end, int)
-                  and start <= int(t.get("index", -1)) < end]
+                  and start <= int(t.get("index", -1)) < end and t.get("kind") != "temporal"]
         if any(str(t.get("surface") or "").casefold() == "and" for t in inside) \
                 and not all(t.get("kind") in ("proper_noun", "conjunction") for t in inside):
             # "me and you", "my sister and I": each of them, together.
@@ -570,6 +579,11 @@ class LanguageGenerator:
             words = [str(t.get("surface") or "") for t in names]
             name = " and ".join(w[:1].upper() + w[1:] for w in words)
             return {"name": name, "count": "many"} if len(words) > 1 else {"name": name}
+        prep_at = next((n for n, t in enumerate(inside) if n and t.get("kind") == "preposition"), None)
+        rest = []
+        if prep_at is not None and not any(t.get("kind") == "verb" for t in inside[prep_at:]):
+            # "the dog in the yard": the dog, where it is said after it.
+            inside, rest = inside[:prep_at], inside[prep_at:]
         nouns = [t for t in inside if t.get("kind") == "noun"]
         if not nouns:
             return None
@@ -592,6 +606,25 @@ class LanguageGenerator:
                                                or entity.get("definite") else "mass")
         if first in ("a", "an"):
             entity["definite"] = False
+        if len(rest) > 1:
+            where = self._mention_entity({"start": rest[1].get("index"), "end": int(rest[-1].get("index", 0)) + 1,
+                                          "surface": " ".join(str(t.get("surface") or "") for t in rest[1:])}, tokens)
+            if where:
+                entity["modifiers"] = [{"prep": str(rest[0].get("surface") or "").casefold(), "object": where}]
+        after_head = inside[inside.index(head) + 1:]
+        if after_head and after_head[0].get("kind") == "preposition" and any(t.get("kind") == "verb" for t in after_head):
+            # "a lot to work on", "someone to talk to": what it's for stays with it.
+            entity["tail"] = " ".join(str(t.get("surface") or "") for t in after_head)
+        # How many, as he said it: "7 dogs", "2 more dogs", "one dog".
+        from reasoning_engine import number_in
+        at = next((n for n, t in enumerate(inside) if t is not head and (
+            t.get("kind") == "number" or (t.get("kind") == "noun"
+                                          and number_in(str(t.get("surface") or "")) is not None))), None)
+        if at is not None:
+            words = [str(t.get("surface") or "") for t in inside[at:inside.index(head)]]
+            entity["number"] = " ".join(words)
+            entity.pop("adjectives", None) if set(entity.get("adjectives") or []) <= set(words) else None
+            entity["count"] = "one" if number_in(words[0]) == 1 else "many"
         return entity
 
     def _statement_meaning(self, reading: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -618,7 +651,11 @@ class LanguageGenerator:
         if copular:
             # "we will stay home", "she seems happy": the linking verb he used stays.
             linking = str(clause.get("predicate_surface") or "").casefold()
-            meaning["verb"] = linking if linking and linking != "be" and linking.isalpha() else "be"
+            linking_verb = any(str(t.get("surface") or "").casefold() == linking and t.get("kind") == "verb"
+                               for t in tokens)
+            # ("I am so happy": "happy" is what he is, not a linking verb.)
+            meaning["verb"] = linking if linking and linking != "be" and linking.isalpha() and linking_verb \
+                and linking != str(complement.get("lemma") or "").casefold() else "be"
             if complement.get("kind") == "adjective" and complement.get("lemma"):
                 meaning["complement"] = {"adjectives": [str(complement["lemma"]).casefold()]}
             else:
@@ -662,6 +699,8 @@ class LanguageGenerator:
                 meaning["modifiers"] = mods
         if (clause.get("qualifiers") or {}).get("polarity") == "negative":
             meaning["negated"] = True
+        if meaning.get("verb") and meaning["verb"] != "be":
+            meaning["_word_chosen"] = True  # his own verb, as he said it
         if reading.get("tense") in ("past", "future"):
             meaning["tense"] = reading["tense"]
             heard_verb = next((str(t.get("surface") or "") for t in tokens if t.get("kind") == "verb"
@@ -670,6 +709,12 @@ class LanguageGenerator:
                 meaning["past_form"] = heard_verb  # "worked", as he said it
         if reading.get("modal"):
             meaning["modal"] = reading["modal"]
+        how = [str(t.get("surface") or "") for t in tokens if t.get("read_as") == "how, after the action"]
+        if how:
+            meaning["how"] = " ".join(how)  # "you didn't sleep well"
+        when = str((clause.get("qualifiers") or {}).get("event_time_text") or "").strip()
+        if when:
+            meaning["when"] = self._from_her_side(when)  # "last time", "this morning"
         sure = (reading.get("certainty") or {}).get("sure")
         if isinstance(sure, (int, float)) and sure < 0.9:
             meaning["hedge"] = "maybe" if sure < 0.6 else "probably"
@@ -823,6 +868,12 @@ class LanguageGenerator:
         if len(words) > 1 and words[0] == "the":
             noun, count = LanguageGenerator._number_of(" ".join(words[1:]))
             return {"noun": noun, "definite": True, "count": count}
+        from reasoning_engine import number_in
+        if len(words) > 1 and number_in(words[0]) is not None:
+            # "7 dogs", "2 more dogs": how many, then what.
+            noun, _ = LanguageGenerator._number_of(words[-1])
+            return {"noun": noun, "number": " ".join(words[:-1]),
+                    "count": "one" if number_in(words[0]) == 1 else "many"}
         noun, count = LanguageGenerator._number_of(low)
         return {"noun": noun, "count": "many" if count == "many" else "mass"}
 
@@ -956,6 +1007,8 @@ class LanguageGenerator:
                         meaning["object"] = target
             if negated:
                 meaning["negated"] = True
+            if meaning.get("verb") and meaning["verb"] != "be":
+                meaning["_word_chosen"] = True  # his own verb, not a dictionary stand-in ("hold" for "have")
             self._how_it_was_said(meaning, fact)
             meaning["_fact"] = record
             return meaning
@@ -990,7 +1043,7 @@ class LanguageGenerator:
     _FORMS = ("state", "ask", "greet", "farewell")
     FAREWELL_SENSE = "oewn-06642117-n"  # dictionary sense: "a farewell remark"
     _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing",
-                    "expected_reply", "what_he_said")
+                    "expected_reply", "what_he_said", "understood", "what_he_means")
 
     # Pronouns he uses for other people and things, turned to her point of view.
     # ("I", "me", "you" are the two of them and come in as subject choices already.)
@@ -1050,7 +1103,60 @@ class LanguageGenerator:
         if understanding.get("speech_act") == "question":
             # Asked something, she can always say she doesn't know it.
             pieces["not_knowing"].append(True)
+        self._didnt_get = None
+        pieces["understood"] = self._understood_pieces(user_id, user_input,
+                                                       understanding.get("speech_act") == "question")
+        if self._didnt_get:
+            # Reasoning couldn't make sense of it: she can ask what he means.
+            pieces["what_he_means"].append({"ask_about": "object", "subject": {"ref": "addressee"},
+                                             "verb": "mean", "_word_chosen": True,
+                                             "_purpose": "ask_what_he_means"})
         return pieces
+
+    def _understood_pieces(self, user_id: str, text: str, question: bool) -> List[Dict[str, Any]]:
+        """What Reasoning worked out, as meanings she can say: for a question,
+        its guesses that answer it ("maybe because you drank coffee"); for
+        anything else, what it just worked out and what he corrected. A guess
+        is said as one: "probably" or "maybe", by how sure it is."""
+        out: List[Dict[str, Any]] = []
+        if question:
+            body = self._ask("reasoning", "work_out", {"question": text, "user_id": user_id})
+            guesses = body.get("answers") or []
+        else:
+            body = self._ask("reasoning", "get_understanding", {"user_id": user_id})
+            if str(body.get("said") or "").strip() and str(body.get("said")).strip() != text.strip():
+                return out  # it's about something else he said
+            self._didnt_get = body.get("didnt_get")
+            guesses = body.get("conclusions") or []
+            for wrong in body.get("corrected") or []:
+                # He said her guess was wrong: what he means is the other way round.
+                turned = dict(wrong)
+                predicate = str(turned.get("predicate") or "")
+                turned["predicate"] = predicate[4:] if predicate.startswith("not_") else "not_" + predicate
+                turned["sure"] = 1.0
+                meaning = self._fact_meaning(turned)
+                if meaning:
+                    meaning["_purpose"] = "take_correction"
+                    meaning["_fact"] = dict(meaning.get("_fact") or {}, held_by="he corrected her")
+                    out.append(meaning)
+        for guess in guesses[:3]:
+            if not isinstance(guess, dict):
+                continue
+            explains = guess.get("explains")
+            if isinstance(explains, dict) and guess.get("first_cause"):
+                # Why something is: the thing he told her, with the first cause.
+                meaning = self._fact_meaning(dict(explains, because=str(guess["first_cause"]),
+                                                  sure=guess.get("sure")))
+            elif str(guess.get("predicate") or "") == "then":
+                continue  # an if-rule she worked out: not something to say on its own
+            else:
+                meaning = self._fact_meaning(dict(guess, held_by="concluded"))
+            if meaning:
+                meaning.setdefault("hedge", "maybe" if float(guess.get("sure") or 0) < 0.6 else "probably")
+                meaning["_fact"] = dict(meaning.get("_fact") or {}, held_by="concluded",
+                                        reasoned=str(guess.get("because") or ""))
+                out.append(meaning)
+        return out
 
     @staticmethod
     def _context_key(semantic_input: Dict[str, Any], pieces: Dict[str, List[Any]]) -> str:
@@ -1088,6 +1194,11 @@ class LanguageGenerator:
             fresh = [m for m in pieces["memory"] if self._fact_key(m) not in skip] or pieces["memory"]
             # A question asks one thing; "tell me about..." asks for all she knows.
             may_say_several = not ctx.startswith("question") or bool(self.__dict__.get("_asked_about"))
+            if not ctx.startswith("question") and not self.__dict__.get("_asked_about"):
+                # Told something, she adds what she knows that goes with it, not
+                # everything (and not her guesses: those come from Reasoning's piece).
+                fresh = [m for m in fresh if not str((m.get("_fact") or {}).get("held_by") or "").startswith("concluded")
+                         and not m.get("hedge")][:2] or fresh[:1]
             if may_say_several and len(fresh) > 1 \
                     and builder._choose(plan, f"plan_how_much@{ctx}.memory", ["one", "several"]) == "several":
                 # More than one thing she knows about it, said together.
@@ -1099,6 +1210,12 @@ class LanguageGenerator:
             else:
                 meaning = dict(fresh[0] if ctx.startswith("question") else rng.choice(fresh))
                 self._add_reason(meaning)
+        elif kind == "understood":
+            # What Reasoning worked out: the surest first when answering.
+            skip = self.__dict__.get("_sent_back_facts") or set()
+            fresh = [m for m in pieces["understood"] if self._fact_key(m) not in skip] or pieces["understood"]
+            meaning = dict(fresh[0] if ctx.startswith("question") else rng.choice(fresh))
+            self._add_reason(meaning)
         elif kind == "what_he_said":
             said = pieces["what_he_said"]
             if len(said) > 1 and builder._choose(plan, f"plan_how_much@{ctx}.what_he_said", ["one", "several"]) == "several":
@@ -1110,6 +1227,8 @@ class LanguageGenerator:
             meaning = dict(pieces["expected_reply"][0])
             if meaning.get("act") == "phrase":
                 return meaning  # said as taught, never turned into a question
+        elif kind == "what_he_means":
+            return dict(pieces["what_he_means"][0], act="ask")
         elif kind == "not_knowing":
             meaning = {"subject": me, "verb": "know", "negated": True, "_purpose": "admit_unknown"}
         else:
@@ -1142,6 +1261,24 @@ class LanguageGenerator:
             part["act"] = meaning["act"]
         return meaning
 
+    def _tell_pattern_how_built(self, reading: Dict[str, Any], user_id: str) -> None:
+        """Send Pattern Recognition how his sentence was built (the shape of
+        each statement in it: "N V N", "N be A"), so it can find the shapes he
+        uses and how they follow each other."""
+        tell = getattr(self.thalamus, "tell", None)
+        if not callable(tell):
+            return
+        try:
+            from language_structure import ShapeMemory
+            parts = [self.comprehension.analyze(p) for p in reading.get("parts") or []] or [reading]
+            shapes = [ShapeMemory.shape(r.get("tokens") or []) for r in parts]
+            shapes = [x for x in shapes if x]
+            if shapes:
+                tell("pattern", "observe", {"items": [f"sentence shape: {x}" for x in shapes],
+                                                        "user_id": user_id, "from": "language"}, "language")
+        except Exception as error:
+            print(f"⚠️  Language: couldn't tell Pattern Recognition how his sentence was built ({error})")
+
     def _add_reason(self, meaning: Dict[str, Any]) -> None:
         if meaning.get("_because_text"):
             # "...because your dog died": his reason, read and turned to her side.
@@ -1152,17 +1289,18 @@ class LanguageGenerator:
     # What kind of reply Reasoning said would fit, and how Language narrows its
     # next try to fit it (it still chooses, and still learns from what's kept).
     _FEEDBACK = {
-        "use_memory": ({"plan_form@": {"state"}, "plan_piece@": {"memory"}}, {}),
+        "use_memory": ({"plan_form@": {"state"}, "plan_piece@": {"memory", "understood"}}, {}),
         "say_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"not_knowing"}}, {}),
         "say_expected": ({"plan_form@": {"state"}, "plan_piece@": {"expected_reply"}}, {}),
         "say_own_feeling": ({"plan_form@": {"state"}, "plan_piece@": {"feeling"},
                              "plan_subject@": {"me"}}, {}),
-        "other_fact_or_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"memory", "not_knowing"}}, {}),
+        "other_fact_or_dont_know": ({"plan_form@": {"state"}, "plan_piece@": {"memory", "understood", "not_knowing"}}, {}),
         "answer_not_ask": ({}, {"plan_form@": {"ask"}}),
         "state_not_ask": ({"plan_form@": {"state"}}, {}),
         "not_about_herself": ({}, {"plan_subject@": {"me"}, "plan_piece@": {"what_he_said"}}),
         "greet_back": ({"plan_form@": {"greet"}}, {}),
-        "respond_to_feeling": ({"plan_piece@": {"heard_adjective", "feeling"}}, {}),
+        "respond_to_feeling": ({"plan_piece@": {"what_he_said", "heard_adjective", "feeling"},
+                                "plan_how_much@": {"several"}}, {}),
         "about_him": ({"plan_subject@": {"you"}}, {}),
         "farewell_back": ({"plan_form@": {"farewell"}}, {}),
         "no_name": ({"plan_greet_who@": {"you"}, "plan_farewell_who@": {"you"}}, {}),
@@ -1170,11 +1308,24 @@ class LanguageGenerator:
         "not_greeting": ({}, {"plan_form@": {"greet"}}),
         "not_farewell": ({}, {"plan_form@": {"farewell"}}),
         "restate_or_ask": ({"plan_form@": {"state", "ask"},
-                            "plan_piece@": {"memory", "heard_noun", "heard_verb", "heard_adjective"}}, {}),
-        "about_what_he_said": ({"plan_piece@": {"memory", "heard_noun", "heard_verb", "heard_adjective"}}, {}),
+                            "plan_piece@": {"what_he_said", "memory", "understood", "heard_noun", "heard_verb",
+                                            "heard_adjective"}}, {}),
+        "about_what_he_said": ({"plan_piece@": {"what_he_said", "memory", "heard_noun", "heard_verb",
+                                                "heard_adjective"}}, {}),
+        "misheard": ({"plan_piece@": {"what_he_means"}}, {}),
     }
 
     def _take_feedback(self, builder: Any, wanted: str) -> None:
+        if wanted in ("about_what_he_said", "restate_or_ask", "respond_to_feeling") \
+                and not (self.__dict__.get("_said_back_several_failed") if wanted == "respond_to_feeling"
+                         else self.__dict__.get("_said_back_failed")):
+            # Sent back for not keeping to what he said: say what he said, from her
+            # side (unless that was what got sent back).
+            builder.steer_only["plan_piece@"] = {"what_he_said"}
+            builder.steer_only["plan_form@"] = {"state"}
+            if wanted == "respond_to_feeling":
+                builder.steer_only["plan_how_much@"] = {"several"}
+            return
         if wanted.startswith("plain_word:"):
             _, pos, word = (wanted.split(":", 2) + ["", ""])[:3]
             if pos and word:
@@ -1231,6 +1382,7 @@ class LanguageGenerator:
             self._trace("word_taught", word=taught["word"], means=taught["means"],
                         senses=len(taught.get("senses") or []))
             his = self.comprehension.analyze(resolved_input or "")
+        self._tell_pattern_how_built(his, user_id)
         said_parts = [self._statement_meaning(self.comprehension.analyze(part)) for part in his.get("parts") or []] \
             if his.get("parts") else [self._statement_meaning(his)]
         attached = set()
@@ -1267,6 +1419,12 @@ class LanguageGenerator:
         # synonym that may mean something else ("hold" for "have").
         for pos, word in self._his_words(pieces):
             builder.steer_only[f"word_{pos}_{word}"] = {word}
+        for token in his.get("tokens") or []:
+            # "hello" back for his "hello", "bye" for "bye": his greeting word, if it is one.
+            word = str(token.get("surface") or "").casefold()
+            if word.isalpha():
+                builder.steer_only.setdefault("greeting_word", set()).add(word)
+                builder.steer_only.setdefault("farewell_word", set()).add(word)
         self._asked_about = bool(asks_her and asks_her.get("about") and not asks_her.get("say"))
         if asks_her and asks_her.get("about") and not asks_her.get("say") and len(pieces.get("memory") or []) > 1:
             # "Tell me about my brother" asks for what she knows about him, all of it.
@@ -1274,6 +1432,7 @@ class LanguageGenerator:
             builder.steer_only["plan_form@"] = {"state"}
             builder.steer_only["plan_piece@"] = {"memory"}
         sent_back: set = set()
+        self._said_back_failed = self._said_back_several_failed = False
         try:
             for attempt in range(1, self.MAX_REPLY_ATTEMPTS + 1):
                 builder.explore_rate = min(1.0, base_explore + 0.15 * (attempt - 1))
@@ -1309,6 +1468,10 @@ class LanguageGenerator:
                 builder.feedback(built, ok, last_reason)
                 if not ok:
                     sent_back.add(built.sentence)
+                    if meaning.get("_purpose") == "say_back" and meaning.get("act") == "state":
+                        self._said_back_failed = True
+                    if any(p.get("_purpose") == "say_back" for p in meaning.get("several") or []):
+                        self._said_back_failed = self._said_back_several_failed = True
                     if meaning.get("_fact"):
                         self.__dict__.setdefault("_sent_back_facts", set()).add(self._fact_key(meaning))
                     self._take_feedback(builder, str(review.get("wanted") or ""))

@@ -58,6 +58,23 @@ _CONTRACTIONS = {
     "it's": "it is",
     "they're": "they are",
     "we're": "we are",
+    "that's": "that is",
+    "what's": "what is",
+    "who's": "who is",
+    "where's": "where is",
+    "there's": "there is",
+    "here's": "here is",
+    "how's": "how is",
+    "i've": "i have",
+    "you've": "you have",
+    "we've": "we have",
+    "they've": "they have",
+    "i'll": "i will",
+    "you'll": "you will",
+    "we'll": "we will",
+    "they'll": "they will",
+    "i'd": "i would",
+    "you'd": "you would",
 }
 
 _MODALS = {
@@ -584,7 +601,8 @@ class LanguageComprehensionEngine:
         raw = [
             t
             for t in raw
-            if t.lower() not in _TIME and t.lower() not in _NEGATION
+            if t.lower() not in self._times() and t.lower() not in _NEGATION
+            and t.lower() not in (getattr(self, "_how_now", None) or set())
         ]
         while raw and raw[0].lower() in _PREPOSITIONS:
             raw.pop(0)
@@ -768,7 +786,7 @@ class LanguageComprehensionEngine:
             and t.lower() not in _AUX_RAW
             and t.lower() not in _NEGATION
             and t.lower() not in _PREPOSITIONS
-            and t.lower() not in _TIME
+            and t.lower() not in self._times()
             and t.lower() not in _WH
         ]
         raw_before = [
@@ -833,7 +851,7 @@ class LanguageComprehensionEngine:
             | set(_MODALS)
             | _AUX_RAW
             | _NEGATION
-            | set(_TIME)
+            | set(self._times())
             | _CONJUNCTIONS  # joining words are never the action ("my sister and I went")
             | _SUBORDINATING
         )
@@ -1051,7 +1069,7 @@ class LanguageComprehensionEngine:
         end = len(tokens)
         for idx in range(start, len(tokens)):
             low = tokens[idx].lower()
-            if low in _TIME or re.fullmatch(r"[.!?;]", tokens[idx]):
+            if low in self._times() or re.fullmatch(r"[.!?;]", tokens[idx]):
                 end = idx
                 break
         return end
@@ -1197,14 +1215,14 @@ class LanguageComprehensionEngine:
             ).get("head")
             if head and str(head).isalpha():
                 h = str(head).lower()
-                if h in _TIME or h in self._DEGREE_ADVERBS:
+                if h in self._times() or h in self._DEGREE_ADVERBS:
                     return None
                 if not allow_emotion and surface_is_affective(h):
                     return None
                 return h
             concept = (mention.concept_surface or mention.surface or "").strip()
             parts = [p for p in concept.lower().split() if p.isalpha()]
-            parts = [p for p in parts if p not in _TIME and p not in self._DEGREE_ADVERBS]
+            parts = [p for p in parts if p not in self._times() and p not in self._DEGREE_ADVERBS]
             if parts:
                 # NP head = last content token ("denver weather" → weather;
                 # "the aluminum gasket" → gasket). Never first proper alone.
@@ -1250,8 +1268,8 @@ class LanguageComprehensionEngine:
                 q["modality_text"] = token
                 break
         for token in lows:
-            if token in _TIME:
-                q.update(_TIME[token])
+            if token in self._times():
+                q.update(self._times()[token])
                 break
         return q
 
@@ -1301,6 +1319,7 @@ class LanguageComprehensionEngine:
             and first not in _WH
             and first not in _NEGATION
             and self._has_pos(content[0], "v")
+            and first not in (getattr(self, "_hinted_things", None) or set())  # read again: it's who, not a command
         ):
             features["verb_initial"] = True
 
@@ -1530,13 +1549,90 @@ class LanguageComprehensionEngine:
 
     _SUBJECT_FORMS = ("i", "you", "he", "she", "we", "they")
 
+    def _times(self) -> Dict[str, Dict[str, str]]:
+        """Words that say when: the usual ones, and this sentence's own time
+        phrase ("last time")."""
+        now = getattr(self, "_time_now", None)
+        return {**_TIME, **now} if now else _TIME
+
+    def _how_after_action(self, lexical: List[Dict[str, Any]]) -> None:
+        """"I didn't sleep well", "she runs fast": last, after an action that
+        needs nothing after it, a word the dictionary has as an adverb says how."""
+        words = [e for e in lexical if e.get("kind") != "punctuation"]
+        if len(words) < 2:
+            return
+        verb_at = max((n for n, e in enumerate(words) if e.get("kind") == "verb"), default=None)
+        if verb_at is None:
+            return
+        # The words at the end, after the action (and what it acts on), that the
+        # dictionary has as adverbs: "so much", "well", "fast", "a lot"? (only adverbs).
+        trailing = []
+        for e in reversed(words[verb_at + 1:]):
+            adverb = [x for x in self._lookup(e["surface"]) if x.get("pos") == "r"
+                      and str(e["surface"]).casefold() in {l.casefold() for l in x.get("lemmas") or []}]
+            if not adverb or e.get("kind") not in ("noun", "adjective", "adverb"):
+                break
+            trailing.append((e, adverb))
+        if not trailing:
+            return
+        first_kept = words.index(trailing[-1][0])
+        acts_on = [e for e in words[verb_at + 1:first_kept] if e.get("kind") in ("noun", "pronoun", "proper_noun")]
+        if not acts_on and not self._can_stand_alone(str(words[verb_at].get("lemma") or "")):
+            return  # "I like fast": the word is what it acts on
+        for e, adverb in trailing:
+            e.update({"kind": "adverb", "lemma": e["surface"], "senses": adverb,
+                      "sense_count": len(adverb), "read_as": "how, after the action"})
+            self._how_now.add(str(e["surface"]).casefold())
+
+    def _time_phrase(self, lexical: List[Dict[str, Any]]) -> None:
+        """"Last time I charged it", "this morning we left": a word before a
+        noun the dictionary files under time, right before who did it, says
+        when, not who."""
+        # At the end, after what happened: "my dog died last week".
+        rest = [e for e in lexical if e.get("kind") != "punctuation"]
+        if len(rest) >= 4 and rest[-1].get("kind") == "noun" and rest[-2].get("kind") in ("adjective", "determiner", "noun") \
+                and any(e.get("kind") == "verb" for e in rest[:-2]) and str(rest[-2].get("surface")).casefold() not in ("a", "an", "the"):
+            try:
+                from lexicon.oewn_offline import get_wordnet
+                senses = get_wordnet().synsets(rest[-1]["surface"], pos="n")[:3]
+                timed = any(x.lexfile() == "noun.time" for x in senses)
+            except Exception:
+                timed = False
+            if timed:
+                text = f"{rest[-2]['surface']} {rest[-1]['surface']}"
+                for entry in (rest[-2], rest[-1]):
+                    entry.update({"kind": "temporal", "read_as": "when", "time_text": text})
+                    self._time_now[str(entry["surface"]).casefold()] = {"event_time_text": text}
+        for idx in range(len(lexical) - 2):
+            first, noun, after = lexical[idx], lexical[idx + 1], lexical[idx + 2]
+            if idx and lexical[idx - 1].get("kind") not in ("punctuation", "conjunction"):
+                continue
+            if first.get("kind") not in ("adjective", "determiner", "noun") or noun.get("kind") != "noun":
+                continue
+            if after.get("kind") not in ("pronoun", "proper_noun") and str(after.get("surface")) != "," \
+                    and not (idx == 0 and after.get("kind") in ("determiner", "possessive")):
+                continue
+            try:
+                from lexicon.oewn_offline import get_wordnet
+                timed = any(x.lexfile() == "noun.time" for x in get_wordnet().synsets(noun["surface"], pos="n"))
+            except Exception:
+                timed = False
+            if timed:
+                text = f"{first['surface']} {noun['surface']}"
+                for entry in (first, noun):
+                    entry.update({"kind": "temporal", "read_as": "when", "time_text": text})
+                    self._time_now[str(entry["surface"]).casefold()] = {"event_time_text": text}
+
     def _take_hints(self, lexical: List[Dict[str, Any]]) -> None:
         """Reading again: take the words Reasoning pointed out the way it says
         they fit better ("a thing" or "an action"), if the dictionary has them so."""
+        self._hinted_things = set()
         for hint in getattr(self, "_hints_now", None) or []:
             word = str(hint.get("word") or "").casefold()
             better = str(hint.get("fits_better") or "")
             pos, kind = ("n", "noun") if "thing" in better else ("v", "verb") if "action" in better else ("", "")
+            if pos == "n":
+                self._hinted_things.add(word)
             if not pos:
                 continue
             for entry in lexical:
@@ -1728,6 +1824,10 @@ class LanguageComprehensionEngine:
             if idx == 0 or entry.get("kind") not in ("verb", "noun"):
                 continue
             before = lexical[idx - 1]
+            if before.get("kind") in ("pronoun", "proper_noun", "noun") and idx >= 2 \
+                    and lexical[idx - 2].get("kind") == "auxiliary" and lexical[idx - 2].get("lemma") == "be" \
+                    and (idx == 2 or lexical[idx - 3].get("kind") in ("wh", "punctuation")):
+                before = lexical[idx - 2]  # "are you tired?", "why am I tired?": asked the other way round
             if before.get("kind") != "auxiliary" or before.get("lemma") != "be":
                 continue
             after = lexical[idx + 1] if idx + 1 < len(lexical) else None
@@ -1994,6 +2094,9 @@ class LanguageComprehensionEngine:
                 unknown_words.append(token)
 
         phrases = self._set_phrases(lexical)
+        self._time_now = {}
+        self._how_now = set()
+        self._time_phrase(lexical)
         self._thing_after_number(lexical)
         self._describing_before_noun(lexical)
         self._degree_before_describing(lexical)
@@ -2040,6 +2143,7 @@ class LanguageComprehensionEngine:
                 if entry.get("kind") == "verb" and self._lookup(entry["surface"], pos="n"):
                     entry.update({"kind": "noun", "lemma": self.lemma(entry["surface"], prefer_pos="n"),
                                   "senses": self._lookup(entry["surface"], pos="n")})
+        self._how_after_action(lexical)
         mentions: List[LinguisticMention] = []
         roles: Dict[str, str] = {}
         qualifiers = self._qualifiers(tokens)

@@ -311,7 +311,7 @@ def _fit(pronoun: str, cand: Dict[str, Any]) -> float:
         if sex is None:
             # Someone whose sex she doesn't know might be a he or she; an
             # animal is usually an "it" unless the speaker knows it.
-            return 0.6 if kind == "person" else 0.3
+            return 0.6 if kind == "person" else 0.5  # (people call their own pets he and she)
         return 0.0
     if pronoun == "they":
         if plural:
@@ -355,7 +355,8 @@ def resolve(reading: Dict[str, Any], context: List[str], people: Dict[str, List[
                     fit = 0.0
                 if fit > 0:
                     # Newer is more likely; later in the same line is more likely.
-                    scored.append((fit / (1 + age) + order * 0.001, cand))
+                    # (What he just said counts much more than a few lines back.)
+                    scored.append((fit / (1 + age) ** 1.5 + order * 0.001, cand))
         scored.sort(key=lambda s: s[0], reverse=True)
         ref: Dict[str, Any] = {"index": token.get("index"), "pronoun": word, "refers_to": None,
                                "sure": False, "candidates": [c["label"] for _, c in scored[:3]]}
