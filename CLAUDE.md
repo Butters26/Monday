@@ -10,6 +10,8 @@ This overrides everything else. It applies to every AI and every session.
 4. **No percentage without the list behind it.** A percentage must come with every contract item, quoted, and for each one: checked live in the trace (yes/no) and what the trace showed. No list, no number.
 5. **Say which part each fix is in.** A Language fix is not Notus progress. Never report work on one part as progress on another.
 6. **Never say where a test or conversation came from unless you can show it.** Don't call something "Matthew's conversation" unless you can point to his own message.
+7. **Tests are only for small things.** A small test is allowed only to check one small piece before booting her (does this one piece run at all). Whether she works is checked by booting her up and using her, never by a test.
+8. **Every report to Matthew is the real, unedited tracer output.** Show him the raw `trace_report.py` output (as a file). No editing, trimming, picking the good parts, or rewording. Any explanation goes next to the raw report, never instead of it.
 
 ## Matthew's rule: how to check Monday works
 
