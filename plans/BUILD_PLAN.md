@@ -13,7 +13,7 @@ The goal: every lobe does the job in its contract (`.github/instructions/`) and 
 - **Done for a lobe** = every item in its contract seen working live in the tracer, with the raw report given to Matthew. Nothing else counts.
 - **Done for the brain** = a long live conversation where every lobe does its job, every announcement has a lobe that uses it, and the old turn script is gone.
 - Where code, notes or this plan disagree with a lobe's contract, the contract wins, and the conflict is reported to Matthew.
-- Facts about "today" come from the Nov 12 live run (`reports/2026-11-12_live_run/`).
+- Facts about "today" come from the Nov 12 live run (its report was removed: it replayed an old AI test script).
 
 ## Part 1: Each lobe's fixes
 

@@ -20,14 +20,14 @@ Every memory Notus stores has these fields. No memory is stored without all of t
 |---|---|---|---|
 | `id` | yes | Notus gives every memory its own number | `57` |
 | `kind` | yes | **experienced**, **reported**, or **concluded** (C) | `reported` |
-| `content` | yes | what is remembered, as it was given to Notus | `Matthew's dog is Pixel` |
+| `content` | yes | what is remembered, as it was given to Notus | `the cup is on the table` |
 | `about` | yes | who/what it is about | `Matthew`, `Matthew's dog` |
 | `source` | yes | who told her, which sense, or which lobe concluded it (C) | `told by Matthew (typed)` / `seen (camera)` / `concluded by reasoning` |
 | `based_on` | concluded only | the ids of the memories the conclusion came from | `[57, 58]` |
 | `stored_at` | yes | when Notus stored it | `2026-11-12 13:05` |
 | `when_it_happened` | if given | the time the memory is about, if any | `tomorrow`, `when I was a kid` |
 | `recalled_count` | yes | how many times it has been given back | `3` |
-| `structure` | if given | the who / relation / what, if the lobe that sent it gave one | `Matthew — dog — Pixel` |
+| `structure` | if given | the who / relation / what, if the lobe that sent it gave one | `cup — on — table` |
 
 Notus never changes `kind` or `source` after storing. A report never becomes an experience. A conclusion never becomes a report. (C)
 
@@ -53,7 +53,7 @@ structure:         optional (who — relation — what)
 - Stores it exactly as given. Notus does not reword it, decide what it means, or decide whether it is true. (D)
 - The same thing from the same source again → not a second copy; that memory's `recalled_count`/strength goes up.
 - The same thing from a *different* source (Matthew said it, then Reasoning concluded it) → kept as **separate** memories, because they are different kinds. (C)
-- Something new that disagrees with something old ("I live in Boulder" after "I live in Denver") → **both are kept.** Notus deletes nothing and marks nothing wrong. Deciding which is current is another lobe's job. (D)
+- Something new that disagrees with something old ("the cup is on the shelf" after "the cup is on the table") → **both are kept.** Notus deletes nothing and marks nothing wrong. Deciding which is current is another lobe's job. (D)
 
 **Checked live by:** boot her, say something, and the raw trace shows the `remember` message arriving, the memory stored with all required fields, and the `id` sent back.
 
@@ -65,7 +65,7 @@ Sent by Sensory Integration for every moment: something heard, seen, or felt.
 **Out:** `{ id }`
 
 **Rules:**
-- The moment itself is stored as **experienced** (e.g. "Matthew said 'my dog is Pixel' at 13:05").
+- The moment itself is stored as **experienced** (e.g. "Matthew said 'the cup is on the table' at 13:05").
 - What was *said* inside it is not stored as experienced. If it is stored as knowledge, it goes through `remember` as **reported**, with Matthew as source.
 
 **Checked live by:** every turn in the raw trace shows one experienced memory for that moment.
@@ -96,7 +96,7 @@ If nothing relevant is stored: `{ memories: [], nothing_remembered: true }`.
 
 **In:** `{ about }`
 **Out:** every memory about it, oldest to newest, each with kind/source/time.
-(Lets Reasoning see "Denver (told 13:01), then Boulder (told 13:06)" and decide for itself.)
+(Lets Reasoning see "on the table (told 13:01), then on the shelf (told 13:06)" and decide for itself.)
 
 **Checked live by:** after changing something, the raw trace shows `history` returning both versions in order.
 
@@ -114,7 +114,7 @@ Not a message — a requirement: everything stored is on disk. Shut her down, bo
 
 ## What Notus does NOT do (D, and the contract's rules)
 
-- Does not decide what something means ("moved to Boulder" → "lives in Boulder"). That's another lobe's call.
+- Does not decide what something means ("moved to a new city" → "lives in that city"). That's another lobe's call.
 - Does not decide which of two memories is true or current, and does not mark memories wrong.
 - Does not announce contradictions or judge them.
 - Does not read Matthew's sentences to work out the facts in them. The lobe that understands language sends Notus the structured memory.
@@ -138,7 +138,7 @@ Not a message — a requirement: everything stored is on disk. Shut her down, bo
 ## Decisions Matthew needs to make
 
 1. Who turns his sentence into a structured memory to send Notus — Language?
-2. Who decides an old memory is no longer current (Denver → Boulder) — Reasoning?
+2. Who decides an old memory is no longer current (table → shelf) — Reasoning?
 3. Do reminders / bringing things up on her own belong to some lobe, and which one?
 4. Code in the conflict list: move to `legacy/`, or move into the lobe that owns it?
 5. Anything in this spec to change, add or remove.
