@@ -449,7 +449,8 @@ class Thalamus:
         response = self.send_and_wait(
             "executive_control",
             "set_goal_from_turn",
-            {"user_input": user_input, "understanding": understanding},
+            {"user_input": user_input, "understanding": understanding,
+             "user_id": getattr(self, "_turn_user_id", None) or "default"},
         )
         if response.get("status") != "success":
             return None
@@ -825,6 +826,7 @@ class Thalamus:
             # Nobody said who is talking: someone she doesn't know, never assumed
             # to be Matthew (every lobe gets the same name for them).
             user_id = "unknown person 1"
+        self._turn_user_id = user_id  # who's talking, for the lobes the turn script still calls
 
         if perception_payload is None:
             perception_payload = {}

@@ -122,6 +122,28 @@ def main() -> int:
         for r in rejected[-15:]:
             print(f"  rejected: {r.get('sentence')!r}  because {r.get('reason')}")
 
+    executive = [r for r in records if str(r.get("kind") or "").startswith("executive_")]
+    if executive:
+        print(f"\n== EXECUTIVE CONTROL: {len(executive)} events ==")
+        for r in executive:
+            kind = r["kind"][len("executive_"):]
+            if kind == "decided":
+                print(f"  decided: {r.get('purpose')!r} because {r.get('situation')!r} "
+                      f"(score {r.get('score')}, weighed {r.get('weighed')}) about {r.get('about')!r}; "
+                      f"steps {r.get('steps')}; other options {r.get('others')}")
+            elif kind == "step":
+                print(f"    step {r.get('step')!r}: {r.get('status')} - {r.get('result')}")
+            elif kind == "monitored":
+                print(f"    result: {r.get('status')}; failed {r.get('failed')}; waiting {r.get('waiting')}")
+            elif kind in ("switched", "kept", "resumed"):
+                print(f"  {kind}: " + ", ".join(f"{k}={v!r}" for k, v in r.items()
+                                               if k not in ("kind", "ts", "turn", "thread")))
+            elif kind in ("held_back", "allowed", "chose"):
+                print(f"  {kind}: {r.get('action')!r} from {r.get('source')!r}: {r.get('reason')}")
+            else:
+                print(f"  {kind}: " + ", ".join(f"{k}={v!r}" for k, v in r.items()
+                                               if k not in ("kind", "ts", "turn", "thread")))
+
     unsigned = sum(1 for r in messages if r.get("claimed_from") == "thalamus"
                    and not str(r.get("from", "")).startswith("thalamus") and r.get("from") != "unknown")
     print(f"\nUnsigned lobe messages (claimed to be thalamus): {unsigned}")

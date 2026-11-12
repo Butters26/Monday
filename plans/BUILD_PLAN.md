@@ -4,7 +4,7 @@
 Live copy: "Monday Build Plan" doc (https://claude.ai/artifact/3sJaBEDJ5LSLeQkoBdCTes). If the doc and this file differ, read the doc and update this file.
 Learning has its own plan: `plans/LEARNING_PLAN.md` (it waits until this plan is finished).
 
-**Status:** Nov 12: plan approved and saved; Stage 1 (the deciding spine) not started yet.
+**Status:** Nov 12: plan approved and saved. Executive Control conductor design decided and built (section below); boot check clean; live check with conversation waiting on Matthew.
 
 The goal: every lobe does the job in its contract (`.github/instructions/`) and works with the others as one team, with no script running the turn.
 
@@ -86,6 +86,29 @@ No script and no boss lobe giving orders: each lobe listens for what it needs an
 Meta-awareness hears every announcement. Any lobe can ask Notus to recall something or Values what matters. Shared Representation keeps meanings the same along the way.
 
 **A turn, as a team:** he speaks → the moment reaches every lobe that needs it → each does its job at once (meaning, memory, tone, focus, conclusions, feeling) → Executive Control decides what she says → Language words it → Output and Voice deliver it → Notus keeps what she said.
+
+## Executive Control: the conductor (decided Nov 12)
+
+Executive Control runs her brain the way the prefrontal cortex does. It is not a goal list; it drives the other lobes. It runs as a loop, during conversation and while she's idle:
+
+1. **Workspace (working memory):** every lobe's findings come together in one live picture of right now (what was said and meant, what she remembers, Reasoning's conclusions, how she feels, the social read, what's new, her focus). Items fade when they stop mattering.
+2. **Decide:** from the workspace it chooses her current purpose (understand him, answer him, find out more, comfort, act, think something through), weighing Reasoning, Emotion, Values and Social Context.
+3. **Plan:** breaks the purpose into steps, each given to the lobe whose job it is (Notus recall, Reasoning work out, Language say, Motor do).
+4. **Direct:** sends those requests through Thalamus; results come back into the workspace.
+5. **Hold back:** stops impulses that would derail the purpose; a strong enough impulse can still win (Matthew, Nov 3: Emotion can override Reasoning if another lobe sides with it).
+6. **Monitor:** checks each step; a failed step (nothing remembered, Reasoning rejects it, he says it's wrong) changes the plan or the purpose.
+7. **Switch:** new input or a bigger need interrupts the current purpose; the old one is set aside, not lost.
+
+It never does another lobe's specialist work itself: it asks the lobe whose job it is.
+
+**Built Nov 12** (`executive_control_lobe.py`; old version in `legacy/`). Its situation-to-purpose rules, ranks, steps and impulse threshold are in `executive_purposes.txt` in her runtime folder, placeholder lines for Matthew to change. It listens to Reasoning (`understood`), Social Context (`social_read`) and Notus (`remembered`); its decisions show in the trace report's EXECUTIVE CONTROL section.
+
+**Still needed from other lobes:**
+- Language: take a purpose from Executive Control and word it (until then every "say" step is recorded as waiting).
+- Output and Motor Action: report when something was actually done, so Executive Control can see a step really happened.
+- Conversation: announce the turn itself instead of the turn script handing it over.
+- Autonomous Thinking: announce its thoughts so they reach the workspace.
+- Live check with conversation: waiting on Matthew saying how to talk to her (law 10).
 
 ## Part 3: All 100% together
 
