@@ -1307,6 +1307,7 @@ class EmotionalProcess:
                     'valence': valence,
                     'timestamp': time.time(),
                 },
+                source='emotion',
             )
         except Exception:
             # Never let novelty notify errors break emotion / chat.

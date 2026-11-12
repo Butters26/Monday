@@ -68,7 +68,7 @@ def _write(record: Dict[str, Any]) -> None:
 
 
 def _real_sender(thalamus: Any) -> str:
-    frames = inspect.stack()[3:]
+    frames = inspect.stack()[1:]  # (not [3:]: that skipped the script's own frame on a direct send)
     try:
         for info in frames:
             obj = info.frame.f_locals.get("self")
