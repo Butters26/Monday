@@ -893,6 +893,10 @@ class LanguageComprehensionEngine:
                                                                                      "the kind asked about",
                                                                                      "a name before is"):
                 continue  # "used to live": "used to" goes with the action; "what color": a thing
+            if len(lexical_now) == len(tokens) and lexical_now[idx].get("read_as") == "action after its subject" \
+                    and idx > 1 and lexical_now[idx - 1].get("read_as") == "how or when he does it":
+                known_candidates.append((idx, self.lemma(token, prefer_pos="v"), 8))
+                continue  # "I really like tea": like is what he does
             if len(lexical_now) == len(tokens) and idx > 0 and lexical_now[idx - 1].get("read_as") == "used to":
                 known_candidates.append((idx, self.lemma(token, prefer_pos="v"), 8))
                 continue  # "used to play guitar": play is what he did
@@ -1085,8 +1089,9 @@ class LanguageComprehensionEngine:
                 start += 1
         for idx in range(start, verb_idx):
             low = tokens[idx].lower()
-            if low in _MODALS or low in _AUX_RAW or low in _NEGATION:
-                end = min(end, idx)
+            how_or_when = getattr(self, "_how_or_when_at", set())
+            if low in _MODALS or low in _AUX_RAW or low in _NEGATION or idx in how_or_when:
+                end = min(end, idx)  # ("I just got": "just" is when, not part of who)
             elif low in ("used", "use") and idx + 2 == verb_idx and lows[idx + 1] == "to":
                 end = min(end, idx)  # "I used to live": "I" is who
         return end
@@ -1691,13 +1696,29 @@ class LanguageComprehensionEngine:
                 entry.update({"kind": "participle", "read_as": "says what the thing before it is called",
                               "names": True})
         for idx, entry in enumerate(lexical):
-            if idx == 0 or entry.get("kind") != "noun":
+            if idx == 0 or entry.get("kind") not in ("noun", "verb", "adjective"):
                 continue
-            before = lexical[idx - 1]
+            # "I really like tea", "I just got a job": a word saying how or when
+            # can sit between him and what he does.
+            between = None
+            at = idx - 1
+            if idx >= 2 and lexical[at].get("kind") in ("adverb", "adjective") \
+                    and self._lookup(str(lexical[at].get("surface") or ""), pos="r") \
+                    and lexical[idx - 2].get("kind") == "pronoun":
+                between = lexical[at]
+                at = idx - 2
+            if entry.get("kind") != "noun" and not (between and entry.get("kind") in ("verb", "adjective")):
+                continue
+            before = lexical[at]
             if before.get("kind") != "pronoun" or str(before.get("lemma")) not in self._SUBJECT_FORMS:
                 continue
-            if idx >= 2 and lexical[idx - 2].get("kind") in ("verb", "preposition", "auxiliary"):
+            if at >= 1 and lexical[at - 1].get("kind") in ("verb", "preposition", "auxiliary"):
                 continue  # "I told you stories": "you" is not the subject here
+            if between is not None:
+                if not self._lookup(str(entry.get("surface") or ""), pos="v"):
+                    continue
+                between.update({"kind": "adverb", "senses": self._lookup(str(between["surface"]), pos="r"),
+                                "read_as": "how or when he does it"})
             verb = [s for s in self._lookup(entry["surface"], pos="v")]
             if not verb:
                 continue
@@ -2178,6 +2199,12 @@ class LanguageComprehensionEngine:
         for idx, token in enumerate(tokens):
             original_token = original_tokens[idx] if idx < len(original_tokens) else token
             kind, lemma, senses, known = self._lexical_entry(token, original_token)
+            before_word = original_tokens[idx - 1] if 0 < idx <= len(original_tokens) else ""
+            if idx > 0 and kind != "proper_noun" and original_token[:1].isupper() and original_token.isalpha() \
+                    and original_token != "I" and not re.fullmatch(r"[.!?]", before_word):
+                # "My son is Jack": capitalized in the middle of what he wrote is a
+                # name, even when the dictionary also has the word (jack, rose, bill).
+                kind, lemma, senses, known = "proper_noun", token, [], False
             entry = {
                 "index": idx,
                 "surface": token,
@@ -2212,6 +2239,20 @@ class LanguageComprehensionEngine:
             # action ("rose" as in rising can't be followed by "is").
             lexical[0].update({"kind": "proper_noun", "lemma": str(lexical[0]["surface"]), "senses": [],
                                "sense_count": 0, "read_as": "a name before is"})
+        if len(lexical) > 2 and lexical[0].get("kind") == "adverb" \
+                and lexical[1].get("kind") in ("pronoun", "proper_noun", "determiner", "possessive") \
+                and str(lexical[1].get("surface") or "").casefold() not in ("you",) or (
+                    len(lexical) > 2 and lexical[0].get("kind") == "adverb"
+                    and str(lexical[1].get("surface") or "").casefold() == "you"
+                    and lexical[2].get("kind") not in ("auxiliary", "modal")):
+            # "Actually I work at Walmart", "Honestly my dog is huge": the word
+            # before it is how he says it; what he says is the rest.
+            rest = re.sub(r"^\s*\S+\s*,?\s*", "", original, count=1)
+            if rest and rest != original:
+                inner = self.analyze(rest)
+                inner["raw_text"] = original
+                inner["opener"] = inner.get("opener") or {"words": [str(lexical[0].get("surface"))], "denies": False}
+                return inner
         phrases = self._set_phrases(lexical)
         self._time_now = {}
         self._how_now = set()
@@ -2227,6 +2268,7 @@ class LanguageComprehensionEngine:
         self._action_after_subject(lexical)
         self._take_hints(lexical)
         self._measure_now = {i: e["measure"] for i, e in enumerate(lexical) if e.get("measure")}
+        self._how_or_when_at = {i for i, e in enumerate(lexical) if e.get("read_as") == "how or when he does it"}
         self._lexical_now = lexical
         try:
             verb_idx, predicate, passive, predicate_known = self._find_main_verb(tokens)
