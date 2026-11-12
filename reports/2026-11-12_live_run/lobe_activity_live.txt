@@ -1,0 +1,41 @@
+Lobes running on their own at boot: attention, autonomous, conversation, emotion, executive_control, language, meta_awareness, meta_cognition, motor_action, notus, novelty, output, pattern, perception, reasoning, sensory_integration, shared_representation, social_context, speech, values, voice
+
+lobe                              handled   sent  message types handled
+attention                             103     28  {'evaluate': 14, 'route_focus': 28, 'remove_signals': 14, 'replace_signals': 14, 'select_focus': 14, 'rank': 14, 'update_salience': 5}
+autonomous                             14    111  {'user_active': 14}
+conversation                           14      0  {'understand': 14}
+emotion                               138     49  {'social_read': 14, 'process_input': 14, 'reply_outcome': 14, 'remembered': 12, 'didnt_understand': 1, 'get_state': 37, 'get_emotional_state': 37, 'appraise_internal': 9}
+executive_control                      31     42  {'set_goal_from_turn': 14, 'steer_attention': 14, 'should_inhibit': 3}
+language                              140    170  {'analyze': 98, 'comprehend': 14, 'social_read': 14, 'generate': 14}
+meta_awareness                         28      0  {'observe_turn': 14, 'release_to_wandering': 14}
+meta_cognition                         28      5  {'monitor_reasoning': 14, 'monitor_language': 14}
+motor_action                           28      4  {'plan_from_turn': 14, 'execute_next': 14}
+notus                                 323     38  {'moment': 14, 'query_context': 14, 'store_emotional_memory': 14, 'get_past_observations': 28, 'get_behavioral_patterns': 28, 'get_contradictions': 28, 'get_meta_patterns': 28, 'query_facts': 140, 'store': 14, 'store_conclusion': 1, 'get_recent_memories': 14}
+novelty                                49      0  {'assess_experience': 14, 'get_assessment': 28, 'emotional_response_to_novelty': 7}
+output                                 29      0  {'generate_output': 14, 'voice_output': 14, 'motor_output': 1}
+pattern                                42     98  {'observe': 28, 'get_significant': 14}
+perception                             14     14  {'sense': 14}
+reasoning                             104    247  {'attention_focus': 28, 'social_read': 14, 'think': 14, 'work_out': 9, 'review_reply': 22, 'remembered': 12, 'get_understanding': 5}
+sensory_integration                    28     14  {'heard_words': 14, 'get_moment': 14}
+shared_representation                 172      0  {'get_active': 14, 'lookup_surface': 37, 'resolve_terms': 50, 'register_instance': 24, 'activate': 31, 'register_proposition': 16}
+social_context                         35     91  {'observe_turn': 14, 'how_meant': 21}
+speech                                 14      0  {'user_spoke': 14}
+thalamus:_activate_representation_ids        0     45  {}
+thalamus:_attend_live_signals           0     28  {}
+thalamus:_executive_set_goal_from_turn        0     28  {}
+thalamus:_meta_awareness_observe_turn        0     14  {}
+thalamus:_meta_awareness_release        0     14  {}
+thalamus:_meta_cognition_watch_language        0     14  {}
+thalamus:_meta_cognition_watch_reasoning        0     14  {}
+thalamus:_moment_for                    0     14  {}
+thalamus:_motor_deliver_to_output        0     14  {}
+thalamus:_motor_plan_from_turn          0     14  {}
+thalamus:_refresh_attention_payload_post_executive        0     28  {}
+thalamus:_resolve_representation_live        0     14  {}
+thalamus:_run_pattern_live              0     28  {}
+thalamus:_social_observe_turn           0     14  {}
+thalamus:_voice_speak_for_output        0     14  {}
+thalamus:process_user_input             0    140  {}
+unknown                                 0     14  {}
+values                                 28      0  {'get_values': 28}
+voice                                  14     14  {'speak_for_output': 14}
