@@ -52,8 +52,8 @@ def test_morphology_rules():
 
 
 def test_statements(runtime):
-    assert say({"subject": N("Ariana"), "verb": "be", "complement": {"noun": "wife", "of": N("Matthew")}}) \
-        in {"Ariana is Matthew's wife.", "Ariana is the wife of Matthew."}
+    assert say({"subject": N("Sam"), "verb": "be", "complement": {"noun": "wife", "of": N("Matthew")}}) \
+        in {"Sam is Matthew's wife.", "Sam is the wife of Matthew."}
     assert say({"subject": N("Malrik"), "verb": "devour", "modal": "can",
                 "object": {"noun": "fire", "count": "mass"}}) == "Malrik can devour fire."
     assert say({"subject": N("The Black Witch"), "verb": "give", "tense": "past",
@@ -105,11 +105,11 @@ def test_record_round_trip_and_language_lobe(runtime):
 
     lang = LanguageGenerator(thalamus=Thalamus())
     out = lang.process_message({"type": "express", "content": {
-        "meaning": {"subject": N("Ariana"), "verb": "be", "complement": {"noun": "wife", "of": N("Matthew")}},
+        "meaning": {"subject": N("Sam"), "verb": "be", "complement": {"noun": "wife", "of": N("Matthew")}},
         "learner": "lobe_test"}})
     assert out["status"] == "success"
     record = out["content"]
-    assert record["sentence"].startswith("Ariana is")
+    assert record["sentence"].startswith("Sam is")
     assert Built.from_dict(record).choices
     fb = lang.process_message({"type": "express_feedback", "content": {
         "record": record, "good": True, "reason": "clear"}})

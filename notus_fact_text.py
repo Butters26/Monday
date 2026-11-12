@@ -276,7 +276,7 @@ class FactText:
                 return False
             if any(v.lower().startswith(p) for p in cls._VAGUE_VALUE_PREFIXES):
                 return False
-            # Compound-clause bleed: "Boulder and I work as…" / "Matthew and my dog…"
+            # Compound-clause bleed: "Austin and I work as…" / "Matthew and my dog…"
             if re.search(r"\b(?:and\s+(?:i|my|you|we|he|she|they)\b)", v, re.I):
                 return False
             if len(v.split()) > 6:
@@ -336,7 +336,7 @@ class FactText:
             ).strip()
             return n
 
-        # my dog's name is Pixel / my dogs name is Pixel (tight noun — no "is"/"and")
+        # my dog's name is Biscuit / my dogs name is Biscuit (tight noun — no "is"/"and")
         for m in re.finditer(
             r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
             r"([a-z]+(?:\s+[a-z]+){0,3})(?:'s|s')\s+name\s+is\s+"
@@ -346,7 +346,7 @@ class FactText:
             if _noun_ok(m.group(1), allow_fragile=True):
                 _add("user", f"{_slug(m.group(1))}_name", m.group(2).strip())
 
-        # my dog is named Pixel (tight noun — no clause bleed)
+        # my dog is named Biscuit (tight noun — no clause bleed)
         for m in re.finditer(
             r"(?i)\b(?:please\s+)?(?:remember\s+(?:that\s+)?)?my\s+"
             r"([a-z]+(?:\s+[a-z]+){0,3})\s+is\s+named\s+"
@@ -474,7 +474,7 @@ class FactText:
             t,
         ):
             place = m.group(1).strip(" .!?")
-            # Drop trailing tense/hedge so "Denver now" -> "Denver".
+            # Drop trailing tense/hedge so "Seattle now" -> "Seattle".
             place = re.sub(
                 r"(?i)\s+\b(?:now|currently|these\s+days|at\s+the\s+moment|"
                 r"these\s+days|anymore|again)\s*$",
@@ -572,10 +572,10 @@ class FactText:
             if self_sub:
                 return f"You work {prep} {obj}."
             return f"{subject} works {prep} {obj}."
-        # "Ariana / dog / Rex": a name for something of hers ("my dog is Rex" is filed
+        # "Sam / dog / Rex": a name for something of hers ("my dog is Rex" is filed
         # the same way for him), so its words include "name".
         named = obj[:1].isupper() and pred.replace("_", "").isalpha() and pred != "name"  # (not "your name's name")
-        # (Once: "Your sister is Ariana." The search also finds it by "name"; that's
+        # (Once: "Your sister is Sam." The search also finds it by "name"; that's
         # added where memory searches, not said twice.)
         if self_sub:
             return f"Your {pred.replace('_', ' ')} is {obj}."

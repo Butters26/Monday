@@ -1192,7 +1192,7 @@ class DirectNotusProcess:
                 if when_said:
                     blob += " " + when_said  # "next week": found by "what do I have next week?"
                 if obj[:1].isupper() and predicate.replace("_", "").isalpha():
-                    blob += " name"  # "my dog is Pixel": found by "what's my dog's name?"
+                    blob += " name"  # "my dog is Biscuit": found by "what's my dog's name?"
                 if predicate.startswith(("v:", "not_v:")):
                     # "visit" is a kind of "go": findable by the more general word.
                     blob += " " + " ".join(self._verb_kinds(predicate.split("v:", 1)[1].split("@", 1)[0]))
@@ -2044,7 +2044,7 @@ class DirectNotusProcess:
                 if subject[:1].isupper():
                     people.setdefault(subject, []).append(str(row["object"]))
             with self._lock:
-                # "My wife is Ariana": filed as user / wife / Ariana, so Ariana is a wife.
+                # "My wife is Sam": filed as user / wife / Sam, so Sam is a wife.
                 rows = self._require_connection().execute(
                     "SELECT predicate, object FROM brain_facts WHERE user_id = ? AND subject = 'user' "
                     "AND is_contradicted = 0 ORDER BY id DESC LIMIT 200", (user_id,)).fetchall()
@@ -2163,8 +2163,8 @@ class DirectNotusProcess:
             name = str(names_inside[-1].get("surface") or "")
             return name[:1].upper() + name[1:]
         if any(t.get("kind") == "conjunction" for t in inside_all):
-            # "Ariana and Cleo", "me and you", "my sister and I": each of them,
-            # together ("Ariana and Cleo", "user and monday", "user's sister and user").
+            # "Sam and Cleo", "me and you", "my sister and I": each of them,
+            # together ("Sam and Cleo", "user and monday", "user's sister and user").
             groups, group = [], []
             for t in inside_all:
                 if t.get("kind") == "conjunction" and str(t.get("surface") or "").casefold() == "and":
@@ -2455,7 +2455,7 @@ corrected: sorry
 """
 
     PLACEHOLDER_MEANS = """# What some things he says mean for what she knows (editable).
-# "<what he said>: <what it means>": "I moved to Boulder" means he lives in Boulder now.
+# "<what he said>: <what it means>": "I moved to Austin" means he lives in Austin now.
 move to: live in
 move into: live in
 relocate to: live in
@@ -2480,7 +2480,7 @@ relocate to: live in
         return out
 
     def _also_means(self, subject: str, predicate: str, obj: str, user_id: str) -> List[Dict[str, Any]]:
-        """"I moved to Boulder": he lives in Boulder now (from her what-it-means
+        """"I moved to Austin": he lives in Austin now (from her what-it-means
         file); filed too, as what he told her."""
         if predicate.startswith("not_") or not predicate.startswith("v:"):
             return []
@@ -2669,7 +2669,7 @@ relocate to: live in
             connection = self._require_connection()
             for fact in facts:
                 if isinstance(fact, dict) and str(fact.get("from") or "").startswith("what "):
-                    continue  # "moved to Boulder" (past) means he lives there now: no "past" on that
+                    continue  # "moved to Austin" (past) means he lives there now: no "past" on that
                 if isinstance(fact, dict) and fact.get("id"):
                     when = str(how.get("when_said") or "").strip()
                     obj = str(fact.get("object") or "")
@@ -2824,7 +2824,7 @@ relocate to: live in
             return []
         extra = self._what_a_name_is(mentions.get(subject_id), tokens, negative=False, user_id=user_id)
         predicate_lemma = str(clause.get("predicate") or clause.get("predicate_surface") or "").casefold()
-        # "I have a dog named Pixel", "Ben has a son called Tom": whose it is (who
+        # "I have a dog named Biscuit", "Ben has a son called Tom": whose it is (who
         # has it), what it is, and its name.
         if predicate_lemma == "have" and not clause.get("copular"):
             had = mentions.get(roles.get("patient") or roles.get("theme")) or {}
@@ -2899,7 +2899,7 @@ relocate to: live in
                               and t.get("index") == target.get("end", 0) - 1
                               and t.get("kind") == "proper_noun"), None) if isinstance(target, dict) else None
                 if named and "'s " in subject:
-                    # "Her dog is Rex": Ariana's dog is called Rex -> Ariana / dog / Rex,
+                    # "Her dog is Rex": Sam's dog is called Rex -> Sam / dog / Rex,
                     # filed the same way as "my dog is Rex".
                     if subject.count("'s ") >= 2 and subject.endswith("'s name"):
                         # "My cat's name is Luna": filed as his cat is Luna, the
@@ -3027,7 +3027,7 @@ relocate to: live in
                             "predicate": fact.get("predicate"), "object": fact.get("object"),
                             "value": fact.get("value"), "usage_count": fact.get("usage_count"),
                             "from": "language's reading"})
-            # "I moved to Boulder" means he lives there now; "I will move" or
+            # "I moved to Austin" means he lives there now; "I will move" or
             # "I might move" doesn't mean that yet.
             how = self._how_said(reading)
             done = how.get("tense") == "past" and not how.get("modal")

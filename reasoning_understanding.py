@@ -16,7 +16,7 @@ Each moment it puts together:
   your dog, a dog is an animal, so Rex is an animal"), each with how sure
   and why; they're handed to memory as concluded (not told);
 - explanations: why he feels what he feels ("because his dog died"), what
-  changed ("he used to live in Ohio; now Denver"), whether her feeling has a
+  changed ("he used to live in Ohio; now Seattle"), whether her feeling has a
   reason in what's happening;
 - what she isn't sure of (something new she knows nothing about).
 

@@ -477,7 +477,7 @@ class LanguageGenerator:
 
     def _resolved_text(self, text: str, user_id: str) -> str:
         """His line with he/she/it/they replaced by who they mean, where Language
-        is sure ("what is her dog's name?" -> "what is Ariana's dog's name?")."""
+        is sure ("what is her dog's name?" -> "what is Sam's dog's name?")."""
         reading = self.comprehension.analyze(text)
         if not any(str(t.get("surface") or "").casefold() in
                    {"he", "him", "his", "she", "her", "it", "its", "they", "them", "their"}
@@ -896,7 +896,7 @@ class LanguageGenerator:
             owner, thing = t.split("'s ", 1)
             return {"noun": thing.strip().casefold(), "owner": LanguageGenerator._entity_for(owner)}
         if t[:1].isupper():
-            # "Ariana and Cleo" are two: they take "are".
+            # "Sam and Cleo" are two: they take "are".
             return {"name": t, "count": "many"} if " and " in t else {"name": t}
         words = low.split()
         # As he said it: "a castle", "the sword", "rain" (no article: uncountable or many).
@@ -1134,7 +1134,7 @@ class LanguageGenerator:
                 before = next((t for t in understanding.get("tokens") or []
                                if int(t.get("index", -2)) == index - 1), {})
                 if str(before.get("kind")) == "preposition":
-                    name["_prep"] = str(before.get("surface") or "").casefold()  # "in Denver", as he said it
+                    name["_prep"] = str(before.get("surface") or "").casefold()  # "in Seattle", as he said it
                 pieces["heard_noun"].append(name)
             elif kind == "noun":
                 # Keep it the way he said it: "music" (no a/the) stays "music",
@@ -1329,7 +1329,7 @@ class LanguageGenerator:
                     thing = dict(rng.choice(pieces["heard_noun"]))
                     prep = thing.pop("_prep", None)
                     if prep:
-                        meaning["modifiers"] = [{"prep": prep, "object": thing}]  # "live in Denver"
+                        meaning["modifiers"] = [{"prep": prep, "object": thing}]  # "live in Seattle"
                     else:
                         meaning["object"] = thing
             elif kind == "heard_adjective":

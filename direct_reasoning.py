@@ -418,7 +418,7 @@ class DirectReasoningAdapter:
         fact = cls._normalise_personal_fact(user_input or "")
         if not fact:
             return None
-        # "Your dog's name is Pixel." -> "Got it — your dog's name is Pixel."
+        # "Your dog's name is Biscuit." -> "Got it — your dog's name is Biscuit."
         body = fact[0].lower() + fact[1:] if fact else fact
         return f"Got it — {body}"
 
@@ -428,7 +428,7 @@ class DirectReasoningAdapter:
         if re.match(r"^user\s+[\w]+\s+\S+$", t, re.IGNORECASE):
             return True
         if re.match(r"^[\w]+\s+[\w_]+\s+\S+$", t) and " " not in t.split()[-1]:
-            # e.g. "user dog_name Pixel" / "user favorite_color blue"
+            # e.g. "user dog_name Biscuit" / "user favorite_color blue"
             parts = t.split()
             if len(parts) == 3 and "_" in parts[1]:
                 return True
@@ -1777,7 +1777,7 @@ class DirectReasoningAdapter:
                     bool(resolved) and resolved != user_input
                     and self._says_back(reply, self._analyze(resolved)))  # "Tom loves the dog" for "he loves it"
                 if not said_back and used and self._fact_is_what_he_said(used, user_input):
-                    # "Your dog is Pixel." for "I have a dog named Pixel": his own
+                    # "Your dog is Biscuit." for "I have a dog named Biscuit": his own
                     # words, as memory filed them.
                     said_back = True
                 if not said_back and (not used or not self._fact_fits(used, user_input)):
@@ -1798,7 +1798,7 @@ class DirectReasoningAdapter:
                 return no("he just told her that; asking it back adds nothing", "restate_or_ask")
             elif act == "ask" and self._tense_of_matching_part(reply, user_input) != reply.get("tense") \
                     and self._tense_of_matching_part(reply, user_input) in ("past", "future"):
-                # "I went to Denver": asking back keeps it in the past ("Did you go...?").
+                # "I went to Seattle": asking back keeps it in the past ("Did you go...?").
                 return no("the question changes when it happened", "about_what_he_said")
             elif act == "ask":
                 # Asking back is about the one he talked about ("Is Cleo a
@@ -1839,7 +1839,7 @@ class DirectReasoningAdapter:
             if not any(sense.get("synset_id") == self._GREETING_SENSE for sense in first.get("senses") or []):
                 return no("the greeting word is used as a thing in the sentence, not to greet him", "greet_back")
         elif situation == "question":
-            # Who he/she/they mean, as Language worked it out ("her dog" -> "Ariana's dog").
+            # Who he/she/they mean, as Language worked it out ("her dog" -> "Sam's dog").
             question = str(payload.get("resolved_input") or user_input)
             if reply_is_question:
                 return no("he asked a question and the reply asks another question instead of answering", "answer_not_ask")

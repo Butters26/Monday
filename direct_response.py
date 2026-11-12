@@ -382,7 +382,7 @@ def structures_from_grounded_memories(
 
 
 def _repair_mangled_fact(content: str) -> str:
-    """Fix legacy mangled lines like 'Your lives in is Boulder.'"""
+    """Fix legacy mangled lines like 'Your lives in is Austin.'"""
     text = (content or "").strip()
     m = re.match(r"^your\s+lives\s+in\s+is\s+(.+)$", text, re.IGNORECASE)
     if m:

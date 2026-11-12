@@ -248,7 +248,7 @@ def _candidates(reading: Dict[str, Any], people: Dict[str, List[str]], beliefs: 
     found = _same_ones(reading, found)
     names_here = [c for c in found if "name" in c["entity"]]
     if len(names_here) >= 2:
-        # "Ariana and Cleo": together they are a "they".
+        # "Sam and Cleo": together they are a "they".
         found.append({"entity": {"names": [n["entity"]["name"] for n in names_here]}, "kind": "person",
                       "sex": None, "plural": True, "label": " and ".join(n["label"] for n in names_here)})
     return found

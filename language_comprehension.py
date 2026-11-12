@@ -97,7 +97,7 @@ _PREPOSITIONS = {
     "than",  # "older than me": what it's compared with
 }
 _NEGATION = {"not", "never", "no"}
-# Joining words (grammar, like the sets above): "Ariana and Cleo", "tea or coffee".
+# Joining words (grammar, like the sets above): "Sam and Cleo", "tea or coffee".
 _CONJUNCTIONS = {"and", "or", "but", "nor", "because"}
 # Words that start a statement inside another ("if it rains", "although it was cold").
 _SUBORDINATING = {"if", "although", "though", "unless", "whereas"}
@@ -826,7 +826,7 @@ class LanguageComprehensionEngine:
             and content_before
             and not low.endswith(("ed", "ing", "s", "es"))
         ):
-            # Mid-subject nouny verb reading ("Denver weather looks…"):
+            # Mid-subject nouny verb reading ("Seattle weather looks…"):
             # weather also has a verb sense — penalize uninflected nouny
             # forms only. Inflected "looks" keeps its score.
             score -= 3
@@ -888,7 +888,7 @@ class LanguageComprehensionEngine:
                 known_candidates.append((idx, "have", 8))  # "I have a dog": owning is the action
                 continue
             if idx in naming:
-                continue  # "a dog named Pixel": what it's called, not what's done
+                continue  # "a dog named Biscuit": what it's called, not what's done
             if len(lexical_now) == len(tokens) and lexical_now[idx].get("read_as") in ("used to",
                                                                                      "the kind asked about",
                                                                                      "a name before is"):
@@ -938,7 +938,7 @@ class LanguageComprehensionEngine:
         known = None
         if known_candidates:
             # Highest verb score wins (looks=4 beats weather=3 in
-            # "Denver weather looks awful"). Tie-break: later token
+            # "Seattle weather looks awful"). Tie-break: later token
             # (predicate after compound subject), then earlier.
             clear = [c for c in known_candidates if c[2] >= 5]
             pool = clear if clear else known_candidates
@@ -1255,7 +1255,7 @@ class LanguageComprehensionEngine:
             parts = [p for p in concept.lower().split() if p.isalpha()]
             parts = [p for p in parts if p not in self._times() and p not in self._DEGREE_ADVERBS]
             if parts:
-                # NP head = last content token ("denver weather" → weather;
+                # NP head = last content token ("seattle weather" → weather;
                 # "the aluminum gasket" → gasket). Never first proper alone.
                 h = parts[-1]
                 if not allow_emotion and surface_is_affective(h):
@@ -1682,7 +1682,7 @@ class LanguageComprehensionEngine:
         "have" with a thing right after it is owning, not a helper word:
         "I have a dog", "she has two cats". And a word like "named"/"called"
         between a thing and a name says what the thing is called ("a dog named
-        Pixel"); it isn't what anyone does."""
+        Biscuit"); it isn't what anyone does."""
         for idx, entry in enumerate(lexical[:-1]):
             nxt = lexical[idx + 1]
             if entry.get("kind") == "auxiliary" and str(entry.get("lemma")) == "have" \
@@ -2215,7 +2215,7 @@ class LanguageComprehensionEngine:
                 "sense_count": len(senses),
             }
             if kind == "proper_noun" and senses:
-                # "Ariana" may be a person, not the Tunisian city the dictionary lists.
+                # "Sam" may be a person, not the Tunisian city the dictionary lists.
                 entry["name_senses_uncertain"] = True
                 entry["ambiguous"] = True
             if len(senses) > 1:
