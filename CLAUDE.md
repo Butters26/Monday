@@ -12,6 +12,7 @@ This overrides everything else. It applies to every AI and every session.
 6. **Never say where a test or conversation came from unless you can show it.** Don't call something "Matthew's conversation" unless you can point to his own message.
 7. **Tests are only for small things.** A small test is allowed only to check one small piece before booting her (does this one piece run at all). Whether she works is checked by booting her up and using her, never by a test.
 8. **Every report to Matthew is the real, unedited tracer output.** Show him the raw `trace_report.py` output (as a file). No editing, trimming, picking the good parts, or rewording. Any explanation goes next to the raw report, never instead of it.
+9. **Follow Matthew's plans.** `plans/BUILD_PLAN.md` is the binding plan for every build and fix: read it before starting work, check every change against it and the lobe's contract, and keep its status current as stages finish. `plans/LEARNING_PLAN.md` waits until the build plan is finished and she has run that way for a while. Executive Control decides what she says and does; Language only understands and words it. `plans/REMINDER.md` is shown with every message (hook in `.claude/settings.json`); do not remove or weaken it.
 
 ## Matthew's rule: how to check Monday works
 
