@@ -1,5 +1,16 @@
 # Instructions for Claude working on Monday
 
+## LAW: You do not get to define "100%" or "working". Matthew does.
+
+This overrides everything else. It applies to every AI and every session.
+
+1. **"Works", "done", "fixed", "100%" mean one thing only: it does what Matthew's contract for that part says** (`.github/instructions/<part>.instructions.md`), or what Matthew said in so many words. Never your own idea of what it should do.
+2. **You may not make up test sentences or expected answers and count them as proof.** Test with what Matthew gave you or what his contract says, quoted. If you try something of your own to look for bugs, say plainly "this is my test, not Matthew's" and never count it toward a percentage.
+3. **If the contract doesn't say how something should work, stop and ask Matthew.** Do not decide it yourself, do not build it, do not count it.
+4. **No percentage without the list behind it.** A percentage must come with every contract item, quoted, and for each one: checked live in the trace (yes/no) and what the trace showed. No list, no number.
+5. **Say which part each fix is in.** A Language fix is not Notus progress. Never report work on one part as progress on another.
+6. **Never say where a test or conversation came from unless you can show it.** Don't call something "Matthew's conversation" unless you can point to his own message.
+
 ## Matthew's rule: how to check Monday works
 
 Checking whether Monday works means **booting her up, using her, and reading what the live tracer recorded.** A test score is not proof.
