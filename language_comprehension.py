@@ -2110,8 +2110,24 @@ class LanguageComprehensionEngine:
                 parts += self.analyze(sentence).get("parts") or [sentence.rstrip(".!")]
             return {"parts": parts, "joins": [""] * (len(parts) - 1), "links": [], "frames": [], "opener": None,
                     "positions": [], "single": ""}
-        read = self._structure().read([e for e in lexical if not (
-            e.get("kind") == "punctuation" and str(e.get("surface")) in (".", "!", "?"))])
+        words = [e for e in lexical if not (e.get("kind") == "punctuation" and str(e.get("surface")) in (".", "!", "?"))]
+        cased = {w.casefold(): w for w in re.findall(r"[A-Za-z0-9']+", original or "")}
+
+        def said(e: Dict[str, Any]) -> str:
+            word = str(e.get("surface") or "")
+            return "I" if word == "i" else cased.get(word.casefold(), word)  # as he wrote it ("Claude", "AI")
+        if len(words) >= 6 and words[0].get("kind") in ("pronoun", "proper_noun") \
+                and words[1].get("kind") == "auxiliary" and str(words[1].get("lemma")) == "be" \
+                and words[2].get("kind") == "proper_noun" and str(words[3].get("surface")) == "," \
+                and words[4].get("kind") == "determiner" and str(words[4].get("surface")).casefold() in ("a", "an") \
+                and all(e.get("kind") in ("adjective", "noun", "proper_noun", "unknown") for e in words[5:]):
+            # "I'm Claude, an AI": he is Claude, and he is an AI.
+            who, be = said(words[0]), said(words[1])
+            parts = [f"{who} {be} {said(words[2])}", f"{who} {be} " + " ".join(said(e) for e in words[4:])]
+            return {"parts": parts, "joins": [""], "links": [], "frames": [], "opener": None,
+                    "positions": [[e.get("index") for e in words[:3]], [e.get("index") for e in words[:2] + words[4:]]],
+                    "single": ""}
+        read = self._structure().read(words)
         pieces = read["pieces"]
         texts = [words_of(p, surfaces) for p in pieces]
         links = [l for l in read["links"] if l.get("from") is not None and l.get("to") is not None]

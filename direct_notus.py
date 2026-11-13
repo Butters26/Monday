@@ -2932,12 +2932,17 @@ relocate to: live in
                     whose, thing = subject.split("'s ", 1)
                     name = str(named.get("surface") or "")
                     return self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
-                if named and subject in ("user", "monday") and not owner:
+                with_article = named is not None and any(
+                    t.get("index") == named.get("index", 0) - 1 and t.get("kind") == "determiner" for t in tokens)
+                if named and subject in ("user", "monday") and not owner and not with_article:
                     # "I'm Claude": a person saying a name about themself is giving
                     # their name, not a kind of thing they are.
                     name = str(named.get("surface") or "")
                     return self._file(subject, "name", name[:1].upper() + name[1:], negative, user_id)
-                facts.append(("is_a", str(complement.get("lemma") or ""), owner))
+                kind = str(complement.get("lemma") or "")
+                acronym = next((w for w in re.findall(r"[A-Za-z]+", str(reading.get("raw_text") or text or ""))
+                                if w.casefold() == kind.casefold() and w.isupper() and len(w) > 1), None)
+                facts.append(("is_a", acronym or kind, owner))  # "an AI" keeps his capitals
         elif facts:
             pass  # "my test is tomorrow": when it is, filed above
         else:
