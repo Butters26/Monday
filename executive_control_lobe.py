@@ -52,17 +52,31 @@ PLACEHOLDER_PURPOSES = """# Executive Control: what she does in each situation (
 #   a mistake was found / nothing is happening
 # Steps she can give out:
 #   recall (Notus)  work out (Reasoning)  say (Language)  do (Motor Action)
-when she didn't get what he meant: find out what he means | rank 4 | steps: say
-when a mistake was found: fix the mistake | rank 4 | steps: work out, say
-when he asked something: answer him | rank 3 | steps: recall, work out, say
-when he shared a feeling: respond to how he feels | rank 3 | steps: recall, say | feeling raises it
-when he asked her to do something: do what he asked | rank 3 | steps: work out, do, say
-when his move expects one back: answer his move in kind | rank 2 | steps: say
-when he told her something: take in what he told her | rank 1 | steps: recall, work out, say
+# "say: A / B" is what she means to say; the first one she has something for is used:
+#   what she knows / how she feels / that she doesn't know / what she worked out / ask what he means /
+#   his feeling back / what he asked / what he told her / his move back
+when she didn't get what he meant: find out what he means | rank 4 | steps: say: ask what he means
+when a mistake was found: fix the mistake | rank 4 | steps: work out, say: what she worked out
+when he asked something: answer him | rank 3 | steps: recall, work out, say: what she knows / how she feels / that she doesn't know
+when he shared a feeling: respond to how he feels | rank 3 | steps: recall, say: his feeling back | feeling raises it
+when he asked her to do something: do what he asked | rank 3 | steps: work out, do, say: what he asked
+when his move expects one back: answer his move in kind | rank 2 | steps: say: his move back
+when he told her something: take in what he told her | rank 1 | steps: recall, work out, say: what he told her / what she knows
 when nothing is happening: think things through | rank 0 | steps: recall, work out
 # How strong an impulse has to be (0 to 1) to win over her current purpose:
 impulse wins at: 0.8
 """
+
+# The first placeholder (Nov 12), before "say" said what to say: a runtime file
+# that still matches it exactly was never edited by Matthew and is upgraded.
+OLD_PLACEHOLDER_PURPOSES = PLACEHOLDER_PURPOSES.replace(
+    """# "say: A / B" is what she means to say; the first one she has something for is used:
+#   what she knows / how she feels / that she doesn't know / what she worked out / ask what he means /
+#   his feeling back / what he asked / what he told her / his move back
+""", "").replace(" | steps: say: ask what he means", " | steps: say").replace(
+    "say: what she worked out", "say").replace("say: what she knows / how she feels / that she doesn't know", "say").replace(
+    "say: his feeling back", "say").replace("say: what he asked", "say").replace(
+    "steps: say: his move back", "steps: say").replace("say: what he told her / what she knows", "say")
 
 # How long something stays in the workspace without being refreshed (seconds),
 # and how long she waits with nothing happening before thinking on her own.
@@ -92,6 +106,8 @@ class ExecutiveControlLobe:
         self.set_aside: List[Dict[str, Any]] = []
         self.history: List[Dict[str, Any]] = []
         self.held_back: List[Dict[str, Any]] = []
+        self.owed: List[Dict[str, Any]] = []  # things she should have answered and didn't
+        self._directed: set = set()  # lobes doing a step she asked for right now
         self.tasks: List[Any] = []  # remediation asks (Metacognition) and legacy add_task
         self.inhibition_state = False
         self.last_turn_at = 0.0
@@ -120,7 +136,7 @@ class ExecutiveControlLobe:
         text = PLACEHOLDER_PURPOSES
         if path is not None:
             try:
-                if not path.exists():
+                if not path.exists() or path.read_text(encoding="utf-8") == OLD_PLACEHOLDER_PURPOSES:
                     path.write_text(PLACEHOLDER_PURPOSES, encoding="utf-8")
                 text = path.read_text(encoding="utf-8")
             except Exception:
@@ -189,17 +205,22 @@ class ExecutiveControlLobe:
         since = turn["at"] if turn else 0.0
         found: List[str] = []
         if turn:
-            und = turn["content"].get("understanding") or {}
-            intent = str(und.get("intent") or "").casefold()
-            move = str(und.get("ask_kind") or "").casefold()
+            reading = self._reading(turn["content"])
+            move, act = reading["move"], reading["speech_act"]
             said = str(turn["content"].get("said") or "")
-            if intent == "question" or move == "question" or said.rstrip().endswith("?"):
+            # Read from what Conversation and Language actually found (the dialogue
+            # move, the speech act, Language's feeling signal), not Conversation's
+            # thin "intent" label, which calls any sentence with "it" a request.
+            if act == "question" or move == "question" or said.rstrip().endswith("?"):
                 found.append("he asked something")
-            if intent == "request" or move == "request":
+            if act == "imperative" or move == "request":
                 found.append("he asked her to do something")
-            if intent == "emotional_share" or move == "affect_share":
+            if reading["feeling"] or move == "affect_share":
                 found.append("he shared a feeling")
-            if intent == "statement" or move in ("assertion", "answer", "correction"):
+            if move in ("social_open", "social_close", "social_fragment"):
+                found.append("his move expects one back")
+            if move in ("assertion", "answer", "correction", "topic_shift") or (
+                    act == "declarative" and move not in ("social_open", "social_close")):
                 found.append("he told her something")
         understood = self._latest("understood", user_id, since)
         if understood:
@@ -218,7 +239,25 @@ class ExecutiveControlLobe:
                     found.append("he shared a feeling")
         if self._latest("mistake", None, since):
             found.append("a mistake was found")
-        return found
+        return list(dict.fromkeys(found))
+
+    @staticmethod
+    def _reading(turn_content: Dict[str, Any]) -> Dict[str, Any]:
+        """What the other lobes made of his turn: Conversation's dialogue move,
+        Language's speech act, Language's feeling signal, and what it's about."""
+        und = turn_content.get("understanding") or {}
+        packet = und.get("language_understanding") if isinstance(und.get("language_understanding"), dict) else {}
+        affect = packet.get("affect") if isinstance(packet.get("affect"), dict) else {}
+        about = [str(e) for e in (und.get("entities") or []) if str(e).strip()]
+        topic = str(und.get("topic") or "").strip()
+        if topic and topic not in about:
+            about.insert(0, topic)
+        return {
+            "move": str(und.get("dialogue_move") or und.get("ask_kind") or "").casefold(),
+            "speech_act": str(und.get("speech_act") or packet.get("speech_act") or "").casefold(),
+            "feeling": bool(affect.get("present")),
+            "about": about,
+        }
 
     def _feeling(self) -> float:
         body = self._ask("emotion", "get_emotional_state", {})
@@ -279,13 +318,60 @@ class ExecutiveControlLobe:
             "weighed": best["weighed"],
             "for": user_id,
             "about": self._what_its_about(user_id),
-            "steps": [{"step": s, "status": "planned"} for s in best["steps"]],
+            "steps": [self._step(s) for s in best["steps"]],
             "status": "active",
             "started": time.time(),
             "why": why,
             "other_options": [{"purpose": o["purpose"], "score": o["score"]} for o in options[1:]],
         }
+        turn = self._latest("turn", user_id) or self._latest("turn")
+        if turn:
+            r = self._reading(turn["content"])
+            purpose["reading"] = {"move": r["move"], "speech_act": r["speech_act"], "feeling": r["feeling"]}
+            purpose["topic"] = r["about"]
         return purpose
+
+    @staticmethod
+    def _step(text: str) -> Dict[str, Any]:
+        """"say: what she knows / that she doesn't know" -> the say step and what to say."""
+        text = str(text).strip()
+        low = text.casefold()
+        if low.startswith("say") and (len(low) == 3 or low[3] in ": "):
+            what = [w.strip() for w in text[3:].lstrip(": ").split("/") if w.strip()]
+            return {"step": "say", "what": what, "status": "planned"}
+        return {"step": text, "status": "planned"}
+
+    def what_to_say(self, user_id: str, heard: str = "") -> Dict[str, Any]:
+        """Language asks what she means to say right now; Executive Control decides it
+        from her current purpose and what its steps found. Language only words it."""
+        with self.lock:
+            purpose = self.current
+            if not purpose or purpose.get("status") != "active":
+                answer = {"say": None, "reason": "she has no purpose right now"}
+            elif heard and purpose.get("about") and purpose["about"].strip() != heard.strip():
+                answer = {"say": None, "purpose": purpose["purpose"],
+                          "reason": f"her purpose is about something else ({purpose.get('about')!r})"}
+            else:
+                step = next((s for s in purpose["steps"] if s["step"].casefold() == "say"), None)
+                if step is None:
+                    answer = {"say": None, "purpose": purpose["purpose"], "reason": "her purpose has nothing to say"}
+                else:
+                    found = {s["step"].casefold(): s for s in purpose["steps"]}
+                    has = {
+                        "what she knows": any(found.get(k, {}).get("status") == "done" for k in ("recall", "work out")),
+                        "what she worked out": found.get("work out", {}).get("status") == "done",
+                    }
+                    options = step.get("what") or []
+                    tried = set(step.get("tried") or [])
+                    chosen = next((w for w in options if has.get(w.casefold(), True) and w not in tried), None)
+                    answer = {"say": chosen, "purpose": purpose["purpose"], "options": options,
+                              "move": (purpose.get("reading") or {}).get("move"),
+                              "reason": (f"for '{purpose['purpose']}'" if chosen
+                                         else "nothing she could say worked" if tried
+                                         else "none of what she could say has anything behind it")}
+        _trace("executive_say", purpose=answer.get("purpose"), say=answer.get("say"),
+               options=answer.get("options"), reason=answer.get("reason"))
+        return answer
 
     def _what_its_about(self, user_id: str) -> str:
         turn = self._latest("turn", user_id)
@@ -308,21 +394,39 @@ class ExecutiveControlLobe:
                         and float(h.get("finished") or 0) >= since:
                     return  # already did this for what's happening now
             if now and now.get("status") == "active":
-                same = now["purpose"] == purpose["purpose"] and now.get("about") == purpose.get("about")
-                if same:
+                same_turn = now.get("about") == purpose.get("about")
+                if same_turn and now["purpose"] == purpose["purpose"]:
                     return  # already doing exactly this
-                if purpose["score"] < now["score"] and now.get("about") == purpose.get("about"):
+                if same_turn and purpose["score"] <= now["score"]:
                     _trace("executive_kept", purpose=now["purpose"], over=purpose["purpose"],
-                           reason="the current purpose ranks higher")
+                           reason="the current purpose ranks as high or higher")
                     return
-                now["status"] = "set aside"
-                self.set_aside.append(now)
-                self.set_aside = self.set_aside[-10:]
-                _trace("executive_switched", from_purpose=now["purpose"], to_purpose=purpose["purpose"],
-                       reason=purpose["why"])
+                if same_turn:
+                    # Something bigger about the same thing: it takes over.
+                    now["status"] = "replaced"
+                    self.history.append({**{k: now.get(k) for k in ("purpose", "situation", "about", "status", "steps")},
+                                         "finished": time.time()})
+                    _trace("executive_switched", from_purpose=now["purpose"], to_purpose=purpose["purpose"],
+                           reason=f"{purpose['situation']} ranks higher ({purpose['score']} > {now['score']})")
+                else:
+                    unsaid = any(s["step"].casefold() == "say" and s["status"] == "waiting" for s in now["steps"])
+                    now["status"] = "set aside"
+                    if unsaid:
+                        # She never answered it: kept as something she still owes, not dropped.
+                        self.owed.append({**{k: now.get(k) for k in ("purpose", "situation", "about", "for")},
+                                          "since": time.time()})
+                        self.owed = self.owed[-10:]
+                        _trace("executive_owed", purpose=now["purpose"], about=now.get("about"),
+                               reason="something new came before she answered")
+                    else:
+                        self.set_aside.append(now)
+                        self.set_aside = self.set_aside[-10:]
+                    _trace("executive_switched", from_purpose=now["purpose"], to_purpose=purpose["purpose"],
+                           reason=purpose["why"])
             self.current = purpose
         _trace("executive_decided", purpose=purpose["purpose"], situation=purpose["situation"],
                score=purpose["score"], weighed=purpose["weighed"], about=purpose["about"],
+               reading=purpose.get("reading"),
                steps=[s["step"] for s in purpose["steps"]], others=purpose["other_options"])
         self._steer_attention(purpose)
         self._direct(purpose)
@@ -337,11 +441,19 @@ class ExecutiveControlLobe:
                 break
             kind = step["step"].casefold()
             if kind == "recall":
-                body = self._ask("notus", "query_facts", {"query": about, "user_id": user_id, "limit": 10})
-                facts = body.get("facts") or []
-                self._add("recalled", "notus", {"about": about, "facts": facts}, user_id)
-                step.update(status="done" if facts else "failed",
-                            result=f"{len(facts)} memories" if facts else "nothing remembered about it")
+                topic = " ".join(purpose.get("topic") or [])
+                if topic:
+                    body = self._ask("notus", "query_facts", {"query": topic, "user_id": user_id, "limit": 10})
+                    found = list(body.get("facts") or []) + list(body.get("beliefs") or [])
+                    asked = f"what she knows about '{topic}'"
+                else:
+                    # Nothing specific to look up: what has happened lately.
+                    body = self._ask("notus", "get_recent", {"user_id": user_id, "limit": 10})
+                    found = list(body.get("memories") or body.get("results") or [])
+                    asked = "what happened lately"
+                self._add("recalled", "notus", {"about": topic or about, "found": found}, user_id)
+                step.update(status="done" if found else "failed",
+                            result=f"{len(found)} memories ({asked})" if found else f"nothing remembered ({asked})")
             elif kind == "work out":
                 if not about:
                     step.update(status="failed", result="nothing to work out")
@@ -353,11 +465,18 @@ class ExecutiveControlLobe:
                             result="worked out" if answers else str(body.get("unsure") or "Reasoning couldn't work it out"))
             elif kind == "say":
                 # Language does not yet take a purpose to word (on Language's list); the
-                # turn script still has Language pick the reply until that's built.
-                step.update(status="waiting", result="Language can't take a purpose to word yet (on Language's list)")
+                # turn script still has Language pick the reply. The step stays open until
+                # Output reports what she actually said (see "delivered").
+                step.update(status="waiting", result="waiting to hear what she says")
             elif kind == "do":
-                body = self._ask("motor_action", "plan_from_turn",
-                                 {"user_input": about, "user_id": user_id, "goal": purpose["purpose"]})
+                with self.lock:
+                    self._directed.add("motor_action")
+                try:
+                    body = self._ask("motor_action", "plan_from_turn",
+                                     {"user_input": about, "user_id": user_id, "goal": purpose["purpose"]})
+                finally:
+                    with self.lock:
+                        self._directed.discard("motor_action")
                 step.update(status="done" if body else "failed",
                             result="given to Motor Action" if body else "Motor Action didn't take it")
             else:
@@ -374,13 +493,18 @@ class ExecutiveControlLobe:
         steps = purpose["steps"]
         failed = [s for s in steps if s["status"] == "failed"]
         waiting = [s for s in steps if s["status"] == "waiting"]
+        if waiting and purpose.get("status") == "active":
+            # Not finished until she has actually said it: the purpose stays hers.
+            _trace("executive_monitored", purpose=purpose["purpose"], status="active",
+                   failed=[f"{s['step']}: {s.get('result')}" for s in failed],
+                   waiting=[f"{s['step']}: {s.get('result')}" for s in waiting])
+            return
         if steps and len(failed) == len(steps):
             purpose["status"] = "stuck"
         elif not failed and not waiting:
             purpose["status"] = "done"
         else:
-            # A step that failed, or one waiting on a lobe that can't take it yet,
-            # is a gap: recorded, not hidden, and she moves on.
+            # A step that failed is a gap: recorded, not hidden.
             purpose["status"] = "done with gaps"
         _trace("executive_monitored", purpose=purpose["purpose"], status=purpose["status"],
                failed=[f"{s['step']}: {s.get('result')}" for s in failed],
@@ -405,6 +529,33 @@ class ExecutiveControlLobe:
                         break
         self._save_state()
 
+    def _heard_delivery(self, content: Dict[str, Any]) -> None:
+        """Output reports what she actually said: the open "say" step is done, or,
+        if she said nothing when a reply was owed, it failed and stays owed."""
+        text = str(content.get("text") or "").strip()
+        self._add("said", "output", {"text": text}, str(content.get("user_id") or "default"))
+        with self.lock:
+            purpose = self.current
+            if not purpose or purpose.get("status") != "active":
+                return
+            step = next((s for s in purpose["steps"]
+                         if s["step"].casefold() == "say" and s["status"] == "waiting"), None)
+            if step is None:
+                return
+            if text:
+                step.update(status="done", result=f"she said: {text}")
+            else:
+                step.update(status="failed", result="she owed a reply and said nothing")
+                self.owed.append({**{k: purpose.get(k) for k in ("purpose", "situation", "about", "for")},
+                                  "since": time.time()})
+                self.owed = self.owed[-10:]
+                _trace("executive_owed", purpose=purpose["purpose"], about=purpose.get("about"),
+                       reason="she said nothing")
+            purpose["status"] = "checking"
+        _trace("executive_step", purpose=purpose["purpose"], step="say",
+               status=step["status"], result=step.get("result"))
+        self._monitor(purpose)
+
     # ------------------------------------------------------------------
     # 5. Hold back
     # ------------------------------------------------------------------
@@ -423,6 +574,8 @@ class ExecutiveControlLobe:
             held, reason = True, "everything is on hold"
         elif purpose is None:
             held, reason = False, "no current purpose to protect"
+        elif source in self._directed:
+            held, reason = False, f"Executive Control asked for it, for the current purpose ({purpose})"
         elif serves and serves.casefold() == purpose.casefold():
             held, reason = False, f"it serves the current purpose ({purpose})"
         elif power >= wins_at:
@@ -529,7 +682,7 @@ class ExecutiveControlLobe:
         self.name = name
         listen = getattr(self.thalamus, "listen", None)
         if callable(listen):
-            for topic in ("understood", "social_read", "remembered"):
+            for topic in ("understood", "social_read", "remembered", "delivered"):
                 listen(name, topic)
         self.start()
 
@@ -590,6 +743,7 @@ class ExecutiveControlLobe:
                 "status": now.get("status") if now else None,
                 "steps": [dict(s) for s in now.get("steps") or []] if now else [],
                 "set_aside": [p.get("purpose") for p in self.set_aside],
+                "owed": [{"purpose": o.get("purpose"), "about": o.get("about")} for o in self.owed],
                 "inhibited_actions": [],
             }
 
@@ -619,6 +773,7 @@ class ExecutiveControlLobe:
             self.set_aside.clear()
             self.history.clear()
             self.held_back.clear()
+            self.owed.clear()
             self.tasks.clear()
             self.inhibition_state = False
         self._save_state()
@@ -642,24 +797,42 @@ class ExecutiveControlLobe:
         if msg_type == "remembered":
             self._add("remembered", "notus", content, user_id)
             return {"status": "success", "content": {"heard": True}}
+        if msg_type == "delivered":
+            self._heard_delivery(content)
+            return {"status": "success", "content": {"heard": True}}
 
         if msg_type in ("set_goal_from_turn", "derive_goal", "update_from_turn"):
             und = content.get("understanding") if isinstance(content.get("understanding"), dict) else {}
             body = self.hear_turn(str(content.get("user_input") or content.get("text") or ""), und, user_id)
-            return {"status": "success", "content": body, **body}
+            return {**body, "status": "success", "content": body}
         if msg_type in ("get_goal", "current_goal"):
             body = self.get_goal()
-            return {"status": "success", "content": body, **body}
+            return {**body, "status": "success", "content": body}
+        if msg_type == "say_failed":
+            # Language couldn't get it said (Reasoning sent it back every time): the
+            # plan changes to the next thing she could say, if there is one.
+            with self.lock:
+                purpose = self.current
+                step = next((st for st in (purpose or {}).get("steps") or [] if st["step"].casefold() == "say"), None)
+                if step is not None:
+                    step.setdefault("tried", []).append(str(content.get("say") or ""))
+            _trace("executive_step", purpose=(purpose or {}).get("purpose"), step="say",
+                   status="changed", result=f"couldn't say '{content.get('say')}': {content.get('reason')}")
+            body = self.what_to_say(user_id, str(content.get("heard") or ""))
+            return {"status": "success", "content": body}
+        if msg_type == "what_to_say":
+            body = self.what_to_say(user_id, str(content.get("heard") or ""))
+            return {"status": "success", "content": body}
         if msg_type in ("get_status", "status"):
             body = self.get_status()
-            return {"status": "success", "content": body, **body}
+            return {**body, "status": "success", "content": body}
         if msg_type in ("should_inhibit", "inhibit_check", "check_inhibition"):
             body = self.should_inhibit(str(content.get("action") or ""), content.get("strength"),
                                        str(content.get("serves") or ""), source)
-            return {"status": "success", "content": body, **body}
+            return {**body, "status": "success", "content": body}
         if msg_type in ("steer_attention", "steer"):
             body = self._steer_attention(self.current)
-            return {"status": "success", "content": body, **body}
+            return {**body, "status": "success", "content": body}
         if msg_type == "select_action":
             return self.select_action(content.get("candidates") or [])
         if msg_type in ("add_task", "report_mistake"):
@@ -693,7 +866,7 @@ class ExecutiveControlLobe:
                         "other_options": []}
             self._take_up(proposed)
             body = self.get_goal()
-            return {"status": "success", "content": body, **body}
+            return {**body, "status": "success", "content": body}
         if msg_type == "clear_goal":
             with self.lock:
                 if self.current:
@@ -701,7 +874,7 @@ class ExecutiveControlLobe:
                     self.history.append({"purpose": self.current.get("purpose"), "status": "dropped"})
                 self.current = None
             body = self.get_goal()
-            return {"status": "success", "content": body, **body}
+            return {**body, "status": "success", "content": body}
         if msg_type == "reset":
             self.reset()
             return {"status": "success", "content": {"message": "ExecutiveControlLobe reset"}}

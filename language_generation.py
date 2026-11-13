@@ -430,7 +430,7 @@ class LanguageGenerator:
     # redoes it. Silence is only ever her choice, and is reported as such.
     # ------------------------------------------------------------------
 
-    MAX_REPLY_ATTEMPTS = 10
+    MAX_REPLY_ATTEMPTS = 15  # 5 tries for each thing Executive Control chooses, up to 3
     GREETING_SENSE = "oewn-06645018-n"  # dictionary sense: "an expression of greeting"
 
     def generate(self, semantic_input: Dict[str, Any]) -> str:
@@ -1100,6 +1100,21 @@ class LanguageGenerator:
     # farewells ("goodbye", "good night") are filed under these two.
     _GREETING_FAMILY = {"oewn-06642524-n", "oewn-06645018-n"}
     _FAREWELL_FAMILY = {"oewn-06641899-n", "oewn-06642117-n"}
+    # How each thing Executive Control can mean to say is put into words: which
+    # pieces may carry it and in which forms. Executive Control decides WHAT she
+    # says; this is only how Language words it.
+    _WORDING = {
+        "what she knows": ({"memory", "understood"}, {"state"}),
+        "how she feels": ({"feeling"}, {"state"}),
+        "that she doesn't know": ({"not_knowing"}, {"state"}),
+        "what she worked out": ({"understood"}, {"state"}),
+        "ask what he means": ({"what_he_means"}, {"ask"}),
+        "his feeling back": ({"heard_adjective", "what_he_said"}, {"state", "ask"}),
+        "what he asked": ({"what_he_said"}, {"state"}),
+        "what he told her": ({"what_he_said"}, {"state", "ask"}),
+        "his move back": ({"expected_reply", "what_he_said"}, {"state"}),
+    }
+
     _PIECE_KINDS = ("heard_noun", "heard_verb", "heard_adjective", "memory", "feeling", "not_knowing",
                     "expected_reply", "what_he_said", "understood", "what_he_means")
 
@@ -1257,6 +1272,10 @@ class LanguageGenerator:
         forms = [f for f in self._FORMS if f not in ("greet", "farewell")
                  or (f == "greet" and self.__dict__.get("_situation_now") == "greeting")
                  or (f == "farewell" and self.__dict__.get("_situation_now") == "farewell")]
+        if self.__dict__.get("_ec_forms"):
+            forms = [f for f in forms if f in self._ec_forms]
+            if not forms:
+                return None
         form = builder._choose(plan, f"plan_form@{ctx}", forms)
         if form in ("greet", "farewell"):
             options = [you] + [p for p in pieces["heard_noun"] if p.get("name")]
@@ -1270,6 +1289,8 @@ class LanguageGenerator:
             return {"act": form, "addressee": rng.choice(named) if target == "a_name" and named else you,
                     "his_words": [his] if his and len(his.split()) <= 3 else []}
         available = [k for k in self._PIECE_KINDS if pieces[k]]
+        if self.__dict__.get("_ec_pieces"):
+            available = [k for k in available if k in self._ec_pieces]
         if not available:
             return None
         kind = builder._choose(plan, f"plan_piece@{ctx}", available)
@@ -1515,6 +1536,29 @@ class LanguageGenerator:
             said = self._meaning_from_words(expected_reply)
             if said:
                 pieces["expected_reply"].append(said)
+        # Executive Control decides what she means to say; Language only words it.
+        self._ec_pieces = self._ec_forms = None
+        told = self._ask("executive_control", "what_to_say", {"user_id": user_id, "heard": user_input})
+        say = str(told.get("say") or "").strip()
+        self._trace("wording_for_executive", say=say or None, purpose=told.get("purpose"), reason=told.get("reason"))
+        if not say:
+            reason = f"Executive Control gave her nothing to say ({told.get('reason') or 'no answer'})"
+            self._trace("reply_done", silence="failed", situation=situation, reason=reason)
+            return {"sentence": "", "silence": "failed", "reason": reason, "situation": situation}
+        wording = self._WORDING.get(say.casefold())
+        if wording is None:
+            reason = f"Language doesn't know how to word '{say}'"
+            self._trace("reply_done", silence="failed", situation=situation, reason=reason)
+            return {"sentence": "", "silence": "failed", "reason": reason, "situation": situation}
+        self._ec_pieces, self._ec_forms = set(wording[0]), set(wording[1])
+        if say.casefold() == "his move back":
+            move = str(told.get("move") or "")
+            if move == "social_open" or situation == "greeting":
+                self._situation_now = situation = "greeting"
+                self._ec_forms = {"greet"}
+            elif move == "social_close" or situation == "farewell":
+                self._situation_now = situation = "farewell"
+                self._ec_forms = {"farewell"}
         ctx = self._context_key(semantic_input, pieces)
         feeling_words = [e.get("surface") for e in (understanding.get("affect") or {}).get("evidence") or []
                          if e.get("surface")]
@@ -1572,7 +1616,7 @@ class LanguageGenerator:
                     if built.sentence not in sent_back:
                         break
                 if meaning is None:
-                    last_reason = "she had nothing to put together"
+                    last_reason = f"she had nothing to word '{say}' with"
                     continue
                 built.choices = plan.choices + built.choices
                 review = self._ask("reasoning", "review_reply", {
@@ -1603,6 +1647,19 @@ class LanguageGenerator:
                 self._trace("reply_attempt", ok=ok, sentence=built.sentence,
                             reason=last_reason, context=ctx, attempt=attempt,
                             plan=[f"{p}={o}" for p, o, _ in plan.choices])
+                if not ok and attempt % 5 == 0 and attempt < self.MAX_REPLY_ATTEMPTS:
+                    # What Executive Control chose keeps getting sent back: it decides again.
+                    told = self._ask("executive_control", "say_failed",
+                                     {"user_id": user_id, "heard": user_input, "say": say, "reason": last_reason})
+                    new_say = str(told.get("say") or "").strip()
+                    self._trace("wording_for_executive", say=new_say or None, purpose=told.get("purpose"),
+                                reason=told.get("reason"))
+                    wording = self._WORDING.get(new_say.casefold()) if new_say else None
+                    if wording is None:
+                        last_reason = f"{last_reason} (and Executive Control had nothing else to say: {told.get('reason')})"
+                        break
+                    say = new_say
+                    self._ec_pieces, self._ec_forms = set(wording[0]), set(wording[1])
                 if ok:
                     silence = None
                     self._tell_emotion(failed=False, used_memory=bool(meaning.get("_fact")) and situation == "question")

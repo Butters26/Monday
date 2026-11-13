@@ -104,8 +104,9 @@ It never does another lobe's specialist work itself: it asks the lobe whose job 
 **Built Nov 12** (`executive_control_lobe.py`; old version in `legacy/`). Its situation-to-purpose rules, ranks, steps and impulse threshold are in `executive_purposes.txt` in her runtime folder, placeholder lines for Matthew to change. It listens to Reasoning (`understood`), Social Context (`social_read`) and Notus (`remembered`); its decisions show in the trace report's EXECUTIVE CONTROL section.
 
 **Still needed from other lobes:**
-- Language: take a purpose from Executive Control and word it (until then every "say" step is recorded as waiting).
-- Output and Motor Action: report when something was actually done, so Executive Control can see a step really happened.
+- Language: take a purpose from Executive Control and word it. **Wired Nov 12 (evening):** Language asks Executive Control `what_to_say` and only words that (the "say:" part of each line in `executive_purposes.txt`); when Reasoning sends it back 5 times, Language tells Executive Control `say_failed` and it picks the next thing. Seen live; not yet judged against the contract by Matthew.
+- Output: **announces `delivered` (Nov 12 evening)**, so Executive Control sees what she really said; a blank when she owed a reply is recorded as owed. Motor Action still doesn't report when it actually did something.
+- Upstream misreads Executive Control can't fix: Conversation/Language read "Okay. I have to go now. Bye, Monday." as a request, not a goodbye; Language's feeling signal missed "I'm a little tired"; Conversation's topic carries over junk ("monday me to talk with you for a bit"), so recall searches the wrong thing; Reasoning lets "I am curious." through as the answer to "Can you tell me something you remember?".
 - Conversation: announce the turn itself instead of the turn script handing it over.
 - Autonomous Thinking: announce its thoughts so they reach the workspace.
 - Live check with conversation: waiting on Matthew saying how to talk to her (law 10).

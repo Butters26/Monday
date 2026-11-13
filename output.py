@@ -674,6 +674,17 @@ class OutputLobe:
             self._speech_buffer = self._speech_buffer[-50:]
         return True, str(path)
 
+    def _announce_delivered(self, text: Any, user_id: Any = None) -> None:
+        """Tell any lobe that wants to know what was actually delivered (empty if nothing was)."""
+        announce = getattr(self.thalamus, "announce", None)
+        if not callable(announce):
+            return
+        try:
+            announce("delivered", {"text": str(text or "").strip(), "user_id": user_id or "default"},
+                     source="output")
+        except Exception:
+            pass
+
     def get_last_envelope(self) -> Optional[Dict[str, Any]]:
         return dict(self.last_envelope) if isinstance(self.last_envelope, dict) else None
 
@@ -799,6 +810,7 @@ class OutputLobe:
             envelope = envelope_obj.to_dict()
             self.last_envelope = envelope
             self.last_output = text_output
+            self._announce_delivered(text_output, content.get('user_id') or message.get('user_id'))
 
             self._send_to_gui({
                 'status': 'success',
@@ -906,6 +918,7 @@ class OutputLobe:
                 spoke=spoke,
             )
             self.last_envelope = mini.to_dict()
+            self._announce_delivered(text, payload.get('user_id'))
             return {
                 'status': 'success',
                 'content': {
