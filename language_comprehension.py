@@ -2251,6 +2251,13 @@ class LanguageComprehensionEngine:
             # action ("rose" as in rising can't be followed by "is").
             lexical[0].update({"kind": "proper_noun", "lemma": str(lexical[0]["surface"]), "senses": [],
                                "sense_count": 0, "read_as": "a name before is"})
+        if len(lexical) > 2 and lexical[0].get("kind") == "adjective" and lexical[1].get("kind") == "verb" \
+                and original_tokens[:1] and original_tokens[0][:1].isupper() and original_tokens[0].isalpha() \
+                and str(lexical[1].get("surface") or "").casefold() not in ("please",):
+            # "Anthropic made you": a word describing nothing, right before what was
+            # done, is who did it; capitalized, it's a name.
+            lexical[0].update({"kind": "proper_noun", "lemma": str(lexical[0]["surface"]), "senses": [],
+                               "sense_count": 0, "read_as": "a name before what was done"})
         if len(lexical) > 2 and lexical[0].get("kind") == "adverb" \
                 and lexical[1].get("kind") in ("pronoun", "proper_noun", "determiner", "possessive") \
                 and str(lexical[1].get("surface") or "").casefold() not in ("you",) or (

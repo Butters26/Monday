@@ -442,14 +442,35 @@ class SentenceBuilder:
             return helper["past"], helper["participle"]
         forms = [f for f in self.lexicon.irregular_forms(verb, "v") if not f.endswith("ing")
                  and f not in (third_person_s(verb),)]
+        regular = regular_past(verb)
+        if forms and self._used_more(verb, regular, forms):
+            return regular, regular  # "worked", not the old "wrought"
         if not forms:
-            regular = regular_past(verb)
             return regular, regular
         if len(forms) == 1:
             return forms[0], forms[0]
         participle = next((f for f in forms if f.endswith(("en", "ne", "wn"))), forms[-1])
         past = next((f for f in forms if f != participle), participle)
         return past, participle
+
+    _USAGE: Dict[Tuple[str, str], bool] = {}
+
+    def _used_more(self, verb: str, regular: str, forms: List[str]) -> bool:
+        """Does the dictionary's own writing (its definitions and examples for
+        the verb) use the regular past more than every listed irregular one?"""
+        key = (verb, regular)
+        if key not in self._USAGE:
+            text = ""
+            wn = getattr(self.lexicon, "_wn", None)
+            try:
+                text = " ".join((s.definition() or "") + " " + " ".join(s.examples())
+                                for s in wn.synsets(verb, pos="v")).casefold() if wn else ""
+            except Exception:
+                text = ""
+            count = lambda w: len(re.findall(r"\b" + re.escape(w) + r"\b", text))
+            regular_count = count(regular)
+            self._USAGE[key] = regular_count > 0 and all(regular_count > count(f) for f in forms)
+        return self._USAGE[key]
 
     def _negate(self, built: Built, aux: str) -> str:
         style = self._choose(built, "negation_style", ["full", "contracted"])

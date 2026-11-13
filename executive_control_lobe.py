@@ -61,15 +61,20 @@ when he asked something: answer him | rank 3 | steps: recall, work out, say: wha
 when he shared a feeling: respond to how he feels | rank 3 | steps: recall, say: his feeling back | feeling raises it
 when he asked her to do something: do what he asked | rank 3 | steps: work out, do, say: what he asked
 when his move expects one back: answer his move in kind | rank 2 | steps: say: his move back
-when he told her something: take in what he told her | rank 1 | steps: recall, work out, say: what he told her / what she knows
+when he told her something: take in what he told her | rank 1 | steps: recall, work out, say: what he told her / what she knows / his move back
 when nothing is happening: think things through | rank 0 | steps: recall, work out
 # How strong an impulse has to be (0 to 1) to win over her current purpose:
 impulse wins at: 0.8
 """
 
+# The Nov 13 placeholder, before "his move back" was the last thing to say
+# when he told her something: unedited, it's upgraded too.
+NOV13_PLACEHOLDER_PURPOSES = PLACEHOLDER_PURPOSES.replace(
+    "say: what he told her / what she knows / his move back", "say: what he told her / what she knows")
+
 # The first placeholder (Nov 12), before "say" said what to say: a runtime file
 # that still matches it exactly was never edited by Matthew and is upgraded.
-OLD_PLACEHOLDER_PURPOSES = PLACEHOLDER_PURPOSES.replace(
+OLD_PLACEHOLDER_PURPOSES = PLACEHOLDER_PURPOSES.replace(" / his move back\n", "\n").replace(
     """# "say: A / B" is what she means to say; the first one she has something for is used:
 #   what she knows / how she feels / that she doesn't know / what she worked out / ask what he means /
 #   his feeling back / what he asked / what he told her / his move back
@@ -136,7 +141,8 @@ class ExecutiveControlLobe:
         text = PLACEHOLDER_PURPOSES
         if path is not None:
             try:
-                if not path.exists() or path.read_text(encoding="utf-8") == OLD_PLACEHOLDER_PURPOSES:
+                if not path.exists() or path.read_text(encoding="utf-8") in (
+                        OLD_PLACEHOLDER_PURPOSES, NOV13_PLACEHOLDER_PURPOSES):
                     path.write_text(PLACEHOLDER_PURPOSES, encoding="utf-8")
                 text = path.read_text(encoding="utf-8")
             except Exception:

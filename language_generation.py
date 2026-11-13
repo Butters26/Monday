@@ -722,7 +722,8 @@ class LanguageGenerator:
             meaning["tense"] = reading["tense"]
             heard_verb = next((str(t.get("surface") or "") for t in tokens if t.get("kind") == "verb"
                                and str(t.get("lemma") or "").casefold() == meaning.get("verb")), "")
-            if reading["tense"] == "past" and heard_verb and heard_verb != meaning.get("verb"):
+            if reading["tense"] == "past" and heard_verb and heard_verb != meaning.get("verb") \
+                    and not heard_verb.casefold().endswith("ing"):  # "was working": not a past form
                 meaning["past_form"] = heard_verb  # "worked", as he said it
         if reading.get("modal"):
             meaning["modal"] = reading["modal"]
@@ -988,7 +989,7 @@ class LanguageGenerator:
         if fact.get("tense") in ("past", "future"):
             meaning["tense"] = fact["tense"]
         value = str(fact.get("value") or "")
-        if value.startswith("said:") and fact.get("tense") == "past":
+        if value.startswith("said:") and fact.get("tense") == "past" and not value.casefold().endswith("ing"):
             meaning["past_form"] = value[5:]  # "worked", as he said it
         if fact.get("modal"):
             meaning["modal"] = str(fact["modal"])
@@ -1553,13 +1554,7 @@ class LanguageGenerator:
             return {"sentence": "", "silence": "failed", "reason": reason, "situation": situation}
         self._ec_pieces, self._ec_forms = set(wording[0]), set(wording[1])
         if say.casefold() == "his move back":
-            move = str(told.get("move") or "")
-            if move == "social_open" or situation == "greeting":
-                self._situation_now = situation = "greeting"
-                self._ec_forms = {"greet"}
-            elif move == "social_close" or situation == "farewell":
-                self._situation_now = situation = "farewell"
-                self._ec_forms = {"farewell"}
+            situation = self._take_his_move(told, situation, his)
         ctx = self._context_key(semantic_input, pieces)
         feeling_words = [e.get("surface") for e in (understanding.get("affect") or {}).get("evidence") or []
                          if e.get("surface")]
@@ -1618,6 +1613,22 @@ class LanguageGenerator:
                         break
                 if meaning is None:
                     last_reason = f"she had nothing to word '{say}' with"
+                    if not say:
+                        continue
+                    # Nothing to word what Executive Control chose: it decides again.
+                    told = self._ask("executive_control", "say_failed",
+                                     {"user_id": user_id, "heard": user_input, "say": say, "reason": last_reason})
+                    new_say = str(told.get("say") or "").strip()
+                    self._trace("wording_for_executive", say=new_say or None, purpose=told.get("purpose"),
+                                reason=told.get("reason"))
+                    wording = self._WORDING.get(new_say.casefold()) if new_say else None
+                    if wording is None:
+                        last_reason = f"{last_reason} (and Executive Control had nothing else to say: {told.get('reason')})"
+                        break
+                    say = new_say
+                    self._ec_pieces, self._ec_forms = set(wording[0]), set(wording[1])
+                    if say.casefold() == "his move back":
+                        situation = self._take_his_move(told, situation, his)
                     continue
                 built.choices = plan.choices + built.choices
                 review = self._ask("reasoning", "review_reply", {
@@ -1661,6 +1672,8 @@ class LanguageGenerator:
                         break
                     say = new_say
                     self._ec_pieces, self._ec_forms = set(wording[0]), set(wording[1])
+                    if say.casefold() == "his move back":
+                        situation = self._take_his_move(told, situation, his)
                 if ok:
                     silence = None
                     self._tell_emotion(failed=False, used_memory=bool(meaning.get("_fact")) and situation == "question")
@@ -1680,6 +1693,29 @@ class LanguageGenerator:
 
 
     
+    _GREETING_SENSE = "oewn-06645018-n"  # dictionary sense: "an expression of greeting"
+
+    def _take_his_move(self, told: Dict[str, Any], situation: str, his: Dict[str, Any]) -> str:
+        """Answering his move in kind: his greeting gets one back ("Hi, it's
+        Claude again" opens with a greeting even when it tells her something)."""
+        move = str(told.get("move") or "")
+        heard = str(self.__dict__.get("_heard_now") or "")
+        if heard:
+            his = self.comprehension.analyze(heard)  # as he said it, opener and all
+        opener = " ".join(str(w) for w in (his.get("opener") or {}).get("words") or [])
+        first = (self.comprehension.analyze(opener).get("tokens") or [])[:1] if opener \
+            else (his.get("tokens") or [])[:1]
+        greeted = any(sense.get("synset_id") == self._GREETING_SENSE
+                      for t in first for sense in t.get("senses") or [])
+        self._trace("his_move", move=move, opener=opener, greeted=greeted, situation=situation)
+        if move == "social_open" or situation == "greeting" or greeted:
+            self._situation_now = situation = "greeting"
+            self._ec_forms = {"greet"}
+        elif move == "social_close" or situation == "farewell":
+            self._situation_now = situation = "farewell"
+            self._ec_forms = {"farewell"}
+        return situation
+
     def _register_with_thalamus(self):
         """Register with Thalamus - DIRECT FUNCTION CALL (NO SOCKETS)"""
         try:

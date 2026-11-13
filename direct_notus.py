@@ -2396,8 +2396,9 @@ class DirectNotusProcess:
         with self._lock:
             rows = self._require_connection().execute(
                 "SELECT * FROM brain_facts WHERE user_id = ? AND is_contradicted = 0 "
-                "AND (subject = ? OR subject LIKE ?) AND (held_by IS NULL OR held_by NOT LIKE 'concluded%') "
-                "ORDER BY id DESC LIMIT ?", (user_id, who, f"{who}'s %", int(limit))).fetchall()
+                "AND (subject = ? OR subject LIKE ? OR (object = ? AND predicate LIKE 'v:%')) "
+                "AND (held_by IS NULL OR held_by NOT LIKE 'concluded%') "
+                "ORDER BY id DESC LIMIT ?", (user_id, who, f"{who}'s %", who, int(limit))).fetchall()
         out = []
         for row in rows:
             out.append({"id": int(row["id"]), "user_id": row["user_id"], "subject": row["subject"],

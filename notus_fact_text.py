@@ -110,6 +110,31 @@ class FactText:
             out |= cls._alias_set(t)
         return out
 
+    _DICT_FORMS: dict = {}
+
+    @classmethod
+    def _dictionary_form(cls, w: str) -> str:
+        """The word's dictionary form when the dictionary knows it ("working" ->
+        work, "made" -> make, "dogs" -> dog); "" when it doesn't or it's unchanged."""
+        if w in cls._DICT_FORMS:
+            return cls._DICT_FORMS[w]
+        form = ""
+        try:
+            from lexicon.oewn_offline import lemma_and_pos_candidates
+            cands = lemma_and_pos_candidates(w)
+        except Exception:
+            cands = []
+        verbs = [c["lemma"] for c in cands if c.get("pos") == "v" and c["lemma"] != w]
+        nouns = [c["lemma"] for c in cands if c.get("pos") == "n" and c["lemma"] != w]
+        own = any(c["lemma"] == w for c in cands)
+        if verbs:
+            form = verbs[0]          # working -> work, made -> make, lives -> live
+        elif nouns and not own:
+            form = nouns[0]          # dogs -> dog
+        form = form.casefold() if form and " " not in form and "_" not in form else ""
+        cls._DICT_FORMS[w] = form
+        return form
+
     @classmethod
     def _stem_token(cls, w: str) -> str:
         """Light stemming for ranking (possessives, -ing/-ed, simple plurals)."""
@@ -127,6 +152,9 @@ class FactText:
         irregular = {"called": "call", "named": "name"}
         if w in irregular:
             return irregular[w]
+        known = cls._dictionary_form(w)
+        if known:
+            return known
         if w in short_ing:
             return short_ing[w]
         if len(w) > 5 and w.endswith("ing"):

@@ -931,7 +931,9 @@ class DirectReasoningAdapter:
         asked_about = str((reading.get("asks_her") or {}).get("about") or "").casefold().strip()
         if asked_about in ("me", "myself"):
             # "Do you remember anything about me?": anything about him, or his, answers it.
-            return subject.casefold() == "user" or subject.casefold().startswith("user's ")
+            return subject.casefold() == "user" or subject.casefold().startswith("user's ") or (
+                str(fact.get("object") or "").casefold() == "user"
+                and str(fact.get("predicate") or "").startswith("v:"))  # "Anthropic made you"
         if (str(clause.get("predicate_surface") or "") == "know" or asked_about) and about_at is not None:
             # "What do you know about my brother?": everything she knows about him.
             mention = next((m for m in reading.get("mentions") or []
@@ -1303,6 +1305,22 @@ class DirectReasoningAdapter:
                     break  # "Are you Cleo?": the one asked about comes first
         return self._TURNED.get(found, found) if turn else found
 
+    @staticmethod
+    def _as_she_says_it(thing: str) -> List[str]:
+        """How a filed thing sounds in her reply: "monday's language" is "my
+        language", "user" is "you", "monday" is "me"."""
+        thing = (thing or "").casefold().strip()
+        if thing == "user":
+            return [" you", " your"]
+        if thing == "monday":
+            return [" me ", " me.", " i ", " myself"]
+        forms = [thing]
+        if thing.startswith("monday's "):
+            forms.append("my " + thing[len("monday's "):])
+        if thing.startswith("user's "):
+            forms.append("your " + thing[len("user's "):])
+        return forms
+
     def _fact_is_what_he_said(self, fact: Dict[str, Any], user_input: str) -> bool:
         """Every word of the fact (its who, what and name) is in what he just said."""
         his = {str(t.get("lemma") or "").casefold() for t in self._analyze(user_input).get("tokens") or []} | {
@@ -1313,6 +1331,8 @@ class DirectReasoningAdapter:
             text = str(fact.get(key) or "").replace("(nothing)", "")
             text = text.split("v:", 1)[-1].split("@", 1)[0] if key == "predicate" else text
             words |= {w for w in re.findall(r"[a-z]+", text.casefold().replace("_", " ")) if w not in ("s", "is", "a")}
+        if str(fact.get("predicate") or "") == "name" and str(fact.get("object") or "")[:1].isupper():
+            words.discard("name")  # "I'm Claude" is his name: "name" is how memory filed it
         return bool(words) and words <= his
 
     def _tense_of_matching_part(self, reply: Dict[str, Any], user_input: str) -> Optional[str]:
@@ -1375,6 +1395,17 @@ class DirectReasoningAdapter:
                 action = word  # "do you like": the action is like
             elif who and action and not what and kind in self._NOMINAL + ("adjective", "number"):
                 what = self._base(surface)
+        clause = (reading.get("clauses") or [{}])[0]
+        if clause.get("voice") == "passive" and clause.get("predicate_surface"):
+            # "I was made by Anthropic" is Anthropic making him: who did it comes
+            # after "by", and the one it was done to is the one he started with.
+            by_at = next((n for n, t in enumerate(tokens) if str(t.get("surface") or "").casefold() == "by"), None)
+            doer = next((t for t in tokens[by_at + 1:] if t.get("kind") in self._NOMINAL), None) \
+                if by_at is not None else None
+            if doer:
+                surface = str(doer.get("surface") or "").casefold()
+                return (self._base(self._HER_SIDE.get(surface, surface) if turn else surface),
+                        str(clause["predicate_surface"]).casefold(), who)
         return who, action, what
 
     @staticmethod
@@ -1420,6 +1451,14 @@ class DirectReasoningAdapter:
             # A long sentence is several statements: saying back is saying one of them.
             return any(self._says_back(reply, self._analyze(part)) for part in his["parts"])
         said, told = self._content_lemmas(reply), self._content_lemmas(his)
+        voices = {str(((r.get("clauses") or [{}])[0]).get("voice") or "active") for r in (reply, his)}
+        if "passive" in voices:
+            # "I was made by Anthropic" said back as "Anthropic made you": the same
+            # one did the same thing to the same one, at the same time, the same yes/no.
+            negative = lambda r: any(t.get("kind") == "negation" for t in r.get("tokens") or [])
+            mine_triple, his_triple = self._who_did_what(reply), self._who_did_what(his, turn=True)
+            return all(mine_triple) and mine_triple == his_triple and negative(reply) == negative(his) \
+                and (reply.get("tense") or "now") == (his.get("tense") or "now")
         if (reply.get("tense") or "now") != (his.get("tense") or "now"):
             return False  # "it was cold" isn't said back as "it is cold"
         mine = (reply.get("clauses") or [{}])[0]
@@ -1929,7 +1968,8 @@ class DirectReasoningAdapter:
                 missing = FactText._content_tokens(thing) - FactText._content_tokens(sentence)
                 if missing:
                     return no(f"the reply leaves out part of his rule ({' '.join(sorted(missing))})")
-            elif thing != "(nothing)" and thing not in sentence.casefold():
+            elif thing != "(nothing)" and not any(
+                    form in f" {sentence.casefold()} " for form in self._as_she_says_it(thing)):
                 return no(f"the reply leaves out the fact ({fact.get('object')})")
         feeling = understood.get("her_feeling") or {}
         if feeling.get("note"):
