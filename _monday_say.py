@@ -35,7 +35,7 @@ def _request(payload: dict) -> dict:
     return data
 
 
-def say(text: str, user_id: str = "matthew") -> str:
+def say(text: str, user_id: str = "") -> str:
     data = _request({"text": text, "user_id": user_id})
     for u in data.get("unprompted") or []:
         if isinstance(u, str) and u.strip():
@@ -43,7 +43,7 @@ def say(text: str, user_id: str = "matthew") -> str:
     return data["reply"]
 
 
-def poll(user_id: str = "matthew") -> list:
+def poll(user_id: str = "") -> list:
     data = _request({"type": "poll", "user_id": user_id})
     return list(data.get("pending") or [])
 
@@ -51,7 +51,7 @@ def poll(user_id: str = "matthew") -> list:
 if __name__ == "__main__":
     args = sys.argv[1:]
     if args and args[0] in ("--poll", "-p"):
-        uid = args[1] if len(args) > 1 else "matthew"
+        uid = args[1] if len(args) > 1 else ""
         for item in poll(uid):
             print(item)
         raise SystemExit(0)

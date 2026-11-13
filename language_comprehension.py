@@ -2196,11 +2196,23 @@ class LanguageComprehensionEngine:
         unknown_words: List[str] = []
         ambiguous_words: List[Dict[str, Any]] = []
 
+        # Each word as he wrote it (capitals kept). "I'm" becomes "i am" when read,
+        # so words are matched by spelling, not by position.
+        aligned: List[str] = []
+        pointer = 0
+        for token in tokens:
+            found = token
+            for j in range(pointer, min(pointer + 3, len(original_tokens))):
+                if original_tokens[j].casefold() == token.casefold():
+                    found, pointer = original_tokens[j], j + 1
+                    break
+            aligned.append(found)
         for idx, token in enumerate(tokens):
-            original_token = original_tokens[idx] if idx < len(original_tokens) else token
+            original_token = aligned[idx] if idx < len(aligned) else token
             kind, lemma, senses, known = self._lexical_entry(token, original_token)
             before_word = original_tokens[idx - 1] if 0 < idx <= len(original_tokens) else ""
             if idx > 0 and kind != "proper_noun" and original_token[:1].isupper() and original_token.isalpha() \
+                    and original_token.casefold() == token.casefold() \
                     and original_token != "I" and not re.fullmatch(r"[.!?]", before_word):
                 # "My son is Jack": capitalized in the middle of what he wrote is a
                 # name, even when the dictionary also has the word (jack, rose, bill).
@@ -2603,7 +2615,15 @@ class LanguageComprehensionEngine:
             # "No wait, my dog is named Max" / "I think that you are getting
             # better": the statement, read on its own, with what opened it
             # ("no wait") or who holds it ("I think") kept.
-            inner = self.analyze(statements["single"] + ("?" if original.rstrip().endswith("?") else ""))
+            single = statements["single"]
+            if statements["opener"] and "," in original:
+                # The rest as he wrote it, capitals kept ("Hi, I'm Claude": Claude is a name).
+                rest = original.split(",", 1)[1].strip()
+                if rest.casefold().rstrip(".!?").replace("'", "") and \
+                        re.sub(r"[^a-z]", "", self.normalize(rest).casefold()) == \
+                        re.sub(r"[^a-z]", "", self.normalize(single).casefold()):
+                    single = rest.rstrip(".!?")
+            inner = self.analyze(single + ("?" if original.rstrip().endswith("?") else ""))
             inner["raw_text"] = original
             inner["opener"] = statements["opener"] or inner.get("opener")
             inner["frames"] = statements["frames"] + (inner.get("frames") or [])

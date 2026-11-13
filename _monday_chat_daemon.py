@@ -3,9 +3,9 @@
 
 Protocol over Unix socket ~/.local/state/monday-chat/chat.sock:
   client sends one JSON line:
-    {"text": "...", "user_id": "matthew"}                 → prompted turn
-    {"type": "poll", "user_id": "matthew"}               → drain unprompted pending
-    {"type": "deliver_unprompted", "user_id": "matthew",
+    {"text": "...", "user_id": "<who, or empty>"}                 → prompted turn
+    {"type": "poll", "user_id": "<who, or empty>"}               → drain unprompted pending
+    {"type": "deliver_unprompted", "user_id": "<who, or empty>",
      "force": {...}}                                     → operator/smoke deliver
   server replies one JSON line:
     prompted: {"ok": true, "reply": "...", "unprompted": [...]}
@@ -50,7 +50,8 @@ RUNTIME = Path(os.environ.get("MONDAY_RUNTIME_DIR", os.path.expanduser("~/.local
 SOCK_PATH = RUNTIME / "chat.sock"
 PID_PATH = RUNTIME / "chat.pid"
 
-ACTIVE_USERS = ("matthew",)
+# Nobody is assumed to be Matthew: an unintroduced speaker is "unknown person 1".
+ACTIVE_USERS = ("unknown person 1",)
 
 
 def main() -> int:
@@ -211,7 +212,9 @@ def main() -> int:
                     if line.startswith("{"):
                         req = json.loads(line)
                         req_type = str(req.get("type") or "").lower()
-                        user_id = str(req.get("user_id") or "matthew")
+                        user_id = str(req.get("user_id") or "default")
+                        if user_id == "default":
+                            user_id = "unknown person 1"  # never assumed to be Matthew
                         if req_type == "poll":
                             drained = _drain(user_id)
                             conn.sendall(
@@ -259,7 +262,7 @@ def main() -> int:
                             continue
                         text = str(req.get("text") or "")
                     else:
-                        text, user_id = line, "matthew"
+                        text, user_id = line, "unknown person 1"
                     reply = thalamus.process_user_input(text, user_id=user_id)
                     unprompted = _drain(user_id)
                     conn.sendall(

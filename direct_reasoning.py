@@ -664,7 +664,12 @@ class DirectReasoningAdapter:
             if (str(row.get("predicate")).casefold() == str(fact.get("predicate")).casefold()
                     and str(row.get("object")).casefold() == str(fact.get("object")).casefold()):
                 return True
-        return False
+        # Something that was true before ("your favorite color was green") is held as
+        # history; it counts only when the reply says it as the past.
+        held = self._response_content(self.thalamus.send_message(
+            "notus", "was_held", {"predicate": fact.get("predicate"), "object": fact.get("object"),
+                                  "user_id": user_id}, source="reasoning"))
+        return bool(held.get("held_now") or (held.get("held_before") and fact.get("tense") == "past"))
 
     # ------------------------------------------------------------------
     # On the team: reasoning signs up for what memory brings up on its own,
@@ -676,6 +681,7 @@ class DirectReasoningAdapter:
         if callable(listen):
             listen(name, "remembered")
             listen(name, "social_read")  # what social context makes of each moment
+            listen(name, "contradicts")  # memory found something new that disagrees with the old
 
     def _hear_social(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.__dict__.setdefault("_social_reads", {})[str(payload.get("user_id") or "default")] = dict(payload)
@@ -898,6 +904,9 @@ class DirectReasoningAdapter:
             asked |= FactText._alias_set("name")
         about = self._fact_words(fact)
         lows = [str(t.get("surface") or "").casefold() for t in reading.get("tokens") or []]
+        before_words = {"before", "previously", "used", "originally", "earlier", "formerly"}
+        if before_words & set(lows) and fact.get("used_to_be") and not fact.get("history"):
+            return False  # "what was it before?": what it is now doesn't answer that
         if str(fact.get("predicate") or "") == "then":
             # "What do I do when I am tired?" is answered by his rule "if I am
             # tired I go to bed early": what he asks about is its "if" part.
@@ -1941,6 +1950,12 @@ class DirectReasoningAdapter:
         if message.get("type") == "remembered":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return self._hear_remembered(payload)
+        if message.get("type") == "contradicts":
+            # Kept with what she understood, so she knows what changed and from what.
+            payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
+            user = str(payload.get("user_id") or "default")
+            self.__dict__.setdefault("_contradictions", {}).setdefault(user, []).append(payload)
+            return {"status": "success", "content": {"heard": True}}
         if message.get("type") == "social_read":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return self._hear_social(payload)

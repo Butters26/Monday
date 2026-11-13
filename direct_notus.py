@@ -1277,7 +1277,7 @@ class DirectNotusProcess:
                     )
                 connection.commit()
 
-        return [
+        facts = [
             {
                 "id": int(row["id"]),
                 "user_id": row["user_id"],
@@ -1307,6 +1307,27 @@ class DirectNotusProcess:
             }
             for score, _recency, row, readable in chosen
         ]
+        return self._history_first(query, facts)
+
+    # Words that ask how things were before (grammar, like "not").
+    _BEFORE_WORDS = {"before", "previously", "used", "originally", "earlier", "formerly"}
+
+    def _history_first(self, query: str, facts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """"What was my favorite color before?": the memory he's asking for is the
+        one that was replaced, so it comes back first, marked as how things were
+        and what replaced it. Otherwise the facts come back as they are."""
+        words = set(re.findall(r"[a-z']+", (query or "").casefold()))
+        if not (words & self._BEFORE_WORDS):
+            return facts
+        out: List[Dict[str, Any]] = []
+        for fact in facts:
+            for old in fact.get("used_to_be") or []:
+                was = dict(old)
+                was.update({"tense": "past", "is_contradicted": False, "replaced_by": fact.get("object"),
+                            "history": True, "role": "fact"})
+                out.append(was)
+            out.append(fact)
+        return out
 
     def store_episodic_event(
         self,
@@ -2127,6 +2148,8 @@ class DirectNotusProcess:
         """How memory files someone Language says a pronoun means."""
         if not isinstance(entity, dict):
             return None
+        if entity.get("ref") == "speaker":
+            return "user"  # the person talking
         if entity.get("name"):
             return str(entity["name"])
         if entity.get("names"):
@@ -2908,6 +2931,11 @@ relocate to: live in
                     whose, thing = subject.split("'s ", 1)
                     name = str(named.get("surface") or "")
                     return self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
+                if named and subject in ("user", "monday") and not owner:
+                    # "I'm Claude": a person saying a name about themself is giving
+                    # their name, not a kind of thing they are.
+                    name = str(named.get("surface") or "")
+                    return self._file(subject, "name", name[:1].upper() + name[1:], negative, user_id)
                 facts.append(("is_a", str(complement.get("lemma") or ""), owner))
         elif facts:
             pass  # "my test is tomorrow": when it is, filed above
@@ -3549,6 +3577,17 @@ relocate to: live in
                 },
             }
 
+        if msg_type == "was_held":
+            # Was this ever remembered: now, or as history (replaced, never deleted)?
+            pred = str(payload.get("predicate") or "").casefold()
+            obj = str(payload.get("object") or "").casefold()
+            with self._lock:
+                rows = self._require_connection().execute(
+                    "SELECT id, is_contradicted FROM brain_facts WHERE user_id = ? AND lower(predicate) = ? "
+                    "AND lower(object) = ?", (self._asked_about_who(payload), pred, obj)).fetchall()
+            body = {"held_now": any(not r["is_contradicted"] for r in rows),
+                    "held_before": any(r["is_contradicted"] for r in rows)}
+            return {"status": "success", "content": body, **body}
         if msg_type == "query_facts":
             query = self._clean_text(
                 payload.get("query", payload.get("text", ""))

@@ -336,6 +336,14 @@ def _fit(pronoun: str, cand: Dict[str, Any]) -> float:
     return 0.0
 
 
+def _introduces_self(tokens: List[Dict[str, Any]], token: Dict[str, Any]) -> bool:
+    """"it" + "is" + a name: "it's Claude", "it is Sam"."""
+    at = int(token.get("index", -1))
+    after = [t for t in tokens if int(t.get("index", -1)) > at and t.get("kind") != "punctuation"]
+    return len(after) >= 2 and str(after[0].get("lemma") or "").casefold() == "be" \
+        and after[1].get("kind") == "proper_noun"
+
+
 def resolve(reading: Dict[str, Any], context: List[str], people: Dict[str, List[str]],
             analyze: Callable[[str], Dict[str, Any]], beliefs: PeopleBeliefs, user_id: str) -> Dict[str, Any]:
     """Add reading["references"]: what each he/she/it/they means, or that it's uncertain."""
@@ -358,6 +366,13 @@ def resolve(reading: Dict[str, Any], context: List[str], people: Dict[str, List[
             # placeholder; it means nothing to look back for.
             references.append({"index": token.get("index"), "pronoun": word, "refers_to": None,
                                "sure": True, "placeholder": True, "candidates": []})
+            continue
+        if pronoun == "it" and reading.get("opener") and _introduces_self(tokens, token):
+            # "Hi, it's Claude": after a greeting, "it's <name>" is the person
+            # talking saying who they are, not something said before.
+            references.append({"index": token.get("index"), "pronoun": word, "refers_to": {"ref": "speaker"},
+                               "label": "the person talking", "sure": True, "presentational": True,
+                               "candidates": []})
             continue
         here = _candidates(reading, people, beliefs, user_id, stop_at=int(token.get("index", 0)))
         # What "it"/"he" does here: one he said does (or won't do) the same thing

@@ -493,8 +493,9 @@ class LanguageGenerator:
             words = list(as_written)  # keep his spelling ("Texas", not "texas")
         for ref in reading.get("references") or []:
             idx = ref.get("index")
-            if not ref.get("sure") or not ref.get("label") or not isinstance(idx, int) or idx >= len(words):
-                continue  # ("it rains": a placeholder "it" means nothing; it stays "it")
+            if not ref.get("sure") or not ref.get("label") or not isinstance(idx, int) or idx >= len(words) \
+                    or ref.get("presentational"):
+                continue  # ("it rains", "hi, it's Claude": that "it" stays "it")
             label = str(ref.get("label") or "")  # in his own words ("my brother")
             nxt = words[idx + 1].casefold() if idx + 1 < len(words) else ""
             name = str((ref.get("refers_to") or {}).get("name") or "")
