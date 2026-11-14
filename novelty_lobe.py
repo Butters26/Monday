@@ -45,7 +45,7 @@ _COMMON_FUNCTION = frozenset(
 
 @dataclass
 class NoveltyMemory:
-    """Remembers how Monday reacted to similar novel things before."""
+    """Remembers how Mercy reacted to similar novel things before."""
 
     stimulus_type: str
     stimulus: str

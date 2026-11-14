@@ -1,4 +1,4 @@
-"""AttentionLobe: selective focus for Monday's live path.
+"""AttentionLobe: selective focus for Mercy's live path.
 
 Scores salience of competing signals, decays stale scores, and returns an
 honest ranked focus for thalamus — not print theater, not hardcoded dead routes.

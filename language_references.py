@@ -189,7 +189,7 @@ def _candidates(reading: Dict[str, Any], people: Dict[str, List[str]], beliefs: 
             break
         surface = str(token.get("surface") or "")
         low = surface.casefold()
-        if low in _SPEAKERS or low in _SUBJECTS or low in ("monday", "mercy"):
+        if low in _SPEAKERS or low in _SUBJECTS or low in ("mercy", "mercy"):
             continue
         raw = words[pos] if pos < len(words) else surface
         raw = raw[:-2] if raw.endswith("'s") else raw
@@ -222,13 +222,13 @@ def _candidates(reading: Dict[str, Any], people: Dict[str, List[str]], beliefs: 
             kind, sex = noun_kind(lemma)
             before = tokens[pos - 1] if pos > 0 else {}
             owner_word = str(before.get("surface") or "").casefold()
-            owner = {"my": "user", "our": "user", "your": "monday"}.get(owner_word)
+            owner = {"my": "user", "our": "user", "your": "mercy"}.get(owner_word)
             if not owner and before.get("kind") == "possessive":
                 o = str(before.get("lemma") or "")
                 owner = o[:1].upper() + o[1:]
             plural = surface.casefold() != lemma and surface.casefold().endswith("s") and token.get("kind") == "noun"
             entity = {"noun": lemma, "owner": owner} if owner else {"noun": lemma, "definite": True}
-            label = (f"{'my' if owner == 'user' else 'your' if owner == 'monday' else (owner + chr(39) + 's') if owner else 'the'} {surface}")
+            label = (f"{'my' if owner == 'user' else 'your' if owner == 'mercy' else (owner + chr(39) + 's') if owner else 'the'} {surface}")
             found.append({"entity": entity, "kind": kind, "sex": sex, "plural": plural, "label": label,
                           "at": int(token.get("index", pos))})
     # What each one did in that sentence (the action right after it, when it

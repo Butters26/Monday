@@ -75,8 +75,8 @@ class VoiceProfile:
 
 
 VOICE_PROFILES = {
-    "monday": VoiceProfile(
-        name="Monday",
+    "mercy": VoiceProfile(
+        name="Mercy",
         pitch_base=205,
         pitch_range=80,
         formant_shift=1.02,
@@ -145,7 +145,7 @@ PHONEME_FREQUENCIES = {
 TEXT_TO_PHONEMES = {
     "hello": ["h", "eh", "l", "oh"],
     "hi": ["h", "ay"],
-    "monday": ["m", "ah", "n", "d", "ay"],
+    "mercy": ["m", "ah", "n", "d", "ay"],
     "matthew": ["m", "ae", "th", "uw"],
     "i": ["ay"],
     "am": ["ae", "m"],
@@ -174,7 +174,7 @@ class VoiceSynthesizer:
     def __init__(self, voice_profile: VoiceProfile, sample_rate: int = 22050):
         self.voice = voice_profile
         self.sample_rate = sample_rate
-        self.output_dir = "monday_audio"
+        self.output_dir = "mercy_audio"
 
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -330,7 +330,7 @@ class VoiceSynthesizer:
 
     def save_to_file(self, audio, filename: str = None) -> str:
         if filename is None:
-            filename = f"{self.output_dir}/monday_{int(random.random() * 10000)}.wav"
+            filename = f"{self.output_dir}/mercy_{int(random.random() * 10000)}.wav"
 
         if not filename.startswith(self.output_dir):
             filename = os.path.join(self.output_dir, filename)
@@ -362,7 +362,7 @@ class VoiceLobe:
     def __init__(
         self,
         thalamus: Any = None,
-        voice_name: str = "monday",
+        voice_name: str = "mercy",
         socket_path: str = "/tmp/voice.sock",
         auto_play: bool = False,
     ) -> None:
@@ -371,7 +371,7 @@ class VoiceLobe:
         self.running = True
         self.user = "Butters26"
 
-        self.voice_profile = VOICE_PROFILES.get(voice_name, VOICE_PROFILES["monday"])
+        self.voice_profile = VOICE_PROFILES.get(voice_name, VOICE_PROFILES["mercy"])
         self.synthesizer: Optional[VoiceSynthesizer] = None
         self._synth_backend = "none"
         if _NUMPY_OK:
@@ -459,7 +459,7 @@ class VoiceLobe:
             "id": str(uuid.uuid4()),
             "text": text,
             "user_id": uid,
-            "voice_profile": self.voice_config.get("voice_name", "monday"),
+            "voice_profile": self.voice_config.get("voice_name", "mercy"),
             "synth_backend": self._synth_backend,
             "status": "empty_text",
             "audio_file": None,
@@ -603,7 +603,7 @@ class VoiceLobe:
 
         if msg_type == "set_voice":
             voice_name = str(
-                content.get("voice_name") or content.get("profile") or "monday"
+                content.get("voice_name") or content.get("profile") or "mercy"
             )
             ok = self.set_voice(voice_name)
             return {

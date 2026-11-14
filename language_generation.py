@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Language Lobe - Monday's understanding and speech.
+Language Lobe - Mercy's understanding and speech.
 
 Understanding: language_comprehension.py (offline dictionary).
 Speaking: respond() composes a meaning from the pieces in front of her and
@@ -29,7 +29,7 @@ if SEED is not None:
 
 
 class LanguageGenerator:
-    """Builds sentences from meaning - Monday's voice"""
+    """Builds sentences from meaning - Mercy's voice"""
     
     def __init__(self, thalamus=None):
         self.running = True
@@ -45,15 +45,15 @@ class LanguageGenerator:
         # Sentence builder (meaning -> sentence, always learning); one per learner.
         self._builders: Dict[str, Any] = {}
 
-    def _builder(self, learner: str = "monday"):
+    def _builder(self, learner: str = "mercy"):
         from language_builder import SentenceBuilder
 
-        learner = (learner or "monday").strip() or "monday"
+        learner = (learner or "mercy").strip() or "mercy"
         if learner not in self._builders:
             self._builders[learner] = SentenceBuilder(learner=learner)
         return self._builders[learner]
 
-    def express(self, meaning: Any, learner: str = "monday") -> Dict[str, Any]:
+    def express(self, meaning: Any, learner: str = "mercy") -> Dict[str, Any]:
         """Build a sentence from a meaning (one dict, or a list of facts).
 
         Not used by the live reply path yet. Returns the sentence plus the
@@ -425,7 +425,7 @@ class LanguageGenerator:
     
     
     # ------------------------------------------------------------------
-    # Reply: Language decides what Monday means and builds the sentence;
+    # Reply: Language decides what Mercy means and builds the sentence;
     # Reasoning reviews it and says why when it doesn't make sense; Language
     # redoes it. Silence is only ever her choice, and is reported as such.
     # ------------------------------------------------------------------
@@ -434,7 +434,7 @@ class LanguageGenerator:
     GREETING_SENSE = "oewn-06645018-n"  # dictionary sense: "an expression of greeting"
 
     def generate(self, semantic_input: Dict[str, Any]) -> str:
-        """Build Monday's reply for this turn."""
+        """Build Mercy's reply for this turn."""
         result = self.respond(semantic_input if isinstance(semantic_input, dict) else {})
         return result["sentence"]
 
@@ -883,7 +883,7 @@ class LanguageGenerator:
     @staticmethod
     def _entity_for(text: str) -> Dict[str, Any]:
         """Who/what a filed fact is about, as a meaning: "user" is him,
-        "monday" is her, "user's brother" is his brother, a name is a name."""
+        "mercy" is her, "user's brother" is his brother, a name is a name."""
         t = (text or "").strip()
         low = t.casefold()
         if " and " in t and not all(m.strip()[:1].isupper() for m in t.split(" and ")):
@@ -892,7 +892,7 @@ class LanguageGenerator:
                     "count": "many"}
         if low in ("user", "i", "me", ""):
             return {"ref": "addressee"}
-        if low == "monday":
+        if low == "mercy":
             return {"ref": "speaker"}
         if "'s " in t:
             owner, thing = t.split("'s ", 1)
@@ -1559,7 +1559,7 @@ class LanguageGenerator:
         feeling_words = [e.get("surface") for e in (understanding.get("affect") or {}).get("evidence") or []
                          if e.get("surface")]
 
-        builder = self._builder("monday")
+        builder = self._builder("mercy")
         base_explore = builder.explore_rate
         last_reason = ""
         builder.steer_only, builder.steer_avoid = {}, {}
@@ -1794,7 +1794,7 @@ class LanguageGenerator:
             return {'status': 'success', 'content': result, **result}
 
         if msg_type == 'express':
-            learner = str(payload.get('learner') or 'monday')
+            learner = str(payload.get('learner') or 'mercy')
             result = self.express(payload.get('meaning'), learner=learner)
             return {'status': 'success', 'content': result}
 

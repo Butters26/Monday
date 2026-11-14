@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Persistent Monday chat daemon for live talk (direct-call core).
+"""Persistent Mercy chat daemon for live talk (direct-call core).
 
-Protocol over Unix socket ~/.local/state/monday-chat/chat.sock:
+Protocol over Unix socket ~/.local/state/mercy-chat/chat.sock:
   client sends one JSON line:
     {"text": "...", "user_id": "<who, or empty>"}                 → prompted turn
     {"type": "poll", "user_id": "<who, or empty>"}               → drain unprompted pending
@@ -16,14 +16,14 @@ Also accepts text/line mode if first char is not '{'.
 
 Background thread (~8–15s) calls Thalamus.deliver_unprompted_speech for active
 (currently not built: removed Oct 6; the thread reports that once and stops)
-users so Monday can speak without a user turn. Speech stays decision-only;
+users so Mercy can speak without a user turn. Speech stays decision-only;
 delivery is Thalamus→Output (+ this pending/poll push).
 
 Notus identity (WANT-GAP 8): same path as create_core_systems / run_abin —
 one shared DirectNotus SQLite file
-at shared_direct_notus_path() (default ~/.local/state/monday/notus_memory.sqlite3,
-override MONDAY_NOTUS_SQLITE). Sock/pid stay under MONDAY_RUNTIME_DIR
-(default ~/.local/state/monday-chat); memory is NOT a separate chat DB.
+at shared_direct_notus_path() (default ~/.local/state/mercy/notus_memory.sqlite3,
+override MERCY_NOTUS_SQLITE). Sock/pid stay under MERCY_RUNTIME_DIR
+(default ~/.local/state/mercy-chat); memory is NOT a separate chat DB.
 Issue #11 Thalamus.notus_fallback still covers mid-turn store/query outages.
 Not Learning; not cloud.
 """
@@ -46,7 +46,7 @@ from run_abin import (
     shutdown_core_systems,
 )
 
-RUNTIME = Path(os.environ.get("MONDAY_RUNTIME_DIR", os.path.expanduser("~/.local/state/monday-chat")))
+RUNTIME = Path(os.environ.get("MERCY_RUNTIME_DIR", os.path.expanduser("~/.local/state/mercy-chat")))
 SOCK_PATH = RUNTIME / "chat.sock"
 PID_PATH = RUNTIME / "chat.pid"
 
@@ -59,7 +59,7 @@ def main() -> int:
     if SOCK_PATH.exists():
         SOCK_PATH.unlink()
 
-    print(f"Booting Monday core (runtime={RUNTIME})...", flush=True)
+    print(f"Booting Mercy core (runtime={RUNTIME})...", flush=True)
     # No notus_factory: open_primary_notus — same mind as run_abin REPL.
     systems = create_core_systems(
         runtime_directory=str(RUNTIME),
@@ -131,7 +131,7 @@ def main() -> int:
         # Unprompted delivery used Thalamus.deliver_unprompted_speech, which was
         # removed when Thalamus became a plain router (Oct 6). Rebuilding it the
         # team way (Autonomous Speech decides, Language words, Output delivers)
-        # is on the Monday Work List. Until then, say so once instead of
+        # is on the Mercy Work List. Until then, say so once instead of
         # crashing every 8-15 seconds.
         if not callable(getattr(thalamus, "deliver_unprompted_speech", None)):
             print("Unprompted speech is not built in the current design; "
@@ -175,7 +175,7 @@ def main() -> int:
     server.bind(str(SOCK_PATH))
     server.listen(8)
     SOCK_PATH.chmod(0o600)
-    print(f"Monday chat ready on {SOCK_PATH}", flush=True)
+    print(f"Mercy chat ready on {SOCK_PATH}", flush=True)
 
     def _stop(*_a):
         stopping["v"] = True
@@ -285,7 +285,7 @@ def main() -> int:
                     )
     finally:
         stopping["v"] = True
-        print("Shutting down Monday...", flush=True)
+        print("Shutting down Mercy...", flush=True)
         try:
             shutdown_core_systems(systems)
         except Exception:

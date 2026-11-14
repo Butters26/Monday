@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal local web UI for Monday — talks to the chat daemon. No Steve relay."""
+"""Minimal local web UI for Mercy — talks to the chat daemon. No Steve relay."""
 from __future__ import annotations
 
 import json
@@ -9,17 +9,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-RUNTIME = Path(os.environ.get("MONDAY_RUNTIME_DIR", os.path.expanduser("~/.local/state/monday-chat")))
+RUNTIME = Path(os.environ.get("MERCY_RUNTIME_DIR", os.path.expanduser("~/.local/state/mercy-chat")))
 SOCK = RUNTIME / "chat.sock"
-HOST, PORT = os.environ.get("MONDAY_WEB_HOST", "127.0.0.1"), int(os.environ.get("MONDAY_WEB_PORT", "8765"))
-# The live tracer's file (MONDAY_TRACE), shown on the page under each reply.
-TRACE = os.environ.get("MONDAY_TRACE") or ""
+HOST, PORT = os.environ.get("MERCY_WEB_HOST", "127.0.0.1"), int(os.environ.get("MERCY_WEB_PORT", "8765"))
+# The live tracer's file (MERCY_TRACE), shown on the page under each reply.
+TRACE = os.environ.get("MERCY_TRACE") or ""
 
 HTML = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Monday</title>
+<title>Mercy</title>
 <style>
   :root { color-scheme: dark; }
   body { margin:0; font:15px/1.45 system-ui,sans-serif; background:#0f1115; color:#e8eaed; }
@@ -41,9 +41,9 @@ HTML = """<!DOCTYPE html>
   details pre { white-space:pre-wrap; margin:6px 0 0; }
   header a { margin-left:auto; color:#8ab4ff; font-size:13px; }
 </style></head><body>
-<header><span class="dot"></span><h1>Monday</h1><span style="opacity:.5;font-size:13px">live tracer on</span><a href="/trace_all" target="_blank">Full trace</a></header>
+<header><span class="dot"></span><h1>Mercy</h1><span style="opacity:.5;font-size:13px">live tracer on</span><a href="/trace_all" target="_blank">Full trace</a></header>
 <div id="log"></div>
-<form id="f"><input id="t" autocomplete="off" placeholder="Talk to Monday…" autofocus/><button id="b">Send</button></form>
+<form id="f"><input id="t" autocomplete="off" placeholder="Talk to Mercy…" autofocus/><button id="b">Send</button></form>
 <script>
 const log = document.getElementById('log');
 const f = document.getElementById('f');
@@ -52,7 +52,7 @@ const b = document.getElementById('b');
 function add(who, text, extraClass){
   const d=document.createElement('div');
   d.className='bubble '+(who==='me'?'me':'her')+(extraClass?' '+extraClass:'');
-  const label = who==='me' ? 'You' : (extraClass==='unprompted' ? 'Monday (unprompted)' : 'Monday');
+  const label = who==='me' ? 'You' : (extraClass==='unprompted' ? 'Mercy (unprompted)' : 'Mercy');
   d.innerHTML='<div class="meta">'+label+'</div>'+text.replace(/[&<>]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
   log.appendChild(d); log.scrollTop=log.scrollHeight;
 }
@@ -98,7 +98,7 @@ pollPending();
 """
 
 
-def monday_request(payload: dict) -> dict:
+def mercy_request(payload: dict) -> dict:
     if not SOCK.exists():
         raise RuntimeError(f"chat daemon not running ({SOCK})")
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -115,7 +115,7 @@ def monday_request(payload: dict) -> dict:
         s.close()
     data = json.loads(buf.decode() or "{}")
     if not data.get("ok"):
-        raise RuntimeError(data.get("error") or "Monday error")
+        raise RuntimeError(data.get("error") or "Mercy error")
     return data
 
 
@@ -131,7 +131,7 @@ def trace_report(start: int = 0) -> str:
     """What trace_report.py says about the trace from line `start` on: her
     replies, why a reply was blank, failed messages, errors, warnings."""
     if not TRACE or not os.path.exists(TRACE):
-        return "(no trace: MONDAY_TRACE is not set)"
+        return "(no trace: MERCY_TRACE is not set)"
     import subprocess
     import tempfile
     with open(TRACE, encoding="utf-8") as f:
@@ -146,12 +146,12 @@ def trace_report(start: int = 0) -> str:
         os.unlink(tmp.name)
 
 
-def monday_say(text: str, user_id: str = "matthew") -> dict:
-    return monday_request({"text": text, "user_id": user_id})
+def mercy_say(text: str, user_id: str = "matthew") -> dict:
+    return mercy_request({"text": text, "user_id": user_id})
 
 
-def monday_poll(user_id: str = "matthew") -> dict:
-    return monday_request({"type": "poll", "user_id": user_id})
+def mercy_poll(user_id: str = "matthew") -> dict:
+    return mercy_request({"type": "poll", "user_id": user_id})
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -188,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
             qs = parse_qs(parsed.query or "")
             user_id = (qs.get("user_id") or ["matthew"])[0]
             try:
-                data = monday_poll(user_id)
+                data = mercy_poll(user_id)
                 self._json(200, {"ok": True, "pending": data.get("pending") or []})
             except Exception as e:
                 self._json(500, {"ok": False, "error": str(e), "pending": []})
@@ -204,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             req = json.loads(raw.decode() or "{}")
             start = trace_lines()
-            data = monday_say(str(req.get("text") or ""), str(req.get("user_id") or "matthew"))
+            data = mercy_say(str(req.get("text") or ""), str(req.get("user_id") or "matthew"))
             self._json(
                 200,
                 {
@@ -221,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     RUNTIME.mkdir(parents=True, exist_ok=True)
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"Monday web chat http://{HOST}:{PORT}", flush=True)
+    print(f"Mercy web chat http://{HOST}:{PORT}", flush=True)
     httpd.serve_forever()
 
 

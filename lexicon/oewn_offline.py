@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline Open English WordNet (OEWN) access for Language.
 
-Download once into the Monday tree. Runtime reads only local files — never
+Download once into the Mercy tree. Runtime reads only local files — never
 reaches the network. Prefer the `wn` package against the local OEWN archive.
 """
 
@@ -71,7 +71,7 @@ def _connections_per_thread() -> None:
 
 def _configure_wn(wn_module) -> None:
     _connections_per_thread()
-    # Force every wn call onto Monday's tree — never home ~/.wn_data or network.
+    # Force every wn call onto Mercy's tree — never home ~/.wn_data or network.
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     wn_module.config.data_directory = _DATA_DIR
     # Belt-and-suspenders for child imports.

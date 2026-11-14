@@ -1,8 +1,8 @@
-"""Live tracer: watches Monday while she is actually being used.
+"""Live tracer: watches Mercy while she is actually being used.
 
-Turn on by setting MONDAY_TRACE before starting her (REPL or chat daemon):
-  MONDAY_TRACE=1                -> writes <runtime dir>/trace.jsonl
-  MONDAY_TRACE=/path/file.jsonl -> writes there
+Turn on by setting MERCY_TRACE before starting her (REPL or chat daemon):
+  MERCY_TRACE=1                -> writes <runtime dir>/trace.jsonl
+  MERCY_TRACE=/path/file.jsonl -> writes there
 
 It changes nothing about her behavior. It records, one JSON line each:
 - every message through Thalamus: who REALLY sent it (from the call stack,
@@ -135,8 +135,8 @@ class _Tee:
 
 
 def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str]:
-    """Attach the tracer to a running Monday. Returns the trace file path."""
-    setting = path or os.environ.get("MONDAY_TRACE", "")
+    """Attach the tracer to a running Mercy. Returns the trace file path."""
+    setting = path or os.environ.get("MERCY_TRACE", "")
     if not setting or _state["installed"]:
         return _state["path"]
     if setting == "1":

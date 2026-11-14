@@ -2,13 +2,13 @@
 superhuman_memory.db*
 *.sqlite
 *.sqlite3
-monday_notus_snapshot.json
-monday_emotional_state*
-monday_beliefs.json
-monday_emergent_values.json
-monday_experiences.json
-monday_values.json
-monday_behavior_weights.json
+mercy_notus_snapshot.json
+mercy_emotional_state*
+mercy_beliefs.json
+mercy_emergent_values.json
+mercy_experiences.json
+mercy_values.json
+mercy_behavior_weights.json
 
 # Logs and generated process output
 *.log
@@ -54,7 +54,7 @@ Non-Essential Files/ABIN_backups/
 Non-Essential Files/EXAMINE_THIS/
 
 # Voice synthesis output (generated WAVs)
-monday_audio/
+mercy_audio/
 
 # Generated OEWN database (bootstrap from lexicon/oewn-2024.xml.gz)
 lexicon/wn_data/wn.db

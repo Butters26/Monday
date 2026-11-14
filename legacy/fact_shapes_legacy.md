@@ -7,4 +7,4 @@ brother Tom is tall" -> `brother_tom is tall`).
 
 Facts now come only from Language's reading (`DirectNotusProcess._learn_from_reading`).
 The function is left in place, unused, so nothing is deleted. Setting
-`MONDAY_OLD_FACT_SHAPES=1` turns it back on.
+`MERCY_OLD_FACT_SHAPES=1` turns it back on.

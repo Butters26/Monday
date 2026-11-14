@@ -336,7 +336,7 @@ class Understanding:
             for f in list(gathered.values()):
                 for part in (f.get("subject"), f.get("object")):
                     w = str(part or "").replace("user's ", "").strip()
-                    if w and w.casefold() not in ("user", "monday", "(nothing)"):
+                    if w and w.casefold() not in ("user", "mercy", "(nothing)"):
                         words.add(base_noun(w) if not w[:1].isupper() else w)
             for w in words - asked:
                 asked.add(w)
@@ -769,7 +769,7 @@ class Understanding:
         """What she feels, why (as Emotion says), and whether what's happening
         right now gives a reason for it. Reasoning doesn't change the feeling;
         it says what it makes of it."""
-        name = str(emotion.get("monday_emotion") or emotion.get("emotion") or "").strip()
+        name = str(emotion.get("mercy_emotion") or emotion.get("emotion") or "").strip()
         reason = str(emotion.get("self_impact_reason") or "").strip()
         try:
             valence = float(emotion.get("valence") or 0.0)

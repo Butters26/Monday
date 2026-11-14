@@ -1,7 +1,7 @@
 """Notus outage fallback against the current direct-call envelope architecture.
 
 Does NOT target legacy retrieve_relevant_memory / sync_memory_to_notus /
-monday_memory APIs from PR #3/#4.
+mercy_memory APIs from PR #3/#4.
 """
 
 from __future__ import annotations
@@ -219,7 +219,7 @@ def test_recovery_retry_removes_only_successes_and_dedupes(tmp_path):
         fb = thalamus.notus_fallback
         r1 = fb.enqueue(user_id="erin", role="user", content="unsaved-1")
         r2 = fb.enqueue(user_id="erin", role="user", content="unsaved-2")
-        r3 = fb.enqueue(user_id="erin", role="monday", content="unsaved-reply")
+        r3 = fb.enqueue(user_id="erin", role="mercy", content="unsaved-reply")
         assert fb.pending_count("erin") == 3
         assert r1 and r2 and r3
 
@@ -275,11 +275,11 @@ def test_recovery_retry_removes_only_successes_and_dedupes(tmp_path):
         shutdown_core_systems(systems)
 
 
-def test_no_legacy_monday_memory_apis():
+def test_no_legacy_mercy_memory_apis():
     from thalamus import Thalamus
 
     t = Thalamus()
-    assert not hasattr(t, "monday_memory")
+    assert not hasattr(t, "mercy_memory")
     assert not hasattr(t, "retrieve_relevant_memory")
     assert not hasattr(t, "sync_memory_to_notus")
     assert hasattr(t, "notus_fallback")

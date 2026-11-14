@@ -25,7 +25,7 @@ class ReasoningGoal:
 
 class ControlledThinking:
     """
-    Handles Monday's deliberate, focused reasoning system.
+    Handles Mercy's deliberate, focused reasoning system.
     
     This class manages goal-directed thinking, reasoning steps,
     attention shifting, and conclusion synthesis.
@@ -337,7 +337,7 @@ class ControlledThinking:
 def test_controlled_thinking():
     """Test function demonstrating the ControlledThinking system."""
     print("=" * 60)
-    print("Testing Monday's Controlled Thinking System")
+    print("Testing Mercy's Controlled Thinking System")
     print("=" * 60)
     
     # Initialize the system

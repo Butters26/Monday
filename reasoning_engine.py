@@ -108,7 +108,7 @@ def is_kind_word(subject: str) -> bool:
     """"dogs", "a penguin", "birds": a kind of thing (a word the dictionary
     has as a thing), not a name or someone's own ("Rex", "user's dog")."""
     s = str(subject or "").strip()
-    if not s or s[:1].isupper() or "'" in s or s.casefold() in ("user", "monday", "i", "you"):
+    if not s or s[:1].isupper() or "'" in s or s.casefold() in ("user", "mercy", "i", "you"):
         return False
     return bool(_ordinary(base_noun(s)))
 

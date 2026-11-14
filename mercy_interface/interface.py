@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main Interface Window for Monday AI Assistant
+Main Interface Window for Mercy AI Assistant
 """
 
 from PyQt5.QtWidgets import (
@@ -15,9 +15,9 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from monday_interface.components import ChatPanel, EmotionDisplay, DebugPanel
-from monday_interface.brain_connector import BrainConnector
-from monday_interface.styles import (
+from mercy_interface.components import ChatPanel, EmotionDisplay, DebugPanel
+from mercy_interface.brain_connector import BrainConnector
+from mercy_interface.styles import (
     MAIN_WINDOW_STYLE,
     INPUT_AREA_STYLE,
     COLORS,
@@ -25,8 +25,8 @@ from monday_interface.styles import (
 )
 
 
-class MondayInterface(QMainWindow):
-    """Main window for Monday AI interface"""
+class MercyInterface(QMainWindow):
+    """Main window for Mercy AI interface"""
     
     def __init__(self):
         super().__init__()
@@ -36,7 +36,7 @@ class MondayInterface(QMainWindow):
     
     def init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("Monday AI Assistant")
+        self.setWindowTitle("Mercy AI Assistant")
         self.setGeometry(100, 100, 900, 700)
         self.setStyleSheet(MAIN_WINDOW_STYLE)
         
@@ -66,7 +66,7 @@ class MondayInterface(QMainWindow):
         input_layout.setSpacing(10)
         
         self.input_field = QLineEdit()
-        self.input_field.setPlaceholderText("Type your message to Monday...")
+        self.input_field.setPlaceholderText("Type your message to Mercy...")
         self.input_field.setStyleSheet(INPUT_AREA_STYLE)
         self.input_field.returnPressed.connect(self.send_message)
         
@@ -91,8 +91,8 @@ class MondayInterface(QMainWindow):
         self.setup_shortcuts()
         
         # Welcome message
-        self.chat_panel.add_system_message("Welcome to Monday AI Assistant!")
-        self.chat_panel.add_system_message("Monday is initializing brain systems...")
+        self.chat_panel.add_system_message("Welcome to Mercy AI Assistant!")
+        self.chat_panel.add_system_message("Mercy is initializing brain systems...")
     
     def setup_shortcuts(self):
         """Setup keyboard shortcuts"""
@@ -110,7 +110,7 @@ class MondayInterface(QMainWindow):
             self.brain_connector = BrainConnector()
             
             # Set up callbacks
-            self.brain_connector.on_response = self.on_monday_response
+            self.brain_connector.on_response = self.on_mercy_response
             self.brain_connector.on_emotion_update = self.on_emotion_update
             self.brain_connector.on_thinking_update = self.on_thinking_update
             
@@ -125,7 +125,7 @@ class MondayInterface(QMainWindow):
     
     @pyqtSlot()
     def send_message(self):
-        """Send a message to Monday"""
+        """Send a message to Mercy"""
         message = self.input_field.text().strip()
         if not message:
             return
@@ -152,13 +152,13 @@ class MondayInterface(QMainWindow):
             self.send_button.setEnabled(True)
     
     @pyqtSlot(str)
-    def on_monday_response(self, response):
-        """Handle response from Monday"""
+    def on_mercy_response(self, response):
+        """Handle response from Mercy"""
         # Remove thinking indicator
         self.chat_panel.remove_thinking_indicator()
         
-        # Display Monday's response
-        self.chat_panel.add_monday_message(response)
+        # Display Mercy's response
+        self.chat_panel.add_mercy_message(response)
         
         # Re-enable input
         self.input_field.setEnabled(True)

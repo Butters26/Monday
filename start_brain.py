@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility launcher for Monday's single-process direct-call core."""
+"""Compatibility launcher for Mercy's single-process direct-call core."""
 
 from run_abin import main
 

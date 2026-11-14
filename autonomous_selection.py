@@ -601,7 +601,7 @@ class AutonomousSelectionMixin:
         stop = {
             "that", "this", "with", "have", "about", "what", "when", "from", "they",
             "them", "were", "been", "into", "your", "their", "would", "could", "should",
-            "still", "while", "feeling", "think", "thought", "monday", "matthew",
+            "still", "while", "feeling", "think", "thought", "mercy", "matthew",
         }
         if (u_toks - stop) & (c_toks - stop):
             return True

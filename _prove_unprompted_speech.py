@@ -43,7 +43,7 @@ def _inject_speak_worthy(autonomous, content: str, intensity: float = 0.92) -> N
 
 def main() -> int:
     results = []
-    td = tempfile.mkdtemp(prefix="monday_unprompted_")
+    td = tempfile.mkdtemp(prefix="mercy_unprompted_")
     systems = create_core_systems(
         runtime_directory=td,
         notus_factory=_factory,

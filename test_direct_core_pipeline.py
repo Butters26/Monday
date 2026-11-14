@@ -44,7 +44,7 @@ def test_prompted_core_path_order_and_output(tmp_path):
     systems = _boot(tmp_path)
     try:
         response = systems["thalamus"].process_user_input(
-            "Hello Monday, explain memory?"
+            "Hello Mercy, explain memory?"
         )
         # This prompt is not guaranteed grounded. Current contract permits silence.
         assert isinstance(response, str)
@@ -92,9 +92,9 @@ def test_prompted_core_path_order_and_output(tmp_path):
         assert store_idx < min(context_indices) < emotion_idx
 
         # Said without saying who: filed as someone she doesn't know, never as Matthew.
-        memories = systems["notus"].retrieve_memories("Hello Monday", user_id="unknown person 1")
+        memories = systems["notus"].retrieve_memories("Hello Mercy", user_id="unknown person 1")
         assert any(
-            memory.get("content") == "Hello Monday, explain memory?"
+            memory.get("content") == "Hello Mercy, explain memory?"
             for memory in memories
         )
     finally:

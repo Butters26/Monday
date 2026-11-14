@@ -1,5 +1,5 @@
 """LEGACY (moved Nov 3, 2026): parts of advanced_emotional_engine.py nothing used any more.
-Her feelings now come from monday_inner_life.py. Kept, not deleted (Matthew's rule).
+Her feelings now come from mercy_inner_life.py. Kept, not deleted (Matthew's rule).
 Includes: canned reply text and "healing responses" built each turn then thrown away,
 the old appraisal classifier stub, emotion blending, and the feel_emotion backdoor that
 set a feeling directly. Not importable as-is (methods were cut out of their class)."""
@@ -248,7 +248,7 @@ set a feeling directly. Not importable as-is (methods were cut out of their clas
     def predict_user_emotion(self, user_input: str) -> Dict[str, float]:
         """
         Fail-closed stub. Emotion lobe does NOT own user-feeling recognition.
-        Conversation/Social own user affect. This never writes Monday mood.
+        Conversation/Social own user affect. This never writes Mercy mood.
         """
         pred: Dict[str, float] = {'neutral': 0.0}
         self.emotional_predictions[(user_input or '')[:50]] = pred
@@ -396,12 +396,12 @@ class AppraisalEngine:
     LEGACY STUB (2026-09-25 emotion honesty cleanup).
 
     Phrase→event classifier tables and the old appraisal driver were DELETED.
-    Live Monday mood is MondayCoreAffect + appraisal only
+    Live Mercy mood is MercyCoreAffect + appraisal only
     (see get_emotional_response / appraise_internal_event).
 
     This class remains only so unused/compat call sites do not crash.
     appraise() fails closed: always returns a neutral AppraisalResult
-    with zero monday_pad_delta — never writes her mood.
+    with zero mercy_pad_delta — never writes her mood.
     """
 
     # Minimal event-type list for leftover sensitivity maps / persist keys.
@@ -419,13 +419,13 @@ class AppraisalEngine:
         return AppraisalResult(
             event_type='neutral',
             severity=0.0,
-            directed_at_monday=False,
+            directed_at_mercy=False,
             directed_at_user=False,
             third_party=False,
             negated=False,
             sarcasm_likely=False,
             raw_text=text or '',
-            monday_pad_delta=(0.0, 0.0, 0.0),
+            mercy_pad_delta=(0.0, 0.0, 0.0),
             user_inferred_emotion='unknown',
             user_confidence=0.0,
             explicit_user_emotion=None,
@@ -444,14 +444,14 @@ class AppraisalResult:
     """LEGACY container for event metadata. Live mood does not use appraisal-as-driver."""
     event_type: str          # one of EVENT_TYPES
     severity: float          # 0..1 – how significant is this
-    directed_at_monday: bool # is Monday the target / subject?
+    directed_at_mercy: bool # is Mercy the target / subject?
     directed_at_user: bool   # is the user the target / subject?
     third_party: bool        # about someone else entirely
     negated: bool            # the event was negated ("I'm not upset")
     sarcasm_likely: bool     # sarcasm detected
     raw_text: str            # original message
-    # What Monday's own emotion should lean toward, given this appraisal
-    monday_pad_delta: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # (Δv, Δa, Δd)
+    # What Mercy's own emotion should lean toward, given this appraisal
+    mercy_pad_delta: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # (Δv, Δa, Δd)
     # What the user is inferred to be feeling
     user_inferred_emotion: str = 'neutral'
     user_confidence: float = 0.0

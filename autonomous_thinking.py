@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Autonomous Thinking Loop - Generates thoughts without prompting
-Monday thinks on her own, not just when spoken to.
+Mercy thinks on her own, not just when spoken to.
 """
 
 import time
@@ -43,7 +43,7 @@ class AutonomousThought:
 class AutonomousThinkingLoop(AutonomousSelectionMixin):
     """
     Background process that generates thoughts without prompting.
-    Monday has an inner monologue.
+    Mercy has an inner monologue.
     """
     
     def __init__(self, thalamus=None):
@@ -67,7 +67,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         
         # State
         self.current_mood = "neutral"
-        self.current_focus = None  # What Monday is currently thinking about
+        self.current_focus = None  # What Mercy is currently thinking about
         self.user_present = False  # Is user actively engaged?
         self.user_last_message_time = 0.0
         # Active conversation user — Notus memories are per-user; ground thoughts there.
@@ -541,7 +541,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
 
     @staticmethod
     def _is_boilerplate_memory(text: str) -> bool:
-        """Skip Monday refusal/filler lines — they are not lived experience to sit with."""
+        """Skip Mercy refusal/filler lines — they are not lived experience to sit with."""
         t = (text or "").strip().lower()
         if not t:
             return True
@@ -561,7 +561,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         memories: List[Dict[str, Any]],
         primary: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Prefer this user's lived lines over Monday replies / boilerplate."""
+        """Prefer this user's lived lines over Mercy replies / boilerplate."""
         usable: List[Dict[str, Any]] = []
         for m in memories or []:
             if not isinstance(m, dict):

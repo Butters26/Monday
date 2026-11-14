@@ -18,7 +18,7 @@ class BehaviorRecord:
     """Record of a behavior and its outcome"""
     id: str
     behavior_type: str  # "response_style", "topic", "timing", "tone", etc.
-    behavior: str  # What Monday did
+    behavior: str  # What Mercy did
     user_reaction: str  # "positive", "negative", "neutral", "ignored"
     reaction_intensity: float  # 0-1 how strong the reaction
     context: Dict[str, Any]
@@ -50,7 +50,7 @@ class BehavioralReinforcement:
     
     def __init__(self, storage_path: Optional[str] = None):
         self.thalamus = get_thalamus()
-        self.storage_path = storage_path or runtime_file("monday_behavior_weights.json")
+        self.storage_path = storage_path or runtime_file("mercy_behavior_weights.json")
         self.running = True
         
         # Behavior tracking
@@ -178,7 +178,7 @@ class BehavioralReinforcement:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
     
     def _record_behavior(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Record a behavior Monday performed"""
+        """Record a behavior Mercy performed"""
         with self.lock:
             record = BehaviorRecord(
                 id=f"behavior_{int(time.time() * 1000)}",
@@ -322,7 +322,7 @@ class BehavioralReinforcement:
     
     def _should_do(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Ask if Monday should do a behavior.
+        Ask if Mercy should do a behavior.
         Returns recommendation based on learned weights.
         """
         behavior_type = message.get('behavior_type', '')

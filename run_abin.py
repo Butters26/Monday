@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start Monday's prompted core plus light autonomous inner-life for own feelings.
+"""Start Mercy's prompted core plus light autonomous inner-life for own feelings.
 
 Direct-call path (no sockets): prompted lobes including PerceptionLobe
 (text always; hearing/vision via file or live device when available) and AttentionLobe, plus
@@ -8,7 +8,7 @@ plus MetaCognitionLobe watching reasoning/language for uncertainty —
 plus ExecutiveControlLobe setting goals, inhibiting off-goal moves, steering Attention —
 plus AdvancedPatternRecognition discovering patterns for Reasoning via pattern_result —
 plus SocialContextLobe tracking social cues/stance across turns for Language —
-plus MotorActionLobe planning/queuing action envelopes when Monday should do
+plus MotorActionLobe planning/queuing action envelopes when Mercy should do
 something beyond talk (honest no_actuator status; no fake limbs) —
 plus VoiceLobe synthesizing speech / voice envelopes from Output text
 (honest synthesized/play_unavailable; no fake "she spoke") —
@@ -52,24 +52,24 @@ from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
 # Canonical SQLite Notus memory file.
-# Intentionally independent of MONDAY_RUNTIME_DIR / monday-chat sock dir so
-# run_abin REPL and _monday_chat_daemon share one memory identity.
+# Intentionally independent of MERCY_RUNTIME_DIR / mercy-chat sock dir so
+# run_abin REPL and _mercy_chat_daemon share one memory identity.
 _SHARED_DIRECT_NOTUS_NAME = "notus_memory.sqlite3"
 
 
 def shared_direct_notus_path() -> Path:
     """Return the primary SQLite Notus path.
 
-    Override with ``MONDAY_NOTUS_SQLITE`` (absolute/expanded path). Default is
-    ``~/.local/state/monday/notus_memory.sqlite3`` — never under monday-chat.
-    Chat keeps sock/pid under ``~/.local/state/monday-chat``; memory is shared.
+    Override with ``MERCY_NOTUS_SQLITE`` (absolute/expanded path). Default is
+    ``~/.local/state/mercy/notus_memory.sqlite3`` — never under mercy-chat.
+    Chat keeps sock/pid under ``~/.local/state/mercy-chat``; memory is shared.
     """
-    configured = os.environ.get("MONDAY_NOTUS_SQLITE")
+    configured = os.environ.get("MERCY_NOTUS_SQLITE")
     if configured:
         path = Path(configured).expanduser().resolve()
     else:
         path = (
-            Path.home() / ".local" / "state" / "monday" / _SHARED_DIRECT_NOTUS_NAME
+            Path.home() / ".local" / "state" / "mercy" / _SHARED_DIRECT_NOTUS_NAME
         ).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
@@ -130,13 +130,13 @@ def create_core_systems(
 
     When ``notus_factory`` is omitted, ``open_primary_notus`` opens SQLite
     ``DirectNotusProcess`` at ``shared_direct_notus_path()``
-    (default ``~/.local/state/monday/notus_memory.sqlite3``, override
-    ``MONDAY_NOTUS_SQLITE``) — shared by REPL and chat daemon.
+    (default ``~/.local/state/mercy/notus_memory.sqlite3``, override
+    ``MERCY_NOTUS_SQLITE``) — shared by REPL and chat daemon.
     Tests may still inject another Notus via ``notus_factory``.
 
     Related:
-      MONDAY_RUNTIME_DIR   — runtime_paths.runtime_dir() for non-Notus state
-      MONDAY_NOTUS_SQLITE  — override the primary DirectNotus SQLite path
+      MERCY_RUNTIME_DIR   — runtime_paths.runtime_dir() for non-Notus state
+      MERCY_NOTUS_SQLITE  — override the primary DirectNotus SQLite path
 
     PostgreSQL is not part of the active Notus boot path.
 
@@ -232,7 +232,7 @@ def create_core_systems(
             raise RuntimeError(f"Could not register autonomous: {result.get('message')}")
         systems["autonomous"] = autonomous
         autonomous.start_background()
-    if os.environ.get("MONDAY_TRACE"):
+    if os.environ.get("MERCY_TRACE"):
         # Live tracer (trace_monitor.py): records every message, turn, and error.
         from trace_monitor import install as install_trace
         systems["trace_path"] = install_trace(systems)
@@ -271,7 +271,7 @@ def shutdown_core_systems(systems: Dict[str, Any]) -> None:
 
 def main() -> int:
     systems = create_core_systems()
-    print("Monday direct-call core ready. Type a message, or press Ctrl-D to exit.")
+    print("Mercy direct-call core ready. Type a message, or press Ctrl-D to exit.")
     try:
         while True:
             try:

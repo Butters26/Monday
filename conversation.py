@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Conversation System for Monday / Mercy
+Conversation System for Mercy / Mercy
 
 Dialogue state across turns — topic, shifts, follow-ups, corrections,
 answers to her questions, open threads, and cross-turn referents.

@@ -38,7 +38,7 @@
       "socket": "/tmp/notus.sock",
       "enabled": true,
       "auto_start": true,
-      "database": "${MONDAY_RUNTIME_DIR}/superhuman_memory.db"
+      "database": "${MERCY_RUNTIME_DIR}/superhuman_memory.db"
     },
     "emotion": {
       "name": "Emotional Engine",
@@ -46,7 +46,7 @@
       "socket": "/tmp/emotion.sock",
       "enabled": true,
       "auto_start": true,
-      "state_file": "${MONDAY_RUNTIME_DIR}/monday_emotional_state.json"
+      "state_file": "${MERCY_RUNTIME_DIR}/mercy_emotional_state.json"
     },
     "perception": {
       "name": "Perception",
@@ -78,10 +78,10 @@
   
   "paths": {
     "sockets": "/tmp",
-    "runtime_dir": "${MONDAY_RUNTIME_DIR:-~/.local/state/monday}",
-    "memory_db": "${MONDAY_RUNTIME_DIR}/superhuman_memory.db",
-    "emotional_state": "${MONDAY_RUNTIME_DIR}/monday_emotional_state.json",
-    "logs": "${MONDAY_RUNTIME_DIR}/logs"
+    "runtime_dir": "${MERCY_RUNTIME_DIR:-~/.local/state/mercy}",
+    "memory_db": "${MERCY_RUNTIME_DIR}/superhuman_memory.db",
+    "emotional_state": "${MERCY_RUNTIME_DIR}/mercy_emotional_state.json",
+    "logs": "${MERCY_RUNTIME_DIR}/logs"
   },
   
   "startup": {

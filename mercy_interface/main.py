@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main Application Launcher for Monday AI Interface
+Main Application Launcher for Mercy AI Interface
 """
 
 import sys
@@ -11,7 +11,7 @@ from PyQt5.QtCore import Qt
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from monday_interface.interface import MondayInterface
+from mercy_interface.interface import MercyInterface
 
 
 def main():
@@ -22,10 +22,10 @@ def main():
     
     # Create application
     app = QApplication(sys.argv)
-    app.setApplicationName("Monday AI Assistant")
+    app.setApplicationName("Mercy AI Assistant")
     
     # Create and show main window
-    window = MondayInterface()
+    window = MercyInterface()
     window.show()
     
     # Run event loop

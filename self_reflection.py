@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Self-Reflection Engine - Questions own beliefs and updates confidence
-Makes Monday examine WHY she believes things, not just WHAT she believes.
+Makes Mercy examine WHY she believes things, not just WHAT she believes.
 """
 
 import json
@@ -16,7 +16,7 @@ from runtime_paths import runtime_file
 
 @dataclass
 class Belief:
-    """A belief Monday holds"""
+    """A belief Mercy holds"""
     id: str
     content: str  # What she believes
     category: str  # "value", "fact", "preference", "identity", "about_matthew"
@@ -50,13 +50,13 @@ class ReflectionResult:
 
 class SelfReflectionEngine:
     """
-    Makes Monday question her own beliefs.
+    Makes Mercy question her own beliefs.
     Not just storing beliefs - actively examining them.
     """
     
     def __init__(self, storage_path: Optional[str] = None):
         self.thalamus = get_thalamus()
-        self.storage_path = storage_path or runtime_file("monday_beliefs.json")
+        self.storage_path = storage_path or runtime_file("mercy_beliefs.json")
         self.running = True
         
         # Belief storage

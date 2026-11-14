@@ -171,13 +171,13 @@ class PerceptionLobe:
         try:
             from vosk import Model as VoskModel  # type: ignore
             import json as _json  # noqa: F401
-            model_dir = os.environ.get("MONDAY_VOSK_MODEL")
+            model_dir = os.environ.get("MERCY_VOSK_MODEL")
             candidates = []
             if model_dir:
                 candidates.append(model_dir)
             candidates.extend(
                 [
-                    "/workspace/Monday/models/vosk-model-small-en-us-0.15",
+                    "/workspace/Mercy/models/vosk-model-small-en-us-0.15",
                     str(Path.home() / "vosk-model-small-en-us-0.15"),
                     "/usr/share/vosk/models/vosk-model-small-en-us-0.15",
                 ]
@@ -424,7 +424,7 @@ class PerceptionLobe:
             return p, None
         if audio_bytes is not None:
             raw = bytes(audio_bytes)
-            fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="monday_perc_aud_")
+            fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="mercy_perc_aud_")
             os.close(fd)
             with open(tmp, "wb") as fh:
                 fh.write(raw)
@@ -812,7 +812,7 @@ class PerceptionLobe:
 
     def _ffmpeg_to_wav(self, src_path: str) -> Tuple[str, str]:
         import subprocess
-        fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="monday_perc_ff_")
+        fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="mercy_perc_ff_")
         os.close(fd)
         try:
             subprocess.run(
@@ -857,7 +857,7 @@ class PerceptionLobe:
                 self.stt_engine.adjust_for_ambient_noise(source, duration=0.3)
                 audio = self.stt_engine.listen(source, timeout=5, phrase_time_limit=10)
             # Persist to temp wav for acoustic analysis + STT
-            fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="monday_perc_mic_")
+            fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="mercy_perc_mic_")
             os.close(fd)
             try:
                 with open(tmp, "wb") as fh:

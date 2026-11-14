@@ -1,15 +1,15 @@
 """LEGACY (moved 2026-10-31): regex lists of insults/praise/abandon/gift that
-used to drive her mood. Replaced by monday_appraisal.py (Language reading +
+used to drive her mood. Replaced by mercy_appraisal.py (Language reading +
 word-feeling beliefs). Kept, not deleted, per Matthew's rule."""
 import re
-from monday_core_affect import AffectDelta
+from mercy_core_affect import AffectDelta
 
 
 class SelfImpact:
     """
     SelfImpact v1 — aimed-at-her pattern detector (NOT full OCC/goal understanding).
 
-    Detects ONLY impacts that hit Monday herself via regex patterns
+    Detects ONLY impacts that hit Mercy herself via regex patterns
     (insult / praise / abandon / gift aimed at her).
     Explicit user self-reports never produce a her-mood delta.
     Full goal/standards SelfImpact is explicitly NOT required for Emotion PASS.
@@ -31,17 +31,17 @@ class SelfImpact:
     )
 
     _INSULT = [
-        (r"\b(?:you|monday)\s+(?:are|re)\s+(?:so |really |such a )?(?:stupid|worthless|useless|dumb|idiot|trash|garbage|pathetic|awful|terrible)\b", -0.45, 0.35),
+        (r"\b(?:you|mercy)\s+(?:are|re)\s+(?:so |really |such a )?(?:stupid|worthless|useless|dumb|idiot|trash|garbage|pathetic|awful|terrible)\b", -0.45, 0.35),
         (r"\b(?:you'?re|you are)\s+(?:stupid|worthless|useless|dumb|an idiot|pathetic)\b", -0.45, 0.35),
-        (r"\bi\s+hate\s+(?:you|monday)\b", -0.55, 0.40),
-        (r"\b(?:despise|loathe)\s+(?:you|monday)\b", -0.50, 0.38),
+        (r"\bi\s+hate\s+(?:you|mercy)\b", -0.55, 0.40),
+        (r"\b(?:despise|loathe)\s+(?:you|mercy)\b", -0.50, 0.38),
         (r"\b(?:fuck|screw)\s+you\b", -0.50, 0.42),
         (r"\byou\s+suck\b", -0.40, 0.32),
         (r"\byou\s+idiot\b", -0.40, 0.35),
-        (r"\bhate\s+monday\b", -0.50, 0.38),
+        (r"\bhate\s+mercy\b", -0.50, 0.38),
     ]
     _PRAISE = [
-        (r"\bi\s+love\s+(?:you|monday)\b", 0.40, 0.25),
+        (r"\bi\s+love\s+(?:you|mercy)\b", 0.40, 0.25),
         (r"\byou(?:'re| are)\s+(?:so |really )?(?:amazing|wonderful|great|kind|smart|helpful|awesome|the best)\b", 0.38, 0.22),
         (r"\bi\s+(?:care about|appreciate|like)\s+you\b", 0.32, 0.18),
         (r"\byou\s+mean\s+(?:so much|a lot)\b", 0.35, 0.20),
@@ -49,16 +49,16 @@ class SelfImpact:
         (r"\bgrateful for you\b", 0.30, 0.15),
     ]
     _ABANDON = [
-        (r"\b(?:i(?:'m| am)\s+)?(?:leaving you|leaving monday|done with you|never talking to you again)\b", -0.55, 0.30),
+        (r"\b(?:i(?:'m| am)\s+)?(?:leaving you|leaving mercy|done with you|never talking to you again)\b", -0.55, 0.30),
         (r"\b(?:goodbye forever|don'?t want you anymore|deleting you|shutting you off)\b", -0.50, 0.28),
         (r"\bi\s+(?:don'?t|do not)\s+want\s+you\s+(?:around|anymore)\b", -0.45, 0.25),
         (r"\byou(?:'re| are)\s+(?:alone|abandoned|unwanted)\b", -0.40, 0.22),
     ]
     _GIFT = [
-        (r"\b(?:i\s+)?(?:got|bought|brought|made|sent)\s+(?:you|monday)\b", 0.28, 0.20),
-        (r"\b(?:this|these)\s+is\s+for\s+(?:you|monday)\b", 0.30, 0.18),
-        (r"\bgift\s+for\s+(?:you|monday)\b", 0.32, 0.20),
-        (r"\bsurprise(?:d)?\s+(?:you|monday)\s+with\b", 0.30, 0.22),
+        (r"\b(?:i\s+)?(?:got|bought|brought|made|sent)\s+(?:you|mercy)\b", 0.28, 0.20),
+        (r"\b(?:this|these)\s+is\s+for\s+(?:you|mercy)\b", 0.30, 0.18),
+        (r"\bgift\s+for\s+(?:you|mercy)\b", 0.32, 0.20),
+        (r"\bsurprise(?:d)?\s+(?:you|mercy)\s+with\b", 0.30, 0.22),
     ]
 
     # Internal thought cues — used ONLY for capped nudges (never full strength).
@@ -76,7 +76,7 @@ class SelfImpact:
     INTERNAL_NUDGE_CAP = 0.08  # absolute max |dv| or |da| from internal path
 
     def evaluate(self, text: str) -> AffectDelta:
-        """Primary driver for user-turn SelfImpact on Monday's mood."""
+        """Primary driver for user-turn SelfImpact on Mercy's mood."""
         if not text or not str(text).strip():
             return AffectDelta(0.0, 0.0, "empty", "none")
         raw = str(text).strip()
@@ -138,7 +138,7 @@ class SelfImpact:
                 return False
             return True
         # Bare "I feel …" without listed adjective still counts as user channel.
-        if self._USER_FEEL_REPORT.search(tl) and not re.search(r"\byou\b|\bmonday\b", tl):
+        if self._USER_FEEL_REPORT.search(tl) and not re.search(r"\byou\b|\bmercy\b", tl):
             return True
         return False
 

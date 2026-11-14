@@ -20,9 +20,9 @@
     },
     
     "runtime_data": {
-      "directory": "${MONDAY_RUNTIME_DIR:-~/.local/state/monday}",
-      "memory_database": "${MONDAY_RUNTIME_DIR}/superhuman_memory.db",
-      "emotional_state": "${MONDAY_RUNTIME_DIR}/monday_emotional_state.json"
+      "directory": "${MERCY_RUNTIME_DIR:-~/.local/state/mercy}",
+      "memory_database": "${MERCY_RUNTIME_DIR}/superhuman_memory.db",
+      "emotional_state": "${MERCY_RUNTIME_DIR}/mercy_emotional_state.json"
     },
     
     "config_locations": {

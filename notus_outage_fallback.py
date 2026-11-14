@@ -6,9 +6,9 @@ prompted pipeline can continue. On recovery, records flush back to Notus in
 strict FIFO order; each queued record has its own stable event_id used for
 retry idempotency so identical content is never collapsed into one event.
 
-This is the current-architecture equivalent of the legacy monday_memory dict
+This is the current-architecture equivalent of the legacy mercy_memory dict
 fallback from PR #3/#4 — it does NOT restore retrieve_relevant_memory,
-sync_memory_to_notus, or monday_memory.
+sync_memory_to_notus, or mercy_memory.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ def _normalize_user_id(user_id: Any) -> str:
 def _normalize_role(role: Any) -> str:
     text = str(role or "user").strip().lower() or "user"
     if text in {"assistant", "abin"}:
-        return "monday"
+        return "mercy"
     return text
 
 

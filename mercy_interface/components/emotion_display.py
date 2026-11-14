@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Emotion Display Component - Shows Monday's current emotional state
+Emotion Display Component - Shows Mercy's current emotional state
 """
 
 from PyQt5.QtWidgets import QLabel, QWidget, QVBoxLayout, QGraphicsOpacityEffect
@@ -12,7 +12,7 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from monday_interface.styles import (
+from mercy_interface.styles import (
     EMOTION_DISPLAY_STYLE,
     COLORS,
     FONTS,
@@ -23,7 +23,7 @@ from monday_interface.styles import (
 
 
 class EmotionDisplay(QWidget):
-    """Widget displaying Monday's current emotional state"""
+    """Widget displaying Mercy's current emotional state"""
     
     def __init__(self, parent=None):
         super().__init__(parent)

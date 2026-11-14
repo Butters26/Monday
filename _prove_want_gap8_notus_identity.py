@@ -26,8 +26,8 @@ def main() -> int:
     shared = shared_direct_notus_path()
     print(f"shared_direct_notus_path={shared}")
 
-    chat_rt = Path(tempfile.mkdtemp(prefix="monday-chat-prove-"))
-    repl_rt = Path(tempfile.mkdtemp(prefix="monday-repl-prove-"))
+    chat_rt = Path(tempfile.mkdtemp(prefix="mercy-chat-prove-"))
+    repl_rt = Path(tempfile.mkdtemp(prefix="mercy-repl-prove-"))
 
     chat = create_core_systems(runtime_directory=str(chat_rt), enable_autonomous=False)
     print("chat_identity", json.dumps(chat["notus_identity"], default=str))

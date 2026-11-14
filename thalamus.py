@@ -8,7 +8,7 @@ announcements to the lobes that listen for them, and reports any delivery
 failure to the sender. It decides nothing.
 
 Temporary exception: the turn script in process_user_input still sequences a
-turn. It is removed lobe by lobe (Monday Build Plan steps 2-3); nothing new may
+turn. It is removed lobe by lobe (Mercy Build Plan steps 2-3); nothing new may
 be added to it.
 """
 
@@ -1141,7 +1141,7 @@ class Thalamus:
                 "notus",
                 "store",
                 {
-                    "role": "monday",
+                    "role": "mercy",
                     "content": reply.strip(),
                     "user_id": user_id,
                     "memory_type": "conversation",
@@ -1153,7 +1153,7 @@ class Thalamus:
             if spoken.get("status") != "success":
                 self.notus_fallback.enqueue(
                     user_id=user_id,
-                    role="monday",
+                    role="mercy",
                     content=reply.strip(),
                     memory_type="conversation",
                     extra={

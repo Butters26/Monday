@@ -72,7 +72,7 @@ def test_identical_messages_survive_outage_as_separate_events(tmp_path):
 
         ctl.fail_store_with_error = False
         ctl.fail_store_after = None
-        # Drain monday reply rows too if any — flush all for user.
+        # Drain mercy reply rows too if any — flush all for user.
         result = thalamus.retry_unsaved_notus_records(user_id="twin")
         assert result["failed"] == 0
         assert fb.pending_count("twin") == 0
@@ -211,7 +211,7 @@ def test_pending_fallback_visible_when_query_succeeds(tmp_path):
             if "FACT_MERGE_TEAL" in str(m.get("content") or "")
         ]
         assert len(teal) >= 1
-        # Content may appear as user utterance once (plus maybe monday reply).
+        # Content may appear as user utterance once (plus maybe mercy reply).
         user_teal = [
             m
             for m in teal

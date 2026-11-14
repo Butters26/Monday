@@ -18,7 +18,7 @@ def _factory(*, thalamus, runtime_directory):
 
 def main() -> int:
     results = []
-    td = tempfile.mkdtemp(prefix="monday_full_bar_")
+    td = tempfile.mkdtemp(prefix="mercy_full_bar_")
     systems = create_core_systems(
         runtime_directory=td,
         notus_factory=_factory,
@@ -123,7 +123,7 @@ def main() -> int:
             {
                 "type": "resolve_from_text",
                 "content": {
-                    "text": "monday drinks dark roast coffee",
+                    "text": "mercy drinks dark roast coffee",
                     "user_id": "prove",
                 },
             }
@@ -214,7 +214,7 @@ def main() -> int:
         )
 
         # 11. Prompted path still answers
-        reply = th.process_user_input("Hi Monday, my favorite color is teal", user_id="prove")
+        reply = th.process_user_input("Hi Mercy, my favorite color is teal", user_id="prove")
         results.append(
             (
                 "prompted_path_reply",

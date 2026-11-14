@@ -2547,7 +2547,7 @@ class ReasoningLobe:
 
         memories = context.get('memories', []) or []
 
-        # Live direct-core path: ground think in Notus facts / Monday lines only.
+        # Live direct-core path: ground think in Notus facts / Mercy lines only.
         # Compound answers come from answer_from_grounded_memories; empty → no invent
         # (no wrong-slot favorite substitution, no baseline textbook leak).
         if getattr(self, '_direct_core', False):

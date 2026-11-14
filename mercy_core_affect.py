@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-MondayCoreAffect — live mood substrate for the emotion lobe.
+MercyCoreAffect — live mood substrate for the emotion lobe.
 
 Design lock: _emotion_what_we_must_build.txt
 - Continuous valence/arousal with decay toward setpoint; additive deltas; clamp.
-- What moves her core affect is her inner life (monday_inner_life.py): her
+- What moves her core affect is her inner life (mercy_inner_life.py): her
   needs and what happens to her. No word ratings.
   (The old regex SelfImpact lists are in legacy/self_impact_regex_legacy.py.)
 - Thin label readout from (v,a); no intensity hardcode 0.8; no RNG identity.
@@ -28,8 +28,8 @@ class AffectDelta:
 
 
 @dataclass
-class MondayCoreAffect:
-    """Russell-style continuous core affect for Monday herself."""
+class MercyCoreAffect:
+    """Russell-style continuous core affect for Mercy herself."""
 
     valence: float = 0.15
     arousal: float = -0.10
@@ -79,7 +79,7 @@ class MondayCoreAffect:
         }
 
     @classmethod
-    def from_dict(cls, data: Optional[Dict]) -> "MondayCoreAffect":
+    def from_dict(cls, data: Optional[Dict]) -> "MercyCoreAffect":
         if not isinstance(data, dict):
             return cls()
         ca = cls(
@@ -112,6 +112,6 @@ def label_from_va(v: float, a: float) -> str:
     return "excited" if v >= 0 else "worried"
 
 
-def sync_legacy_fields(core: MondayCoreAffect) -> Tuple[str, float, float, float]:
+def sync_legacy_fields(core: MercyCoreAffect) -> Tuple[str, float, float, float]:
     """Return (label, intensity, valence, arousal) for legacy envelope fields."""
     return core.label(), core.intensity(), core.valence, core.arousal

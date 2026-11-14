@@ -1,4 +1,4 @@
-"""Offline linguistic resources owned by Monday Language."""
+"""Offline linguistic resources owned by Mercy Language."""
 
 from .oewn_offline import (
     OfflineLexiconError,
