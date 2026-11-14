@@ -1,5 +1,15 @@
 # Instructions for GitHub Copilot working on Mercy
 
+## Matthew's rule: word matching is BANNED
+
+**Word matching is banned in Mercy. This is a hard rule, not a guideline.**
+
+Do not find, file, recall, judge, sort, classify or decide anything by matching words, keywords, phrases, strings or regex against what someone said or what she knows. Work from meaning instead.
+
+The only exception is where word matching is genuinely required and nothing else can do the job. Before it goes in, tell Matthew exactly where it is and why it's required. If you can't justify it to him, it doesn't go in.
+
+Breaking this rule is the most serious way to break Matthew's rules.
+
 ## Matthew's rule: how to check Mercy works
 
 Checking whether Mercy works means **booting her up, using her, and reading what the live tracer recorded.** A test score is not proof.
