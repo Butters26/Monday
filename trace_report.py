@@ -90,6 +90,13 @@ def main() -> int:
     for (lobe, other, typ), n in unlocked.most_common():
         print(f"{n:4d}  un-stuck: {lobe} and {other} were waiting on each other; {lobe} answered [{typ}] first")
 
+    focus = [r for r in records if r.get("kind") == "attention_focus"]
+    if focus:
+        print(f"\n== ATTENTION: {len(focus)} times her focus was weighed ==")
+        for r in focus:
+            others = ", ".join(f"{c.get('id')} {c.get('score')}" for c in r.get("competing") or [])
+            print(f"  focus: {r.get('focus')} ({r.get('score')}) on {r.get('on')!r} after {r.get('because')}; competing: {others}")
+
     failed_tells = collections.Counter(
         (r.get("lobe"), r.get("msg_type"), (r.get("message") or "")[:90])
         for r in records if r.get("kind") == "tell_failed")
