@@ -207,6 +207,10 @@ def test_reasoning_reviews_language_reply_before_output(tmp_path):
             if message.get("type") == "turn":
                 # A stand-in Reasoning: hears the turn and announces a thought.
                 turn = message.get("content") or {}
+                # ...and, like the real one, bids for what it has to offer.
+                systems["thalamus"].send_and_wait("executive_control", "bid", {
+                    "from": "reasoning", "impulse": "that she doesn't know", "strength": 0.7,
+                    "about": turn.get("user_input"), "user_id": turn.get("user_id")}, source="reasoning")
                 systems["thalamus"].announce("thought", {
                     "user_id": turn.get("user_id"), "user_input": turn.get("user_input"),
                     "semantic_input": {"answer": "IGNORED_PASS_THROUGH"}, "memories": [],

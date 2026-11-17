@@ -189,6 +189,11 @@ class MotorActionLobe:
                 "action": None,
             }
 
+        # Something she could do: a bid to Executive Control on the "do" channel.
+        from team import bid
+        bid(self.thalamus, "motor_action", "do what he asked", 1.0,
+            user_input if isinstance(user_input, str) else "", user_id, channel="do",
+            why="what he said is something to act on")
         inhibit = self._check_inhibit("motor_action")
         text = user_input if isinstance(user_input, str) else ""
         if inhibit.get("inhibited"):

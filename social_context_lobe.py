@@ -554,6 +554,20 @@ compliment -> "thank you" (sure 0.7)
         announce = getattr(self.thalamus, "announce", None)
         if callable(announce):
             announce("social_read", dict(snap), source="social_context")
+        # What the social side of this calls for, as bids to Executive Control:
+        # how strong is how sure she is of the belief behind it.
+        from team import bid
+        if snap.get("expects") or snap.get("expected_reply"):
+            try:
+                sure = float(snap.get("belief_sure") if snap.get("belief_sure") is not None else 0.5)
+            except (TypeError, ValueError):
+                sure = 0.5
+            bid(self.thalamus, "social_context", "his move back", sure, user_input, user_id,
+                move={"greeting": "social_open", "goodbye": "social_close"}.get(cue or ""),
+                why=f"his {cue} calls for one back")
+        if snap_his is not None:
+            bid(self.thalamus, "social_context", "his feeling back", min(1.0, abs(float(snap_his.get("good") or 0.0))),
+                user_input, user_id, feeling=True, why="he shared how he feels")
         return snap
 
     def get_context(self, user_id: str = "default") -> Dict[str, Any]:

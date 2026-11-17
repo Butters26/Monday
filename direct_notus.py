@@ -3095,6 +3095,16 @@ relocate to: live in
         announce("remembered", {"user_id": user_id, "recognition_id": recognition_id, "about": text,
                                 "facts": facts, "memories": memories, "beliefs": beliefs},
                  source="notus")
+        # Something came back that she could say: a bid to Executive Control. How
+        # strong is how firmly he holds it: how sure the fact is and how often it
+        # has been used, or how strong the memory is.
+        held = [self._clamp_confidence(f.get("confidence"), default=0.5)
+                * (float(f.get("usage_count") or 0) / (float(f.get("usage_count") or 0) + 1.0)) for f in facts]
+        held += [float(m.get("strength") or 1.0) / (float(m.get("strength") or 1.0) + 1.0) * 0.5 for m in memories]
+        if held:
+            from team import bid
+            bid(self.thalamus, "notus", "what she knows", max(held), text, user_id,
+                why=f"it brought back {len(facts)} facts and {len(memories)} memories")
 
     # ------------------------------------------------------------------
     # Beliefs: basic knowledge with how sure she is. Starting beliefs come

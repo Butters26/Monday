@@ -57,7 +57,7 @@ class AutonomousSpeechSystem:
         self.interruption_threshold = 0.85  # High bar for interrupting
 
         # Lock
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
         # Legacy CLI: construct without thalamus → singleton + self-register.
         # Live path: create_core_systems passes thalamus= and registers "speech".

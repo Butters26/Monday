@@ -16,6 +16,9 @@ The announcements that carry a moment through her, and who makes them:
   thought       Reasoning: what there is to say about it
   delivered     Output: what she actually said (empty if nothing)
 
+Besides announcing, a lobe that has something she could do bids for it (bid):
+Executive Control weighs the bids and one wins.
+
 Each one carries "user_id" (who she is with) and, when it came from something
 sensed, "recognition_id" (which moment it is about).
 """
@@ -56,6 +59,19 @@ def ask(thalamus: Any, lobe: str, msg_type: str, payload: Dict[str, Any], source
     return {k: v for k, v in response.items() if k not in ("status", "content", "message")}
 
 
+def bid(thalamus: Any, source: str, impulse: str, strength: Any, about: str, user_id: str,
+        **more: Any) -> None:
+    """Tell Executive Control this lobe has something she could do: what the
+    impulse is, how strong it is by this lobe's own measure (0 to 1), and what
+    it is about. Executive Control weighs it against the other lobes' bids."""
+    # Asked, not told: the lobe carries on only once Executive Control has taken
+    # the bid, so a lobe that has finished with a moment has its bids in.
+    send = getattr(thalamus, "send_and_wait", None)
+    if callable(send):
+        send("executive_control", "bid", {"from": source, "impulse": impulse, "strength": strength,
+                                          "about": about, "user_id": user_id, **more}, source=source)
+
+
 def words_of(moment: Dict[str, Any]) -> str:
     """The words in a moment, if it has any (typed or heard)."""
     if not isinstance(moment, dict):
@@ -70,4 +86,4 @@ def words_of(moment: Dict[str, Any]) -> str:
     return ""
 
 
-__all__ = ["listen", "announce", "ask", "words_of"]
+__all__ = ["listen", "announce", "ask", "bid", "words_of"]

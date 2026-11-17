@@ -164,7 +164,10 @@ def main() -> int:
         print(f"\n== EXECUTIVE CONTROL: {len(executive)} events ==")
         for r in executive:
             kind = r["kind"][len("executive_"):]
-            if kind == "decided":
+            if kind == "bid":
+                print(f"    bid: {r.get('lobe')} -> {r.get('impulse')!r} (strength {r.get('strength')}, {r.get('channel')}) "
+                      f"because {r.get('why')}")
+            elif kind == "decided":
                 print(f"  decided: {r.get('purpose')!r} because {r.get('situation')!r} "
                       f"(score {r.get('score')}, weighed {r.get('weighed')}) about {r.get('about')!r}; "
                       f"steps {r.get('steps')}; other options {r.get('others')}")

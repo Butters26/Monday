@@ -144,7 +144,7 @@ class PeopleBeliefs:
 
     def __init__(self, path: Optional[str] = None) -> None:
         self.path = Path(path) if path else None
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.known: Dict[str, Dict[str, str]] = {}
         if self.path and self.path.is_file():
             try:

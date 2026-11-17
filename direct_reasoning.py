@@ -724,6 +724,7 @@ class DirectReasoningAdapter:
         semantic_input = (thought.get("content") or {}).get("semantic_input")
         semantic_input = dict(semantic_input) if isinstance(semantic_input, dict) else {}
         semantic_input.setdefault("semantic_owner", "reasoning")
+        self._bid_for_turn(turn, user_input, user_id, semantic_input)
         announce = getattr(self.thalamus, "announce", None)
         if callable(announce):
             announce("thought", {
@@ -732,6 +733,49 @@ class DirectReasoningAdapter:
                 "memories": list(memory.get("memories") or []) if isinstance(memory, dict) else [],
             }, "reasoning")
         return {"status": "success", "content": {"thought": True}}
+
+    def _bid_for_turn(self, turn: Dict[str, Any], user_input: str, user_id: str,
+                      semantic_input: Dict[str, Any]) -> None:
+        """What Reasoning has to offer about what was said, as bids to Executive
+        Control. How strong each is comes from how sure she is: of what she
+        knows, of what she worked out, or of having understood him."""
+        from team import bid
+        understanding = turn.get("understanding") if isinstance(turn.get("understanding"), dict) else {}
+        reading = turn.get("language_understanding") if isinstance(turn.get("language_understanding"), dict) else {}
+        understood = (self.__dict__.get("_understood") or {}).get(user_id) or {}
+        act = str(understanding.get("speech_act") or reading.get("speech_act") or "")
+        move = str(understanding.get("dialogue_move") or "")
+        try:
+            got_him = max(0.0, min(1.0, float(understanding.get("confidence") or 0.5)))
+        except (TypeError, ValueError):
+            got_him = 0.5
+
+        def offer(impulse: str, strength: float, why: str) -> None:
+            bid(self.thalamus, "reasoning", impulse, strength, user_input, user_id, why=why)
+
+        if understood.get("didnt_get"):
+            offer("ask what he means", 1.0, str(understood.get("didnt_get")))
+        if understood.get("corrected"):
+            offer("what she worked out", 1.0, "he said she was wrong and she found what")
+        if act == "question" or move == "question":
+            knows = bool(semantic_input.get("grounded_structures") or semantic_input.get("answer")
+                         or self._facts_for(user_input, user_id))
+            if knows:
+                try:
+                    sure = max(0.0, min(1.0, float(semantic_input.get("certainty") or 0.5)))
+                except (TypeError, ValueError):
+                    sure = 0.5
+                offer("what she knows", sure, "he asked and she knows something about it")
+            else:
+                offer("that she doesn't know", got_him, "he asked and she knows nothing about it")
+        elif act == "imperative" or move == "request":
+            offer("what he asked", got_him, "he asked her to do something")
+        else:
+            offer("what he told her", got_him, "he told her something and she took it in")
+            fresh = [c for c in understood.get("conclusions") or [] if isinstance(c, dict)]
+            if fresh:
+                sure = max((float(c.get("sure") or 0.5) for c in fresh), default=0.5)
+                offer("what she worked out", max(0.0, min(1.0, sure)), "something follows from what he said")
 
     def _hear_social(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.__dict__.setdefault("_social_reads", {})[str(payload.get("user_id") or "default")] = dict(payload)

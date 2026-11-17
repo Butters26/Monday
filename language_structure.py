@@ -67,7 +67,7 @@ class ShapeMemory:
 
     def __init__(self, path: Optional[str] = None) -> None:
         self.path = path
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.counts: Dict[str, int] = {}
         self._unsaved = 0
         if path:

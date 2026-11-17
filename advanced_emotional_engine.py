@@ -246,7 +246,7 @@ class AdvancedEmotionalEngine:
         self._logger = logger or (lambda _: None)
         self._rng = rng or random.Random()
         self.thalamus = thalamus
-        self.engine_lock = threading.Lock()
+        self.engine_lock = threading.RLock()  # the same lobe thread can come back in while it waits on another lobe
         # PAD dynamics - start neutral
         self.pad: PAD = PAD(0.0, 0.0, 0.0)
         # LIVE mood substrate (design lock 2026-09-25). Classifiers no longer drive her mood.
@@ -1083,6 +1083,12 @@ class EmotionalProcess:
                     'patterns': snap['patterns'],
                     'user_affect': snap.get('user_affect'),
                 }
+                if msg_type == 'turn':
+                    # What she feels about it is something she could say: a bid to
+                    # Executive Control, as strong as the feeling is.
+                    from team import bid
+                    bid(self.thalamus, 'emotion', 'how she feels', snap['intensity'], user_input,
+                        str(message.get('user_id') or 'default'), why=f"she feels {snap['current_emotion']}")
                 return {'status': 'success', **felt}
 
             elif msg_type == 'social_read':
