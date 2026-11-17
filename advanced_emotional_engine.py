@@ -817,6 +817,7 @@ class EmotionalProcess:
             listen(name, "social_read")
             listen(name, "remembered")
             listen(name, "turn")  # something was said: she feels about it herself
+            listen(name, "thought_arose")  # her own thought: the memories in it bring their feelings
 
     def __init__(self, state_file=None, thalamus=None):
         self.thalamus = thalamus or get_thalamus()
@@ -1115,7 +1116,7 @@ class EmotionalProcess:
                 self.engine._sync_from_core_affect(trigger="didnt_understand")
                 return {'status': 'success', 'content': {'felt': self.engine.inner.last_feeling}}
 
-            elif msg_type == 'remembered':
+            elif msg_type in ('remembered', 'thought_arose'):
                 # A memory came back with the feeling it had: she feels some of it again.
                 body = message.get('content') if isinstance(message.get('content'), dict) else message
                 felt = []

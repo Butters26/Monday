@@ -90,6 +90,20 @@ def main() -> int:
     for (lobe, other, typ), n in unlocked.most_common():
         print(f"{n:4d}  un-stuck: {lobe} and {other} were waiting on each other; {lobe} answered [{typ}] first")
 
+    thoughts = [r for r in records if r.get("kind") == "thought"]
+    no_thoughts = collections.Counter(r.get("reason") for r in records if r.get("kind") == "thought_none")
+    if thoughts or no_thoughts:
+        print(f"\n== HER OWN THOUGHTS (nobody asked): {len(thoughts)} ==")
+        for r in thoughts:
+            print(f"  about {r.get('about')!r}   (started from {r.get('started_from')}; {r.get('ms')} ms)")
+            print(f"    Notus brought with it: {r.get('with_memories') or 'nothing'}")
+            print(f"    Reasoning: knows {r.get('knows') or 'nothing'}; follows {r.get('follows') or 'nothing'}"
+                  + (f"; problem {r.get('problem')}" if r.get("problem") else "")
+                  + (f"; unsure: {r.get('unsure')}" if r.get("unsure") else ""))
+            print(f"    leads on to: {r.get('leads_to') or 'nowhere'}")
+        for reason, n in no_thoughts.most_common():
+            print(f"{n:4d}  no thought: {reason}")
+
     focus = [r for r in records if r.get("kind") == "attention_focus"]
     if focus:
         print(f"\n== ATTENTION: {len(focus)} times her focus was weighed ==")

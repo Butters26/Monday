@@ -1958,6 +1958,7 @@ class DirectNotusProcess:
             listen(name, "moment")
             listen(name, "read_again")  # Language read something again: file it the new way
             listen(name, "delivered")   # what she actually said: he keeps that too
+            listen(name, "thought_arose")  # what she thinks about on her own: he replays it
 
     def hear_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
@@ -3215,7 +3216,29 @@ relocate to: live in
             "user_id": row["user_id"], "memory_type": row["memory_type"], "timestamp": row["created_at"],
             "told_by": row["told_by"] if "told_by" in keys else None,
             "sense": row["sense"] if "sense" in keys else None,
+            "strength": float(row["strength"] or 1.0) if "strength" in keys else 1.0,
         }
+
+    def replay(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """She thought about these memories on her own: going over them again
+        makes them stronger (once per memory per thought)."""
+        ids = []
+        for memory in payload.get("memories") or []:
+            try:
+                ids.append(int(memory.get("id")))
+            except (AttributeError, TypeError, ValueError):
+                continue
+        ids = list(dict.fromkeys(ids))
+        if not ids:
+            return {"status": "success", "content": {"replayed": []}}
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            connection = self._require_connection()
+            connection.executemany(
+                "UPDATE memories SET strength = strength + 0.1, access_count = access_count + 1, "
+                "last_accessed = ? WHERE id = ?", [(now, i) for i in ids])
+            connection.commit()
+        return {"status": "success", "content": {"replayed": ids}}
 
     def recent_memories(self, user_id: str, limit: Any = 10) -> List[Dict[str, Any]]:
         """Her newest memories with this person, newest first."""
@@ -3498,6 +3521,8 @@ relocate to: live in
             return self.file_again(str(payload.get("text") or ""), str(payload.get("user_id") or self._talking_with or "default"))
         if msg_type == "moment":
             return self.hear_moment(payload)
+        if msg_type == "thought_arose":
+            return self.replay(payload)
         if msg_type == "delivered":
             said = str(payload.get("text") or "").strip()
             if not said:

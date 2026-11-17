@@ -12,8 +12,7 @@ Distinct from MetaCognition (epistemic watcher of reasoning/language outputs):
                    worth engaging?"
 
 Optional stream generators may be attached via set_spontaneous_system /
-set_controlled_system for experiments. Live create_core_systems does NOT attach
-ContinuousThoughtGenerator or ControlledThinking (those are mock/toy modules).
+set_controlled_system for experiments. Live create_core_systems attaches none.
 When no generator is attached, envelopes report generator_attached=False and
 do not stamp controlled_fed/spontaneous_fed as if real cognition ran.
 MetaAwareness remains awareness, not the generator owner.
@@ -421,7 +420,7 @@ class MetaAwareness:
 
     def on_joined(self, name: str) -> None:
         from team import listen
-        listen(self.thalamus, name, "turn", "delivered")
+        listen(self.thalamus, name, "turn", "delivered", "thought_arose")
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
@@ -468,8 +467,10 @@ class MetaAwareness:
                 "meta_awareness": snap,
             }
 
-        if msg_type in ("notice_thought", "notice", "notice_spontaneous"):
+        if msg_type in ("thought_arose", "notice_thought", "notice", "notice_spontaneous"):
             thought = content.get("thought")
+            if msg_type == "thought_arose":
+                thought = {"content": str(content.get("about") or ""), "trigger": str(content.get("started_from") or "")}
             if not isinstance(thought, dict):
                 thought = content
             snap = self.notice_thought(

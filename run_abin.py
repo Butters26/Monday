@@ -16,9 +16,8 @@ plus AutonomousSpeechSystem as social WHEN/WHETHER filter for speak-worthy
 asides (does not invent wording or audio) —
 plus SharedRepresentationSystem as common semantic substrate (stable concept IDs) —
 plus MetaAwareness tracking process / dual-stream mode (wandering vs focused;
-distinct from MetaCognition epistemic watching). ContinuousThoughtGenerator and
-ControlledThinking stay in-tree as optional/unwired toys — NOT attached on the
-live path (no mock *_fed stamps) — not the full legacy socket stack.
+distinct from MetaCognition epistemic watching) —
+plus AutonomousThinkingLoop, her mind when nothing is asked of it (default mode).
 """
 
 from __future__ import annotations
@@ -219,12 +218,6 @@ def create_core_systems(
         result = thalamus.register_lobe(name, systems[name])
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
-
-    # Dual-stream generators NOT attached live: ContinuousThoughtGenerator and
-    # ControlledThinking are mock/toy modules. MetaAwareness still tracks mode
-    # (wandering/focused) from real user turns / asides without feeding toys.
-    # dual_stream_thinking.py stays unwired (Anthropic-only demo).
-    # Optional: callers may still systems["meta_awareness"].set_*_system(...) by hand.
 
     if enable_autonomous:
         autonomous = AutonomousThinkingLoop(thalamus=thalamus)
