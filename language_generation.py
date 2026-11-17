@@ -515,29 +515,30 @@ class LanguageGenerator:
         listen = getattr(self.thalamus, "listen", None)
         if callable(listen):
             listen(name, "social_read")
-            listen(name, "moment")   # words reached her: read them
-            listen(name, "thought")  # Reasoning has something to say about it: word it
+            listen(name, "moment")   # every lobe hears the moment: Language reads the words in it
+            listen(name, "thought")  # there is a thought to word: she words a reply
 
-    def _hear_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Words reached her. Read them and tell the others what they mean."""
-        from team import announce, words_of
+    def _read_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Words reached her: what they mean. (Taken in once; any lobe can ask
+        Language what it read in a moment.)"""
+        from team import words_of
         moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
         text = words_of(moment)
-        if not text:
-            return {"status": "success", "content": {"read": False, "reason": "no words in this moment"}}
         user_id = str(payload.get("user_id") or moment.get("user_id") or "default")
         recognition_id = str(payload.get("recognition_id") or moment.get("recognition_id") or "")
+        if not text:
+            return {"user_id": user_id, "text": "", "recognition_id": recognition_id, "read": False,
+                    "reason": "no words in this moment"}
         result = self.comprehend(text, user_id=user_id, turn_id=recognition_id or None)
-        announce(self.thalamus, "read", {
-            "user_id": user_id, "text": text, "recognition_id": recognition_id, "moment": moment,
+        return {
+            "user_id": user_id, "text": text, "recognition_id": recognition_id, "read": True,
             "language_understanding": result.get("language_understanding"),
             "concept_ids": [str(i) for i in (result.get("concept_ids") or []) if i],
             "referent_ids": [str(i) for i in (result.get("referent_ids") or []) if i],
             "proposition_ids": [str(i) for i in (result.get("proposition_ids") or []) if i],
             "resolved_concepts": [dict(i) for i in (result.get("resolved_concepts") or result.get("resolved") or [])
                                   if isinstance(i, dict)],
-        }, "language")
-        return {"status": "success", "content": {"read": True}}
+        }
 
     def _hear_thought(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Reasoning has something to say about what was said. Have Meta-Cognition
@@ -1864,8 +1865,10 @@ class LanguageGenerator:
 
         if msg_type == 'social_read':
             return self._hear_social(payload if isinstance(payload, dict) else {})
-        if msg_type == 'moment':
-            return self._hear_moment(payload if isinstance(payload, dict) else {})
+        if msg_type in ('moment', 'about_moment'):
+            from team import take_moment
+            return {'status': 'success',
+                    'content': take_moment(self, 'language', self._read_moment, payload if isinstance(payload, dict) else {})}
         if msg_type == 'thought':
             return self._hear_thought(payload if isinstance(payload, dict) else {})
         if msg_type == 'comprehend':

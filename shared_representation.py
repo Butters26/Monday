@@ -742,18 +742,25 @@ class SharedRepresentationSystem:
         b=dict(resolve_result or {})
         return {"status":"success","resolved":b.get("resolved") or [],"concept_ids":list(b.get("concept_ids") or []),"highly_active_concepts":list(b.get("highly_active_concepts") or []),"active_concepts":list(b.get("active_concepts") or []),"activation":dict(b.get("activation") or {}),"user_id":b.get("user_id"),"relationship_edges":b.get("relationship_edges",0),"co_occurrence_edges_added":b.get("co_occurrence_edges_added",0),"spread_had_edges":bool(b.get("spread_had_edges")),"source":"shared_representation","timestamp":time.time()}
 
+    def _light_up(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from team import about_moment
+        reading=about_moment(self.thalamus,"language",payload,"shared_representation")
+        lit=[str(c) for c in (reading.get("concept_ids") or []) if c]
+        for cid in lit: self.activate(cid,1.0,user_id=payload.get("user_id"),spread=True)
+        return {"activated":lit}
+
     def on_joined(self, name: str) -> None:
         from team import listen
-        listen(self.thalamus, name, "read")
+        listen(self.thalamus, name, "moment")
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type=message.get("type") or message.get("message_type") or ""; content=message.get("content") if isinstance(message.get("content"),dict) else {}
         if not content and isinstance(message,dict): content={k:v for k,v in message.items() if k not in {"type","message_type","source","message_id","content"}}
-        if msg_type=="read":
-            # On the team: the concepts Language found in what was said become active here.
-            lit=[str(c) for c in (content.get("concept_ids") or []) if c]
-            for cid in lit: self.activate(cid,1.0,user_id=content.get("user_id"),spread=True)
-            return {"status":"success","content":{"activated":lit}}
+        if msg_type in {"moment","about_moment"}:
+            # In unison: she hears the moment herself and asks Language what it read;
+            # the concepts in it become active here.
+            from team import take_moment
+            return {"status":"success","content":take_moment(self,"shared_representation",self._light_up,content)}
         if msg_type=="health": return {"status":"success","healthy":True,"concept_count":len(self.concepts),"global_relationship_count":len(self.global_relationships),"transient_instance_count":len(self.instances),"transient_proposition_count":len(self.propositions),"live_co_occurrence_producer":True,"store_path":str(self.store_path)}
         if msg_type=="resolve_from_text":
             return {"status":"error","message":"raw text interpretation belongs to language","content":{}}

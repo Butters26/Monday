@@ -181,25 +181,12 @@ def test_native_real_thalamus_live_representation_path_uses_language(tmp_path):
     assert thalamus.register_lobe("language", language)["status"] == "success"
     assert thalamus.register_lobe("shared_representation", shared)["status"] == "success"
 
-    heard = []
-
-    class Listener:
-        def on_joined(self, name):
-            thalamus.listen(name, "read")
-
-        def process_message(self, message):
-            heard.append(message["content"])
-            return {"status": "success", "content": {}}
-
-    assert thalamus.register_lobe("listener", Listener())["status"] == "success"
-    # A moment reaches her: Language reads it itself and announces what it read.
-    thalamus.announce(
-        "moment",
-        {"user_id": "u1", "recognition_id": "r1",
-         "moment": {"modality": "text", "text": "Steve gave the dog a ball yesterday."}},
-        source="sensory_integration",
-    )
+    # A moment reaches her: Language reads it itself, and any lobe can ask what it read.
+    moment = {"user_id": "u1", "recognition_id": "r1",
+              "moment": {"modality": "text", "text": "Steve gave the dog a ball yesterday."}}
+    thalamus.announce("moment", moment, source="sensory_integration")
     assert thalamus.wait_until_quiet(30)
+    heard = [thalamus.send_and_wait("language", "about_moment", moment)["content"]]
     result = heard[-1]
     assert len(result["proposition_ids"]) == 1
     assert result["language_understanding"]["contract"] == "language_understanding_v1"

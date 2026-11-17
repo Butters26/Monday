@@ -37,26 +37,12 @@ def test_thalamus_is_native_router_not_wrapper():
 
 def test_language_first_then_sr_ids(tmp_path):
     thalamus, shared, _, _ = _stack(tmp_path)
-    heard = []
-
-    class Listener:
-        def on_joined(self, name):
-            thalamus.listen(name, "read")
-
-        def process_message(self, message):
-            heard.append(message["content"])
-            return {"status": "success", "content": {}}
-
-    assert thalamus.register_lobe("listener", Listener())["status"] == "success"
-    # A moment reaches her: Language reads it itself and announces what it read.
-    thalamus.announce(
-        "moment",
-        {"user_id": "u1", "recognition_id": "r1",
-         "moment": {"modality": "text", "text": "Steve gave the dog a ball yesterday."}},
-        source="sensory_integration",
-    )
+    # A moment reaches her: Language reads it itself, and any lobe can ask what it read.
+    moment = {"user_id": "u1", "recognition_id": "r1",
+              "moment": {"modality": "text", "text": "Steve gave the dog a ball yesterday."}}
+    thalamus.announce("moment", moment, source="sensory_integration")
     assert thalamus.wait_until_quiet(30)
-    assert heard, "Language did not announce what it read"
+    heard = [thalamus.send_and_wait("language", "about_moment", moment)["content"]]
     result = heard[-1]
     assert isinstance(result["language_understanding"], dict)
     assert result["proposition_ids"]

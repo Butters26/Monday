@@ -457,57 +457,24 @@ class AttentionLobe:
 
     def on_joined(self, name: str) -> None:
         from team import listen
-        listen(self.thalamus, name, "moment", "read", "turn")
+        listen(self.thalamus, name, "moment")
 
-    def _learned(self, signal_id: str, **found: Any) -> Dict[str, Any]:
-        """Another lobe reported something about a signal she already has: weigh
-        it again with that, pick the focus again, and pass it on."""
-        meta = self.signal_meta.get(signal_id)
-        if not meta:
-            return {"weighed": False, "reason": "that signal has faded"}
-        raw = dict(meta.get("raw") or {}) if isinstance(meta.get("raw"), dict) else {"id": signal_id, "text": meta.get("text")}
-        raw.update(found)
-        self.replace_signals([raw])
-        if self.current_focus:
-            self.route_focus()
-        self.turn_up_focus()
-        self._report_focus(", ".join(f"{k}={v}" for k, v in found.items()))
-        return {"weighed": True, "score": self.salience_map.get(signal_id), "focus": self.current_focus}
-
-    def hear_read(self, content: Dict[str, Any]) -> Dict[str, Any]:
-        """Language read what was said: a question, or something with feeling
-        in it, pulls at her more."""
-        reading = content.get("language_understanding")
-        reading = reading if isinstance(reading, dict) else {}
-        affect = reading.get("affect") if isinstance(reading.get("affect"), dict) else {}
-        return self._learned(getattr(self, "_said", ""), asks=reading.get("speech_act") == "question",
-                             feeling=bool(affect.get("present")))
-
-    def hear_turn(self, content: Dict[str, Any]) -> Dict[str, Any]:
-        """Emotion has felt what was said: the more strongly she feels about it,
-        the more it holds her."""
-        from team import ask
-        felt = ask(self.thalamus, "emotion", "how_she_felt",
-                   {"user_id": str(content.get("user_id") or "default")}, "attention")
-        return self._learned(getattr(self, "_said", ""), felt=self._unit(felt.get("intensity")))
-
-    def hear_moment(self, content: Dict[str, Any]) -> Dict[str, Any]:
-        """A new moment: weigh what's in it against everything else, pick the
-        focus, tell Reasoning, and turn the winner up in the Thalamus."""
-        from team import words_of
+    def _take_in(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        """A new moment. First what her senses bring in is weighed against
+        everything else (bottom-up) and a focus is picked. Then she asks the
+        other lobes what they make of it, and weighs again with that."""
+        from team import about_moment, words_of
         moment = content.get("moment") if isinstance(content.get("moment"), dict) else {}
         user_id = str(content.get("user_id") or moment.get("user_id") or "default")
-        from team import ask
         # What her senses bring in this moment, as Sensory Integration built it.
         signals: List[Dict[str, Any]] = [dict(item) for item in moment.get("attention_signals") or []
                                          if isinstance(item, dict)]
-        # The one that carries the words, if any: the other lobes will report on it.
+        # The one that carries the words, if any.
         sense = str(moment.get("modality") or "text")
         said = next((sig for sig in signals if words_of(moment) and str(sig.get("modality")) == sense), None)
-        self._said = str(said.get("id") or "") if said else ""
         if said is not None:
-            # How new Novelty found this moment (it heard the same moment).
-            novelty = ask(self.thalamus, "novelty", "get_assessment", {}, "attention")
+            # How new Novelty found this moment.
+            novelty = about_moment(self.thalamus, "novelty", content, "attention")
             said["novelty_score"] = novelty.get("novelty_score", novelty.get("score", 0.0))
             said.setdefault("user_id", user_id)
         # A new moment is a new thing: last moment's score for the same sense doesn't carry into it.
@@ -516,8 +483,23 @@ class AttentionLobe:
         if result.get("focus"):
             self.route_focus()
         self.turn_up_focus()
-        self._report_focus("a new moment")
-        return result
+        self._report_focus("a new moment (what her senses brought)")
+        if said is not None:
+            # What the other lobes make of it: whether it asks something or carries
+            # feeling (Language), and how strongly she feels about it (Emotion).
+            reading = about_moment(self.thalamus, "language", content, "attention").get("language_understanding")
+            reading = reading if isinstance(reading, dict) else {}
+            affect = reading.get("affect") if isinstance(reading.get("affect"), dict) else {}
+            felt = about_moment(self.thalamus, "emotion", content, "attention")
+            said.update(asks=reading.get("speech_act") == "question", feeling=bool(affect.get("present")),
+                        felt=self._unit(felt.get("intensity")))
+            self.replace_signals([said])
+            if self.current_focus:
+                self.route_focus()
+            self.turn_up_focus()
+            self._report_focus(f"what the other lobes made of it: asks={said['asks']}, "
+                               f"feeling={said['feeling']}, felt={round(said['felt'], 3)}")
+        return self.get_focus()
 
     def _report_focus(self, because: str) -> None:
         """For the tracer: where her focus is, and what just changed it."""
@@ -584,15 +566,9 @@ class AttentionLobe:
                 if k not in ("type", "_message_id", "message_id", "source")
             }
 
-        if msg_type == "moment":
-            result = self.hear_moment(content)
-            return {"status": "success", "content": result}
-
-        if msg_type == "read":
-            return {"status": "success", "content": self.hear_read(content)}
-
-        if msg_type == "turn":
-            return {"status": "success", "content": self.hear_turn(content)}
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            return {"status": "success", "content": take_moment(self, "attention", self._take_in, content)}
 
         if msg_type == "get_focus":
             body = self.get_focus()

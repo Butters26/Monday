@@ -682,27 +682,37 @@ class DirectReasoningAdapter:
             listen(name, "remembered")
             listen(name, "social_read")  # what social context makes of each moment
             listen(name, "contradicts")  # memory found something new that disagrees with the old
-            listen(name, "turn")         # something was said: think about it
+            listen(name, "moment")       # every lobe hears the moment: she thinks about it
 
-    def _hear_turn(self, turn: Dict[str, Any], message: Dict[str, Any]) -> Dict[str, Any]:
-        """Something was said. Gather what the other lobes know about it, think,
-        and announce what there is to say."""
+    def _think_about_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Think about this moment: ask the other lobes what they make of it,
+        think, and announce what there is to say."""
+        from team import about_moment
+        message = {"message_id": payload.get("recognition_id")}
+        turn = about_moment(self.thalamus, "conversation", payload, "reasoning")
         user_input = str(turn.get("user_input") or "")
-        user_id = str(turn.get("user_id") or "default")
+        user_id = str(payload.get("user_id") or turn.get("user_id") or "default")
+        if not user_input.strip():
+            return {"thought": False, "reason": "no words in this moment"}
+        about_moment(self.thalamus, "notus", payload, "reasoning")  # he has it filed before she asks him
         query = {"query": user_input, "user_id": user_id, "limit": 15}
         memory = self._ask_lobe("notus", "query_context", query) or self._ask_lobe("notus", "query", query)
+        about_moment(self.thalamus, "shared_representation", payload, "reasoning")
         active = self._ask_lobe("shared_representation", "get_active", {"user_id": user_id})
         highly = self._ask_lobe("shared_representation", "get_highly_active", {})
         reading = turn.get("language_understanding") if isinstance(turn.get("language_understanding"), dict) else None
+        social = about_moment(self.thalamus, "social_context", payload, "reasoning")
+        if social:
+            self.__dict__.setdefault("_social_reads", {})[user_id] = dict(social)
         direct_input = {
             "user_input": user_input,
             "user_id": user_id,
             "understanding": turn.get("understanding") if isinstance(turn.get("understanding"), dict) else {},
             "memory_context": memory,
-            "emotion_result": self._ask_lobe("emotion", "how_she_felt", {"user_id": user_id}),
+            "emotion_result": about_moment(self.thalamus, "emotion", payload, "reasoning"),
             "perception": turn.get("moment") if isinstance(turn.get("moment"), dict) else {},
-            "attention": self._ask_lobe("attention", "get_focus", {}),
-            "pattern_result": self._ask_lobe("pattern", "latest", {"user_id": user_id}),
+            "attention": about_moment(self.thalamus, "attention", payload, "reasoning"),
+            "pattern_result": about_moment(self.thalamus, "pattern", payload, "reasoning"),
             "representation_result": {
                 "status": "success" if reading is not None else "absent",
                 "resolved": list(turn.get("resolved_concepts") or []),
@@ -715,12 +725,12 @@ class DirectReasoningAdapter:
                 "user_id": user_id,
                 "source": "shared_representation",
             },
-            "social_context": self._ask_lobe("social_context", "get_context", {"user_id": user_id}),
+            "social_context": social,
         }
         thought = self.process_message({"type": "think", "content": {"input": direct_input},
                                         "message_id": message.get("message_id")})
         if thought.get("status") != "success":
-            return thought
+            return {"thought": False, "reason": str(thought.get("message") or "thinking failed")}
         semantic_input = (thought.get("content") or {}).get("semantic_input")
         semantic_input = dict(semantic_input) if isinstance(semantic_input, dict) else {}
         semantic_input.setdefault("semantic_owner", "reasoning")
@@ -732,7 +742,7 @@ class DirectReasoningAdapter:
                 "semantic_input": semantic_input,
                 "memories": list(memory.get("memories") or []) if isinstance(memory, dict) else [],
             }, "reasoning")
-        return {"status": "success", "content": {"thought": True}}
+        return {"thought": True, "semantic_input": semantic_input}
 
     def _bid_for_turn(self, turn: Dict[str, Any], user_input: str, user_id: str,
                       semantic_input: Dict[str, Any]) -> None:
@@ -2093,9 +2103,10 @@ class DirectReasoningAdapter:
         if message.get("type") == "social_read":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return self._hear_social(payload)
-        if message.get("type") == "turn":
+        if message.get("type") in ("moment", "about_moment"):
+            from team import take_moment
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
-            return self._hear_turn(payload, message)
+            return {"status": "success", "content": take_moment(self, "reasoning", self._think_about_moment, payload)}
         if message.get("type") in ("work_out", "think_through"):
             # Another lobe (Autonomous Thinking, Executive Control...) asks her to
             # think something through: what she knows about it, what follows, why.

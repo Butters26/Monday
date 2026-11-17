@@ -1,31 +1,40 @@
-"""How a lobe talks to the rest of her through the Thalamus.
+"""How a lobe works with the rest of her through the Thalamus.
 
-Three things a lobe can do: sign up for announcements (listen), tell everyone
-who signed up that something happened (announce), and ask another lobe for
-something it needs (ask). Nothing here decides anything.
+In unison, not in a line. Every lobe hears each moment at the same time, the
+same full moment as her senses built it, and takes it in on its own. No lobe
+waits for another to finish before it starts. A lobe that needs what another
+lobe makes of the moment asks that lobe about it (about_moment); the lobe
+asked takes the moment in right then if it hasn't yet, and answers with what
+it made of it. Each lobe takes a moment in exactly once.
 
-The announcements that carry a moment through her, and who makes them:
+What a lobe can do here: sign up for announcements (listen), tell everyone who
+signed up that something happened (announce), ask another lobe for something
+(ask), and ask another lobe what it made of a moment (about_moment).
+
+Announcements, and who makes them:
 
   heard_words / heard_sound / saw   Perception: something reached a sense
-  moment        Sensory Integration: the moment built from all her senses
-  read          Language: what the words in the moment mean
-  turn          Conversation: where this leaves the conversation
-  remembered    Notus: what the moment brought back
-  social_read   Social Context: the social side of it
-  understood    Reasoning: what is going on and what follows
-  thought       Reasoning: what there is to say about it
+  moment        Sensory Integration: the moment built from all her senses.
+                Every lobe hears this one.
+  thought       Reasoning: it has something to say about the moment (Language
+                words a reply when there is a thought to word)
   delivered     Output: what she actually said (empty if nothing)
+  remembered, social_read, understood, read_again, contradicts, thought_arose:
+                what a lobe found, for any lobe that wants to know. Nobody
+                waits on these to start.
 
-Besides announcing, a lobe that has something she could do bids for it (bid):
+Besides that, a lobe that has something she could do bids for it (bid):
 Executive Control weighs the bids and one wins.
 
-Each one carries "user_id" (who she is with) and, when it came from something
-sensed, "recognition_id" (which moment it is about).
+A moment carries "user_id" (who she is with), "recognition_id" (which moment
+it is) and "moment" (what her senses built).
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import threading
+from collections import OrderedDict
+from typing import Any, Callable, Dict, Optional
 
 
 def listen(thalamus: Any, name: str, *topics: str) -> None:
@@ -72,6 +81,76 @@ def bid(thalamus: Any, source: str, impulse: str, strength: Any, about: str, use
                                           "about": about, "user_id": user_id, **more}, source=source)
 
 
+def moment_key(payload: Dict[str, Any]) -> str:
+    """Which moment this is."""
+    moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
+    rid = str(payload.get("recognition_id") or moment.get("recognition_id") or "").strip()
+    return rid or f"{payload.get('user_id')}|{words_of(moment)}"
+
+
+def about_moment(thalamus: Any, lobe: str, payload: Dict[str, Any], source: str) -> Dict[str, Any]:
+    """Ask another lobe what it made of this moment. It takes the moment in
+    right then if it hasn't yet. {} if it couldn't answer."""
+    return ask(thalamus, lobe, "about_moment",
+               {"user_id": payload.get("user_id"), "recognition_id": payload.get("recognition_id"),
+                "moment": payload.get("moment")}, source)
+
+
+class TakesIn:
+    """A lobe's way of taking each moment in exactly once, whether it heard the
+    moment itself or another lobe asked it about the moment first."""
+
+    def __init__(self, lobe: str, take_in: Callable[[Dict[str, Any]], Dict[str, Any]]) -> None:
+        self.lobe = lobe
+        self._take_in = take_in
+        self._made: "OrderedDict[str, Optional[Dict[str, Any]]]" = OrderedDict()
+        self._lock = threading.RLock()
+
+    def take(self, payload: Dict[str, Any],
+             then: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+        """`then` runs once, after what the lobe made of the moment is ready for
+        anyone who asks (bidding for it, for one: a lobe bids with a finished
+        take on the moment, not while another lobe is still waiting on it)."""
+        key = moment_key(payload)
+        with self._lock:
+            if key in self._made:
+                made = self._made[key]
+                if made is None:
+                    # Asked about a moment it is still in the middle of taking in.
+                    try:
+                        from trace_monitor import trace_event
+                        trace_event("asked_midway", lobe=self.lobe, moment=key)
+                    except Exception:
+                        pass
+                    return {"still_taking_it_in": True}
+                return made
+            self._made[key] = None
+            while len(self._made) > 30:
+                self._made.popitem(last=False)
+        try:
+            made = self._take_in(payload)
+        except Exception:
+            with self._lock:
+                self._made.pop(key, None)
+            raise
+        made = made if isinstance(made, dict) else {}
+        with self._lock:
+            self._made[key] = made
+        if then is not None:
+            then(payload, made)
+        return made
+
+
+def take_moment(lobe: Any, name: str, take_in: Callable[[Dict[str, Any]], Dict[str, Any]],
+                payload: Dict[str, Any],
+                then: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+    """What this lobe makes of the moment: taken in now if it hasn't been yet."""
+    taker = lobe.__dict__.get("_takes_in")
+    if taker is None:
+        taker = lobe.__dict__.setdefault("_takes_in", TakesIn(name, take_in))
+    return taker.take(payload, then)
+
+
 def words_of(moment: Dict[str, Any]) -> str:
     """The words in a moment, if it has any (typed or heard)."""
     if not isinstance(moment, dict):
@@ -86,4 +165,4 @@ def words_of(moment: Dict[str, Any]) -> str:
     return ""
 
 
-__all__ = ["listen", "announce", "ask", "bid", "words_of"]
+__all__ = ["listen", "announce", "ask", "bid", "about_moment", "moment_key", "TakesIn", "take_moment", "words_of"]

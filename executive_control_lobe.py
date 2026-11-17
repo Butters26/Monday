@@ -279,10 +279,9 @@ class ExecutiveControlLobe:
         what it was already handling; Executive Control takes bids while it waits.)"""
         listeners = getattr(self.thalamus, "listeners", None) or {}
         heard_it = []
-        for topic in ("moment", "turn"):
-            for lobe in listeners.get(topic) or []:
-                if lobe != self.name and lobe not in heard_it:
-                    heard_it.append(lobe)
+        for lobe in listeners.get("moment") or []:
+            if lobe != self.name and lobe not in heard_it:
+                heard_it.append(lobe)
         for lobe in heard_it:
             self._ask(lobe, "health", {})
 
@@ -419,7 +418,7 @@ class ExecutiveControlLobe:
         self.name = name
         listen = getattr(self.thalamus, "listen", None)
         if callable(listen):
-            for topic in ("turn", "delivered"):
+            for topic in ("moment", "delivered"):
                 listen(name, topic)
 
     def shutdown(self) -> None:
@@ -483,8 +482,11 @@ class ExecutiveControlLobe:
 
         if msg_type == "bid":
             return {"status": "success", "content": self.take_bid(content, source)}
-        if msg_type == "turn":
-            body = self.hear_turn(str(content.get("user_input") or content.get("text") or ""), user_id)
+        if msg_type in ("moment", "about_moment"):
+            # In unison: she hears the moment herself. Bids about anything older stop competing.
+            from team import words_of
+            said = words_of(content.get("moment") if isinstance(content.get("moment"), dict) else {})
+            body = self.hear_turn(said, user_id) if said else self.get_goal()
             return {"status": "success", "content": body}
         if msg_type == "delivered":
             self._heard_delivery(content)

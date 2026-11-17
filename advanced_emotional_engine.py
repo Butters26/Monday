@@ -816,7 +816,7 @@ class EmotionalProcess:
         if callable(listen):
             listen(name, "social_read")
             listen(name, "remembered")
-            listen(name, "turn")  # something was said: she feels about it herself
+            listen(name, "moment")  # every lobe hears the moment: she feels about it herself
             listen(name, "thought_arose")  # her own thought: the memories in it bring their feelings
 
     def __init__(self, state_file=None, thalamus=None):
@@ -1008,6 +1008,31 @@ class EmotionalProcess:
             },
         }
 
+    def _feel_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """What she feels about this moment. Asks Social Context for the social
+        side of it first, so that is in when she feels."""
+        from team import about_moment, words_of
+        moment = payload.get('moment') if isinstance(payload.get('moment'), dict) else {}
+        said = words_of(moment)
+        user_id = str(payload.get('user_id') or moment.get('user_id') or 'default')
+        if not said:
+            return {}
+        read = about_moment(self.thalamus, 'social_context', payload, 'emotion')
+        if read:
+            self.engine.__dict__.setdefault('_social_reads', {})[user_id] = dict(read)
+        felt = self.process_message_safe({'type': 'process_input', 'content': {'user_input': said, 'user_id': user_id}})
+        return {k: v for k, v in felt.items() if k != 'status'}
+
+    def _bid_feeling(self, payload: Dict[str, Any], felt: Dict[str, Any]) -> None:
+        """What she feels about it is something she could say: a bid to
+        Executive Control, as strong as the feeling is."""
+        from team import bid, words_of
+        moment = payload.get('moment') if isinstance(payload.get('moment'), dict) else {}
+        if felt.get('current_emotion') is not None:
+            bid(self.thalamus, 'emotion', 'how she feels', felt.get('intensity'), words_of(moment),
+                str(payload.get('user_id') or moment.get('user_id') or 'default'),
+                why=f"she feels {felt.get('current_emotion')}")
+
     def process_message_safe(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Safe dispatcher with validation (FIX)"""
         with self.engine.engine_lock:
@@ -1025,6 +1050,12 @@ class EmotionalProcess:
             if msg_type == 'health':
                 return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
             
+            if msg_type in ('moment', 'about_moment'):
+                # In unison: she hears the moment herself and feels about it (once).
+                from team import take_moment
+                return {'status': 'success', **take_moment(self, 'emotion', self._feel_moment, message,
+                                                           then=self._bid_feeling)}
+
             if msg_type == 'how_she_felt':
                 # What she felt about the last thing said (to this person), for any
                 # lobe that needs it.
@@ -1034,7 +1065,7 @@ class EmotionalProcess:
                     felt = {**snap, 'monday_emotion': snap.get('monday_emotion', snap['current_emotion'])}
                 return {'status': 'success', **felt}
 
-            if msg_type in ('process_input', 'turn'):
+            if msg_type == 'process_input':
                 user_input = message.get('user_input', '')
                 # FIX: validate input type
                 if not isinstance(user_input, str):
@@ -1083,12 +1114,6 @@ class EmotionalProcess:
                     'patterns': snap['patterns'],
                     'user_affect': snap.get('user_affect'),
                 }
-                if msg_type == 'turn':
-                    # What she feels about it is something she could say: a bid to
-                    # Executive Control, as strong as the feeling is.
-                    from team import bid
-                    bid(self.thalamus, 'emotion', 'how she feels', snap['intensity'], user_input,
-                        str(message.get('user_id') or 'default'), why=f"she feels {snap['current_emotion']}")
                 return {'status': 'success', **felt}
 
             elif msg_type == 'social_read':

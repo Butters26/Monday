@@ -3529,7 +3529,7 @@ relocate to: live in
             return self.mark_wrong(payload)
         if msg_type == "read_again":
             return self.file_again(str(payload.get("text") or ""), str(payload.get("user_id") or self._talking_with or "default"))
-        if msg_type == "moment":
+        if msg_type in ("moment", "about_moment"):
             return self.hear_moment(payload)
         if msg_type == "thought_arose":
             return self.replay(payload)

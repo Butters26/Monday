@@ -1891,26 +1891,28 @@ class AdvancedPatternRecognition:
     
     def on_joined(self, name: str) -> None:
         from team import listen
-        listen(self.thalamus, name, "turn")
+        listen(self.thalamus, name, "moment")
 
-    def _hear_turn(self, turn: Dict[str, Any]) -> Dict[str, Any]:
-        """Something was said: look for patterns in it, with what the other lobes
-        made of it."""
-        from team import ask
-        moment = turn.get("moment") if isinstance(turn.get("moment"), dict) else {}
-        user_id = str(turn.get("user_id") or "default")
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Look for patterns in this moment, with what the other lobes make of it."""
+        from team import about_moment, ask
+        where = about_moment(self.thalamus, "conversation", payload, "pattern")
+        user_id = str(payload.get("user_id") or where.get("user_id") or "default")
+        if not str(where.get("user_input") or "").strip():
+            return {"status": "success", "significant_patterns": {}, "observed_patterns": {}}
+        moment = where.get("moment") if isinstance(where.get("moment"), dict) else {}
         words = list(moment.get("words") or [])
-        patterns = self.observe({
-            "statement": str(turn.get("user_input") or ""),
+        observed = self.observe({
+            "statement": str(where.get("user_input") or ""),
             "items": list(words), "words": list(words),
             "perception": moment,
             "attention": ask(self.thalamus, "attention", "get_focus", {}, "pattern"),
-            "understanding": turn.get("understanding") if isinstance(turn.get("understanding"), dict) else {},
-            "emotion": ask(self.thalamus, "emotion", "how_she_felt", {"user_id": user_id}, "pattern"),
+            "understanding": where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
+            "emotion": about_moment(self.thalamus, "emotion", payload, "pattern"),
             "user_id": user_id,
         })
-        self.__dict__.setdefault("_last_observed", {})[user_id] = patterns
-        return {"status": "success", "content": {"patterns": patterns}}
+        return {"status": "success", "observed_patterns": observed,
+                "significant_patterns": self.get_significant_patterns_only(user_id=user_id) or {}}
 
     def observe(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Query Notus for past observations to compare
@@ -2338,18 +2340,9 @@ class AdvancedPatternRecognition:
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid(), 'content': {'healthy': True}}
         
-        if msg_type == 'turn':
-            return self._hear_turn(payload)
-
-        if msg_type == 'latest':
-            # What she found in the last thing said, for any lobe that needs it.
-            uid = payload.get('user_id')
-            found = {
-                'status': 'success',
-                'significant_patterns': self.get_significant_patterns_only(user_id=uid) or {},
-                'observed_patterns': (self.__dict__.get('_last_observed') or {}).get(str(uid or 'default')) or {},
-            }
-            return {'status': 'success', 'content': found}
+        if msg_type in ('moment', 'about_moment'):
+            from team import take_moment
+            return {'status': 'success', 'content': take_moment(self, 'pattern', self._take_in, payload)}
 
         if msg_type == 'observe' or msg_type == 'process_input':
             data = nested if nested is not None else payload

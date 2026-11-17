@@ -219,9 +219,9 @@ def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str
 
     original_tell = getattr(thalamus, "tell", None)
     if callable(original_tell):
-        def traced_tell(destination, msg_type, content=None, source="thalamus"):
+        def traced_tell(destination, msg_type, content=None, source="thalamus", **carrying):
             sender = _real_sender(thalamus)
-            response = original_tell(destination, msg_type, content, source)
+            response = original_tell(destination, msg_type, content, source, **carrying)
             outcome = "DELIVERED" if response.get("status") == "delivered" else "NO_RECEIVER"
             _write({"kind": "message", "from": sender, "claimed_from": source, "to": destination,
                     "type": msg_type, "outcome": outcome, "waits": False})

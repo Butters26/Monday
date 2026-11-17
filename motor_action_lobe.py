@@ -353,7 +353,19 @@ class MotorActionLobe:
 
     def on_joined(self, name: str) -> None:
         from team import listen
-        listen(self.thalamus, name, "turn", "delivered")
+        listen(self.thalamus, name, "moment", "delivered")
+
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Is there something to do in this moment? Asks Conversation where it leaves things."""
+        from team import about_moment
+        where = about_moment(self.thalamus, "conversation", payload, "motor_action")
+        if not str(where.get("user_input") or "").strip():
+            return {}
+        return self.plan_from_turn(
+            user_input=str(where.get("user_input") or ""),
+            understanding=where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
+            user_id=str(payload.get("user_id") or where.get("user_id") or "default"),
+        )
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
@@ -369,7 +381,12 @@ class MotorActionLobe:
         if msg_type == "health":
             return {"status": "success", "healthy": True}
 
-        if msg_type in ("turn", "plan_from_turn", "plan_turn"):
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            body = take_moment(self, "motor_action", self._take_in, content)
+            return {"status": "success", "content": body}
+
+        if msg_type in ("plan_from_turn", "plan_turn"):
             body = self.plan_from_turn(
                 user_input=str(content.get("user_input") or content.get("text") or ""),
                 understanding=content.get("understanding")
