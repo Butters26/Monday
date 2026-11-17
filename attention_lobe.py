@@ -433,23 +433,91 @@ class AttentionLobe:
         }
         if not self.thalamus:
             return {"routed": False, "reason": "no_thalamus", "payload": payload}
-        send = getattr(self.thalamus, "send_message", None)
-        if not callable(send):
-            return {"routed": False, "reason": "thalamus_has_no_send", "payload": payload}
-        # Only deliver if reasoning is actually registered — no hardcoded dead route.
-        handlers = getattr(self.thalamus, "lobe_handlers", None) or {}
-        if "reasoning" not in handlers:
-            return {"routed": False, "reason": "reasoning_offline", "payload": payload}
-        response = send(
-            "reasoning",
-            "attention_focus",
-            payload,
-            source="attention",
-        )
+        tell = getattr(self.thalamus, "tell", None)
+        if not callable(tell):
+            return {"routed": False, "reason": "thalamus_has_no_tell", "payload": payload}
+        # Told, not asked: Attention doesn't wait on Reasoning to carry on.
+        response = tell("reasoning", "attention_focus", payload, source="attention")
         return {
-            "routed": response.get("status") == "success",
+            "routed": response.get("status") == "delivered",
             "response": response,
             "payload": payload,
+        }
+
+    # --- on the team ---------------------------------------------------------
+
+    # Which lobes' messages carry each kind of signal she can focus on.
+    _CARRIED_BY = {
+        "user": ("perception", "sensory_integration"),
+        "user_input": ("perception", "sensory_integration"),
+        "chat": ("perception", "sensory_integration"),
+        "perception": ("perception", "sensory_integration"),
+        "sensory": ("perception", "sensory_integration"),
+        "sensory_integration": ("perception", "sensory_integration"),
+        "executive": ("executive_control",),
+        "executive_control": ("executive_control",),
+        "novelty": ("novelty",),
+        "meta": ("meta_cognition",),
+        "meta_cognition": ("meta_cognition",),
+        "emotion": ("emotion",),
+        "autonomous": ("autonomous",),
+        "inner": ("autonomous",),
+    }
+    _WINNER_VOLUME = 2.0
+
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment")
+
+    def hear_moment(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        """A new moment: weigh what's in it against everything else, pick the
+        focus, tell Reasoning, and turn the winner up in the Thalamus."""
+        from team import words_of
+        moment = content.get("moment") if isinstance(content.get("moment"), dict) else {}
+        user_id = str(content.get("user_id") or moment.get("user_id") or "default")
+        signals: List[Dict[str, Any]] = []
+        said = words_of(moment)
+        if said:
+            signals.append({"id": "user_input", "text": said, "source": "user",
+                            "modality": str(moment.get("modality") or "text"), "user_id": user_id})
+        for item in moment.get("attention_signals") or []:
+            if isinstance(item, dict):
+                signals.append(dict(item))
+        result = self.evaluate(signals)
+        if result.get("focus"):
+            self.route_focus()
+        self.turn_up_focus()
+        return result
+
+    def turn_up_focus(self) -> Dict[str, Any]:
+        """Set the Thalamus's volume: what the lobes behind her current focus
+        announce is delivered first; everything else is back to normal. The
+        Thalamus only applies it."""
+        set_volume = getattr(self.thalamus, "set_volume", None)
+        if not callable(set_volume):
+            return {}
+        meta = self.signal_meta.get(self.current_focus or "") or {}
+        winners = self._CARRIED_BY.get(str(meta.get("source") or "").lower(), ())
+        levels = {f"from:{lobe}": 1.0 for lobe in getattr(self, "_turned_up", ())}
+        levels.update({f"from:{lobe}": self._WINNER_VOLUME for lobe in winners})
+        if not levels or levels == getattr(self, "_last_levels", None):
+            return levels
+        self._turned_up = tuple(winners)
+        self._last_levels = dict(levels)
+        set_volume(levels)
+        return levels
+
+    def get_focus(self) -> Dict[str, Any]:
+        """Where her focus is right now, without weighing anything again."""
+        ranked = self.rank_signals()
+        entry = next((r for r in ranked if r.get("id") == self.current_focus), None)
+        return {
+            "focus": self.current_focus,
+            "focus_text": (entry or {}).get("text"),
+            "focus_score": (entry or {}).get("score"),
+            "focus_source": (entry or {}).get("source"),
+            "ranked": ranked,
+            "salience_map": dict(self.salience_map),
         }
 
     def get_status(self) -> Dict[str, Any]:
@@ -479,6 +547,14 @@ class AttentionLobe:
                 if k not in ("type", "_message_id", "message_id", "source")
             }
 
+        if msg_type == "moment":
+            result = self.hear_moment(content)
+            return {"status": "success", "content": result}
+
+        if msg_type == "get_focus":
+            body = self.get_focus()
+            return {"status": "success", "content": body}
+
         if msg_type in ("evaluate", "attend", "score_signals"):
             result = self.evaluate(content.get("signals", content.get("input_signals", [])))
             return {"status": "success", "content": result, **result}
@@ -493,6 +569,10 @@ class AttentionLobe:
 
         if msg_type in ("replace_signals", "replace_salience", "replace"):
             ranked = self.replace_signals(content.get("signals", []))
+            # What is competing changed: pick the focus again and pass it on.
+            if self.select_focus():
+                self.route_focus()
+            self.turn_up_focus()
             return {
                 "status": "success",
                 "content": {"ranked": ranked, "salience_map": dict(self.salience_map)},

@@ -346,6 +346,10 @@ class MotorActionLobe:
         if uid == "default":
             self.action_queue = []
 
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "turn", "delivered")
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         if "content" in message and isinstance(message.get("content"), dict):
@@ -360,7 +364,7 @@ class MotorActionLobe:
         if msg_type == "health":
             return {"status": "success", "healthy": True}
 
-        if msg_type in ("plan_from_turn", "plan_turn"):
+        if msg_type in ("turn", "plan_from_turn", "plan_turn"):
             body = self.plan_from_turn(
                 user_input=str(content.get("user_input") or content.get("text") or ""),
                 understanding=content.get("understanding")
@@ -383,7 +387,7 @@ class MotorActionLobe:
             )
             return {"status": "success", "content": {"action": action}, "action": action}
 
-        if msg_type in ("execute_next", "deliver", "execute_action"):
+        if msg_type in ("delivered", "execute_next", "deliver", "execute_action"):
             action = self.execute_action(
                 user_id=str(content.get("user_id") or "default")
             )

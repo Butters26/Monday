@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""Mercy Thalamus: the message boy.
+"""Mercy's Thalamus: the tube between her lobes, with a volume knob.
 
-Contract: .github/instructions/thalamus.instructions.md. Thalamus reads only
-the address on a message and delivers it to that lobe's inbox; every lobe runs
-on its own thread (lobe_inbox.py). It carries answers back, delivers
-announcements to the lobes that listen for them, and reports any delivery
-failure to the sender. It decides nothing.
+It carries every message. It reads only the address on a message (who it is
+for, what kind it is, who sent it) and never what is inside. It decides
+nothing and runs nothing: there is no turn script. Every lobe runs on its own
+thread (lobe_inbox.py), hears the announcements it signed up for, and asks
+other lobes for what it needs.
 
-Temporary exception: the turn script in process_user_input still sequences a
-turn. It is removed lobe by lobe (Monday Build Plan steps 2-3); nothing new may
-be added to it.
+What it does:
+- delivers a message to the lobe it is addressed to and carries the answer
+  back (send_message / send_and_wait), or delivers without waiting (tell);
+- delivers an announcement to every lobe that listens for it (listen /
+  announce); the lobes choose what they listen for;
+- applies the volume Attention sets (set_volume): of the things told and
+  announced to a lobe, louder ones are delivered first and quieter ones wait.
+  Nothing is ever dropped. Only Attention can set it;
+- keeps track of who is waiting on whom, only so two lobes waiting on each
+  other don't lock up (lobe_inbox.py);
+- reports every delivery failure to the sender;
+- everything it carries is visible to the tracer (trace_monitor.py).
 """
 
 from __future__ import annotations
@@ -22,11 +31,16 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
 from lobe_inbox import ANSWER_TIMEOUT_SEC, Letter, LobeInbox, Reply, current_chain, new_chain
-from notus_outage_fallback import NotusOutageFallback
+
+try:
+    from trace_monitor import trace_event as _trace_event
+except Exception:  # tracer is optional
+    def _trace_event(kind: str, **data: Any) -> None:
+        return None
 
 
 class Thalamus:
-    """Synchronous router/coordinator for Mercy's direct-call lobe graph."""
+    """Carries messages between lobes. Decides nothing."""
 
     def __init__(self) -> None:
         self.running = True
@@ -36,24 +50,16 @@ class Thalamus:
         self.message_routes: deque = deque(maxlen=200)
         self.inboxes: Dict[str, LobeInbox] = {}
         self.listeners: Dict[str, List[str]] = {}
+        # The volume knob. Attention sets it; Thalamus only applies it.
+        self.volume: Dict[str, float] = {}
+        # Who is waiting on whom right now (addresses only).
+        self._waiting: Dict[str, List[str]] = {}
+        self._waiting_lock = threading.Lock()
+        self._carried = 0  # how many messages it has carried (to tell when she has gone quiet)
 
-        self.last_output_envelope: Optional[Dict[str, Any]] = None
-        self.last_grounded_structures: Optional[List[Dict[str, Any]]] = None
-        self.last_language_sentence: Optional[str] = None
-        self.last_meta_cognition: Optional[Dict[str, Any]] = None
-        self.last_executive: Optional[Dict[str, Any]] = None
-        self.last_social_context: Optional[Dict[str, Any]] = None
-        self.last_motor_action: Optional[Dict[str, Any]] = None
-        self.last_voice_envelope: Optional[Dict[str, Any]] = None
-        self.last_meta_awareness: Optional[Dict[str, Any]] = None
-        self.last_speech_decision: Optional[Dict[str, Any]] = None
-        self.last_representation: Optional[Dict[str, Any]] = None
-        self._last_pre_output_final_text: Optional[str] = None
-        self._last_curiosity_time = 0.0
-        self._curiosity_cooldown_sec = 25.0
-        self._force_curiosity_follow_up = False
-
-        self.notus_fallback = NotusOutageFallback()
+    # ------------------------------------------------------------------
+    # Lobes joining
+    # ------------------------------------------------------------------
 
     def register_lobe(self, name: str, lobe: Any) -> Dict[str, Any]:
         if not name or lobe is None:
@@ -62,7 +68,7 @@ class Thalamus:
             getattr(lobe, "process_message_safe", None)
         ):
             return {"status": "error", "message": f"{name} has no message handler"}
-        inbox = LobeInbox(name, lobe, self._set_status)
+        inbox = LobeInbox(name, lobe, self._set_status, volume=self._volume_of, waits_on=self.waits_on)
         with self.lobe_handlers_lock:
             old = self.inboxes.get(name)
             self.lobe_handlers[name] = lobe
@@ -73,8 +79,8 @@ class Thalamus:
         inbox.start()
         joined = getattr(lobe, "on_joined", None)
         if callable(joined):
-            # Lets the lobe sign itself up for the announcements it wants
-            # (thalamus.listen); thalamus doesn't choose them.
+            # The lobe signs itself up for the announcements it wants
+            # (thalamus.listen); Thalamus doesn't choose them.
             joined(name)
         return {
             "status": "success",
@@ -97,6 +103,10 @@ class Thalamus:
                 return inbox
         return None
 
+    # ------------------------------------------------------------------
+    # Carrying
+    # ------------------------------------------------------------------
+
     def _post(
         self, destination: str, msg_type: str, content: Optional[Dict[str, Any]], source: str,
         want_answer: bool,
@@ -117,15 +127,27 @@ class Thalamus:
             "source": source,
             "message_id": str(uuid.uuid4()),
         }
-        chain = current_chain() or new_chain()
+        # An ask stays on the asker's chain; something told without waiting
+        # starts a new chain for whoever receives it (see lobe_inbox.py).
+        chain = (current_chain() if want_answer else None) or new_chain()
         reply = Reply() if want_answer else None
-        inbox.post(Letter(envelope, reply, chain))
+        caller = self._caller_inbox()
+        self._carried += 1
+        inbox.post(Letter(envelope, reply, chain, sender=caller.name if caller is not None else None))
         return reply, chain, None
 
     def _await(self, destination: str, reply: Reply, chain: str) -> Dict[str, Any]:
         caller = self._caller_inbox()
         if caller is not None:
-            answered = caller.wait_while_working(reply, chain, ANSWER_TIMEOUT_SEC)
+            with self._waiting_lock:
+                self._waiting.setdefault(caller.name, []).append(destination)
+            try:
+                answered = caller.wait_while_working(reply, chain, ANSWER_TIMEOUT_SEC)
+            finally:
+                with self._waiting_lock:
+                    stack = self._waiting.get(caller.name) or []
+                    if stack:
+                        stack.pop()
         else:
             answered = reply.wait(ANSWER_TIMEOUT_SEC)
         if not answered:
@@ -135,6 +157,21 @@ class Thalamus:
                 "content": {},
             }
         return reply.value
+
+    def waits_on(self, lobe: str, other: str) -> bool:
+        """Is `lobe` waiting on `other`, directly or through other lobes?"""
+        with self._waiting_lock:
+            seen = set()
+            current = lobe
+            while current not in seen:
+                seen.add(current)
+                stack = self._waiting.get(current) or []
+                if not stack:
+                    return False
+                current = stack[-1]
+                if current == other:
+                    return True
+        return False
 
     def _log_route(self, source: str, destination: str, msg_type: str, status: str) -> None:
         self.message_routes.append(
@@ -221,1030 +258,76 @@ class Thalamus:
             results[destination] = response
         return results
 
-    @staticmethod
-    def _content(response: Dict[str, Any]) -> Dict[str, Any]:
-        content = response.get("content", {}) if isinstance(response, dict) else {}
-        return content if isinstance(content, dict) else {}
+    # ------------------------------------------------------------------
+    # The volume knob (Attention's)
+    # ------------------------------------------------------------------
 
-    @classmethod
-    def _route_reasoning_semantics(cls, response: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize Reasoning's envelope without judging its meaning."""
-        body = cls._content(response)
-        semantic = body.get("semantic_input")
-        semantic = dict(semantic) if isinstance(semantic, dict) else {}
-        for key in ("answer", "conclusion", "propositions"):
-            if key in semantic:
+    def set_volume(self, levels: Dict[str, Any]) -> Dict[str, Any]:
+        """Attention turns kinds of message up or down.
+
+        `levels` maps a kind of message (its type / announcement topic), or
+        "from:<lobe>" for everything a lobe sends, to how loud it is. 1 is
+        normal; higher is delivered first; lower waits behind the rest.
+        Nothing is dropped at any level. Only Attention can set this.
+        """
+        caller = self._caller_inbox()
+        who = caller.name if caller is not None else None
+        if who != "attention":
+            _trace_event("thalamus_volume_refused", asked_by=who or "not a lobe",
+                         reason="only Attention sets the volume")
+            return {"status": "error", "message": "Only Attention sets the volume", "content": {}}
+        applied: Dict[str, float] = {}
+        for key, value in (levels or {}).items():
+            try:
+                level = max(0.0, float(value))
+            except (TypeError, ValueError):
                 continue
-            value = body.get(key)
-            if value is None and isinstance(response, dict):
-                value = response.get(key)
-            if value is not None:
-                semantic[key] = value
-        semantic.setdefault("semantic_owner", "reasoning")
-        return semantic
+            applied[str(key)] = level
+        with self.lobe_handlers_lock:
+            self.volume.update(applied)
+        _trace_event("thalamus_volume", set_by="attention", levels=applied)
+        return {"status": "success", "content": {"volume": dict(self.volume)}}
 
-    @staticmethod
-    def _empty_representation(user_id: str) -> Dict[str, Any]:
-        return {
-            "status": "absent",
-            "resolved": [],
-            "concept_ids": [],
-            "referent_ids": [],
-            "proposition_ids": [],
-            "highly_active_concepts": [],
-            "active_concepts": [],
-            "activation": {},
-            "language_understanding": None,
-            "language_comprehension_available": False,
-            "language_first": True,
-            "raw_text_parser_used": False,
-            "user_id": user_id,
-            "source": "shared_representation",
-        }
+    def _volume_of(self, letter: Letter) -> float:
+        volume = self.volume
+        if not volume or letter.reply is not None:
+            # The knob is for what gets told and announced. A lobe waiting on an
+            # answer is never moved ahead of or behind what came before it.
+            return 1.0
+        kind = volume.get(str(letter.envelope.get("type")))
+        if kind is not None:
+            return kind
+        if letter.sender:
+            return volume.get(f"from:{letter.sender}", 1.0)
+        return 1.0
 
-    def _activate_representation_ids(
-        self, concept_ids: List[str], *, user_id: str
-    ) -> Dict[str, Any]:
-        activation: Dict[str, float] = {}
-        highly_active: List[Dict[str, Any]] = []
+    # ------------------------------------------------------------------
+    # For whoever is outside her (the chat window, the tracer)
+    # ------------------------------------------------------------------
 
-        if not self._has_lobe("shared_representation"):
-            return {
-                "activation": activation,
-                "highly_active_concepts": highly_active,
-                "active_concepts": [],
-            }
+    def is_quiet(self) -> bool:
+        """No lobe has a message waiting or is in the middle of one."""
+        with self.lobe_handlers_lock:
+            inboxes = list(self.inboxes.values())
+        return all(inbox.idle for inbox in inboxes)
 
-        for concept_id in concept_ids:
-            response = self.send_and_wait(
-                "shared_representation",
-                "activate",
-                {
-                    "concept_id": concept_id,
-                    "amount": 1.0,
-                    "spread": True,
-                    "user_id": user_id,
-                },
-                source="thalamus",
-            )
-            if response.get("status") != "success":
-                continue
-            body = self._content(response)
-            current = body.get("activation") or response.get("activation") or {}
-            if isinstance(current, dict):
-                for key, value in current.items():
-                    try:
-                        score = float(value)
-                    except (TypeError, ValueError):
-                        continue
-                    activation[str(key)] = max(activation.get(str(key), 0.0), score)
-            candidates = (
-                body.get("highly_active_concepts")
-                or response.get("highly_active_concepts")
-                or []
-            )
-            if isinstance(candidates, list):
-                highly_active = [
-                    dict(item) for item in candidates if isinstance(item, dict)
-                ]
-
-        active_concepts: List[Dict[str, Any]] = []
-        active_response = self.send_and_wait(
-            "shared_representation",
-            "get_active",
-            {"user_id": user_id},
-            source="thalamus",
-        )
-        if active_response.get("status") == "success":
-            body = self._content(active_response)
-            active = (
-                body.get("active_concepts")
-                or active_response.get("active_concepts")
-                or []
-            )
-            if isinstance(active, list):
-                active_concepts = [
-                    dict(item) for item in active if isinstance(item, dict)
-                ]
-
-        return {
-            "activation": activation,
-            "highly_active_concepts": highly_active,
-            "active_concepts": active_concepts,
-        }
-
-    def _resolve_representation_live(
-        self,
-        user_input: str,
-        perception_payload: Optional[Dict[str, Any]] = None,
-        user_id: str = "default",
-    ) -> Dict[str, Any]:
-        """Route raw language to Language, then route Language-owned IDs to SR."""
-        empty = self._empty_representation(user_id)
-        if not self._has_lobe("language") or not self._has_lobe(
-            "shared_representation"
-        ):
-            self.last_representation = None
-            return empty
-
-        response = self.send_and_wait(
-            "language",
-            "comprehend",
-            {"text": user_input or "", "user_id": user_id},
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            self.last_representation = None
-            return empty
-
-        body = self._content(response)
-        understanding = body.get("language_understanding")
-        concept_ids = [str(item) for item in (body.get("concept_ids") or []) if item]
-        referent_ids = [
-            str(item) for item in (body.get("referent_ids") or []) if item
-        ]
-        proposition_ids = [
-            str(item) for item in (body.get("proposition_ids") or []) if item
-        ]
-        resolved = [
-            dict(item)
-            for item in (
-                body.get("resolved_concepts") or body.get("resolved") or []
-            )
-            if isinstance(item, dict)
-        ]
-        active = self._activate_representation_ids(concept_ids, user_id=user_id)
-        env = {
-            "status": "success",
-            "resolved": resolved,
-            "concept_ids": concept_ids,
-            "referent_ids": referent_ids,
-            "proposition_ids": proposition_ids,
-            "highly_active_concepts": active["highly_active_concepts"],
-            "active_concepts": active["active_concepts"],
-            "activation": active["activation"],
-            "language_understanding": (
-                understanding if isinstance(understanding, dict) else None
-            ),
-            "language_comprehension_available": isinstance(understanding, dict),
-            "language_first": True,
-            "raw_text_parser_used": False,
-            "user_id": user_id,
-            "source": "shared_representation",
-        }
-        self.last_representation = dict(env)
-
-        if isinstance(perception_payload, dict):
-            perception_payload["concept_ids"] = list(concept_ids)
-            perception_payload["resolved_concepts"] = list(resolved)
-            perception_payload["language_understanding"] = env[
-                "language_understanding"
-            ]
-            perception_payload["referent_ids"] = list(referent_ids)
-            perception_payload["proposition_ids"] = list(proposition_ids)
-            perception_payload[
-                "representation_source"
-            ] = "language_via_shared_representation"
-        return env
-
-    def _attend_live_signals(
-        self,
-        user_input: str,
-        perception_payload: Optional[Dict[str, Any]] = None,
-        user_id: str = "default",
-    ) -> Dict[str, Any]:
-        if not self._has_lobe("attention"):
-            return {}
-        signals: List[Dict[str, Any]] = [
-            {
-                "id": "user_input",
-                "text": user_input,
-                "source": "user",
-                "modality": "text",
-                "user_id": user_id,
-            }
-        ]
-        if isinstance(perception_payload, dict):
-            for item in perception_payload.get("attention_signals") or []:
-                if isinstance(item, dict):
-                    signals.append(dict(item))
-        response = self.send_and_wait(
-            "attention",
-            "evaluate",
-            {"signals": signals, "user_id": user_id},
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            return {}
-        payload = self._content(response)
-        if payload.get("focus"):
-            self.send_and_wait("attention", "route_focus", {}, source="thalamus")
-        return payload
-
-    def _executive_set_goal_from_turn(
-        self, user_input: str, understanding: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        if not self._has_lobe("executive_control"):
-            return None
-        response = self.send_and_wait(
-            "executive_control",
-            "set_goal_from_turn",
-            {"user_input": user_input, "understanding": understanding,
-             "user_id": getattr(self, "_turn_user_id", None) or "default"},
-        )
-        if response.get("status") != "success":
-            return None
-        body = self._content(response)
-        self.last_executive = dict(body)
-        self.send_and_wait(
-            "executive_control", "steer_attention", {}, source="thalamus"
-        )
-        return self.last_executive
-
-    def _executive_should_inhibit(self, action: str) -> bool:
-        if not self._has_lobe("executive_control"):
-            return False
-        response = self.send_and_wait(
-            "executive_control",
-            "should_inhibit",
-            {"action": action},
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            return False
-        body = self._content(response)
-        return bool(body.get("inhibited", response.get("inhibited")))
-
-    def _social_observe_turn(
-        self,
-        user_input: str,
-        understanding: Dict[str, Any],
-        user_id: str = "default",
-    ) -> Optional[Dict[str, Any]]:
-        if not self._has_lobe("social_context"):
-            return None
-        response = self.send_and_wait(
-            "social_context",
-            "observe_turn",
-            {
-                "user_input": user_input,
-                "understanding": understanding,
-                "user_id": user_id,
-            },
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            return None
-        body = self._content(response)
-        if body:
-            self.last_social_context = dict(body)
-            return self.last_social_context
-        return None
-
-    def _motor_plan_from_turn(
-        self,
-        user_input: str,
-        understanding: Dict[str, Any],
-        user_id: str = "default",
-    ) -> Optional[Dict[str, Any]]:
-        if not self._has_lobe("motor_action"):
-            self.last_motor_action = None
-            return None
-        response = self.send_and_wait(
-            "motor_action",
-            "plan_from_turn",
-            {
-                "user_input": user_input,
-                "understanding": understanding,
-                "user_id": user_id,
-                "goal": (
-                    self.last_executive.get("goal")
-                    if isinstance(self.last_executive, dict)
-                    else None
-                ),
-            },
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            self.last_motor_action = None
-            return None
-        body = self._content(response)
-        action = body.get("action")
-        if isinstance(action, dict):
-            self.last_motor_action = dict(action)
-        return body
-
-    def _motor_deliver_to_output(
-        self, user_id: str = "default"
-    ) -> Optional[Dict[str, Any]]:
-        if not self._has_lobe("motor_action"):
-            return None
-        response = self.send_and_wait(
-            "motor_action",
-            "execute_next",
-            {"user_id": user_id},
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            return None
-        body = self._content(response)
-        action = body.get("action")
-        if isinstance(action, dict):
-            self.last_motor_action = dict(action)
-            if isinstance(self.last_output_envelope, dict):
-                self.last_output_envelope["motor_action"] = dict(action)
-            return dict(action)
-        return None
-
-    def _meta_awareness_observe_turn(
-        self,
-        user_input: str,
-        understanding: Dict[str, Any],
-        user_id: str = "default",
-        novelty_score: float = 0.0,
-    ) -> Optional[Dict[str, Any]]:
-        if not self._has_lobe("meta_awareness"):
-            self.last_meta_awareness = None
-            return None
-        response = self.send_and_wait(
-            "meta_awareness",
-            "observe_turn",
-            {
-                "user_input": user_input,
-                "understanding": understanding,
-                "user_id": user_id,
-                "novelty_score": novelty_score,
-            },
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            return None
-        body = self._content(response)
-        if body:
-            self.last_meta_awareness = dict(body)
-            return self.last_meta_awareness
-        return None
-
-    def _meta_awareness_release(
-        self, user_id: str = "default", reason: str = "turn_complete"
-    ) -> Optional[Dict[str, Any]]:
-        if not self._has_lobe("meta_awareness"):
-            return None
-        response = self.send_and_wait(
-            "meta_awareness",
-            "release_to_wandering",
-            {"reason": reason, "user_id": user_id},
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            return None
-        return self._content(response)
-
-    def _refresh_attention_payload_post_executive(
-        self, prior: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        payload = dict(prior) if isinstance(prior, dict) else {}
-        if not self._has_lobe("attention"):
-            return payload
-        routed = self.send_and_wait(
-            "attention", "route_focus", {}, source="thalamus"
-        )
-        if routed.get("status") == "success":
-            body = self._content(routed)
-            candidate = body.get("payload")
-            if isinstance(candidate, dict):
-                payload.update(candidate)
-        ranked = self.send_and_wait("attention", "rank", {}, source="thalamus")
-        if ranked.get("status") == "success":
-            body = self._content(ranked)
-            values = body.get("ranked", ranked.get("ranked"))
-            if isinstance(values, list):
-                payload["ranked"] = values
-        return payload
-
-    def _run_pattern_live(
-        self,
-        user_input: str,
-        perception_payload: Optional[Dict[str, Any]] = None,
-        attention_payload: Optional[Dict[str, Any]] = None,
-        understanding: Optional[Dict[str, Any]] = None,
-        emotional_state: Optional[Dict[str, Any]] = None,
-        user_id: str = "default",
-    ) -> Dict[str, Any]:
-        if not self._has_lobe("pattern"):
-            return {}
-        perception_payload = (
-            perception_payload if isinstance(perception_payload, dict) else {}
-        )
-        observation = {
-            "statement": user_input,
-            "items": list(perception_payload.get("words") or []),
-            "words": list(perception_payload.get("words") or []),
-            "perception": perception_payload,
-            "attention": (
-                attention_payload if isinstance(attention_payload, dict) else {}
-            ),
-            "understanding": (
-                understanding if isinstance(understanding, dict) else {}
-            ),
-            "emotion": (
-                emotional_state if isinstance(emotional_state, dict) else {}
-            ),
-            "user_id": user_id,
-        }
-        observed = self.send_and_wait(
-            "pattern", "observe", observation, source="thalamus"
-        )
-        if observed.get("status") != "success":
-            return {"status": "error", "significant_patterns": {}}
-        significant = self.send_and_wait(
-            "pattern", "get_significant", {"user_id": user_id}, source="thalamus"
-        )
-        body = self._content(significant) if significant.get("status") == "success" else {}
-        values = body.get("significant_patterns") or significant.get(
-            "significant_patterns"
-        ) or {}
-        return {
-            "status": "success",
-            "significant_patterns": values if isinstance(values, dict) else {},
-            "observed_patterns": self._content(observed).get("patterns")
-            or observed.get("patterns")
-            or {},
-        }
-
-    def _meta_cognition_watch_reasoning(
-        self,
-        user_input: str,
-        semantic_input: Dict[str, Any],
-        reasoning_answer: Any,
-        memories: Any,
-    ) -> Dict[str, Any]:
-        if not self._has_lobe("meta_cognition"):
-            return semantic_input
-        response = self.send_and_wait(
-            "meta_cognition",
-            "monitor_reasoning",
-            {
-                "user_input": user_input,
-                "semantic_input": semantic_input,
-                "reasoning_answer": reasoning_answer,
-                "memories": memories,
-                "apply": True,
-            },
-        )
-        if response.get("status") != "success":
-            return semantic_input
-        body = self._content(response)
-        verdict = body.get("verdict") or response.get("verdict")
-        if isinstance(verdict, dict):
-            self.last_meta_cognition = dict(verdict)
-        applied = body.get("semantic_input") or response.get("semantic_input")
-        return applied if isinstance(applied, dict) else semantic_input
-
-    def _meta_cognition_watch_language(
-        self, sentence: str, semantic_input: Dict[str, Any]
-    ) -> str:
-        if not self._has_lobe("meta_cognition"):
-            return sentence
-        response = self.send_and_wait(
-            "meta_cognition",
-            "monitor_language",
-            {
-                "sentence": sentence,
-                "semantic_input": semantic_input,
-                "prior_verdict": self.last_meta_cognition,
-            },
-        )
-        if response.get("status") != "success":
-            return sentence
-        body = self._content(response)
-        verdict = body.get("verdict") or response.get("verdict")
-        if isinstance(verdict, dict):
-            self.last_meta_cognition = dict(verdict)
-            corrected = verdict.get("corrected_sentence")
-            if isinstance(corrected, str):
-                return corrected
-        return sentence
-
-    def _speech_notify_user_turn(self, user_id: str = "default") -> None:
-        if self._has_lobe("speech"):
-            self.send_message(
-                "speech", "user_spoke", {"user_id": user_id}, source="thalamus"
-            )
-
-    def _voice_speak_for_output(
-        self,
-        text: str,
-        *,
-        user_id: str = "default",
-        emotion: str = "neutral",
-        intensity: float = 0.5,
-        voice_prosody: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
-        if not self._has_lobe("voice") or not isinstance(text, str) or not text.strip():
-            self.last_voice_envelope = None
-            return None
-        response = self.send_and_wait(
-            "voice",
-            "speak_for_output",
-            {
-                "text": text,
-                "user_id": user_id,
-                "emotion": emotion,
-                "intensity": intensity,
-                "voice_prosody": voice_prosody or {},
-            },
-            source="thalamus",
-        )
-        if response.get("status") != "success":
-            self.last_voice_envelope = None
-            return None
-        body = self._content(response)
-        voice = body.get("voice") or response.get("voice")
-        if isinstance(voice, dict):
-            self.last_voice_envelope = dict(voice)
-            if isinstance(self.last_output_envelope, dict):
-                self.last_output_envelope["voice"] = dict(voice)
-            return dict(voice)
-        return None
-
-
-    def retry_unsaved_notus_records(
-        self, user_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        def _store(record: Dict[str, Any]) -> bool:
-            payload = {
-                "role": record.get("role", "user"),
-                "content": record.get("content", ""),
-                "user_id": record.get("user_id", "default"),
-                "memory_type": record.get("memory_type", "conversation"),
-            }
-            for key in ("tag", "importance", "mode"):
-                if key in record:
-                    payload[key] = record[key]
-            event_id = record.get("event_id") or record.get("dedupe_key")
-            if event_id:
-                payload["event_id"] = event_id
-            response = self.send_and_wait("notus", "store", payload)
-            return response.get("status") == "success"
-
-        return self.notus_fallback.flush(_store, user_id=user_id)
-
-    def _merge_notus_fallback_into_context(
-        self, memory_context: Dict[str, Any], user_id: str, limit: int = 15
-    ) -> Dict[str, Any]:
-        if self.notus_fallback.pending_count(user_id) <= 0:
-            return memory_context
-        body = dict(self._content(memory_context))
-        memories = list(body.get("memories") or [])
-        merged = self.notus_fallback.merge_pending_into(
-            user_id, memories, limit=limit
-        )
-        body["memories"] = merged
-        if isinstance(body.get("semantic"), list):
-            body["semantic"] = merged
-        body["fallback_pending"] = True
-        return {"status": "success", "content": body}
-
-    def _flush_notus_fallback_best_effort(self, user_id: str) -> None:
-        try:
-            if self.notus_fallback.pending_count(user_id):
-                self.retry_unsaved_notus_records(user_id=user_id)
-        except Exception:
-            pass
-
-    def process_user_input(
-        self,
-        user_input: str,
-        user_id: str = "default",
-        perception_payload: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """Sequence lobe-owned work without interpreting or repairing its meaning."""
-        if not isinstance(user_input, str) or not user_input.strip():
-            return ""
-        if not user_id or user_id == "default":
-            # Nobody said who is talking: someone she doesn't know, never assumed
-            # to be Matthew (every lobe gets the same name for them).
-            user_id = "unknown person 1"
-        self._turn_user_id = user_id  # who's talking, for the lobes the turn script still calls
-
-        if perception_payload is None:
-            perception_payload = {}
-            if self._has_lobe("perception"):
-                # Her senses: perception recognizes the typed words and announces
-                # them; sensory integration hears that and builds the moment.
-                response = self.send_and_wait(
-                    "perception",
-                    "sense",
-                    {"modality": "text", "text": user_input, "user_id": user_id},
-                )
-                if response.get("status") != "success":
-                    return ""
-                perception_payload = self._content(response)
-                normalized = (
-                    perception_payload.get("text")
-                    or perception_payload.get("normalized_text")
-                )
-                if isinstance(normalized, str) and normalized.strip():
-                    user_input = normalized.strip()
-                perception_payload = self._moment_for(perception_payload, user_id)
-        else:
-            perception_payload = dict(perception_payload)
-
-        if self._has_lobe("novelty"):
-            response = self.send_and_wait(
-                "novelty",
-                "assess_experience",
-                {
-                    "text": user_input,
-                    "perception": perception_payload,
-                    "source": "live_path",
-                    "user_id": user_id,
-                },
-                source="thalamus",
-            )
-            if response.get("status") == "success":
-                novelty = self._content(response)
-                perception_payload = dict(perception_payload)
-                if "novelty_score" in novelty:
-                    perception_payload["novelty_score"] = novelty.get(
-                        "novelty_score"
-                    )
-                if "is_novel" in novelty:
-                    perception_payload["novelty_is_novel"] = novelty.get(
-                        "is_novel"
-                    )
-                if "novelty_flags" in novelty:
-                    perception_payload["novelty_flags"] = list(
-                        novelty.get("novelty_flags") or []
-                    )
-
-        attention_payload = self._attend_live_signals(
-            user_input, perception_payload, user_id=user_id
-        )
-        representation_result = self._resolve_representation_live(
-            user_input, perception_payload, user_id=user_id
-        )
-
-        if self._has_lobe("autonomous"):
-            self.send_message(
-                "autonomous",
-                "user_active",
-                {"user_id": user_id, "text": user_input},
-                source="thalamus",
-            )
-        self._speech_notify_user_turn(user_id=user_id)
-
-        conversation = self.send_and_wait(
-            "conversation",
-            "understand",
-            {
-                "user_input": user_input,
-                "user_id": user_id,
-                "perception": perception_payload,
-                "attention": attention_payload,
-                "language_understanding": representation_result.get(
-                    "language_understanding"
-                ),
-                "concept_ids": list(representation_result.get("concept_ids") or []),
-                "referent_ids": list(
-                    representation_result.get("referent_ids") or []
-                ),
-                "proposition_ids": list(
-                    representation_result.get("proposition_ids") or []
-                ),
-                "context": {
-                    "perception": perception_payload,
-                    "attention": attention_payload,
-                    "language_understanding": representation_result.get(
-                        "language_understanding"
-                    ),
-                    "concept_ids": list(
-                        representation_result.get("concept_ids") or []
-                    ),
-                    "referent_ids": list(
-                        representation_result.get("referent_ids") or []
-                    ),
-                    "proposition_ids": list(
-                        representation_result.get("proposition_ids") or []
-                    ),
-                },
-            },
-        )
-        if conversation.get("status") != "success":
-            return ""
-        understanding = self._content(conversation).get("understanding", {})
-        understanding = understanding if isinstance(understanding, dict) else {}
-
-        self._executive_set_goal_from_turn(user_input, understanding)
-        social_context = self._social_observe_turn(
-            user_input, understanding, user_id=user_id
-        )
-        self._motor_plan_from_turn(user_input, understanding, user_id=user_id)
-        try:
-            novelty_score = float(perception_payload.get("novelty_score") or 0.0)
-        except (TypeError, ValueError):
-            novelty_score = 0.0
-        self._meta_awareness_observe_turn(
-            user_input,
-            understanding,
-            user_id=user_id,
-            novelty_score=novelty_score,
-        )
-        attention_payload = self._refresh_attention_payload_post_executive(
-            attention_payload
-        )
-
-        # Memory saves what he said itself: it hears the moment sensory
-        # integration announces (DirectNotusProcess.hear_moment).
-
-        memory_context = self.send_and_wait(
-            "notus",
-            "query_context",
-            {"query": user_input, "user_id": user_id, "limit": 15},
-        )
-        if memory_context.get("status") != "success":
-            memory_context = self.send_and_wait(
-                "notus",
-                "query",
-                {"query": user_input, "user_id": user_id, "limit": 15},
-            )
-        if memory_context.get("status") != "success":
-            fallback = self.notus_fallback.memories_for(user_id, limit=15)
-            memory_context = {
-                "status": "success",
-                "content": {
-                    "memories": fallback,
-                    "semantic": fallback,
-                    "facts": [],
-                    "episodic": [],
-                    "memory_source": "notus_outage_fallback",
-                },
-            }
-        else:
-            memory_context = self._merge_notus_fallback_into_context(
-                memory_context, user_id, limit=15
-            )
-            self._flush_notus_fallback_best_effort(user_id)
-        ctx = self._content(memory_context)
-
-        emotion = self.send_and_wait(
-            "emotion", "process_input", {"user_input": user_input, "user_id": user_id}
-        )
-        if emotion.get("status") != "success":
-            return ""
-        emotional_state = self._content(emotion)
-
-        pattern_result = self._run_pattern_live(
-            user_input,
-            perception_payload=perception_payload,
-            attention_payload=attention_payload,
-            understanding=understanding,
-            emotional_state=emotional_state,
-            user_id=user_id,
-        )
-
-        reasoning = self.send_and_wait(
-            "reasoning",
-            "think",
-            {
-                "input": {
-                    "user_input": user_input,
-                    "user_id": user_id,
-                    "understanding": understanding,
-                    "memory_context": ctx,
-                    "emotion_result": emotional_state,
-                    "perception": perception_payload,
-                    "attention": attention_payload,
-                    "pattern_result": pattern_result,
-                    "representation_result": representation_result,
-                    "social_context": (
-                        social_context
-                        if isinstance(social_context, dict)
-                        else self.last_social_context
-                    ),
-                }
-            },
-        )
-        if reasoning.get("status") != "success":
-            return ""
-        semantic_input = self._route_reasoning_semantics(reasoning)
-
-        grounded = semantic_input.get("grounded_structures")
-        self.last_grounded_structures = (
-            [dict(item) for item in grounded if isinstance(item, dict)]
-            if isinstance(grounded, list)
-            else None
-        )
-
-        semantic_input = self._meta_cognition_watch_reasoning(
-            user_input,
-            semantic_input,
-            semantic_input.get("answer"),
-            list(ctx.get("memories") or []) if isinstance(ctx, dict) else [],
-        )
-
-        language = self.send_and_wait(
-            "language", "generate",
-            {"semantic_input": semantic_input, "user_input": user_input, "user_id": user_id},
-        )
-        if language.get("status") != "success":
-            return ""
-        response_text = self._content(language).get("sentence", "")
-        if not isinstance(response_text, str):
-            response_text = ""
-        response_text = self._meta_cognition_watch_language(
-            response_text, semantic_input
-        )
-        self.last_language_sentence = response_text
-
-        # Language owns the whole reply (Reasoning has already reviewed it).
-        # Thalamus no longer appends Conversation's stock follow-up question.
-        final_text = response_text
-        self._last_pre_output_final_text = final_text
-
-        output = self.send_and_wait(
-            "output",
-            "generate_output",
-            {
-                "text": final_text,
-                "emotion": emotional_state.get(
-                    "current_emotion", emotional_state.get("emotion", "neutral")
-                ),
-                "intensity": emotional_state.get("intensity", 0.5),
-                "voice_prosody": emotional_state.get("voice_prosody") or {},
-                "emotional_tone": emotional_state.get("emotional_tone"),
-                "emphasis": emotional_state.get("emphasis") or [],
-                "expression": emotional_state.get("expression") or {},
-                "pleasure": emotional_state.get("pleasure"),
-                "arousal": emotional_state.get("arousal"),
-                "dominance": emotional_state.get("dominance"),
-                "user_input": user_input,
-                "user_id": user_id,
-                "preserve_text": True,
-                "meta_cognition": self.last_meta_cognition,
-            },
-        )
-        if output.get("status") != "success":
-            return ""
-        output_body = self._content(output)
-        envelope = output_body.get("envelope") or output.get("envelope")
-        if not isinstance(envelope, dict):
-            envelope = {
-                "text": output_body.get("text", final_text),
-                "expression": output_body.get("expression") or {},
-                "delivery": output_body.get("delivery") or {},
-                "emotional_tone": output_body.get("emotional_tone"),
-                "voice_prosody": output_body.get("voice_prosody") or {},
-                "emotion": emotional_state.get(
-                    "current_emotion", emotional_state.get("emotion", "neutral")
-                ),
-                "intensity": emotional_state.get("intensity", 0.5),
-            }
-        self.last_output_envelope = envelope
-
-        self._motor_deliver_to_output(user_id=user_id)
-        try:
-            output_intensity = float(envelope.get("intensity") or 0.5)
-        except (TypeError, ValueError):
-            output_intensity = 0.5
-        self._voice_speak_for_output(
-            str(envelope.get("text") or output_body.get("text") or final_text or ""),
-            user_id=user_id,
-            emotion=str(
-                envelope.get("emotion")
-                or emotional_state.get("current_emotion")
-                or emotional_state.get("emotion")
-                or "neutral"
-            ),
-            intensity=output_intensity,
-            voice_prosody=envelope.get("voice_prosody") or {},
-        )
-        self._meta_awareness_release(user_id=user_id, reason="turn_complete")
-
-        if isinstance(self.last_meta_awareness, dict) and isinstance(
-            self.last_output_envelope, dict
-        ):
-            self.last_output_envelope["meta_awareness"] = dict(
-                self.last_meta_awareness
-            )
-
-        reply = (
-            self.last_output_envelope.get("text")
-            if isinstance(self.last_output_envelope, dict)
-            else None
-        ) or output_body.get("text") or final_text
-        reply = reply if isinstance(reply, str) else ""
-
-        if reply.strip():
-            spoken = self.send_and_wait(
-                "notus",
-                "store",
-                {
-                    "role": "monday",
-                    "content": reply.strip(),
-                    "user_id": user_id,
-                    "memory_type": "conversation",
-                    "tag": "Spoken",
-                    "importance": 6.5,
-                    "mode": "memory",
-                },
-            )
-            if spoken.get("status") != "success":
-                self.notus_fallback.enqueue(
-                    user_id=user_id,
-                    role="monday",
-                    content=reply.strip(),
-                    memory_type="conversation",
-                    extra={
-                        "tag": "Spoken",
-                        "importance": 6.5,
-                        "mode": "memory",
-                    },
-                )
+    def wait_until_quiet(self, timeout: float = ANSWER_TIMEOUT_SEC) -> bool:
+        deadline = time.monotonic() + timeout
+        carried_when_quiet = None
+        while time.monotonic() < deadline:
+            carried = self._carried
+            if self.is_quiet() and carried == self._carried:
+                # Quiet twice in a row with nothing carried in between: nothing is on its way.
+                if carried_when_quiet == carried:
+                    return True
+                carried_when_quiet = carried
             else:
-                self._flush_notus_fallback_best_effort(user_id)
-        return reply
-
-    def _moment_for(self, recognition: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-        """Temporary turn-script step: fetch the moment sensory integration built
-        from this recognition (it heard perception's announcement itself)."""
-        if not self._has_lobe("sensory_integration"):
-            return recognition
-        response = self.send_and_wait(
-            "sensory_integration",
-            "get_moment",
-            {"user_id": user_id, "recognition_id": recognition.get("recognition_id")},
-        )
-        body = self._content(response) if response.get("status") == "success" else {}
-        return body or recognition
-
-    def process_sensory_input(
-        self,
-        modality: str,
-        *,
-        text: Optional[str] = None,
-        path: Optional[str] = None,
-        audio_bytes: Optional[bytes] = None,
-        image_bytes: Optional[bytes] = None,
-        user_id: str = "default",
-        continue_conversation: bool = True,
-        extra_inputs: Optional[List[Any]] = None,
-    ) -> Any:
-        modality = (modality or "text").strip().lower()
-        if modality in {"text", "chat", "language"}:
-            if not isinstance(text, str) or not text.strip():
-                return {"status": "error", "message": "text modality requires text="}
-            if continue_conversation:
-                return self.process_user_input(text, user_id=user_id)
-            return self.send_and_wait(
-                "perception",
-                "perceive_text",
-                {"text": text, "user_id": user_id},
-            )
-
-        if not self._has_lobe("perception"):
-            return {"status": "error", "message": "perception lobe not registered"}
-
-        sensed: Dict[str, Any] = {"modality": modality, "user_id": user_id}
-        if path:
-            sensed["path"] = path
-        if audio_bytes is not None:
-            sensed["audio_bytes"] = audio_bytes
-        if image_bytes is not None:
-            sensed["image_bytes"] = image_bytes
-        response = self.send_and_wait("perception", "sense", sensed)
-        if response.get("status") != "success":
-            return response
-        for extra in extra_inputs or []:
-            if isinstance(extra, dict) and extra:
-                self.send_and_wait("perception", "sense", {"user_id": user_id, **extra})
-            elif isinstance(extra, str) and extra.strip():
-                self.send_and_wait("perception", "sense", {"modality": "text", "text": extra, "user_id": user_id})
-        stream = self._moment_for(self._content(response), user_id)
-        if not continue_conversation:
-            return {"status": "success", "content": stream, "stream": stream}
-        routed_text = (stream.get("text") or stream.get("normalized_text")) if modality == "audio" else None
-        if not isinstance(routed_text, str) or not routed_text.strip():
-            return ""
-        return self.process_user_input(
-            routed_text.strip(), user_id=user_id, perception_payload=stream
-        )
+                carried_when_quiet = None
+            time.sleep(0.005)
+        return False
 
     def handle_request(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
-        payload = message.get("content", message)
-        payload = payload if isinstance(payload, dict) else {}
-        if msg_type == "process_input":
-            response = self.process_user_input(
-                str(payload.get("user_input") or ""),
-                user_id=str(payload.get("user_id") or "default"),
-            )
-            return {
-                "status": "success",
-                "content": {"response": response},
-                "response": response,
-            }
         if msg_type == "health":
             return {
                 "status": "success",
@@ -1252,17 +335,6 @@ class Thalamus:
                     "thalamus_healthy": True,
                     "lobes": self.lobe_status.copy(),
                 },
-            }
-        if msg_type == "pop_spoken_aside" and self._has_lobe("autonomous"):
-            with self.lobe_handlers_lock:
-                autonomous = self.lobe_handlers.get("autonomous")
-            pop = getattr(autonomous, "pop_spoken_aside", None)
-            aside = pop() if callable(pop) else None
-            return {
-                "status": "success",
-                "content": {"aside": aside, "thought": aside},
-                "aside": aside,
-                "thought": aside,
             }
         return {
             "status": "error",

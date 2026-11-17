@@ -37,19 +37,31 @@ def test_thalamus_is_native_router_not_wrapper():
 
 def test_language_first_then_sr_ids(tmp_path):
     thalamus, shared, _, _ = _stack(tmp_path)
-    perception = {"modality": "text"}
-    result = thalamus._resolve_representation_live(
-        "Steve gave the dog a ball yesterday.",
-        perception_payload=perception,
-        user_id="u1",
+    heard = []
+
+    class Listener:
+        def on_joined(self, name):
+            thalamus.listen(name, "read")
+
+        def process_message(self, message):
+            heard.append(message["content"])
+            return {"status": "success", "content": {}}
+
+    assert thalamus.register_lobe("listener", Listener())["status"] == "success"
+    # A moment reaches her: Language reads it itself and announces what it read.
+    thalamus.announce(
+        "moment",
+        {"user_id": "u1", "recognition_id": "r1",
+         "moment": {"modality": "text", "text": "Steve gave the dog a ball yesterday."}},
+        source="sensory_integration",
     )
-    assert result["status"] == "success"
-    assert result["language_first"] is True
-    assert result["raw_text_parser_used"] is False
-    assert result["language_comprehension_available"] is True
+    assert thalamus.wait_until_quiet(30)
+    assert heard, "Language did not announce what it read"
+    result = heard[-1]
+    assert isinstance(result["language_understanding"], dict)
     assert result["proposition_ids"]
     assert any(
-        route.get("to") == "language" and route.get("type") == "comprehend"
+        route.get("to") == "language" and route.get("type") == "moment"
         for route in thalamus.message_routes
     )
     assert not any(
@@ -65,11 +77,10 @@ def test_language_first_then_sr_ids(tmp_path):
 def test_conversation_natively_receives_language_structure(tmp_path):
     thalamus, _, _, conversation = _stack(tmp_path)
     perception = {"modality": "text"}
-    representation = thalamus._resolve_representation_live(
-        "Steve gave the dog a ball yesterday.",
-        perception_payload=perception,
-        user_id="u1",
-    )
+    representation = thalamus.send_and_wait(
+        "language", "comprehend",
+        {"text": "Steve gave the dog a ball yesterday.", "user_id": "u1"},
+    )["content"]
     response = conversation.process_message(
         {
             "type": "understand",

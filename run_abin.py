@@ -48,6 +48,7 @@ from social_context_lobe import SocialContextLobe
 from motor_action_lobe import MotorActionLobe
 from voice_lobe import VoiceLobe
 from meta_awareness import MetaAwareness
+from outside_world import Outside
 from runtime_paths import runtime_dir
 from thalamus import Thalamus
 
@@ -232,6 +233,13 @@ def create_core_systems(
             raise RuntimeError(f"Could not register autonomous: {result.get('message')}")
         systems["autonomous"] = autonomous
         autonomous.start_background()
+    # Whoever talks to her from outside: hands what is typed to her senses and
+    # hears what she says. Not a lobe (outside_world.py).
+    outside = Outside(thalamus)
+    result = thalamus.register_lobe("outside", outside)
+    if result["status"] != "success":
+        raise RuntimeError(f"Could not register outside: {result.get('message')}")
+    systems["outside"] = outside
     if os.environ.get("MONDAY_TRACE"):
         # Live tracer (trace_monitor.py): records every message, turn, and error.
         from trace_monitor import install as install_trace
@@ -280,7 +288,7 @@ def main() -> int:
                 print()
                 break
             if user_input.strip():
-                print(systems["thalamus"].process_user_input(user_input))
+                print(systems["outside"].say(user_input))
     except KeyboardInterrupt:
         print()
     finally:

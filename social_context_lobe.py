@@ -629,13 +629,17 @@ compliment -> "thank you" (sure 0.7)
             "cue_log_len": len(self.social_cues),
         }
 
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "turn")
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         content = message.get("content", {})
         if not isinstance(content, dict):
             content = {}
 
-        if msg_type in ("observe_turn", "observe", "update_from_turn"):
+        if msg_type in ("turn", "observe_turn", "observe", "update_from_turn"):
             snap = self.observe_turn(
                 user_input=content.get("user_input") or content.get("text") or "",
                 understanding=content.get("understanding")

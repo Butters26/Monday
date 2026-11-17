@@ -1957,6 +1957,7 @@ class DirectNotusProcess:
         if callable(listen):
             listen(name, "moment")
             listen(name, "read_again")  # Language read something again: file it the new way
+            listen(name, "delivered")   # what she actually said: he keeps that too
 
     def hear_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
@@ -3497,6 +3498,14 @@ relocate to: live in
             return self.file_again(str(payload.get("text") or ""), str(payload.get("user_id") or self._talking_with or "default"))
         if msg_type == "moment":
             return self.hear_moment(payload)
+        if msg_type == "delivered":
+            said = str(payload.get("text") or "").strip()
+            if not said:
+                return {"status": "success", "content": {"stored": False, "reason": "she said nothing"}}
+            return self._store({"role": "monday", "content": said,
+                                "user_id": payload.get("user_id") or self._talking_with or "default",
+                                "memory_type": "conversation", "tag": "Spoken", "importance": 6.5,
+                                "mode": "memory"})
 
         if msg_type == "store_conclusion":
             # Something Reasoning worked out ("Rex is an animal"): kept apart from

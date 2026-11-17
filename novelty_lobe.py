@@ -320,6 +320,10 @@ class NoveltyLobe:
     # Message API
     # ------------------------------------------------------------------
 
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment")
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         # Thalamus send_message packs content separately; accept flat or nested.
@@ -329,6 +333,14 @@ class NoveltyLobe:
         # Prefer explicit type on outer message.
         if msg_type is None:
             msg_type = payload.get("type")
+
+        if msg_type == "moment":
+            # On the team: she hears each moment herself and judges how new it is.
+            moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
+            from team import words_of
+            result = self.assess_experience(text=words_of(moment), perception=moment,
+                                            source="live_path", commit=True)
+            return {"status": "success", "content": result}
 
         if msg_type in ("assess_experience", "assess", "evaluate_novelty"):
             result = self.assess_experience(

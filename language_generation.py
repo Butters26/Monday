@@ -515,6 +515,88 @@ class LanguageGenerator:
         listen = getattr(self.thalamus, "listen", None)
         if callable(listen):
             listen(name, "social_read")
+            listen(name, "moment")   # words reached her: read them
+            listen(name, "thought")  # Reasoning has something to say about it: word it
+
+    def _hear_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Words reached her. Read them and tell the others what they mean."""
+        from team import announce, words_of
+        moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
+        text = words_of(moment)
+        if not text:
+            return {"status": "success", "content": {"read": False, "reason": "no words in this moment"}}
+        user_id = str(payload.get("user_id") or moment.get("user_id") or "default")
+        recognition_id = str(payload.get("recognition_id") or moment.get("recognition_id") or "")
+        result = self.comprehend(text, user_id=user_id, turn_id=recognition_id or None)
+        announce(self.thalamus, "read", {
+            "user_id": user_id, "text": text, "recognition_id": recognition_id, "moment": moment,
+            "language_understanding": result.get("language_understanding"),
+            "concept_ids": [str(i) for i in (result.get("concept_ids") or []) if i],
+            "referent_ids": [str(i) for i in (result.get("referent_ids") or []) if i],
+            "proposition_ids": [str(i) for i in (result.get("proposition_ids") or []) if i],
+            "resolved_concepts": [dict(i) for i in (result.get("resolved_concepts") or result.get("resolved") or [])
+                                  if isinstance(i, dict)],
+        }, "language")
+        return {"status": "success", "content": {"read": True}}
+
+    def _hear_thought(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Reasoning has something to say about what was said. Have Meta-Cognition
+        look it over, word it, have the wording looked over, and hand it to Output."""
+        from team import ask
+        semantic_input = payload.get("semantic_input") if isinstance(payload.get("semantic_input"), dict) else {}
+        heard = str(payload.get("user_input") or "")
+        user_id = str(payload.get("user_id") or "default")
+        checked = ask(self.thalamus, "meta_cognition", "monitor_reasoning", {
+            "user_input": heard, "semantic_input": semantic_input,
+            "reasoning_answer": semantic_input.get("answer"),
+            "memories": list(payload.get("memories") or []), "apply": True,
+        }, "language")
+        verdict = checked.get("verdict") if isinstance(checked.get("verdict"), dict) else None
+        if isinstance(checked.get("semantic_input"), dict):
+            semantic_input = checked["semantic_input"]
+        made = self._generate({"semantic_input": semantic_input, "user_input": heard, "user_id": user_id})
+        sentence = made.get("sentence") if isinstance(made.get("sentence"), str) else ""
+        looked = ask(self.thalamus, "meta_cognition", "monitor_language", {
+            "sentence": sentence, "semantic_input": semantic_input, "prior_verdict": verdict,
+        }, "language")
+        if isinstance(looked.get("verdict"), dict):
+            verdict = looked["verdict"]
+            if isinstance(verdict.get("corrected_sentence"), str):
+                sentence = verdict["corrected_sentence"]
+        # Output is told even when there is nothing to say, so it is known she said nothing.
+        tell = getattr(self.thalamus, "tell", None)
+        if callable(tell):
+            tell("output", "generate_output", {
+                "text": sentence, "user_input": heard, "user_id": user_id, "preserve_text": True,
+                "recognition_id": payload.get("recognition_id"), "meta_cognition": verdict,
+            }, source="language")
+        return {"status": "success", "content": {"sentence": sentence, "silence": made.get("silence"),
+                                                 "reason": made.get("reason")}}
+
+    def _generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Word a reply from what there is to say."""
+        semantic_input = payload.get('semantic_input', payload)
+        semantic_input = dict(semantic_input) if isinstance(semantic_input, dict) else {}
+        # Language hears what was said itself; it does not depend on another
+        # lobe forwarding it.
+        heard = str(payload.get('user_input') or semantic_input.get('user_input') or '')
+        if heard:
+            semantic_input['user_input'] = heard
+        if payload.get('user_id'):
+            semantic_input.setdefault('user_id', str(payload['user_id']))
+        understanding = semantic_input.get('language_understanding')
+        again = (self.__dict__.get('_read_again') or {}).get(heard.strip()) if heard else None
+        if again:
+            # Reasoning had it read again: reply to what he meant.
+            import copy
+            understanding = copy.deepcopy(again)
+            understanding['user_id'] = semantic_input.get('user_id', 'default')
+            semantic_input['language_understanding'] = understanding
+        if heard and not (isinstance(understanding, dict) and understanding.get('tokens')):
+            understanding = self.comprehension.analyze(heard)
+            understanding['user_id'] = semantic_input.get('user_id', 'default')
+            semantic_input['language_understanding'] = understanding
+        return self.respond(semantic_input)
 
     def _hear_social(self, read: Dict[str, Any]) -> Dict[str, Any]:
         self.__dict__.setdefault("_social_reads", {})[str(read.get("user_id") or "default")] = dict(read)
@@ -1782,6 +1864,10 @@ class LanguageGenerator:
 
         if msg_type == 'social_read':
             return self._hear_social(payload if isinstance(payload, dict) else {})
+        if msg_type == 'moment':
+            return self._hear_moment(payload if isinstance(payload, dict) else {})
+        if msg_type == 'thought':
+            return self._hear_thought(payload if isinstance(payload, dict) else {})
         if msg_type == 'comprehend':
             text = payload.get('text') or payload.get('user_input') or ''
             user_id = str(payload.get('user_id') or 'default')
@@ -1841,28 +1927,7 @@ class LanguageGenerator:
             return {'status': 'success', 'content': {'understanding': reading}}
 
         if msg_type in {'generate', 'generate_grounded'}:
-            semantic_input = payload.get('semantic_input', payload)
-            semantic_input = dict(semantic_input) if isinstance(semantic_input, dict) else {}
-            # Language hears what was said itself; it does not depend on another
-            # lobe forwarding it.
-            heard = str(payload.get('user_input') or semantic_input.get('user_input') or '')
-            if heard:
-                semantic_input['user_input'] = heard
-            if payload.get('user_id'):
-                semantic_input.setdefault('user_id', str(payload['user_id']))
-            understanding = semantic_input.get('language_understanding')
-            again = (self.__dict__.get('_read_again') or {}).get(heard.strip()) if heard else None
-            if again:
-                # Reasoning had it read again: reply to what he meant.
-                import copy
-                understanding = copy.deepcopy(again)
-                understanding['user_id'] = semantic_input.get('user_id', 'default')
-                semantic_input['language_understanding'] = understanding
-            if heard and not (isinstance(understanding, dict) and understanding.get('tokens')):
-                understanding = self.comprehension.analyze(heard)
-                understanding['user_id'] = semantic_input.get('user_id', 'default')
-                semantic_input['language_understanding'] = understanding
-            result = self.respond(semantic_input)
+            result = self._generate(payload)
             sentence = result['sentence']
             
             # Only send to Output if reasoning explicitly says this is the main response

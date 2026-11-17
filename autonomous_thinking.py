@@ -115,6 +115,10 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             print(f"⚠️  Failed to register Autonomous Thinking Loop: {e}")
             return False
     
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment")
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Handle incoming messages (unwrap Thalamus envelope like emotion does)."""
         msg_type = message.get('type')
@@ -129,6 +133,13 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
             }
         msg_type = message.get('type')
         
+        if msg_type == 'moment':
+            # On the team: she hears each moment herself and knows someone is there.
+            from team import words_of
+            moment = message.get('moment') if isinstance(message.get('moment'), dict) else {}
+            message = {'type': 'user_active', 'user_id': message.get('user_id'), 'text': words_of(moment)}
+            msg_type = 'user_active'
+
         if msg_type == 'user_active':
             self.user_present = True
             self.user_last_message_time = time.time()
@@ -934,7 +945,7 @@ class AutonomousThinkingLoop(AutonomousSelectionMixin):
         return self.pop_spoken_aside()
 
     def pop_spoken_aside(self) -> Optional[Dict[str, Any]]:
-        """Pop one speak-worthy aside for thalamus / process_user_input second beat."""
+        """Pop one speak-worthy aside."""
         with self.lock:
             while self.thought_queue:
                 thought = self.thought_queue.pop(0)

@@ -74,6 +74,22 @@ def main() -> int:
         for (src, topic, heard), n in sorted(announces.items()):
             print(f"{n:4d}  {src} announced {topic!r} -> {heard}")
 
+    volumes = [r for r in records if r.get("kind") == "thalamus_volume"]
+    ahead = collections.Counter((r.get("lobe"), r.get("sender"), r.get("msg_type"))
+                                for r in records if r.get("kind") == "thalamus_priority")
+    unlocked = collections.Counter((r.get("lobe"), r.get("for_lobe"), r.get("served"))
+                                   for r in records if r.get("kind") == "thalamus_unlocked")
+    refused = collections.Counter(r.get("asked_by") for r in records if r.get("kind") == "thalamus_volume_refused")
+    print("\n== THALAMUS (besides carrying) ==")
+    print(f"volume set by Attention: {len(volumes)} times"
+          + (f"; last: {volumes[-1].get('levels')}" if volumes else ""))
+    for who, n in refused.most_common():
+        print(f"{n:4d}  volume change REFUSED: asked by {who} (only Attention sets it)")
+    for (lobe, sender, typ), n in ahead.most_common():
+        print(f"{n:4d}  went first because it was louder: {sender} -> {lobe} [{typ}]")
+    for (lobe, other, typ), n in unlocked.most_common():
+        print(f"{n:4d}  un-stuck: {lobe} and {other} were waiting on each other; {lobe} answered [{typ}] first")
+
     failed_tells = collections.Counter(
         (r.get("lobe"), r.get("msg_type"), (r.get("message") or "")[:90])
         for r in records if r.get("kind") == "tell_failed")

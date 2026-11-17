@@ -1889,6 +1889,29 @@ class AdvancedPatternRecognition:
     # MAIN OBSERVATION FUNCTION
     # ========================================================================
     
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "turn")
+
+    def _hear_turn(self, turn: Dict[str, Any]) -> Dict[str, Any]:
+        """Something was said: look for patterns in it, with what the other lobes
+        made of it."""
+        from team import ask
+        moment = turn.get("moment") if isinstance(turn.get("moment"), dict) else {}
+        user_id = str(turn.get("user_id") or "default")
+        words = list(moment.get("words") or [])
+        patterns = self.observe({
+            "statement": str(turn.get("user_input") or ""),
+            "items": list(words), "words": list(words),
+            "perception": moment,
+            "attention": ask(self.thalamus, "attention", "get_focus", {}, "pattern"),
+            "understanding": turn.get("understanding") if isinstance(turn.get("understanding"), dict) else {},
+            "emotion": ask(self.thalamus, "emotion", "how_she_felt", {"user_id": user_id}, "pattern"),
+            "user_id": user_id,
+        })
+        self.__dict__.setdefault("_last_observed", {})[user_id] = patterns
+        return {"status": "success", "content": {"patterns": patterns}}
+
     def observe(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Query Notus for past observations to compare
         try:
@@ -2315,6 +2338,19 @@ class AdvancedPatternRecognition:
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid(), 'content': {'healthy': True}}
         
+        if msg_type == 'turn':
+            return self._hear_turn(payload)
+
+        if msg_type == 'latest':
+            # What she found in the last thing said, for any lobe that needs it.
+            uid = payload.get('user_id')
+            found = {
+                'status': 'success',
+                'significant_patterns': self.get_significant_patterns_only(user_id=uid) or {},
+                'observed_patterns': (self.__dict__.get('_last_observed') or {}).get(str(uid or 'default')) or {},
+            }
+            return {'status': 'success', 'content': found}
+
         if msg_type == 'observe' or msg_type == 'process_input':
             data = nested if nested is not None else payload
             if not data and msg_type == 'process_input':

@@ -554,6 +554,31 @@ class VoiceLobe:
             "users": sorted(self._last_by_user.keys()),
         }
 
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "delivered")
+
+    def _hear_delivered(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        """Output delivered something: give it her voice, with how it was delivered."""
+        from team import ask
+        text = str(content.get("text") or "").strip()
+        if not text:
+            return {"status": "success", "content": {"spoke": False, "reason": "she said nothing"}}
+        last = ask(self.thalamus, "output", "get_last_envelope", {}, "voice")
+        envelope = last.get("envelope") if isinstance(last.get("envelope"), dict) else last
+        try:
+            intensity = float(envelope.get("intensity") or 0.5)
+        except (TypeError, ValueError):
+            intensity = 0.5
+        voice = self.speak_for_output(
+            text,
+            user_id=str(content.get("user_id") or "default"),
+            emotion=str(envelope.get("emotion") or "neutral"),
+            intensity=intensity,
+            voice_prosody=envelope.get("voice_prosody") if isinstance(envelope.get("voice_prosody"), dict) else {},
+        )
+        return {"status": "success", "content": {"voice": voice}}
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Thalamus live-path handler (no socket)."""
         msg_type = message.get("type")
@@ -568,6 +593,9 @@ class VoiceLobe:
 
         if msg_type == "health":
             return {"status": "success", "healthy": True}
+
+        if msg_type == "delivered":
+            return self._hear_delivered(content)
 
         if msg_type in ("speak_for_output", "speak", "synthesize", "play"):
             text = str(

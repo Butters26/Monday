@@ -419,6 +419,10 @@ class MetaAwareness:
         self.last_envelope = None
         self._observe_count = 0
 
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "turn", "delivered")
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         content = message.get("content", {})
@@ -432,7 +436,15 @@ class MetaAwareness:
         if msg_type == "health":
             return {"status": "success", "healthy": True}
 
-        if msg_type in ("observe_turn", "observe", "update_from_turn"):
+        if msg_type == "delivered":
+            snap = self.release_to_wandering(reason="turn_complete",
+                                             user_id=str(content.get("user_id") or "default"))
+            return {"status": "success", "content": snap}
+
+        if msg_type in ("turn", "observe_turn", "observe", "update_from_turn"):
+            if msg_type == "turn" and "novelty_score" not in content:
+                # How new Novelty found it (Conversation folded it into the understanding).
+                content = {**content, "novelty_score": (content.get("understanding") or {}).get("novelty_score", 0.0)}
             try:
                 novelty = float(content.get("novelty_score", 0.0) or 0.0)
             except (TypeError, ValueError):

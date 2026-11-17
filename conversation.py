@@ -1125,6 +1125,55 @@ class ConversationSystem:
         while self.running:
             time.sleep(0.1)
 
+    # ---- on the team: hear what Language read, tell the others where the
+    # conversation stands -----------------------------------------------------
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "read")
+
+    def _hear_read(self, read: Dict[str, Any]) -> Dict[str, Any]:
+        from team import announce, ask
+        text = str(read.get("text") or "").strip()
+        if not text:
+            return {"status": "success", "content": {"heard": False}}
+        user_id = str(read.get("user_id") or "default")
+        # The moment as her senses built it, with how new Novelty found it and
+        # what Language made of the words.
+        moment = dict(read.get("moment") or {}) if isinstance(read.get("moment"), dict) else {}
+        novelty = ask(self.thalamus, "novelty", "get_assessment", {}, "conversation")
+        if "novelty_score" in novelty:
+            moment["novelty_score"] = novelty.get("novelty_score")
+        if "is_novel" in novelty:
+            moment["novelty_is_novel"] = novelty.get("is_novel")
+        if "novelty_flags" in novelty:
+            moment["novelty_flags"] = list(novelty.get("novelty_flags") or [])
+        language = {
+            "language_understanding": read.get("language_understanding")
+            if isinstance(read.get("language_understanding"), dict) else None,
+            "concept_ids": list(read.get("concept_ids") or []),
+            "referent_ids": list(read.get("referent_ids") or []),
+            "proposition_ids": list(read.get("proposition_ids") or []),
+        }
+        moment.update(language)
+        moment["resolved_concepts"] = list(read.get("resolved_concepts") or [])
+        moment["representation_source"] = "language_via_shared_representation"
+        attention = ask(self.thalamus, "attention", "get_focus", {}, "conversation")
+        answer = self.process_message({"type": "understand", "content": {
+            "user_input": text, "user_id": user_id, "perception": moment, "attention": attention,
+            **language,
+            "context": {"perception": moment, "attention": attention, **language},
+        }})
+        if answer.get("status") != "success":
+            return answer
+        understanding = (answer.get("content") or {}).get("understanding")
+        understanding = understanding if isinstance(understanding, dict) else {}
+        announce(self.thalamus, "turn", {
+            "user_id": user_id, "user_input": text, "recognition_id": read.get("recognition_id"),
+            "understanding": understanding, "moment": moment, "attention": attention,
+            "resolved_concepts": list(read.get("resolved_concepts") or []), **language,
+        }, "conversation")
+        return {"status": "success", "content": {"heard": True}}
+
     @staticmethod
     def _linguistic_context(payload: Dict[str, Any]) -> Dict[str, Any]:
         """Carry Language-owned structure into Conversation without reinterpreting it."""
@@ -1165,6 +1214,9 @@ class ConversationSystem:
 
         if msg_type == "health":
             return {"status": "success", "healthy": True, "pid": os.getpid()}
+
+        if msg_type == "read":
+            return self._hear_read(payload if isinstance(payload, dict) else {})
 
         if msg_type == "understand":
             user_input = payload.get("user_input", "")

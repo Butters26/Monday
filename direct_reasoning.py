@@ -682,6 +682,56 @@ class DirectReasoningAdapter:
             listen(name, "remembered")
             listen(name, "social_read")  # what social context makes of each moment
             listen(name, "contradicts")  # memory found something new that disagrees with the old
+            listen(name, "turn")         # something was said: think about it
+
+    def _hear_turn(self, turn: Dict[str, Any], message: Dict[str, Any]) -> Dict[str, Any]:
+        """Something was said. Gather what the other lobes know about it, think,
+        and announce what there is to say."""
+        user_input = str(turn.get("user_input") or "")
+        user_id = str(turn.get("user_id") or "default")
+        query = {"query": user_input, "user_id": user_id, "limit": 15}
+        memory = self._ask_lobe("notus", "query_context", query) or self._ask_lobe("notus", "query", query)
+        active = self._ask_lobe("shared_representation", "get_active", {"user_id": user_id})
+        highly = self._ask_lobe("shared_representation", "get_highly_active", {})
+        reading = turn.get("language_understanding") if isinstance(turn.get("language_understanding"), dict) else None
+        direct_input = {
+            "user_input": user_input,
+            "user_id": user_id,
+            "understanding": turn.get("understanding") if isinstance(turn.get("understanding"), dict) else {},
+            "memory_context": memory,
+            "emotion_result": self._ask_lobe("emotion", "how_she_felt", {"user_id": user_id}),
+            "perception": turn.get("moment") if isinstance(turn.get("moment"), dict) else {},
+            "attention": self._ask_lobe("attention", "get_focus", {}),
+            "pattern_result": self._ask_lobe("pattern", "latest", {"user_id": user_id}),
+            "representation_result": {
+                "status": "success" if reading is not None else "absent",
+                "resolved": list(turn.get("resolved_concepts") or []),
+                "concept_ids": list(turn.get("concept_ids") or []),
+                "referent_ids": list(turn.get("referent_ids") or []),
+                "proposition_ids": list(turn.get("proposition_ids") or []),
+                "highly_active_concepts": list(highly.get("highly_active_concepts") or []),
+                "active_concepts": list(active.get("active_concepts") or []),
+                "language_understanding": reading,
+                "user_id": user_id,
+                "source": "shared_representation",
+            },
+            "social_context": self._ask_lobe("social_context", "get_context", {"user_id": user_id}),
+        }
+        thought = self.process_message({"type": "think", "content": {"input": direct_input},
+                                        "message_id": message.get("message_id")})
+        if thought.get("status") != "success":
+            return thought
+        semantic_input = (thought.get("content") or {}).get("semantic_input")
+        semantic_input = dict(semantic_input) if isinstance(semantic_input, dict) else {}
+        semantic_input.setdefault("semantic_owner", "reasoning")
+        announce = getattr(self.thalamus, "announce", None)
+        if callable(announce):
+            announce("thought", {
+                "user_id": user_id, "user_input": user_input, "recognition_id": turn.get("recognition_id"),
+                "semantic_input": semantic_input,
+                "memories": list(memory.get("memories") or []) if isinstance(memory, dict) else [],
+            }, "reasoning")
+        return {"status": "success", "content": {"thought": True}}
 
     def _hear_social(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.__dict__.setdefault("_social_reads", {})[str(payload.get("user_id") or "default")] = dict(payload)
@@ -1999,6 +2049,9 @@ class DirectReasoningAdapter:
         if message.get("type") == "social_read":
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return self._hear_social(payload)
+        if message.get("type") == "turn":
+            payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
+            return self._hear_turn(payload, message)
         if message.get("type") in ("work_out", "think_through"):
             # Another lobe (Autonomous Thinking, Executive Control...) asks her to
             # think something through: what she knows about it, what follows, why.

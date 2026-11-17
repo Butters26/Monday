@@ -470,8 +470,8 @@ class ExecutiveControlLobe:
                 step.update(status="done" if answers else "failed",
                             result="worked out" if answers else str(body.get("unsure") or "Reasoning couldn't work it out"))
             elif kind == "say":
-                # Language does not yet take a purpose to word (on Language's list); the
-                # turn script still has Language pick the reply. The step stays open until
+                # Language words the reply on its own when Reasoning announces its thought,
+                # and asks what she means to say (what_to_say). The step stays open until
                 # Output reports what she actually said (see "delivered").
                 step.update(status="waiting", result="waiting to hear what she says")
             elif kind == "do":
@@ -688,7 +688,7 @@ class ExecutiveControlLobe:
         self.name = name
         listen = getattr(self.thalamus, "listen", None)
         if callable(listen):
-            for topic in ("understood", "social_read", "remembered", "delivered"):
+            for topic in ("turn", "understood", "social_read", "remembered", "delivered"):
                 listen(name, topic)
         self.start()
 
@@ -807,7 +807,7 @@ class ExecutiveControlLobe:
             self._heard_delivery(content)
             return {"status": "success", "content": {"heard": True}}
 
-        if msg_type in ("set_goal_from_turn", "derive_goal", "update_from_turn"):
+        if msg_type in ("turn", "set_goal_from_turn", "derive_goal", "update_from_turn"):
             und = content.get("understanding") if isinstance(content.get("understanding"), dict) else {}
             body = self.hear_turn(str(content.get("user_input") or content.get("text") or ""), und, user_id)
             return {**body, "status": "success", "content": body}

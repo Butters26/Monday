@@ -816,6 +816,7 @@ class EmotionalProcess:
         if callable(listen):
             listen(name, "social_read")
             listen(name, "remembered")
+            listen(name, "turn")  # something was said: she feels about it herself
 
     def __init__(self, state_file=None, thalamus=None):
         self.thalamus = thalamus or get_thalamus()
@@ -1023,7 +1024,16 @@ class EmotionalProcess:
             if msg_type == 'health':
                 return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
             
-            if msg_type == 'process_input':
+            if msg_type == 'how_she_felt':
+                # What she felt about the last thing said (to this person), for any
+                # lobe that needs it.
+                felt = (self.__dict__.get('_felt') or {}).get(str(message.get('user_id') or 'default'))
+                if felt is None:
+                    snap = self._affect_snapshot()
+                    felt = {**snap, 'monday_emotion': snap.get('monday_emotion', snap['current_emotion'])}
+                return {'status': 'success', **felt}
+
+            if msg_type in ('process_input', 'turn'):
                 user_input = message.get('user_input', '')
                 # FIX: validate input type
                 if not isinstance(user_input, str):
@@ -1044,8 +1054,7 @@ class EmotionalProcess:
                     for (et, sev, ts) in getattr(self.engine, '_unresolved_appraisals', [])
                 ]
                 snap = self._affect_snapshot()
-                return {
-                    'status': 'success',
+                felt = self.__dict__.setdefault('_felt', {})[str(message.get('user_id') or 'default')] = {
                     'response': response,
                     'current_emotion': snap['current_emotion'],
                     'intensity': snap['intensity'],
@@ -1073,6 +1082,7 @@ class EmotionalProcess:
                     'patterns': snap['patterns'],
                     'user_affect': snap.get('user_affect'),
                 }
+                return {'status': 'success', **felt}
 
             elif msg_type == 'social_read':
                 # Social context's read of each moment (what kind of move it was).

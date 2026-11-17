@@ -753,6 +753,25 @@ class OutputLobe:
         
         if msg_type == 'generate_output':
             content = payload if isinstance(payload, dict) else {}
+            if 'emotion' not in content and 'expression' not in content:
+                # On the team: how she feels shapes how it comes out; Output asks
+                # Emotion itself.
+                from team import ask
+                felt = ask(self.thalamus, 'emotion', 'how_she_felt',
+                           {'user_id': content.get('user_id') or 'default'}, 'output')
+                if felt:
+                    content = {
+                        **content,
+                        'emotion': felt.get('current_emotion', felt.get('emotion', 'neutral')),
+                        'intensity': felt.get('intensity', 0.5),
+                        'voice_prosody': felt.get('voice_prosody') or {},
+                        'emotional_tone': felt.get('emotional_tone'),
+                        'emphasis': felt.get('emphasis') or [],
+                        'expression': felt.get('expression') or {},
+                        'pleasure': felt.get('pleasure'),
+                        'arousal': felt.get('arousal'),
+                        'dominance': felt.get('dominance'),
+                    }
             preserve = bool(content.get('preserve_text')) and isinstance(content.get('text'), str)
             if preserve:
                 # Live path: keep language text intact; expression drives delivery envelope.
