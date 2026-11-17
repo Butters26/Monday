@@ -1125,22 +1125,23 @@ class ConversationSystem:
         while self.running:
             time.sleep(0.1)
 
-    # ---- on the team: hear what Language read, tell the others where the
-    # conversation stands -----------------------------------------------------
+    # ---- in unison: hear the moment itself; ask Language what it read ---------
     def on_joined(self, name: str) -> None:
         from team import listen
-        listen(self.thalamus, name, "read")
+        listen(self.thalamus, name, "moment")
 
-    def _hear_read(self, read: Dict[str, Any]) -> Dict[str, Any]:
-        from team import announce, ask
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Where this moment leaves the conversation. Any lobe can ask for it."""
+        from team import about_moment
+        read = about_moment(self.thalamus, "language", payload, "conversation")
         text = str(read.get("text") or "").strip()
+        user_id = str(payload.get("user_id") or read.get("user_id") or "default")
         if not text:
-            return {"status": "success", "content": {"heard": False}}
-        user_id = str(read.get("user_id") or "default")
+            return {"user_id": user_id, "user_input": "", "understanding": {}}
         # The moment as her senses built it, with how new Novelty found it and
         # what Language made of the words.
-        moment = dict(read.get("moment") or {}) if isinstance(read.get("moment"), dict) else {}
-        novelty = ask(self.thalamus, "novelty", "get_assessment", {}, "conversation")
+        moment = dict(payload.get("moment") or {}) if isinstance(payload.get("moment"), dict) else {}
+        novelty = about_moment(self.thalamus, "novelty", payload, "conversation")
         if "novelty_score" in novelty:
             moment["novelty_score"] = novelty.get("novelty_score")
         if "is_novel" in novelty:
@@ -1157,22 +1158,18 @@ class ConversationSystem:
         moment.update(language)
         moment["resolved_concepts"] = list(read.get("resolved_concepts") or [])
         moment["representation_source"] = "language_via_shared_representation"
-        attention = ask(self.thalamus, "attention", "get_focus", {}, "conversation")
         answer = self.process_message({"type": "understand", "content": {
-            "user_input": text, "user_id": user_id, "perception": moment, "attention": attention,
+            "user_input": text, "user_id": user_id, "perception": moment,
             **language,
-            "context": {"perception": moment, "attention": attention, **language},
+            "context": {"perception": moment, **language},
         }})
-        if answer.get("status") != "success":
-            return answer
-        understanding = (answer.get("content") or {}).get("understanding")
-        understanding = understanding if isinstance(understanding, dict) else {}
-        announce(self.thalamus, "turn", {
-            "user_id": user_id, "user_input": text, "recognition_id": read.get("recognition_id"),
-            "understanding": understanding, "moment": moment, "attention": attention,
+        understanding = (answer.get("content") or {}).get("understanding") if answer.get("status") == "success" else {}
+        return {
+            "user_id": user_id, "user_input": text, "recognition_id": payload.get("recognition_id"),
+            "understanding": understanding if isinstance(understanding, dict) else {},
+            "moment": moment,
             "resolved_concepts": list(read.get("resolved_concepts") or []), **language,
-        }, "conversation")
-        return {"status": "success", "content": {"heard": True}}
+        }
 
     @staticmethod
     def _linguistic_context(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1215,8 +1212,10 @@ class ConversationSystem:
         if msg_type == "health":
             return {"status": "success", "healthy": True, "pid": os.getpid()}
 
-        if msg_type == "read":
-            return self._hear_read(payload if isinstance(payload, dict) else {})
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            return {"status": "success",
+                    "content": take_moment(self, "conversation", self._take_in, payload if isinstance(payload, dict) else {})}
 
         if msg_type == "understand":
             user_input = payload.get("user_input", "")

@@ -274,7 +274,7 @@ class RelationBeliefs:
 
     def __init__(self, path: Optional[str]) -> None:
         self.path = path
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.beliefs: List[Dict[str, Any]] = []
         self.load()
 

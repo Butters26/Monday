@@ -420,7 +420,22 @@ class MetaAwareness:
 
     def on_joined(self, name: str) -> None:
         from team import listen
-        listen(self.thalamus, name, "turn", "delivered", "thought_arose")
+        listen(self.thalamus, name, "moment", "delivered", "thought_arose")
+
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Someone is talking to her: she is focused. Asks Conversation where it leaves things."""
+        from team import about_moment
+        where = about_moment(self.thalamus, "conversation", payload, "meta_awareness")
+        if not str(where.get("user_input") or "").strip():
+            return {}
+        understanding = where.get("understanding") if isinstance(where.get("understanding"), dict) else {}
+        try:
+            novelty = float(understanding.get("novelty_score") or 0.0)  # how new Novelty found it
+        except (TypeError, ValueError):
+            novelty = 0.0
+        return self.observe_turn(user_input=str(where.get("user_input") or ""), understanding=understanding,
+                                 user_id=str(payload.get("user_id") or where.get("user_id") or "default"),
+                                 novelty_score=novelty)
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
@@ -440,10 +455,12 @@ class MetaAwareness:
                                              user_id=str(content.get("user_id") or "default"))
             return {"status": "success", "content": snap}
 
-        if msg_type in ("turn", "observe_turn", "observe", "update_from_turn"):
-            if msg_type == "turn" and "novelty_score" not in content:
-                # How new Novelty found it (Conversation folded it into the understanding).
-                content = {**content, "novelty_score": (content.get("understanding") or {}).get("novelty_score", 0.0)}
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            snap = take_moment(self, "meta_awareness", self._take_in, content)
+            return {"status": "success", "content": snap, "meta_awareness": snap}
+
+        if msg_type in ("observe_turn", "observe", "update_from_turn"):
             try:
                 novelty = float(content.get("novelty_score", 0.0) or 0.0)
             except (TypeError, ValueError):

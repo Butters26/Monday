@@ -14,7 +14,8 @@ Chains: a chain is one line of asking. A lobe that asks another lobe something
 passes its chain along, so every ask that comes out of that ask is on the same
 chain. Anything told without waiting for an answer (tell / announce) starts a
 new chain for whoever receives it. Chains are numbered in the order they
-start, so an older chain has a smaller number.
+start, so an older chain has a smaller number. Every lobe that hears the same
+announcement gets a chain of the same age: they are peers working in unison.
 
 While a lobe waits for an answer it handles only:
   1. messages on its own chain (they come out of its own ask), and
@@ -54,9 +55,17 @@ def current_chain() -> Optional[str]:
     return getattr(_current, "chain", None)
 
 
-def new_chain() -> str:
-    """A new chain id. Later chains sort after earlier ones."""
-    return f"{next(_chain_numbers):012x}"
+def new_chain(born: Optional[int] = None, listener: int = 0) -> str:
+    """A new chain id. Later chains sort after earlier ones. One announcement
+    gives every lobe that hears it a chain born at the same time (`born`), so
+    anything that happens after the announcement is newer than all of them."""
+    if born is None:
+        born = next(_chain_numbers)
+    return f"{born:012x}.{listener:04x}"
+
+
+def next_birth() -> int:
+    return next(_chain_numbers)
 
 
 class Reply:
@@ -192,22 +201,22 @@ class LobeInbox:
     def _for_me_while_waiting(self, chain: str) -> Optional[Letter]:
         """A letter this lobe must handle now, though it is waiting for an answer.
         (Call with the condition held.)"""
-        stuck: Optional[int] = None
         for index, letter in enumerate(self._letters):
             if letter.chain == chain:
                 del self._letters[index]
                 return letter
-            if (stuck is None and letter.reply is not None and letter.sender
-                    and letter.chain < chain and self._waits_on is not None):
-                stuck = index
-        if stuck is not None:
-            letter = self._letters[stuck]
+        if self._waits_on is None:
+            return None
+        for index, letter in enumerate(self._letters):
+            # An older ask from a lobe this one is itself waiting on: serve it.
+            if letter.reply is None or not letter.sender or not letter.chain < chain:
+                continue
             try:
                 locked = bool(self._waits_on(self.name, letter.sender))
             except Exception:
                 locked = False
             if locked:
-                del self._letters[stuck]
+                del self._letters[index]
                 if _trace_enabled():
                     _trace_event("thalamus_unlocked", lobe=self.name, served=letter.envelope.get("type"),
                                  for_lobe=letter.sender,
@@ -283,4 +292,4 @@ class LobeInbox:
             reply.waker = None
 
 
-__all__ = ["ANSWER_TIMEOUT_SEC", "Letter", "LobeInbox", "Reply", "current_chain", "new_chain"]
+__all__ = ["ANSWER_TIMEOUT_SEC", "Letter", "LobeInbox", "Reply", "current_chain", "new_chain", "next_birth"]

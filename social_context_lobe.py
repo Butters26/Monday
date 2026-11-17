@@ -631,7 +631,20 @@ compliment -> "thank you" (sure 0.7)
 
     def on_joined(self, name: str) -> None:
         from team import listen
-        listen(self.thalamus, name, "turn")
+        listen(self.thalamus, name, "moment")
+
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """The social side of this moment. Asks Conversation where it leaves things."""
+        from team import about_moment
+        where = about_moment(self.thalamus, "conversation", payload, "social_context")
+        said = str(where.get("user_input") or "")
+        if not said.strip():
+            return {}
+        return self.observe_turn(
+            user_input=said,
+            understanding=where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
+            user_id=str(payload.get("user_id") or where.get("user_id") or "default"),
+        )
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
@@ -639,7 +652,12 @@ compliment -> "thank you" (sure 0.7)
         if not isinstance(content, dict):
             content = {}
 
-        if msg_type in ("turn", "observe_turn", "observe", "update_from_turn"):
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            snap = take_moment(self, "social_context", self._take_in, content)
+            return {"status": "success", "content": snap, "social_context": snap}
+
+        if msg_type in ("observe_turn", "observe", "update_from_turn"):
             snap = self.observe_turn(
                 user_input=content.get("user_input") or content.get("text") or "",
                 understanding=content.get("understanding")

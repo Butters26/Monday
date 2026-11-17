@@ -334,13 +334,15 @@ class NoveltyLobe:
         if msg_type is None:
             msg_type = payload.get("type")
 
-        if msg_type == "moment":
-            # On the team: she hears each moment herself and judges how new it is.
-            moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
-            from team import words_of
-            result = self.assess_experience(text=words_of(moment), perception=moment,
-                                            source="live_path", commit=True)
-            return {"status": "success", "content": result}
+        if msg_type in ("moment", "about_moment"):
+            # In unison: she hears each moment herself and judges how new it is.
+            from team import take_moment, words_of
+
+            def judge(moment_payload: Dict[str, Any]) -> Dict[str, Any]:
+                moment = moment_payload.get("moment") if isinstance(moment_payload.get("moment"), dict) else {}
+                return self.assess_experience(text=words_of(moment), perception=moment,
+                                              source="live_path", commit=True)
+            return {"status": "success", "content": take_moment(self, "novelty", judge, payload)}
 
         if msg_type in ("assess_experience", "assess", "evaluate_novelty"):
             result = self.assess_experience(

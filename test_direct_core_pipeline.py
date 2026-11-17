@@ -61,15 +61,13 @@ def test_prompted_core_path_order_and_output(tmp_path):
         route_pairs = [
             (r.get("to"), r.get("type")) for r in systems["thalamus"].message_routes
         ]
-        # There is no turn script: each lobe hears the announcement it needs.
-        # Memory hears the moment, Conversation hears what Language read, Emotion
-        # and Reasoning hear the turn, Language hears Reasoning's thought, and
-        # Output gets what Language worded.
+        # No turn script and no line: every lobe hears the moment itself. Then
+        # Language hears Reasoning's thought, and Output gets what Language worded.
+        for lobe in ("notus", "language", "conversation", "emotion", "reasoning", "attention",
+                     "social_context", "pattern", "novelty"):
+            assert (lobe, "moment") in route_pairs, f"{lobe} did not hear the moment itself"
         primary = [
             ("notus", "moment"),
-            ("conversation", "read"),
-            ("emotion", "turn"),
-            ("reasoning", "turn"),
             ("language", "thought"),
             ("output", "generate_output"),
         ]
@@ -201,12 +199,13 @@ def test_reasoning_reviews_language_reply_before_output(tmp_path):
 
     class ReviewingReasoning:
         def on_joined(self, name):
-            systems["thalamus"].listen(name, "turn")
+            systems["thalamus"].listen(name, "moment")
 
         def process_message(self, message):
-            if message.get("type") == "turn":
-                # A stand-in Reasoning: hears the turn and announces a thought.
+            if message.get("type") == "moment":
+                # A stand-in Reasoning: hears the moment and announces a thought.
                 turn = message.get("content") or {}
+                turn = {"user_id": turn.get("user_id"), "user_input": (turn.get("moment") or {}).get("text")}
                 systems["thalamus"].announce("thought", {
                     "user_id": turn.get("user_id"), "user_input": turn.get("user_input"),
                     "semantic_input": {"answer": "IGNORED_PASS_THROUGH"}, "memories": [],

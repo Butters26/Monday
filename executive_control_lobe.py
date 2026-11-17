@@ -688,7 +688,7 @@ class ExecutiveControlLobe:
         self.name = name
         listen = getattr(self.thalamus, "listen", None)
         if callable(listen):
-            for topic in ("turn", "understood", "social_read", "remembered", "delivered"):
+            for topic in ("moment", "understood", "social_read", "remembered", "delivered"):
                 listen(name, topic)
         self.start()
 
@@ -807,7 +807,20 @@ class ExecutiveControlLobe:
             self._heard_delivery(content)
             return {"status": "success", "content": {"heard": True}}
 
-        if msg_type in ("turn", "set_goal_from_turn", "derive_goal", "update_from_turn"):
+        if msg_type in ("moment", "about_moment"):
+            # In unison: she hears the moment herself and asks Conversation where it leaves things.
+            from team import about_moment, take_moment
+
+            def take_in(payload: Dict[str, Any]) -> Dict[str, Any]:
+                where = about_moment(self.thalamus, "conversation", payload, "executive_control")
+                if not str(where.get("user_input") or "").strip():
+                    return {}
+                return self.hear_turn(str(where.get("user_input") or ""),
+                                      where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
+                                      str(payload.get("user_id") or where.get("user_id") or "default"))
+            body = take_moment(self, "executive_control", take_in, content)
+            return {"status": "success", "content": body}
+        if msg_type in ("set_goal_from_turn", "derive_goal", "update_from_turn"):
             und = content.get("understanding") if isinstance(content.get("understanding"), dict) else {}
             body = self.hear_turn(str(content.get("user_input") or content.get("text") or ""), und, user_id)
             return {**body, "status": "success", "content": body}

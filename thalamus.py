@@ -30,7 +30,7 @@ import time
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
-from lobe_inbox import ANSWER_TIMEOUT_SEC, Letter, LobeInbox, Reply, current_chain, new_chain
+from lobe_inbox import ANSWER_TIMEOUT_SEC, Letter, LobeInbox, Reply, current_chain, new_chain, next_birth
 
 try:
     from trace_monitor import trace_event as _trace_event
@@ -109,7 +109,7 @@ class Thalamus:
 
     def _post(
         self, destination: str, msg_type: str, content: Optional[Dict[str, Any]], source: str,
-        want_answer: bool,
+        want_answer: bool, chain: Optional[str] = None,
     ):
         """Put one envelope in the destination's inbox. Returns (reply, chain, error)."""
         if content is None:
@@ -129,7 +129,7 @@ class Thalamus:
         }
         # An ask stays on the asker's chain; something told without waiting
         # starts a new chain for whoever receives it (see lobe_inbox.py).
-        chain = (current_chain() if want_answer else None) or new_chain()
+        chain = chain or (current_chain() if want_answer else None) or new_chain()
         reply = Reply() if want_answer else None
         caller = self._caller_inbox()
         self._carried += 1
@@ -212,9 +212,10 @@ class Thalamus:
         msg_type: str,
         content: Optional[Dict[str, Any]] = None,
         source: str = "thalamus",
+        chain: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Deliver one envelope without waiting for an answer."""
-        _reply, _chain, error = self._post(destination, msg_type, content, source, want_answer=False)
+        _reply, _chain, error = self._post(destination, msg_type, content, source, want_answer=False, chain=chain)
         status = "error" if error is not None else "delivered"
         self._log_route(source, destination, msg_type, status)
         return error if error is not None else {"status": "delivered", "content": {"to": destination}}
@@ -236,7 +237,10 @@ class Thalamus:
         """Deliver an announcement to every lobe that listens for `topic`."""
         with self.lobe_handlers_lock:
             names = [n for n in self.listeners.get(topic, []) if n != source]
-        results = {name: self.tell(name, topic, content, source) for name in names}
+        # Every lobe that hears it hears it as of the same moment: none is ahead of another.
+        born = next_birth()
+        results = {name: self.tell(name, topic, content, source, chain=new_chain(born, index))
+                   for index, name in enumerate(names)}
         return {"status": "delivered", "content": {"topic": topic, "to": names, "results": results}}
 
     def broadcast_message(
