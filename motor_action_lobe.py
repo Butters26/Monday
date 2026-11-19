@@ -189,6 +189,11 @@ class MotorActionLobe:
                 "action": None,
             }
 
+        # Something she could do: a bid to Executive Control on the "do" channel.
+        from team import bid
+        bid(self.thalamus, "motor_action", "do what he asked", 1.0,
+            user_input if isinstance(user_input, str) else "", user_id, channel="do",
+            why="what he said is something to act on")
         inhibit = self._check_inhibit("motor_action")
         text = user_input if isinstance(user_input, str) else ""
         if inhibit.get("inhibited"):
@@ -346,6 +351,22 @@ class MotorActionLobe:
         if uid == "default":
             self.action_queue = []
 
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment", "delivered")
+
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Is there something to do in this moment? Asks Conversation where it leaves things."""
+        from team import about_moment
+        where = about_moment(self.thalamus, "conversation", payload, "motor_action")
+        if not str(where.get("user_input") or "").strip():
+            return {}
+        return self.plan_from_turn(
+            user_input=str(where.get("user_input") or ""),
+            understanding=where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
+            user_id=str(payload.get("user_id") or where.get("user_id") or "default"),
+        )
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         if "content" in message and isinstance(message.get("content"), dict):
@@ -359,6 +380,11 @@ class MotorActionLobe:
 
         if msg_type == "health":
             return {"status": "success", "healthy": True}
+
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            body = take_moment(self, "motor_action", self._take_in, content)
+            return {"status": "success", "content": body}
 
         if msg_type in ("plan_from_turn", "plan_turn"):
             body = self.plan_from_turn(
@@ -383,7 +409,7 @@ class MotorActionLobe:
             )
             return {"status": "success", "content": {"action": action}, "action": action}
 
-        if msg_type in ("execute_next", "deliver", "execute_action"):
+        if msg_type in ("delivered", "execute_next", "deliver", "execute_action"):
             action = self.execute_action(
                 user_id=str(content.get("user_id") or "default")
             )

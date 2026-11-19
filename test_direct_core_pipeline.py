@@ -43,7 +43,7 @@ def test_prompted_core_path_order_and_output(tmp_path):
     random.seed(0)
     systems = _boot(tmp_path)
     try:
-        response = systems["thalamus"].process_user_input(
+        response = systems["outside"].say(
             "Hello Monday, explain memory?"
         )
         # This prompt is not guaranteed grounded. Current contract permits silence.
@@ -61,14 +61,14 @@ def test_prompted_core_path_order_and_output(tmp_path):
         route_pairs = [
             (r.get("to"), r.get("type")) for r in systems["thalamus"].message_routes
         ]
-        # Memory saves what he said itself: it hears the moment sensory
-        # integration announces, before the turn script reaches conversation.
+        # No turn script and no line: every lobe hears the moment itself. Then
+        # Language hears Reasoning's thought, and Output gets what Language worded.
+        for lobe in ("notus", "language", "conversation", "emotion", "reasoning", "attention",
+                     "social_context", "pattern", "novelty"):
+            assert (lobe, "moment") in route_pairs, f"{lobe} did not hear the moment itself"
         primary = [
             ("notus", "moment"),
-            ("conversation", "understand"),
-            ("emotion", "process_input"),
-            ("reasoning", "think"),
-            ("language", "generate"),
+            ("language", "thought"),
             ("output", "generate_output"),
         ]
         positions = []
@@ -82,14 +82,13 @@ def test_prompted_core_path_order_and_output(tmp_path):
             cursor = idx + 1
         assert positions == sorted(positions)
         store_idx = positions[0]
-        emotion_idx = positions[2]
         context_indices = [
             i
             for i, pair in enumerate(route_pairs)
             if pair[0] == "notus" and pair[1] in {"query", "query_context"}
         ]
-        assert context_indices, "expected Notus query/query_context on prompted path"
-        assert store_idx < min(context_indices) < emotion_idx
+        assert context_indices, "expected Reasoning to ask Notus for context"
+        assert store_idx < min(context_indices)
 
         # Said without saying who: filed as someone she doesn't know, never as Matthew.
         memories = systems["notus"].retrieve_memories("Hello Monday", user_id="unknown person 1")
@@ -104,7 +103,7 @@ def test_prompted_core_path_order_and_output(tmp_path):
 def test_prompted_core_path_keeps_user_memory_isolated(tmp_path):
     systems = _boot(tmp_path)
     try:
-        systems["thalamus"].process_user_input(
+        systems["outside"].say(
             "ALICE_PRIVATE_TOKEN", user_id="alice"
         )
         alice_memories = systems["notus"].retrieve_memories(
@@ -125,8 +124,8 @@ def test_prompted_core_path_greets_back_without_canned_answers(tmp_path):
     answer or stock follow-up."""
     systems = _boot(tmp_path)
     try:
-        greeting = systems["thalamus"].process_user_input("hello")
-        gravity = systems["thalamus"].process_user_input("What is gravity?")
+        greeting = systems["outside"].say("hello")
+        gravity = systems["outside"].say("What is gravity?")
         g_low = (greeting or "").lower()
         assert g_low.split(",")[0].strip("!") in {"hello", "hullo", "hi", "howdy", "how-do-you-do"}, greeting
         for needle in ("hi there", "nice to meet", "how are you", "take care"):
@@ -155,7 +154,7 @@ def test_prompted_core_recalls_stable_fact_after_restart(tmp_path):
         enable_autonomous=False,
     )
     try:
-        learned = first["thalamus"].process_user_input(
+        learned = first["outside"].say(
             "My favorite color is violet", user_id="alice"
         )
         # After a plain statement, staying quiet is a choice she may make.
@@ -184,7 +183,7 @@ def test_prompted_core_recalls_stable_fact_after_restart(tmp_path):
         assert any(
             "violet" in str(m.get("content", "")).lower() for m in recalled_memories
         )
-        reply = reopened["thalamus"].process_user_input(
+        reply = reopened["outside"].say(
             "What is my favorite color?", user_id="alice"
         )
         # Asked after a restart, she answers from what she remembers.
@@ -199,7 +198,23 @@ def test_reasoning_reviews_language_reply_before_output(tmp_path):
     reviews = []
 
     class ReviewingReasoning:
+        def on_joined(self, name):
+            systems["thalamus"].listen(name, "moment")
+
         def process_message(self, message):
+            if message.get("type") == "moment":
+                # A stand-in Reasoning: hears the moment and announces a thought.
+                turn = message.get("content") or {}
+                turn = {"user_id": turn.get("user_id"), "user_input": (turn.get("moment") or {}).get("text")}
+                # ...and, like the real one, bids for what it has to offer.
+                systems["thalamus"].send_and_wait("executive_control", "bid", {
+                    "from": "reasoning", "impulse": "that she doesn't know", "strength": 0.7,
+                    "about": turn.get("user_input"), "user_id": turn.get("user_id")}, source="reasoning")
+                systems["thalamus"].announce("thought", {
+                    "user_id": turn.get("user_id"), "user_input": turn.get("user_input"),
+                    "semantic_input": {"answer": "IGNORED_PASS_THROUGH"}, "memories": [],
+                }, "reasoning")
+                return {"status": "success", "content": {}}
             if message.get("type") == "review_reply":
                 content = message.get("content") or {}
                 reviews.append(content.get("sentence"))
@@ -212,7 +227,7 @@ def test_reasoning_reviews_language_reply_before_output(tmp_path):
     systems = _boot(tmp_path)
     systems["thalamus"].register_lobe("reasoning", ReviewingReasoning())
     try:
-        response = systems["thalamus"].process_user_input("What is photosynthesis?")
+        response = systems["outside"].say("What is photosynthesis?")
         assert reviews, "reasoning never reviewed the reply"
         assert response == reviews[-1]
         assert "IGNORED_PASS_THROUGH" not in response
@@ -235,7 +250,7 @@ def test_create_core_systems_is_socket_and_postgres_free_with_injected_notus(tmp
         backend = health.get("content", {}).get("backend")
         assert backend == "sqlite"
         # Touch process path once. Ungrounded ping may correctly produce silence.
-        reply = systems["thalamus"].process_user_input("ping")
+        reply = systems["outside"].say("ping")
         assert isinstance(reply, str)
         # Sanity: stdlib socket module still importable; core did not require PG.
         assert socket is not None

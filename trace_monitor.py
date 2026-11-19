@@ -13,8 +13,11 @@ It changes nothing about her behavior. It records, one JSON line each:
 - every announcement: who announced what topic, and which lobes heard it;
 - each lobe's own thread reporting what it handled ("handled": lobe, type,
   how long it sat in the inbox, how long handling took);
-- every turn: what was said, her reply, how long it took, and for a blank
-  reply whether it was her choice or a failure (and the first failure seen);
+- every turn (something said to her from outside, and what she said back):
+  what was said, her reply, how long it took, and for a blank reply whether it
+  was her choice or a failure (and the first failure seen);
+- what the Thalamus did besides carrying: the volume Attention set, a message
+  that went ahead because it was louder, and two lobes it un-stuck;
 - events lobes report themselves via trace_event() (e.g. reply attempts);
 - uncaught errors in any thread, with traceback;
 - warning/error lines lobes print (lines with "⚠️", "❌", "Error", "Traceback").
@@ -57,6 +60,45 @@ def trace_event(kind: str, **data: Any) -> None:
     _write({"kind": kind, **data})
 
 
+def turn_started(text: str, user_id: str) -> Optional[str]:
+    """Someone outside said something to her (outside_world.py reports it)."""
+    if not enabled():
+        return None
+    turn_id = uuid.uuid4().hex[:8]
+    _state["turn"] = turn_id
+    _state["turn_failures"] = []
+    _state["silence"] = None
+    _state["silence_reason"] = None
+    _write({"kind": "turn_start", "turn": turn_id, "user_id": user_id, "text": text})
+    return turn_id
+
+
+def turn_ended(turn_id: Optional[str], reply: str, started: float,
+               cause: Optional[str] = None, error: Optional[str] = None) -> None:
+    """What came back out of her, and if nothing did, why."""
+    if not enabled() or turn_id is None:
+        return
+    silence = _state.get("silence")
+    blank = not (isinstance(reply, str) and reply.strip())
+    if blank:
+        if error:
+            cause = "crash"
+        elif silence == "chosen":
+            cause = f"her choice: {_state.get('silence_reason') or ''}".rstrip(": ")
+        elif silence == "failed":
+            cause = f"FAILED to form a reply: {_state.get('silence_reason') or ''}".rstrip(": ")
+        elif not cause:
+            cause = "failure" if _state["turn_failures"] else "unexplained"
+    else:
+        cause = None
+    _write({"kind": "turn_end", "turn": turn_id, "reply": reply, "blank": blank,
+            "blank_cause": cause, "failures": list(_state["turn_failures"] or []),
+            "error": error, "ms": round((time.perf_counter() - started) * 1000, 1)})
+    # Later records keep this turn's id until the next thing is said to her:
+    # her lobes carry on with it (remembering what she said, her voice) after she has replied.
+    _state["turn_failures"] = None
+
+
 def _write(record: Dict[str, Any]) -> None:
     record.setdefault("ts", time.time())
     record.setdefault("turn", _state["turn"])
@@ -79,7 +121,9 @@ def _real_sender(thalamus: Any) -> str:
                 return name
         for info in frames:
             if info.frame.f_locals.get("self") is thalamus:
-                if info.function not in ("send_message", "send_and_wait", "broadcast_message", "traced"):
+                if info.function not in ("send_message", "send_and_wait", "broadcast_message", "traced", "tell",
+                                         "announce", "traced_tell", "traced_announce", "traced_broadcast",
+                                         "_post", "_await"):
                     return f"thalamus:{info.function}"
         return "unknown"
     finally:
@@ -175,9 +219,9 @@ def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str
 
     original_tell = getattr(thalamus, "tell", None)
     if callable(original_tell):
-        def traced_tell(destination, msg_type, content=None, source="thalamus"):
+        def traced_tell(destination, msg_type, content=None, source="thalamus", **carrying):
             sender = _real_sender(thalamus)
-            response = original_tell(destination, msg_type, content, source)
+            response = original_tell(destination, msg_type, content, source, **carrying)
             outcome = "DELIVERED" if response.get("status") == "delivered" else "NO_RECEIVER"
             _write({"kind": "message", "from": sender, "claimed_from": source, "to": destination,
                     "type": msg_type, "outcome": outcome, "waits": False})
@@ -217,45 +261,6 @@ def install(systems: Dict[str, Any], path: Optional[str] = None) -> Optional[str
         return results
 
     thalamus.broadcast_message = traced_broadcast
-
-    original_turn = thalamus.process_user_input
-
-    def traced_turn(user_input, user_id="default", perception_payload=None):
-        turn_id = uuid.uuid4().hex[:8]
-        _state["turn"] = turn_id
-        _state["turn_failures"] = []
-        _state["silence"] = None
-        _state["silence_reason"] = None
-        _write({"kind": "turn_start", "turn": turn_id, "user_id": user_id, "text": user_input})
-        started = time.perf_counter()
-        error = None
-        reply = ""
-        try:
-            reply = original_turn(user_input, user_id=user_id, perception_payload=perception_payload)
-            return reply
-        except Exception as exc:
-            error = "".join(traceback.format_exception(exc))[-2000:]
-            raise
-        finally:
-            silence = _state.get("silence")
-            blank = not (isinstance(reply, str) and reply.strip())
-            cause = None
-            if blank:
-                if error:
-                    cause = "crash"
-                elif silence == "chosen":
-                    cause = f"her choice: {_state.get('silence_reason') or ''}".rstrip(": ")
-                elif silence == "failed":
-                    cause = f"FAILED to form a reply: {_state.get('silence_reason') or ''}".rstrip(": ")
-                else:
-                    cause = "failure" if _state["turn_failures"] else "unexplained"
-            _write({"kind": "turn_end", "turn": turn_id, "reply": reply, "blank": blank,
-                    "blank_cause": cause, "failures": list(_state["turn_failures"]),
-                    "error": error, "ms": round((time.perf_counter() - started) * 1000, 1)})
-            _state["turn"] = None
-            _state["turn_failures"] = None
-
-    thalamus.process_user_input = traced_turn
 
     def on_thread_error(args):
         _write({"kind": "uncaught_error", "where": f"thread {getattr(args.thread, 'name', '?')}",

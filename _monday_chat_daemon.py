@@ -1,42 +1,31 @@
 #!/usr/bin/env python3
-"""Persistent Monday chat daemon for live talk (direct-call core).
+"""Persistent Mercy chat daemon for live talk.
 
 Protocol over Unix socket ~/.local/state/monday-chat/chat.sock:
   client sends one JSON line:
-    {"text": "...", "user_id": "<who, or empty>"}                 → prompted turn
-    {"type": "poll", "user_id": "<who, or empty>"}               → drain unprompted pending
-    {"type": "deliver_unprompted", "user_id": "<who, or empty>",
-     "force": {...}}                                     → operator/smoke deliver
+    {"text": "...", "user_id": "<who, or empty>"}       -> say something to her
+    {"type": "poll", "user_id": "<who, or empty>"}     -> collect what she said on her own
   server replies one JSON line:
-    prompted: {"ok": true, "reply": "...", "unprompted": [...]}
-    poll:     {"ok": true, "pending": ["..."]}
-    deliver:  {"ok": true, "spoke": bool, "text": ..., "reason": ...}
-    error:    {"ok": false, "error": "..."}
+    said:  {"ok": true, "reply": "...", "unprompted": [...]}
+    poll:  {"ok": true, "pending": ["..."]}
+    error: {"ok": false, "error": "..."}
 Also accepts text/line mode if first char is not '{'.
 
-Background thread (~8–15s) calls Thalamus.deliver_unprompted_speech for active
-(currently not built: removed Oct 6; the thread reports that once and stops)
-users so Monday can speak without a user turn. Speech stays decision-only;
-delivery is Thalamus→Output (+ this pending/poll push).
+This is outside her: it hands what is typed to her senses and hears what she
+says (outside_world.py). Her lobes do everything in between on their own.
+Anything she says when nobody is waiting on a reply is kept for the next poll.
 
-Notus identity (WANT-GAP 8): same path as create_core_systems / run_abin —
-one shared DirectNotus SQLite file
-at shared_direct_notus_path() (default ~/.local/state/monday/notus_memory.sqlite3,
-override MONDAY_NOTUS_SQLITE). Sock/pid stay under MONDAY_RUNTIME_DIR
-(default ~/.local/state/monday-chat); memory is NOT a separate chat DB.
-Issue #11 Thalamus.notus_fallback still covers mid-turn store/query outages.
-Not Learning; not cloud.
+Memory: one shared Notus SQLite file at shared_direct_notus_path() (default
+~/.local/state/monday/notus_memory.sqlite3, override MONDAY_NOTUS_SQLITE), the
+same one run_abin uses. Sock/pid stay under MONDAY_RUNTIME_DIR.
 """
 from __future__ import annotations
 
 import json
 import os
-import random
 import signal
 import socket
 import sys
-import threading
-import time
 import traceback
 from pathlib import Path
 
@@ -50,9 +39,6 @@ RUNTIME = Path(os.environ.get("MONDAY_RUNTIME_DIR", os.path.expanduser("~/.local
 SOCK_PATH = RUNTIME / "chat.sock"
 PID_PATH = RUNTIME / "chat.pid"
 
-# Nobody is assumed to be Matthew: an unintroduced speaker is "unknown person 1".
-ACTIVE_USERS = ("unknown person 1",)
-
 
 def main() -> int:
     RUNTIME.mkdir(parents=True, exist_ok=True)
@@ -65,7 +51,6 @@ def main() -> int:
         runtime_directory=str(RUNTIME),
         enable_autonomous=True,
     )
-    thalamus = systems["thalamus"]
     identity = systems.get("notus_identity") or describe_notus_identity(systems["notus"])
     print(
         "Notus live store: "
@@ -75,101 +60,8 @@ def main() -> int:
     )
     PID_PATH.write_text(str(os.getpid()))
 
-    pending_lock = threading.Lock()
-    pending: dict[str, list[str]] = {u: [] for u in ACTIVE_USERS}
+    outside = systems["outside"]
     stopping = {"v": False}
-
-    def _drain(user_id: str) -> list[str]:
-        with pending_lock:
-            items = list(pending.get(user_id) or [])
-            pending[user_id] = []
-            return items
-
-    def _append_pending(user_id: str, text: str) -> None:
-        with pending_lock:
-            bucket = pending.setdefault(user_id, [])
-            bucket.append(text)
-            if len(bucket) > 32:
-                del bucket[:-32]
-
-    def _force_inject(force: dict) -> None:
-        from autonomous_thinking import AutonomousThought
-
-        auto = systems.get("autonomous")
-        if auto is None:
-            return
-        content = str(force.get("content") or "").strip()
-        if not content:
-            return
-        if force.get("reset_cooldown"):
-            thalamus._last_spoken_aside_time = 0.0
-            sp = systems.get("speech")
-            if sp is not None:
-                sp.last_speech_time = 0.0
-                sp.conversation_active = False
-                sp.user_is_typing = False
-                sp.user_is_busy = False
-        thought = AutonomousThought(
-            id=f"op_force_{int(time.time() * 1000)}",
-            content=content,
-            thought_type=str(force.get("thought_type") or "feeling"),
-            trigger=str(force.get("trigger") or "unresolved_operator"),
-            intensity=float(force.get("intensity") or 0.9),
-            speak_worthy=True,
-            timestamp=time.time(),
-            mode="inner",
-            topic_key=str(force.get("topic_key") or ""),
-        )
-        lock = getattr(auto, "lock", None)
-        if lock is not None:
-            with lock:
-                auto.thought_queue.insert(0, thought)
-        else:
-            auto.thought_queue.insert(0, thought)
-
-    def _unprompted_loop() -> None:
-        # Unprompted delivery used Thalamus.deliver_unprompted_speech, which was
-        # removed when Thalamus became a plain router (Oct 6). Rebuilding it the
-        # team way (Autonomous Speech decides, Language words, Output delivers)
-        # is on the Monday Work List. Until then, say so once instead of
-        # crashing every 8-15 seconds.
-        if not callable(getattr(thalamus, "deliver_unprompted_speech", None)):
-            print("Unprompted speech is not built in the current design; "
-                  "she only speaks when spoken to.", flush=True)
-            try:
-                from trace_monitor import trace_event
-                trace_event("unprompted_speech_unavailable",
-                            reason="Thalamus.deliver_unprompted_speech removed Oct 6; not rebuilt yet")
-            except Exception:
-                pass
-            return
-        while not stopping["v"]:
-            delay = random.uniform(8.0, 15.0)
-            end = delay
-            while end > 0 and not stopping["v"]:
-                step = min(0.5, end)
-                time.sleep(step)
-                end -= step
-            if stopping["v"]:
-                break
-            for user_id in ACTIVE_USERS:
-                if stopping["v"]:
-                    break
-                try:
-                    result = thalamus.deliver_unprompted_speech(user_id=user_id)
-                except Exception:
-                    traceback.print_exc()
-                    continue
-                if not isinstance(result, dict):
-                    continue
-                if result.get("spoke") and isinstance(result.get("text"), str):
-                    text = result["text"].strip()
-                    if text:
-                        _append_pending(user_id, text)
-                        print(f"[unprompted] {user_id}: {text[:120]}", flush=True)
-
-    bg = threading.Thread(target=_unprompted_loop, name="unprompted-speech", daemon=True)
-    bg.start()
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(SOCK_PATH))
@@ -216,46 +108,12 @@ def main() -> int:
                         if user_id == "default":
                             user_id = "unknown person 1"  # never assumed to be Matthew
                         if req_type == "poll":
-                            drained = _drain(user_id)
                             conn.sendall(
                                 (
                                     json.dumps(
-                                        {"ok": True, "pending": drained},
+                                        {"ok": True, "pending": outside.take_unprompted(user_id)},
                                         ensure_ascii=False,
                                     )
-                                    + "\n"
-                                ).encode()
-                            )
-                            continue
-                        if req_type == "deliver_unprompted":
-                            force = req.get("force")
-                            if isinstance(force, dict):
-                                try:
-                                    _force_inject(force)
-                                except Exception:
-                                    traceback.print_exc()
-                            deliver = getattr(thalamus, "deliver_unprompted_speech", None)
-                            result = (
-                                deliver(user_id=user_id)
-                                if callable(deliver)
-                                else {"spoke": False, "text": None,
-                                      "reason": "unprompted speech not built in the current design"}
-                            )
-                            if not isinstance(result, dict):
-                                result = {
-                                    "spoke": False,
-                                    "text": None,
-                                    "reason": "bad_result",
-                                }
-                            if (
-                                result.get("spoke")
-                                and isinstance(result.get("text"), str)
-                                and result["text"].strip()
-                            ):
-                                _append_pending(user_id, result["text"].strip())
-                            conn.sendall(
-                                (
-                                    json.dumps({"ok": True, **result}, ensure_ascii=False)
                                     + "\n"
                                 ).encode()
                             )
@@ -263,8 +121,8 @@ def main() -> int:
                         text = str(req.get("text") or "")
                     else:
                         text, user_id = line, "unknown person 1"
-                    reply = thalamus.process_user_input(text, user_id=user_id)
-                    unprompted = _drain(user_id)
+                    reply = outside.say(text, user_id=user_id)
+                    unprompted = outside.take_unprompted(user_id)
                     conn.sendall(
                         (
                             json.dumps(

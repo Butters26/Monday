@@ -246,7 +246,7 @@ class AdvancedEmotionalEngine:
         self._logger = logger or (lambda _: None)
         self._rng = rng or random.Random()
         self.thalamus = thalamus
-        self.engine_lock = threading.Lock()
+        self.engine_lock = threading.RLock()  # the same lobe thread can come back in while it waits on another lobe
         # PAD dynamics - start neutral
         self.pad: PAD = PAD(0.0, 0.0, 0.0)
         # LIVE mood substrate (design lock 2026-09-25). Classifiers no longer drive her mood.
@@ -816,6 +816,8 @@ class EmotionalProcess:
         if callable(listen):
             listen(name, "social_read")
             listen(name, "remembered")
+            listen(name, "moment")  # every lobe hears the moment: she feels about it herself
+            listen(name, "thought_arose")  # her own thought: the memories in it bring their feelings
 
     def __init__(self, state_file=None, thalamus=None):
         self.thalamus = thalamus or get_thalamus()
@@ -1006,6 +1008,31 @@ class EmotionalProcess:
             },
         }
 
+    def _feel_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """What she feels about this moment. Asks Social Context for the social
+        side of it first, so that is in when she feels."""
+        from team import about_moment, words_of
+        moment = payload.get('moment') if isinstance(payload.get('moment'), dict) else {}
+        said = words_of(moment)
+        user_id = str(payload.get('user_id') or moment.get('user_id') or 'default')
+        if not said:
+            return {}
+        read = about_moment(self.thalamus, 'social_context', payload, 'emotion')
+        if read:
+            self.engine.__dict__.setdefault('_social_reads', {})[user_id] = dict(read)
+        felt = self.process_message_safe({'type': 'process_input', 'content': {'user_input': said, 'user_id': user_id}})
+        return {k: v for k, v in felt.items() if k != 'status'}
+
+    def _bid_feeling(self, payload: Dict[str, Any], felt: Dict[str, Any]) -> None:
+        """What she feels about it is something she could say: a bid to
+        Executive Control, as strong as the feeling is."""
+        from team import bid, words_of
+        moment = payload.get('moment') if isinstance(payload.get('moment'), dict) else {}
+        if felt.get('current_emotion') is not None:
+            bid(self.thalamus, 'emotion', 'how she feels', felt.get('intensity'), words_of(moment),
+                str(payload.get('user_id') or moment.get('user_id') or 'default'),
+                why=f"she feels {felt.get('current_emotion')}")
+
     def process_message_safe(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Safe dispatcher with validation (FIX)"""
         with self.engine.engine_lock:
@@ -1023,6 +1050,21 @@ class EmotionalProcess:
             if msg_type == 'health':
                 return {'status': 'success', 'healthy': True, 'pid': os.getpid()}
             
+            if msg_type in ('moment', 'about_moment'):
+                # In unison: she hears the moment herself and feels about it (once).
+                from team import take_moment
+                return {'status': 'success', **take_moment(self, 'emotion', self._feel_moment, message,
+                                                           then=self._bid_feeling)}
+
+            if msg_type == 'how_she_felt':
+                # What she felt about the last thing said (to this person), for any
+                # lobe that needs it.
+                felt = (self.__dict__.get('_felt') or {}).get(str(message.get('user_id') or 'default'))
+                if felt is None:
+                    snap = self._affect_snapshot()
+                    felt = {**snap, 'monday_emotion': snap.get('monday_emotion', snap['current_emotion'])}
+                return {'status': 'success', **felt}
+
             if msg_type == 'process_input':
                 user_input = message.get('user_input', '')
                 # FIX: validate input type
@@ -1044,8 +1086,7 @@ class EmotionalProcess:
                     for (et, sev, ts) in getattr(self.engine, '_unresolved_appraisals', [])
                 ]
                 snap = self._affect_snapshot()
-                return {
-                    'status': 'success',
+                felt = self.__dict__.setdefault('_felt', {})[str(message.get('user_id') or 'default')] = {
                     'response': response,
                     'current_emotion': snap['current_emotion'],
                     'intensity': snap['intensity'],
@@ -1073,6 +1114,7 @@ class EmotionalProcess:
                     'patterns': snap['patterns'],
                     'user_affect': snap.get('user_affect'),
                 }
+                return {'status': 'success', **felt}
 
             elif msg_type == 'social_read':
                 # Social context's read of each moment (what kind of move it was).
@@ -1105,7 +1147,7 @@ class EmotionalProcess:
                 self.engine._sync_from_core_affect(trigger="didnt_understand")
                 return {'status': 'success', 'content': {'felt': self.engine.inner.last_feeling}}
 
-            elif msg_type == 'remembered':
+            elif msg_type in ('remembered', 'thought_arose'):
                 # A memory came back with the feeling it had: she feels some of it again.
                 body = message.get('content') if isinstance(message.get('content'), dict) else message
                 felt = []

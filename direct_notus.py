@@ -1957,6 +1957,8 @@ class DirectNotusProcess:
         if callable(listen):
             listen(name, "moment")
             listen(name, "read_again")  # Language read something again: file it the new way
+            listen(name, "delivered")   # what she actually said: he keeps that too
+            listen(name, "thought_arose")  # what she thinks about on her own: he replays it
 
     def hear_moment(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
@@ -3093,6 +3095,16 @@ relocate to: live in
         announce("remembered", {"user_id": user_id, "recognition_id": recognition_id, "about": text,
                                 "facts": facts, "memories": memories, "beliefs": beliefs},
                  source="notus")
+        # Something came back that she could say: a bid to Executive Control. How
+        # strong is how firmly he holds it: how sure the fact is and how often it
+        # has been used, or how strong the memory is.
+        held = [self._clamp_confidence(f.get("confidence"), default=0.5)
+                * (float(f.get("usage_count") or 0) / (float(f.get("usage_count") or 0) + 1.0)) for f in facts]
+        held += [float(m.get("strength") or 1.0) / (float(m.get("strength") or 1.0) + 1.0) * 0.5 for m in memories]
+        if held:
+            from team import bid
+            bid(self.thalamus, "notus", "what she knows", max(held), text, user_id,
+                why=f"it brought back {len(facts)} facts and {len(memories)} memories")
 
     # ------------------------------------------------------------------
     # Beliefs: basic knowledge with how sure she is. Starting beliefs come
@@ -3214,7 +3226,29 @@ relocate to: live in
             "user_id": row["user_id"], "memory_type": row["memory_type"], "timestamp": row["created_at"],
             "told_by": row["told_by"] if "told_by" in keys else None,
             "sense": row["sense"] if "sense" in keys else None,
+            "strength": float(row["strength"] or 1.0) if "strength" in keys else 1.0,
         }
+
+    def replay(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """She thought about these memories on her own: going over them again
+        makes them stronger (once per memory per thought)."""
+        ids = []
+        for memory in payload.get("memories") or []:
+            try:
+                ids.append(int(memory.get("id")))
+            except (AttributeError, TypeError, ValueError):
+                continue
+        ids = list(dict.fromkeys(ids))
+        if not ids:
+            return {"status": "success", "content": {"replayed": []}}
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            connection = self._require_connection()
+            connection.executemany(
+                "UPDATE memories SET strength = strength + 0.1, access_count = access_count + 1, "
+                "last_accessed = ? WHERE id = ?", [(now, i) for i in ids])
+            connection.commit()
+        return {"status": "success", "content": {"replayed": ids}}
 
     def recent_memories(self, user_id: str, limit: Any = 10) -> List[Dict[str, Any]]:
         """Her newest memories with this person, newest first."""
@@ -3495,8 +3529,18 @@ relocate to: live in
             return self.mark_wrong(payload)
         if msg_type == "read_again":
             return self.file_again(str(payload.get("text") or ""), str(payload.get("user_id") or self._talking_with or "default"))
-        if msg_type == "moment":
+        if msg_type in ("moment", "about_moment"):
             return self.hear_moment(payload)
+        if msg_type == "thought_arose":
+            return self.replay(payload)
+        if msg_type == "delivered":
+            said = str(payload.get("text") or "").strip()
+            if not said:
+                return {"status": "success", "content": {"stored": False, "reason": "she said nothing"}}
+            return self._store({"role": "monday", "content": said,
+                                "user_id": payload.get("user_id") or self._talking_with or "default",
+                                "memory_type": "conversation", "tag": "Spoken", "importance": 6.5,
+                                "mode": "memory"})
 
         if msg_type == "store_conclusion":
             # Something Reasoning worked out ("Rex is an animal"): kept apart from

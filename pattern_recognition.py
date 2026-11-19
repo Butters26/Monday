@@ -1889,6 +1889,31 @@ class AdvancedPatternRecognition:
     # MAIN OBSERVATION FUNCTION
     # ========================================================================
     
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment")
+
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Look for patterns in this moment, with what the other lobes make of it."""
+        from team import about_moment, ask
+        where = about_moment(self.thalamus, "conversation", payload, "pattern")
+        user_id = str(payload.get("user_id") or where.get("user_id") or "default")
+        if not str(where.get("user_input") or "").strip():
+            return {"status": "success", "significant_patterns": {}, "observed_patterns": {}}
+        moment = where.get("moment") if isinstance(where.get("moment"), dict) else {}
+        words = list(moment.get("words") or [])
+        observed = self.observe({
+            "statement": str(where.get("user_input") or ""),
+            "items": list(words), "words": list(words),
+            "perception": moment,
+            "attention": ask(self.thalamus, "attention", "get_focus", {}, "pattern"),
+            "understanding": where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
+            "emotion": about_moment(self.thalamus, "emotion", payload, "pattern"),
+            "user_id": user_id,
+        })
+        return {"status": "success", "observed_patterns": observed,
+                "significant_patterns": self.get_significant_patterns_only(user_id=user_id) or {}}
+
     def observe(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Query Notus for past observations to compare
         try:
@@ -2315,6 +2340,10 @@ class AdvancedPatternRecognition:
         if msg_type == 'health':
             return {'status': 'success', 'healthy': True, 'pid': os.getpid(), 'content': {'healthy': True}}
         
+        if msg_type in ('moment', 'about_moment'):
+            from team import take_moment
+            return {'status': 'success', 'content': take_moment(self, 'pattern', self._take_in, payload)}
+
         if msg_type == 'observe' or msg_type == 'process_input':
             data = nested if nested is not None else payload
             if not data and msg_type == 'process_input':

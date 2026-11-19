@@ -1,52 +1,34 @@
-"""AttentionLobe: selective focus for Monday's live path.
+"""Attention: what she is focused on right now.
 
-Scores salience of competing signals, decays stale scores, and returns an
-honest ranked focus for thalamus — not print theater, not hardcoded dead routes.
+Many things compete for her at once: what her senses bring in, her current
+purpose, what her other lobes flag. Attention weighs them, the strongest wins
+and becomes her focus, and scores fade when nothing refreshes them so focus
+moves on.
+
+How much something pulls at her comes from what her other lobes make of it,
+never from matching words in it:
+- bottom-up: how strong the sense itself is (Sensory Integration), how new it
+  is (Novelty), whether it is a question or carries feeling (Language's
+  reading), and how strongly she feels about it (Emotion);
+- top-down: her current purpose (Executive Control), and what Meta-Cognition
+  flags.
+
+The winner is amplified: Attention turns up the Thalamus's volume for the
+lobes that carry her focus. The Thalamus only applies it.
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
-# Urgency / affect cues that honestly raise salience (word-level, not theater).
-_URGENCY_WORDS = frozenset(
-    {
-        "urgent",
-        "important",
-        "emergency",
-        "help",
-        "asap",
-        "critical",
-        "danger",
-        "hurt",
-        "scared",
-        "afraid",
-        "panic",
-        "please",
-    }
-)
-_AFFECT_WORDS = frozenset(
-    {
-        "love",
-        "hate",
-        "angry",
-        "sad",
-        "happy",
-        "worried",
-        "anxious",
-        "excited",
-        "lonely",
-        "afraid",
-        "terrified",
-        "devastated",
-        "furious",
-    }
-)
-_QUESTION_CUES = frozenset(
-    {"what", "why", "how", "when", "where", "who", "which", "?"}
-)
+def _trace(kind: str, **data: Any) -> None:
+    try:
+        from trace_monitor import trace_event
+        trace_event(kind, **data)
+    except Exception:
+        pass
 
 
 class AttentionLobe:
@@ -128,6 +110,10 @@ class AttentionLobe:
                 "emotions": list(signal.get("emotions") or []),
                 "entities": list(signal.get("entities") or []),
                 "concepts": list(signal.get("concepts") or signal.get("words") or []),
+                # What the other lobes made of it (filled in as they report):
+                "asks": bool(signal.get("asks")),        # Language read it as a question
+                "feeling": bool(signal.get("feeling")),  # Language found feeling in it
+                "felt": AttentionLobe._unit(signal.get("felt")),  # how strongly she feels about it (Emotion)
                 "raw": signal,
             }
             return norm
@@ -146,11 +132,16 @@ class AttentionLobe:
             "raw": signal,
         }
 
+    @staticmethod
+    def _unit(value: Any) -> float:
+        try:
+            return max(0.0, min(1.0, float(value or 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
+
     def _compute_salience(self, signal: Dict[str, Any]) -> float:
-        """Honest salience from signal properties (0.0–~1.5, uncapped then clipped)."""
+        """How much a signal pulls at her (0.0–1.5), from what her lobes report about it."""
         text = (signal.get("text") or "").strip()
-        lower = text.lower()
-        tokens = set(lower.replace("?", " ? ").split())
         score = 0.15  # baseline so empty-ish signals still exist briefly
 
         # Caller-supplied priority (0–1); urgency is Meta-style alias when
@@ -206,15 +197,14 @@ class AttentionLobe:
         if entities:
             score += min(0.20, 0.05 * len(entities))
 
-        # Lexical urgency / affect / questions.
-        if tokens & _URGENCY_WORDS:
-            score += 0.35
-        if tokens & _AFFECT_WORDS:
+        # What it means to her, as her other lobes report it (no word matching):
+        # how strongly she feels about it, whether it carries feeling, whether
+        # it asks something of her.
+        score += 0.35 * self._unit(signal.get("felt"))
+        if signal.get("feeling"):
             score += 0.20
-        if ("?" in text) or (tokens & _QUESTION_CUES):
+        if signal.get("asks"):
             score += 0.15
-        if "important" in lower:
-            score += 0.25
 
         # Mild length signal — capped so length alone cannot dominate.
         if text:
@@ -433,23 +423,120 @@ class AttentionLobe:
         }
         if not self.thalamus:
             return {"routed": False, "reason": "no_thalamus", "payload": payload}
-        send = getattr(self.thalamus, "send_message", None)
-        if not callable(send):
-            return {"routed": False, "reason": "thalamus_has_no_send", "payload": payload}
-        # Only deliver if reasoning is actually registered — no hardcoded dead route.
-        handlers = getattr(self.thalamus, "lobe_handlers", None) or {}
-        if "reasoning" not in handlers:
-            return {"routed": False, "reason": "reasoning_offline", "payload": payload}
-        response = send(
-            "reasoning",
-            "attention_focus",
-            payload,
-            source="attention",
-        )
+        tell = getattr(self.thalamus, "tell", None)
+        if not callable(tell):
+            return {"routed": False, "reason": "thalamus_has_no_tell", "payload": payload}
+        # Told, not asked: Attention doesn't wait on Reasoning to carry on.
+        response = tell("reasoning", "attention_focus", payload, source="attention")
         return {
-            "routed": response.get("status") == "success",
+            "routed": response.get("status") == "delivered",
             "response": response,
             "payload": payload,
+        }
+
+    # --- on the team ---------------------------------------------------------
+
+    # Which lobes' messages carry each kind of signal she can focus on.
+    _CARRIED_BY = {
+        "user": ("perception", "sensory_integration"),
+        "user_input": ("perception", "sensory_integration"),
+        "chat": ("perception", "sensory_integration"),
+        "perception": ("perception", "sensory_integration"),
+        "sensory": ("perception", "sensory_integration"),
+        "sensory_integration": ("perception", "sensory_integration"),
+        "executive": ("executive_control",),
+        "executive_control": ("executive_control",),
+        "novelty": ("novelty",),
+        "meta": ("meta_cognition",),
+        "meta_cognition": ("meta_cognition",),
+        "emotion": ("emotion",),
+        "autonomous": ("autonomous",),
+        "inner": ("autonomous",),
+    }
+    _WINNER_VOLUME = 2.0
+
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment")
+
+    def _take_in(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        """A new moment. First what her senses bring in is weighed against
+        everything else (bottom-up) and a focus is picked. Then she asks the
+        other lobes what they make of it, and weighs again with that."""
+        from team import about_moment, words_of
+        moment = content.get("moment") if isinstance(content.get("moment"), dict) else {}
+        user_id = str(content.get("user_id") or moment.get("user_id") or "default")
+        # What her senses bring in this moment, as Sensory Integration built it.
+        signals: List[Dict[str, Any]] = [dict(item) for item in moment.get("attention_signals") or []
+                                         if isinstance(item, dict)]
+        # The one that carries the words, if any.
+        sense = str(moment.get("modality") or "text")
+        said = next((sig for sig in signals if words_of(moment) and str(sig.get("modality")) == sense), None)
+        if said is not None:
+            # How new Novelty found this moment.
+            novelty = about_moment(self.thalamus, "novelty", content, "attention")
+            said["novelty_score"] = novelty.get("novelty_score", novelty.get("score", 0.0))
+            said.setdefault("user_id", user_id)
+        # A new moment is a new thing: last moment's score for the same sense doesn't carry into it.
+        self.remove_signals(ids=[str(sig.get("id")) for sig in signals if sig.get("id")])
+        result = self.evaluate(signals)
+        if result.get("focus"):
+            self.route_focus()
+        self.turn_up_focus()
+        self._report_focus("a new moment (what her senses brought)")
+        if said is not None:
+            # What the other lobes make of it: whether it asks something or carries
+            # feeling (Language), and how strongly she feels about it (Emotion).
+            reading = about_moment(self.thalamus, "language", content, "attention").get("language_understanding")
+            reading = reading if isinstance(reading, dict) else {}
+            affect = reading.get("affect") if isinstance(reading.get("affect"), dict) else {}
+            felt = about_moment(self.thalamus, "emotion", content, "attention")
+            said.update(asks=reading.get("speech_act") == "question", feeling=bool(affect.get("present")),
+                        felt=self._unit(felt.get("intensity")))
+            self.replace_signals([said])
+            if self.current_focus:
+                self.route_focus()
+            self.turn_up_focus()
+            self._report_focus(f"what the other lobes made of it: asks={said['asks']}, "
+                               f"feeling={said['feeling']}, felt={round(said['felt'], 3)}")
+        return self.get_focus()
+
+    def _report_focus(self, because: str) -> None:
+        """For the tracer: where her focus is, and what just changed it."""
+        meta = self.signal_meta.get(self.current_focus or "") or {}
+        _trace("attention_focus", focus=self.current_focus, on=str(meta.get("text") or "")[:120],
+               score=self.salience_map.get(self.current_focus or ""), because=because,
+               competing=[{"id": r["id"], "score": r["score"]} for r in self.rank_signals()[:4]])
+
+    def turn_up_focus(self) -> Dict[str, Any]:
+        """Set the Thalamus's volume: what the lobes behind her current focus
+        announce is delivered first; everything else is back to normal. The
+        Thalamus only applies it."""
+        set_volume = getattr(self.thalamus, "set_volume", None)
+        if not callable(set_volume):
+            return {}
+        meta = self.signal_meta.get(self.current_focus or "") or {}
+        winners = self._CARRIED_BY.get(str(meta.get("source") or "").lower(), ())
+        levels = {f"from:{lobe}": 1.0 for lobe in getattr(self, "_turned_up", ())}
+        levels.update({f"from:{lobe}": self._WINNER_VOLUME for lobe in winners})
+        if not levels or levels == getattr(self, "_last_levels", None):
+            return levels
+        self._turned_up = tuple(winners)
+        self._last_levels = dict(levels)
+        set_volume(levels)
+        return levels
+
+    def get_focus(self) -> Dict[str, Any]:
+        """Where her focus is right now, without weighing anything again."""
+        ranked = self.rank_signals()
+        entry = next((r for r in ranked if r.get("id") == self.current_focus), None)
+        return {
+            "focus": self.current_focus,
+            "focus_text": (entry or {}).get("text"),
+            "focus_score": (entry or {}).get("score"),
+            "focus_source": (entry or {}).get("source"),
+            "ranked": ranked,
+            "salience_map": dict(self.salience_map),
         }
 
     def get_status(self) -> Dict[str, Any]:
@@ -479,6 +566,14 @@ class AttentionLobe:
                 if k not in ("type", "_message_id", "message_id", "source")
             }
 
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            return {"status": "success", "content": take_moment(self, "attention", self._take_in, content)}
+
+        if msg_type == "get_focus":
+            body = self.get_focus()
+            return {"status": "success", "content": body}
+
         if msg_type in ("evaluate", "attend", "score_signals"):
             result = self.evaluate(content.get("signals", content.get("input_signals", [])))
             return {"status": "success", "content": result, **result}
@@ -493,6 +588,11 @@ class AttentionLobe:
 
         if msg_type in ("replace_signals", "replace_salience", "replace"):
             ranked = self.replace_signals(content.get("signals", []))
+            # What is competing changed: pick the focus again and pass it on.
+            if self.select_focus():
+                self.route_focus()
+            self.turn_up_focus()
+            self._report_focus("another lobe changed what is competing")
             return {
                 "status": "success",
                 "content": {"ranked": ranked, "salience_map": dict(self.salience_map)},

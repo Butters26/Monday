@@ -629,11 +629,53 @@ compliment -> "thank you" (sure 0.7)
             "cue_log_len": len(self.social_cues),
         }
 
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment")
+
+    def _bid_for(self, payload: Dict[str, Any], snap: Dict[str, Any]) -> None:
+        """What the social side of this calls for, as bids to Executive Control:
+        how strong is how sure she is of the belief behind it."""
+        from team import bid
+        user_input, user_id, cue = str(snap.get("said") or ""), str(payload.get("user_id") or "default"), snap.get("move")
+        if not user_input:
+            return
+        if snap.get("expects") or snap.get("expected_reply"):
+            try:
+                sure = float(snap.get("belief_sure") if snap.get("belief_sure") is not None else 0.5)
+            except (TypeError, ValueError):
+                sure = 0.5
+            bid(self.thalamus, "social_context", "his move back", sure, user_input, user_id,
+                move={"greeting": "social_open", "goodbye": "social_close"}.get(cue or ""),
+                why=f"his {cue} calls for one back")
+        his = snap.get("his_feeling")
+        if isinstance(his, dict):
+            bid(self.thalamus, "social_context", "his feeling back", min(1.0, abs(float(his.get("good") or 0.0))),
+                user_input, user_id, feeling=True, why="he shared how he feels")
+
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """The social side of this moment. Asks Conversation where it leaves things."""
+        from team import about_moment
+        where = about_moment(self.thalamus, "conversation", payload, "social_context")
+        said = str(where.get("user_input") or "")
+        if not said.strip():
+            return {}
+        return self.observe_turn(
+            user_input=said,
+            understanding=where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
+            user_id=str(payload.get("user_id") or where.get("user_id") or "default"),
+        )
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         content = message.get("content", {})
         if not isinstance(content, dict):
             content = {}
+
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            snap = take_moment(self, "social_context", self._take_in, content, then=self._bid_for)
+            return {"status": "success", "content": snap, "social_context": snap}
 
         if msg_type in ("observe_turn", "observe", "update_from_turn"):
             snap = self.observe_turn(

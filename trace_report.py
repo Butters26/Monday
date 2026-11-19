@@ -74,6 +74,43 @@ def main() -> int:
         for (src, topic, heard), n in sorted(announces.items()):
             print(f"{n:4d}  {src} announced {topic!r} -> {heard}")
 
+    volumes = [r for r in records if r.get("kind") == "thalamus_volume"]
+    ahead = collections.Counter((r.get("lobe"), r.get("sender"), r.get("msg_type"))
+                                for r in records if r.get("kind") == "thalamus_priority")
+    unlocked = collections.Counter((r.get("lobe"), r.get("for_lobe"), r.get("served"))
+                                   for r in records if r.get("kind") == "thalamus_unlocked")
+    refused = collections.Counter(r.get("asked_by") for r in records if r.get("kind") == "thalamus_volume_refused")
+    print("\n== THALAMUS (besides carrying) ==")
+    print(f"volume set by Attention: {len(volumes)} times"
+          + (f"; last: {volumes[-1].get('levels')}" if volumes else ""))
+    for who, n in refused.most_common():
+        print(f"{n:4d}  volume change REFUSED: asked by {who} (only Attention sets it)")
+    for (lobe, sender, typ), n in ahead.most_common():
+        print(f"{n:4d}  went first because it was louder: {sender} -> {lobe} [{typ}]")
+    for (lobe, other, typ), n in unlocked.most_common():
+        print(f"{n:4d}  un-stuck: {lobe} and {other} were waiting on each other; {lobe} answered [{typ}] first")
+
+    thoughts = [r for r in records if r.get("kind") == "thought"]
+    no_thoughts = collections.Counter(r.get("reason") for r in records if r.get("kind") == "thought_none")
+    if thoughts or no_thoughts:
+        print(f"\n== HER OWN THOUGHTS (nobody asked): {len(thoughts)} ==")
+        for r in thoughts:
+            print(f"  about {r.get('about')!r}   (started from {r.get('started_from')}; {r.get('ms')} ms)")
+            print(f"    Notus brought with it: {r.get('with_memories') or 'nothing'}")
+            print(f"    Reasoning: knows {r.get('knows') or 'nothing'}; follows {r.get('follows') or 'nothing'}"
+                  + (f"; problem {r.get('problem')}" if r.get("problem") else "")
+                  + (f"; unsure: {r.get('unsure')}" if r.get("unsure") else ""))
+            print(f"    leads on to: {r.get('leads_to') or 'nowhere'}")
+        for reason, n in no_thoughts.most_common():
+            print(f"{n:4d}  no thought: {reason}")
+
+    focus = [r for r in records if r.get("kind") == "attention_focus"]
+    if focus:
+        print(f"\n== ATTENTION: {len(focus)} times her focus was weighed ==")
+        for r in focus:
+            others = ", ".join(f"{c.get('id')} {c.get('score')}" for c in r.get("competing") or [])
+            print(f"  focus: {r.get('focus')} ({r.get('score')}) on {r.get('on')!r} after {r.get('because')}; competing: {others}")
+
     failed_tells = collections.Counter(
         (r.get("lobe"), r.get("msg_type"), (r.get("message") or "")[:90])
         for r in records if r.get("kind") == "tell_failed")
@@ -127,7 +164,10 @@ def main() -> int:
         print(f"\n== EXECUTIVE CONTROL: {len(executive)} events ==")
         for r in executive:
             kind = r["kind"][len("executive_"):]
-            if kind == "decided":
+            if kind == "bid":
+                print(f"    bid: {r.get('lobe')} -> {r.get('impulse')!r} (strength {r.get('strength')}, {r.get('channel')}) "
+                      f"because {r.get('why')}")
+            elif kind == "decided":
                 print(f"  decided: {r.get('purpose')!r} because {r.get('situation')!r} "
                       f"(score {r.get('score')}, weighed {r.get('weighed')}) about {r.get('about')!r}; "
                       f"steps {r.get('steps')}; other options {r.get('others')}")

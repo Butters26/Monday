@@ -57,7 +57,7 @@ class AutonomousSpeechSystem:
         self.interruption_threshold = 0.85  # High bar for interrupting
 
         # Lock
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
 
         # Legacy CLI: construct without thalamus → singleton + self-register.
         # Live path: create_core_systems passes thalamus= and registers "speech".
@@ -79,6 +79,10 @@ class AutonomousSpeechSystem:
             print(f"⚠️  Failed to register Autonomous Speech System: {e}")
             return False
     
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment")
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Handle incoming messages (Thalamus envelope or direct)."""
         msg_type = message.get('type')
@@ -118,7 +122,7 @@ class AutonomousSpeechSystem:
             self.last_speech_time = time.time()
             return {'status': 'success'}
         
-        elif msg_type == 'user_spoke':
+        elif msg_type in ('user_spoke', 'moment'):
             self.last_user_input_time = time.time()
             self.user_present = True
             return {'status': 'success'}

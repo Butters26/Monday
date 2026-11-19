@@ -2,26 +2,36 @@
 
 Thalamus delivers a message into the destination lobe's inbox; that lobe's
 own thread picks it up and handles it. Nothing here reads or changes what is
-inside a message, picks who gets it, or decides anything (see
-.github/instructions/thalamus.instructions.md).
+inside a message, picks who gets it, or decides anything.
 
-Back-and-forth chains: every message carries a chain id, inherited from the
-message the sender was handling when it sent (a sender that isn't a lobe,
-like the turn script or a background loop, starts a new chain). A lobe that is
-waiting for an answer keeps handling messages from the SAME chain itself, so
-two lobes asking each other never lock up. If messages from OTHER chains pile
-up while it waits, a helper worker for that lobe handles them, so two chains
-crossing the same lobes in opposite directions don't lock up either. (That
-means a lobe can be handling two chains at once, as it could before inboxes
-when two callers reached it at the same time.)
+One thread per lobe. A lobe finishes what it is handling before it takes the
+next message, and takes messages in the order they arrived, loudest first
+(Attention sets how loud; everything is the same loudness until it does).
+So a lobe that asks another lobe something after an announcement always gets
+an answer that already includes that announcement.
+
+Chains: a chain is one line of asking. A lobe that asks another lobe something
+passes its chain along, so every ask that comes out of that ask is on the same
+chain. Anything told without waiting for an answer (tell / announce) starts a
+new chain for whoever receives it. Chains are numbered in the order they
+start, so an older chain has a smaller number. Every lobe that hears the same
+announcement gets a chain of the same age: they are peers working in unison.
+
+While a lobe waits for an answer it handles only:
+  1. messages on its own chain (they come out of its own ask), and
+  2. an ask on an OLDER chain from a lobe it is itself waiting on, directly or
+     through other lobes. That is two lines of asking stuck on each other; the
+     lobe working on the newer one serves the older one, so nothing locks up
+     and nothing is lost.
+Everything else waits its turn.
 """
 
 from __future__ import annotations
 
+import itertools
 import os
 import threading
 import time
-import uuid
 from collections import deque
 from typing import Any, Callable, Deque, Dict, Optional
 
@@ -38,10 +48,24 @@ except Exception:  # tracer is optional
 ANSWER_TIMEOUT_SEC = float(os.environ.get("MONDAY_LOBE_ANSWER_TIMEOUT", "60"))
 
 _current = threading.local()  # .chain = chain id of the message this thread is handling
+_chain_numbers = itertools.count(1)
 
 
 def current_chain() -> Optional[str]:
     return getattr(_current, "chain", None)
+
+
+def new_chain(born: Optional[int] = None, listener: int = 0) -> str:
+    """A new chain id. Later chains sort after earlier ones. One announcement
+    gives every lobe that hears it a chain born at the same time (`born`), so
+    anything that happens after the announcement is newer than all of them."""
+    if born is None:
+        born = next(_chain_numbers)
+    return f"{born:012x}.{listener:04x}"
+
+
+def next_birth() -> int:
+    return next(_chain_numbers)
 
 
 class Reply:
@@ -68,26 +92,36 @@ class Reply:
 
 
 class Letter:
-    __slots__ = ("envelope", "reply", "chain", "posted_at")
+    __slots__ = ("envelope", "reply", "chain", "posted_at", "sender")
 
-    def __init__(self, envelope: Dict[str, Any], reply: Optional[Reply], chain: str) -> None:
+    def __init__(self, envelope: Dict[str, Any], reply: Optional[Reply], chain: str,
+                 sender: Optional[str] = None) -> None:
         self.envelope = envelope
         self.reply = reply
         self.chain = chain
         self.posted_at = time.perf_counter()
+        self.sender = sender  # the lobe whose thread really sent it (None: not a lobe)
 
 
 class LobeInbox:
-    def __init__(self, name: str, lobe: Any, on_status: Callable[[str, str], None]) -> None:
+    def __init__(
+        self,
+        name: str,
+        lobe: Any,
+        on_status: Callable[[str, str], None],
+        volume: Optional[Callable[[Letter], float]] = None,
+        waits_on: Optional[Callable[[str, str], bool]] = None,
+    ) -> None:
         self.name = name
         self.lobe = lobe
         self._on_status = on_status
+        self._volume = volume          # how loud Attention has set this letter (Thalamus keeps the knob)
+        self._waits_on = waits_on      # is this lobe waiting on that lobe, directly or through others
         self._letters: Deque[Letter] = deque()
         self._cond = threading.Condition()
         self._running = True
         self.handled = 0
-        self._waiting = 0   # this lobe's threads currently waiting for an answer
-        self._helpers = 0   # helper workers currently running
+        self._depth = 0   # messages this lobe is in the middle of handling
         self.thread_idents: set = set()
         self.thread = threading.Thread(target=self._run, name=f"lobe:{name}", daemon=True)
 
@@ -105,6 +139,12 @@ class LobeInbox:
     def alive(self) -> bool:
         return self.thread.is_alive() and self._running
 
+    @property
+    def idle(self) -> bool:
+        """Nothing waiting and nothing being handled."""
+        with self._cond:
+            return not self._letters and self._depth == 0
+
     def post(self, letter: Letter) -> None:
         with self._cond:
             self._letters.append(letter)
@@ -118,58 +158,71 @@ class LobeInbox:
         with self._cond:
             self._cond.notify_all()
 
-    def _take(self, chain: Optional[str], timeout: float,
-              stop: Optional[Callable[[], bool]] = None) -> Optional[Letter]:
-        """Next letter (any, or only from `chain`), waiting up to `timeout`
-        or until `stop()` is true."""
-        deadline = time.monotonic() + timeout
-        with self._cond:
-            while self._running:
-                if stop is not None and stop():
-                    return None
-                if chain is None:
-                    if self._letters:
-                        return self._letters.popleft()
-                else:
-                    for index, letter in enumerate(self._letters):
-                        if letter.chain == chain:
-                            del self._letters[index]
-                            return letter
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return None
-                self._cond.wait(remaining)
-        return None
+    def _loudness(self, letter: Letter) -> float:
+        if self._volume is None:
+            return 1.0
+        try:
+            return float(self._volume(letter))
+        except Exception:
+            return 1.0
+
+    def _next(self) -> Optional[Letter]:
+        """The next letter in turn: loudest first, then the one that came first.
+        (Call with the condition held.)"""
+        if not self._letters:
+            return None
+        best_index, best = 0, self._loudness(self._letters[0])
+        for index in range(1, len(self._letters)):
+            loud = self._loudness(self._letters[index])
+            if loud > best:
+                best_index, best = index, loud
+        letter = self._letters[best_index]
+        del self._letters[best_index]
+        if best_index and _trace_enabled():
+            _trace_event("thalamus_priority", lobe=self.name, msg_type=letter.envelope.get("type"),
+                         sender=letter.sender, volume=best, went_ahead_of=best_index)
+        return letter
 
     def _run(self) -> None:
         self.thread_idents.add(threading.get_ident())
         while self._running:
-            letter = self._take(None, 0.5)
-            if letter is not None:
-                self._handle(letter)
-
-    def _helper_needed(self) -> None:
-        """Start a helper if letters are queued and every one of this lobe's
-        threads is busy waiting for an answer."""
-        with self._cond:
-            if not self._letters or not self._running or self._helpers >= self._waiting:
-                return
-            self._helpers += 1
-        threading.Thread(target=self._help, name=f"lobe:{self.name}+helper", daemon=True).start()
-
-    def _help(self) -> None:
-        ident = threading.get_ident()
-        self.thread_idents.add(ident)
-        try:
-            while self._running:
-                letter = self._take(None, 0.0)
-                if letter is None:
-                    return
-                self._handle(letter)
-        finally:
-            self.thread_idents.discard(ident)
             with self._cond:
-                self._helpers -= 1
+                letter = self._next()
+                if letter is None:
+                    self._cond.wait(0.5)
+                    continue
+                self._depth += 1
+            try:
+                self._handle(letter)
+            finally:
+                with self._cond:
+                    self._depth -= 1
+
+    def _for_me_while_waiting(self, chain: str) -> Optional[Letter]:
+        """A letter this lobe must handle now, though it is waiting for an answer.
+        (Call with the condition held.)"""
+        for index, letter in enumerate(self._letters):
+            if letter.chain == chain:
+                del self._letters[index]
+                return letter
+        if self._waits_on is None:
+            return None
+        for index, letter in enumerate(self._letters):
+            # An older ask from a lobe this one is itself waiting on: serve it.
+            if letter.reply is None or not letter.sender or not letter.chain < chain:
+                continue
+            try:
+                locked = bool(self._waits_on(self.name, letter.sender))
+            except Exception:
+                locked = False
+            if locked:
+                del self._letters[index]
+                if _trace_enabled():
+                    _trace_event("thalamus_unlocked", lobe=self.name, served=letter.envelope.get("type"),
+                                 for_lobe=letter.sender,
+                                 reason="both were waiting on each other; the older ask is served first")
+                return letter
+        return None
 
     def _handle(self, letter: Letter) -> None:
         envelope = letter.envelope
@@ -214,31 +267,29 @@ class LobeInbox:
                          message=str(response.get("message", ""))[:300])
 
     def wait_while_working(self, reply: Reply, chain: str, timeout: float) -> bool:
-        """Called on this lobe's own thread while it waits for an answer:
-        keep handling messages from the same chain until the answer arrives."""
+        """Called on this lobe's own thread while it waits for an answer."""
         deadline = time.monotonic() + timeout
         reply.waker = self._wake
-        with self._cond:
-            self._waiting += 1
         try:
             while not reply.done:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return False
-                letter = self._take(chain, min(remaining, 0.05), stop=lambda: reply.done)
-                if letter is not None:
+                with self._cond:
+                    letter = self._for_me_while_waiting(chain) if self._running else None
+                    if letter is None:
+                        if not reply.done:
+                            self._cond.wait(min(remaining, 0.02))
+                        continue
+                    self._depth += 1
+                try:
                     self._handle(letter)
-                elif not reply.done:
-                    self._helper_needed()
+                finally:
+                    with self._cond:
+                        self._depth -= 1
             return True
         finally:
             reply.waker = None
-            with self._cond:
-                self._waiting -= 1
 
 
-def new_chain() -> str:
-    return uuid.uuid4().hex[:12]
-
-
-__all__ = ["ANSWER_TIMEOUT_SEC", "Letter", "LobeInbox", "Reply", "current_chain", "new_chain"]
+__all__ = ["ANSWER_TIMEOUT_SEC", "Letter", "LobeInbox", "Reply", "current_chain", "new_chain", "next_birth"]

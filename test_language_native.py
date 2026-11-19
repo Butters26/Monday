@@ -181,19 +181,16 @@ def test_native_real_thalamus_live_representation_path_uses_language(tmp_path):
     assert thalamus.register_lobe("language", language)["status"] == "success"
     assert thalamus.register_lobe("shared_representation", shared)["status"] == "success"
 
-    perception = {"modality": "text", "concepts": [], "entities": [], "novelty_flags": []}
-    result = thalamus._resolve_representation_live(
-        "Steve gave the dog a ball yesterday.",
-        perception_payload=perception,
-        user_id="u1",
-    )
-
-    assert result["language_comprehension_available"] is True
-    assert result["raw_text_parser_used"] is False
+    # A moment reaches her: Language reads it itself, and any lobe can ask what it read.
+    moment = {"user_id": "u1", "recognition_id": "r1",
+              "moment": {"modality": "text", "text": "Steve gave the dog a ball yesterday."}}
+    thalamus.announce("moment", moment, source="sensory_integration")
+    assert thalamus.wait_until_quiet(30)
+    heard = [thalamus.send_and_wait("language", "about_moment", moment)["content"]]
+    result = heard[-1]
     assert len(result["proposition_ids"]) == 1
     assert result["language_understanding"]["contract"] == "language_understanding_v1"
-    assert perception["concept_ids"] == result["concept_ids"]
-    assert perception["resolved_concepts"] == result["resolved"]
-    assert perception["proposition_ids"] == result["proposition_ids"]
-    assert perception["language_understanding"]["contract"] == "language_understanding_v1"
+    assert result["concept_ids"]
+    # Shared Representation heard the same announcement and made those concepts active.
+    assert shared.get_active_concepts()
     thalamus.shutdown()

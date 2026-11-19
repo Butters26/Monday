@@ -12,8 +12,7 @@ Distinct from MetaCognition (epistemic watcher of reasoning/language outputs):
                    worth engaging?"
 
 Optional stream generators may be attached via set_spontaneous_system /
-set_controlled_system for experiments. Live create_core_systems does NOT attach
-ContinuousThoughtGenerator or ControlledThinking (those are mock/toy modules).
+set_controlled_system for experiments. Live create_core_systems attaches none.
 When no generator is attached, envelopes report generator_attached=False and
 do not stamp controlled_fed/spontaneous_fed as if real cognition ran.
 MetaAwareness remains awareness, not the generator owner.
@@ -419,6 +418,25 @@ class MetaAwareness:
         self.last_envelope = None
         self._observe_count = 0
 
+    def on_joined(self, name: str) -> None:
+        from team import listen
+        listen(self.thalamus, name, "moment", "delivered", "thought_arose")
+
+    def _take_in(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Someone is talking to her: she is focused. Asks Conversation where it leaves things."""
+        from team import about_moment
+        where = about_moment(self.thalamus, "conversation", payload, "meta_awareness")
+        if not str(where.get("user_input") or "").strip():
+            return {}
+        understanding = where.get("understanding") if isinstance(where.get("understanding"), dict) else {}
+        try:
+            novelty = float(understanding.get("novelty_score") or 0.0)  # how new Novelty found it
+        except (TypeError, ValueError):
+            novelty = 0.0
+        return self.observe_turn(user_input=str(where.get("user_input") or ""), understanding=understanding,
+                                 user_id=str(payload.get("user_id") or where.get("user_id") or "default"),
+                                 novelty_score=novelty)
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         content = message.get("content", {})
@@ -431,6 +449,16 @@ class MetaAwareness:
 
         if msg_type == "health":
             return {"status": "success", "healthy": True}
+
+        if msg_type == "delivered":
+            snap = self.release_to_wandering(reason="turn_complete",
+                                             user_id=str(content.get("user_id") or "default"))
+            return {"status": "success", "content": snap}
+
+        if msg_type in ("moment", "about_moment"):
+            from team import take_moment
+            snap = take_moment(self, "meta_awareness", self._take_in, content)
+            return {"status": "success", "content": snap, "meta_awareness": snap}
 
         if msg_type in ("observe_turn", "observe", "update_from_turn"):
             try:
@@ -456,8 +484,10 @@ class MetaAwareness:
                 "meta_awareness": snap,
             }
 
-        if msg_type in ("notice_thought", "notice", "notice_spontaneous"):
+        if msg_type in ("thought_arose", "notice_thought", "notice", "notice_spontaneous"):
             thought = content.get("thought")
+            if msg_type == "thought_arose":
+                thought = {"content": str(content.get("about") or ""), "trigger": str(content.get("started_from") or "")}
             if not isinstance(thought, dict):
                 thought = content
             snap = self.notice_thought(

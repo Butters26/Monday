@@ -14,6 +14,7 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from outside_world import Outside
 from thalamus import get_thalamus
 
 
@@ -22,6 +23,9 @@ class BrainConnector:
     
     def __init__(self):
         self.thalamus = get_thalamus()
+        # Outside her: hands what is typed to her senses, hears what she says.
+        self.outside = Outside(self.thalamus)
+        self.thalamus.register_lobe("outside", self.outside)
         self.running = True
         
         # Message queues
@@ -67,9 +71,9 @@ class BrainConnector:
                 if self.on_thinking_update:
                     self.on_thinking_update(True)
                 
-                # Process through Thalamus
+                # Say it to her and hear what she says back
                 try:
-                    response = self.thalamus.process_user_input(user_input)
+                    response = self.outside.say(user_input)
                     
                     # Send response via callback
                     if self.on_response:
