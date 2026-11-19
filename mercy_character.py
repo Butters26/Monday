@@ -1,6 +1,6 @@
 """
-Monday Character Model Generator
-Creates a female humanoid character model for the Monday project.
+Mercy Character Model Generator
+Creates a female humanoid character model for the Mercy project.
 Built from scratch without AI/ML components.
 
 Note: This generates the geometric structure. Advanced features like detailed
@@ -12,9 +12,9 @@ from model_3d import ModelGenerator, ComplexModelBuilder
 from advanced_modeling import MeshSculpting
 import os
 
-def create_monday_character(height=5.6):
+def create_mercy_character(height=5.6):
     """
-    Create the Monday character - a female humanoid figure.
+    Create the Mercy character - a female humanoid figure.
     
     Based on description: mature female with feminine proportions,
     long hair, glasses, elegant dress.
@@ -25,7 +25,7 @@ def create_monday_character(height=5.6):
     Returns:
         Model3D object
     """
-    builder = ComplexModelBuilder("Monday")
+    builder = ComplexModelBuilder("Mercy")
     scale = height / 6.0
     
     # Feminine proportions
@@ -35,7 +35,7 @@ def create_monday_character(height=5.6):
     leg_thickness = 0.30 * scale
     arm_thickness = 0.22 * scale
     
-    print("Building Monday character model...")
+    print("Building Mercy character model...")
     print(f"Height: {height} units")
     print(f"Proportions: feminine (chest {chest_width:.2f}, waist {waist_width:.2f}, hips {hip_width:.2f})")
     print()
@@ -191,7 +191,7 @@ def create_monday_character(height=5.6):
 
 def main():
     print("=" * 70)
-    print("MONDAY CHARACTER MODEL GENERATOR")
+    print("MERCY CHARACTER MODEL GENERATOR")
     print("Creating female humanoid character with specified features")
     print("=" * 70)
     print()
@@ -201,16 +201,16 @@ def main():
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
-    # Generate the Monday character
-    monday = create_monday_character(height=5.6)
+    # Generate the Mercy character
+    mercy = create_mercy_character(height=5.6)
     
     # Export to files
-    obj_file = os.path.join(output_dir, "monday_character.obj")
-    stl_file = os.path.join(output_dir, "monday_character.stl")
+    obj_file = os.path.join(output_dir, "mercy_character.obj")
+    stl_file = os.path.join(output_dir, "mercy_character.stl")
     
     print("Exporting model files...")
-    monday.export_obj(obj_file)
-    monday.export_stl(stl_file)
+    mercy.export_obj(obj_file)
+    mercy.export_stl(stl_file)
     
     print(f"✓ OBJ file: {obj_file}")
     print(f"✓ STL file: {stl_file}")

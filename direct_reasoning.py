@@ -46,7 +46,7 @@ _NAME_QUESTION = re.compile(
     re.IGNORECASE,
 )
 _POISON_MARKERS = ("How it felt:", "What it meant:")
-_MERCY_ROLES = {"monday", "assistant", "abin", "mercy"}
+_MERCY_ROLES = {"mercy", "assistant", "abin"}
 
 
 class DirectReasoningAdapter:
@@ -98,7 +98,7 @@ class DirectReasoningAdapter:
 
         understanding = direct_input.get("understanding")
         understanding = understanding if isinstance(understanding, dict) else {}
-        if understanding.get("intent") == "monday_speech_ask" and self.thalamus is not None:
+        if understanding.get("intent") == "mercy_speech_ask" and self.thalamus is not None:
             try:
                 recent = self.thalamus.send_message(
                     "notus",
@@ -124,7 +124,7 @@ class DirectReasoningAdapter:
                     if not content or content.casefold() == current:
                         continue
                     item = dict(memory)
-                    item["role"] = "monday"
+                    item["role"] = "mercy"
                     memories.append(item)
 
         context["memories"] = self._dedupe_memories(memories)
@@ -414,7 +414,7 @@ class DirectReasoningAdapter:
 
     @classmethod
     def _teaching_ack(cls, user_input: str) -> Optional[str]:
-        """Acknowledge remembered personal facts (hello-monday / DirectNotus idea)."""
+        """Acknowledge remembered personal facts (hello-mercy / DirectNotus idea)."""
         fact = cls._normalise_personal_fact(user_input or "")
         if not fact:
             return None
@@ -817,7 +817,7 @@ class DirectReasoningAdapter:
                 social = {}
         facts = self._facts_for(user_input, user_id)
         emotion = direct_input.get("emotion_result") if isinstance(direct_input.get("emotion_result"), dict) else {}
-        if not emotion.get("monday_emotion"):
+        if not emotion.get("mercy_emotion"):
             emotion = self._ask_lobe("emotion", "get_state", {}) or emotion
         novelty_body = self._ask_lobe("novelty", "get_assessment", {})
         novelty = novelty_body.get("novelty_score", novelty_body.get("score"))
@@ -1022,7 +1022,7 @@ class DirectReasoningAdapter:
         asked_of = self._subject_words(reading)
         asked_about_her = str((reading.get("asks_her") or {}).get("about") or "").strip()
         if not asked_about_her and (asked_of == {"you"} and subject.casefold() in ("user",) or
-                                    asked_of in ({"i"}, {"me"}) and subject.casefold() == "monday"):
+                                    asked_of in ({"i"}, {"me"}) and subject.casefold() == "mercy"):
             return False
         clause = (reading.get("clauses") or [{}])[0]
         obj = str(fact.get("object") or "")
@@ -1061,8 +1061,8 @@ class DirectReasoningAdapter:
             members = [m.strip() for m in subject.split(" and ")]
             member_words = set()
             for m in members:
-                member_words |= FactText._content_tokens(m.replace("user's ", "")) - {"user", "monday"}
-            about -= (member_words - asked) | {"user", "monday"}  # the ones he didn't name needn't be asked
+                member_words |= FactText._content_tokens(m.replace("user's ", "")) - {"user", "mercy"}
+            about -= (member_words - asked) | {"user", "mercy"}  # the ones he didn't name needn't be asked
             named = bool(asked & member_words) or (
                 "user" in members and any(w in ("we", "us", "our") for w in lows))
             if not named:
@@ -1101,7 +1101,7 @@ class DirectReasoningAdapter:
             return False  # "where did I live?" isn't answered by where he lives now
         asks_who = any(str(t.get("lemma") or "").casefold() in ("who", "what")
                        for t in (reading.get("tokens") or [])[:1])
-        if asks_who and str(fact.get("subject") or "").casefold() not in ("user", "monday"):
+        if asks_who and str(fact.get("subject") or "").casefold() not in ("user", "mercy"):
             # "Who has a cat?": the person is the answer, so the question needn't name them.
             subject_words = FactText._content_tokens(str(fact.get("subject") or ""))
             unnamed = {w for w in about if w not in subject_words}
@@ -1411,16 +1411,16 @@ class DirectReasoningAdapter:
 
     @staticmethod
     def _as_she_says_it(thing: str) -> List[str]:
-        """How a filed thing sounds in her reply: "monday's language" is "my
-        language", "user" is "you", "monday" is "me"."""
+        """How a filed thing sounds in her reply: "mercy's language" is "my
+        language", "user" is "you", "mercy" is "me"."""
         thing = (thing or "").casefold().strip()
         if thing == "user":
             return [" you", " your"]
-        if thing == "monday":
+        if thing == "mercy":
             return [" me ", " me.", " i ", " myself"]
         forms = [thing]
-        if thing.startswith("monday's "):
-            forms.append("my " + thing[len("monday's "):])
+        if thing.startswith("mercy's "):
+            forms.append("my " + thing[len("mercy's "):])
         if thing.startswith("user's "):
             forms.append("your " + thing[len("user's "):])
         return forms

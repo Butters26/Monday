@@ -13,7 +13,7 @@ import json
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from monday_interface.styles import (
+from mercy_interface.styles import (
     DEBUG_PANEL_STYLE,
     COLORS,
     FONTS
@@ -124,9 +124,9 @@ class DebugPanel(QWidget):
                 for idx, thought in enumerate(recent[-5:], 1):
                     if isinstance(thought, dict):
                         user_said = thought.get('user_said', '')[:50]
-                        monday_said = thought.get('monday_said', '')[:50]
+                        mercy_said = thought.get('mercy_said', '')[:50]
                         debug_text.append(f"  [{idx}] U: {user_said}...")
-                        debug_text.append(f"      M: {monday_said}...")
+                        debug_text.append(f"      M: {mercy_said}...")
                     else:
                         debug_text.append(f"  [{idx}] {str(thought)[:50]}...")
             else:

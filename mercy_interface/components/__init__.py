@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Monday Interface Components
+Mercy Interface Components
 """
 
 from .chat_panel import ChatPanel

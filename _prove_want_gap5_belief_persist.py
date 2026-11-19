@@ -21,8 +21,8 @@ def main() -> int:
 
     tmp = tempfile.mkdtemp(prefix="wantgap5-prove-")
     sqlite = str(Path(tmp) / "notus_memory.sqlite3")
-    os.environ["MONDAY_NOTUS_SQLITE"] = sqlite
-    print(f"MONDAY_NOTUS_SQLITE={sqlite}")
+    os.environ["MERCY_NOTUS_SQLITE"] = sqlite
+    print(f"MERCY_NOTUS_SQLITE={sqlite}")
 
     rt_a = Path(tempfile.mkdtemp(prefix="wg5-prove-a-"))
     sys_a = create_core_systems(runtime_directory=str(rt_a), enable_autonomous=False)

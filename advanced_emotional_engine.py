@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Emotion lobe — Monday's feelings.
+Emotion lobe — Mercy's feelings.
 
 Where her feelings come from (Matthew, Nov 3): her inner life
-(monday_inner_life.py) — her needs (belonging, competence, stimulation,
+(mercy_inner_life.py) — her needs (belonging, competence, stimulation,
 safety, autonomy) and attachment, changed by what happens to her (what
 social context reads in a moment, how her replies go, something new, a
 memory coming back) and by time passing. Never by a word's rating.
-Each change pushes her core affect (monday_core_affect.py: how good/bad,
+Each change pushes her core affect (mercy_core_affect.py: how good/bad,
 how stirred up) and is named by what caused it; the full range of human
 feeling has a cause in the inner life. Mood settles with time.
 Saved across restarts. Old unused parts are in
@@ -30,8 +30,8 @@ from collections import deque
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from threading import Lock
 from thalamus import get_thalamus
-from monday_core_affect import MondayCoreAffect, label_from_va, THIN_LABELS
-from monday_inner_life import InnerLife
+from mercy_core_affect import MercyCoreAffect, label_from_va, THIN_LABELS
+from mercy_inner_life import InnerLife
 
 # ------------------------------
 # Core Enums & Dataclasses
@@ -150,7 +150,7 @@ class EmotionalStateOutput:
     emotional_tone: str  # For language gen: "happy", "sad", "angry", etc
     emphasis: List[str]  # Speech emphasis patterns
     voice_prosody: Dict[str, float]  # For voice lobe: pitch, speed, warmth, clarity
-    confidence: float  # How confident is Monday in this emotional state
+    confidence: float  # How confident is Mercy in this emotional state
     timestamp: float  # When this state was created
     
     def to_dict(self) -> Dict[str, Any]:
@@ -215,12 +215,12 @@ EVENT_TYPES = [
 
 @dataclass
 class UserAffectModel:
-    """Monday's model of what the user is feeling, kept separate from Monday's own emotion."""
+    """Mercy's model of what the user is feeling, kept separate from Mercy's own emotion."""
     inferred_emotion: str = 'neutral'
     confidence: float = 0.0
     inferred_need: str = 'neutral'   # 'validation','help','celebration','space','neutral'
     last_updated: float = 0.0
-    # Multi-turn continuity (USER only — never written into Monday INTERNAL enum)
+    # Multi-turn continuity (USER only — never written into Mercy INTERNAL enum)
     previous_emotion: str = 'neutral'
     temporal: str = 'current'  # current | historical | returning
     last_event_type: str = 'neutral'
@@ -250,7 +250,7 @@ class AdvancedEmotionalEngine:
         # PAD dynamics - start neutral
         self.pad: PAD = PAD(0.0, 0.0, 0.0)
         # LIVE mood substrate (design lock 2026-09-25). Classifiers no longer drive her mood.
-        self.core_affect = MondayCoreAffect()
+        self.core_affect = MercyCoreAffect()
         self._last_self_impact_reason: str = "init"
         self.last_appraisal: Dict[str, Any] = {}
         self._last_primary: EmotionalState = EmotionalState.CALM
@@ -501,7 +501,7 @@ class AdvancedEmotionalEngine:
         # Gentle capped nudge — never full phrase-table slam
         # Her own thoughts don't make her feel something from their words; the
         # feelings they carry come back through memory (remembered moments).
-        from monday_inner_life import Felt
+        from mercy_inner_life import Felt
         delta = Felt(0.0, 0.0, None, "thought noted")
 
         if abs(delta.dv) > 1e-9 or abs(delta.da) > 1e-9:
@@ -657,9 +657,9 @@ class AdvancedEmotionalEngine:
         # Prefer persisted CoreAffect; else seed from pad (compat with older state files).
         ca_obj = obj.get('core_affect')
         if isinstance(ca_obj, dict):
-            self.core_affect = MondayCoreAffect.from_dict(ca_obj)
+            self.core_affect = MercyCoreAffect.from_dict(ca_obj)
         elif isinstance(pad_obj, dict):
-            self.core_affect = MondayCoreAffect(
+            self.core_affect = MercyCoreAffect(
                 valence=float(pad_obj.get('v', 0.15)),
                 arousal=float(pad_obj.get('a', -0.10)),
             )
@@ -797,9 +797,9 @@ class AdvancedEmotionalEngine:
             pass
 
 # ------------------------------
-# MondayAffect – adds autonomy knob (alias of AdvancedEmotionalEngine for now)
+# MercyAffect – adds autonomy knob (alias of AdvancedEmotionalEngine for now)
 # ------------------------------
-class MondayAffect(AdvancedEmotionalEngine):
+class MercyAffect(AdvancedEmotionalEngine):
     pass
 
 # ------------------------------
@@ -821,8 +821,8 @@ class EmotionalProcess:
 
     def __init__(self, state_file=None, thalamus=None):
         self.thalamus = thalamus or get_thalamus()
-        self.engine = MondayAffect("Monday", thalamus=self.thalamus)
-        self.state_file = state_file or runtime_file("monday_emotional_state.json")
+        self.engine = MercyAffect("Mercy", thalamus=self.thalamus)
+        self.state_file = state_file or runtime_file("mercy_emotional_state.json")
         self.running = True
         # Persistent connection to Thalamus (no own socket)
         # Direct reference to Thalamus (NO SOCKETS)
@@ -955,7 +955,7 @@ class EmotionalProcess:
         return output
     
     def _affect_snapshot(self) -> Dict[str, Any]:
-        """HER mood envelope only (CoreAffect). user_affect is legacy unused on live path — not merged into monday_emotion."""
+        """HER mood envelope only (CoreAffect). user_affect is legacy unused on live path — not merged into mercy_emotion."""
         emo_out = self.get_emotional_state_output()
         patterns_summary = {
             k: [e.value for e in v[-3:]]
@@ -972,7 +972,7 @@ class EmotionalProcess:
         return {
             'current_emotion': self.engine.current_emotion.value,
             'emotion': self.engine.current_emotion.value,
-            'monday_emotion': self.engine.current_emotion.value,
+            'mercy_emotion': self.engine.current_emotion.value,
             'intensity': self.engine.emotional_intensity,
             'resonance': self.engine.emotional_resonance,
             'valence': valence,
@@ -1062,7 +1062,7 @@ class EmotionalProcess:
                 felt = (self.__dict__.get('_felt') or {}).get(str(message.get('user_id') or 'default'))
                 if felt is None:
                     snap = self._affect_snapshot()
-                    felt = {**snap, 'monday_emotion': snap.get('monday_emotion', snap['current_emotion'])}
+                    felt = {**snap, 'mercy_emotion': snap.get('mercy_emotion', snap['current_emotion'])}
                 return {'status': 'success', **felt}
 
             if msg_type == 'process_input':
@@ -1099,7 +1099,7 @@ class EmotionalProcess:
                     'pleasure': snap['pleasure'],
                     'arousal': snap['arousal'],
                     'dominance': snap['dominance'],
-                    'monday_emotion': snap.get('monday_emotion', snap['current_emotion']),
+                    'mercy_emotion': snap.get('mercy_emotion', snap['current_emotion']),
                     'self_impact_reason': snap.get('self_impact_reason', ''),
                     'appraisal': dict(getattr(self.engine, 'last_appraisal', {}) or {}),
                     'pad': snap['pad'],
@@ -1193,7 +1193,7 @@ class EmotionalProcess:
                     'pleasure': snap['pleasure'],
                     'arousal': snap['arousal'],
                     'dominance': snap['dominance'],
-                    'monday_emotion': snap.get('monday_emotion', snap['current_emotion']),
+                    'mercy_emotion': snap.get('mercy_emotion', snap['current_emotion']),
                     'self_impact_reason': snap.get('self_impact_reason', ''),
                     'pad': snap['pad'],
                     'attachment': snap['attachment'],
@@ -1227,7 +1227,7 @@ class EmotionalProcess:
                 }
 
             elif msg_type in ('appraise_internal', 'internal_event'):
-                # Thalamus / other lobes can drive Monday's own feelings without user text.
+                # Thalamus / other lobes can drive Mercy's own feelings without user text.
                 content = message.get('content', message.get('text', message.get('user_input', '')))
                 if isinstance(content, dict):
                     # Nested payload: prefer explicit fields
@@ -1275,7 +1275,7 @@ class EmotionalProcess:
                                memory_age_seconds: float = 0.0,
                                prior_appraisal_event_type: Optional[str] = None) -> Dict[str, Any]:
         """
-        Safe entry point for other lobes to color Monday's feelings from inner life
+        Safe entry point for other lobes to color Mercy's feelings from inner life
         (thoughts / memories) without user chat. No background spam thread — callable API only.
         """
         if not isinstance(content, str) or not content.strip():

@@ -5,8 +5,8 @@ file and it is not meant to run as-is.
 
 What it was:
 - Word / GrammarEngine: the old "grammar engine". A 163-word hand-typed vocabulary,
-  a grammar rulebook that no code ever read, fixed self-lines ("I'm Monday",
-  "I'm Monday -- Matthew built me to think, understand, and help."), fill-in-the-
+  a grammar rulebook that no code ever read, fixed self-lines ("I'm Mercy",
+  "I'm Mercy -- Matthew built me to think, understand, and help."), fill-in-the-
   blank fact templates, quarantined Mad Libs composers, and checks for stock refusal
   lines. Replaced by language_builder.py (sentences from meaning, every choice
   learned) and LanguageGenerator.respond().
@@ -350,7 +350,7 @@ class GrammarEngine:
     
     def _compose_introduction(self) -> str:
         """Fixed identity line — not a random phrase-bank pick."""
-        return "I'm Monday."
+        return "I'm Mercy."
     
     def _compose_identity(self) -> str:
         """Fixed identity — Notus story if real; else one grounded self-line (no banks)."""
@@ -369,7 +369,7 @@ class GrammarEngine:
         if isinstance(story, str) and story.strip():
             return story.strip()
         return (
-            "I'm Monday — Matthew built me to think, understand, and help."
+            "I'm Mercy — Matthew built me to think, understand, and help."
         )
 
     def _compose_honest_ungrounded(self, semantic_input: Optional[Dict[str, Any]] = None) -> str:

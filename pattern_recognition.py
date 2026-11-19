@@ -199,7 +199,7 @@ class AdvancedPatternRecognition:
         self.discovered_signal_patterns: Dict[Tuple[str, Tuple[str, ...]], DiscoveredSignalPattern] = {}
         self._observe_id = 0  # increments each observe(); combo reinforce once per id
         self._knowledge_dirty = False
-        # Prefer Pattern-local file under runtime_dir(); tests set MONDAY_RUNTIME_DIR.
+        # Prefer Pattern-local file under runtime_dir(); tests set MERCY_RUNTIME_DIR.
         self.knowledge_path = Path(runtime_dir()) / "pattern_knowledge.json"
 
         # Initialize default templates, then overlay Pattern-owned learned state

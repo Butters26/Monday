@@ -1,5 +1,5 @@
 """
-ExecutiveControlLobe — control lobe for Monday's live prompted path.
+ExecutiveControlLobe — control lobe for Mercy's live prompted path.
 
 Sets/holds a current goal and priority, inhibits off-goal moves (curiosity
 follow-up / speak-worthy aside when the goal is fact-answer), and steers
@@ -27,7 +27,7 @@ _FACT_ANSWER_GOALS = frozenset(
     {
         "fact_answer",
         "question",
-        "monday_speech_ask",
+        "mercy_speech_ask",
     }
 )
 
@@ -45,7 +45,7 @@ _INHIBITABLE_ACTIONS = frozenset(
 # Conversation intents → executive goals.
 _INTENT_TO_GOAL = {
     "question": "fact_answer",
-    "monday_speech_ask": "fact_answer",
+    "mercy_speech_ask": "fact_answer",
     "fact_teach": "teach_ack",
     "greeting": "social",
     "goodbye": "social",
@@ -165,7 +165,7 @@ class ExecutiveControlLobe:
         ask_kind = slots.get("ask_kind") if isinstance(slots.get("ask_kind"), str) else ""
 
         goal = _INTENT_TO_GOAL.get(intent, "open_explore")
-        if ask_kind in ("fact_ask", "question") or intent in ("question", "monday_speech_ask"):
+        if ask_kind in ("fact_ask", "question") or intent in ("question", "mercy_speech_ask"):
             goal = "fact_answer"
         # Priority: fact answers and emotional support outrank open explore.
         priority_map = {

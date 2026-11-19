@@ -1,4 +1,4 @@
-"""SQLite memory adapter for the direct Monday core."""
+"""SQLite memory adapter for the direct Mercy core."""
 
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ from runtime_paths import runtime_file
 from thalamus import get_thalamus
 
 
-_TRANSCRIPT_PREFIX = re.compile(r"^\s*(?:user|abin|monday|assistant)\s*:", re.IGNORECASE)
+_TRANSCRIPT_PREFIX = re.compile(r"^\s*(?:user|abin|mercy|assistant)\s*:", re.IGNORECASE)
 _COMBINED_TRANSCRIPT = re.compile(
-    r"(?is)(?:^|\n)\s*(?:user|abin|monday|assistant)\s*:.*\n\s*"
-    r"(?:user|abin|monday|assistant)\s*:"
+    r"(?is)(?:^|\n)\s*(?:user|abin|mercy|assistant)\s*:.*\n\s*"
+    r"(?:user|abin|mercy|assistant)\s*:"
 )
-_ALLOWED_MEMORY_ROLES = frozenset({"user", "fact", "note", "assistant", "monday", "abin", "sensed"})
+_ALLOWED_MEMORY_ROLES = frozenset({"user", "fact", "note", "assistant", "mercy", "abin", "sensed"})
 _LEARNING_KEY_SAFE = re.compile(r"[^a-z0-9:_-]+")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 _UNSAFE_LEARNING = re.compile(
@@ -452,7 +452,7 @@ class DirectNotusProcess:
 
     @staticmethod
     def _is_safe_memory(role: Any, content: Any) -> bool:
-        """Allow clean single-speaker rows including Monday's own speech."""
+        """Allow clean single-speaker rows including Mercy's own speech."""
         if not isinstance(role, str) or role.strip().lower() not in _ALLOWED_MEMORY_ROLES:
             return False
         if not isinstance(content, str):
@@ -616,10 +616,10 @@ class DirectNotusProcess:
         connection = self._require_connection()
         type_sql, type_params = self._memory_type_filter(memory_type)
         role_sql = (
-            "AND m.role IN ('user', 'fact', 'note', 'monday', 'assistant', 'abin') "
+            "AND m.role IN ('user', 'fact', 'note', 'mercy', 'assistant', 'abin') "
             "AND lower(trim(m.content)) NOT LIKE 'user:%' "
             "AND lower(trim(m.content)) NOT LIKE 'abin:%' "
-            "AND lower(trim(m.content)) NOT LIKE 'monday:%' "
+            "AND lower(trim(m.content)) NOT LIKE 'mercy:%' "
             "AND lower(trim(m.content)) NOT LIKE 'assistant:%'"
         )
 
@@ -646,7 +646,7 @@ class DirectNotusProcess:
                     "m.created_at, m.access_count, m.last_accessed, m.strength, NULL AS fts_rank "
                     "FROM memories AS m WHERE m.id IN (" + ",".join("?" * len(ids)) + ") "
                     "AND m.user_id = ? "
-                    "AND m.role IN ('user', 'fact', 'note', 'monday', 'assistant', 'abin')"
+                    "AND m.role IN ('user', 'fact', 'note', 'mercy', 'assistant', 'abin')"
                     + type_sql + " ORDER BY m.id DESC LIMIT ?",
                     [*ids, user_id, *type_params, self.CANDIDATES],
                 ).fetchall()
@@ -766,7 +766,7 @@ class DirectNotusProcess:
         content = payload.get("content")
         role = str(payload.get("role", "user") or "user").strip().lower()
         if role in {"assistant", "abin"}:
-            role = "monday"
+            role = "mercy"
         user_id = payload.get("user_id", "default")
         if not self._is_safe_memory(role, content):
             return {"status": "error", "message": "Memory must be clean structured content"}
@@ -804,8 +804,8 @@ class DirectNotusProcess:
         learned: List[Dict[str, Any]] = []
         # Facts come from Language's reading of the line (hear_moment ->
         # _learn_from_reading). The old regex sentence-shape filer is in
-        # legacy/fact_shapes_legacy.md; it is only used if MONDAY_OLD_FACT_SHAPES=1.
-        if role == "user" and os.environ.get("MONDAY_OLD_FACT_SHAPES") == "1":
+        # legacy/fact_shapes_legacy.md; it is only used if MERCY_OLD_FACT_SHAPES=1.
+        if role == "user" and os.environ.get("MERCY_OLD_FACT_SHAPES") == "1":
             try:
                 from notus_fact_text import FactText
 
@@ -1201,7 +1201,7 @@ class DirectNotusProcess:
                 things = FactText._content_tokens(f"{subject.split(chr(39) + 's ')[-1]} {obj}".replace("_", " "))
                 same_thing = len(query_tokens) >= 2 and any(
                     FactText._alias_set(t) & FactText._expand_tokens(things)
-                    for t in query_tokens if t not in ("user", "monday") and "'" not in t)
+                    for t in query_tokens if t not in ("user", "mercy") and "'" not in t)
                 if same_thing and overlap < 0.75:
                     # Asked with a whole sentence ("my car won't start"), a fact about
                     # the same thing ("your car was fixed by charging the battery") is
@@ -1231,7 +1231,7 @@ class DirectNotusProcess:
                     # part of what it's about: the thing is what's shared.
                     things = FactText._content_tokens(f"{subject.split(chr(39) + 's ')[-1]} {obj}".replace("_", " "))
                     if any(FactText._alias_set(t) & FactText._expand_tokens(things) for t in significant
-                           if t not in ("user", "monday")):
+                           if t not in ("user", "mercy")):
                         part_of_it = True
                     if len(significant) >= 2 and not sig_covered and overlap < 0.75 and not part_of_it:
                         continue
@@ -2026,7 +2026,7 @@ class DirectNotusProcess:
             if not words:
                 continue
             try:
-                fact = self.store_brain_fact("monday", f"v:{verb}", " ".join(words), confidence=0.7,
+                fact = self.store_brain_fact("mercy", f"v:{verb}", " ".join(words), confidence=0.7,
                                              user_id=user_id, single_valued=False)
             except ValueError:
                 continue
@@ -2052,7 +2052,7 @@ class DirectNotusProcess:
         try:
             # His lines (her own replies are built from his words, mistakes included).
             recent = [m.get("content", "") for m in self.recent_memories(user_id, 16)
-                      if m.get("role") != "monday"]
+                      if m.get("role") != "mercy"]
         except Exception:
             recent = []
         recent = [line for line in recent if line.strip().casefold() != text.strip().casefold()]
@@ -2131,13 +2131,13 @@ class DirectNotusProcess:
             if str(token.get("surface") or "").casefold() == "than":
                 after = words[i + 1]
                 word = str(after.get("surface") or "")
-                return {"me": "user", "i": "user", "you": "monday"}.get(word.casefold()) or (
+                return {"me": "user", "i": "user", "you": "mercy"}.get(word.casefold()) or (
                     word[:1].upper() + word[1:] if after.get("kind") == "proper_noun" else word.casefold())
         return None
 
     @staticmethod
     def _is_time_word(noun: str) -> bool:
-        """A word the dictionary files as a time (week, morning, Monday)."""
+        """A word the dictionary files as a time (week, morning, Mercy)."""
         try:
             from lexicon.oewn_offline import get_wordnet
             synsets = list(get_wordnet().synsets(noun, pos="n"))
@@ -2172,7 +2172,7 @@ class DirectNotusProcess:
             return cls._filed_as(mention["refers_to"])
         if mention.get("pronoun"):
             pronoun = str((mention.get("properties") or {}).get("pronoun") or mention.get("surface") or "").casefold()
-            return {"i": "user", "me": "user", "you": "monday"}.get(pronoun)  # he/she/it: unresolved
+            return {"i": "user", "me": "user", "you": "mercy"}.get(pronoun)  # he/she/it: unresolved
         head = str((mention.get("properties") or {}).get("head_lemma") or mention.get("concept_surface") or "").strip()
         if not head:
             return None
@@ -2189,7 +2189,7 @@ class DirectNotusProcess:
             return name[:1].upper() + name[1:]
         if any(t.get("kind") == "conjunction" for t in inside_all):
             # "Sam and Cleo", "me and you", "my sister and I": each of them,
-            # together ("Sam and Cleo", "user and monday", "user's sister and user").
+            # together ("Sam and Cleo", "user and mercy", "user's sister and user").
             groups, group = [], []
             for t in inside_all:
                 if t.get("kind") == "conjunction" and str(t.get("surface") or "").casefold() == "and":
@@ -2203,7 +2203,7 @@ class DirectNotusProcess:
                 if not g:
                     continue
                 if len(g) == 1 and g[0].get("kind") == "pronoun":
-                    one = {"i": "user", "me": "user", "you": "monday"}.get(str(g[0].get("surface") or "").casefold())
+                    one = {"i": "user", "me": "user", "you": "mercy"}.get(str(g[0].get("surface") or "").casefold())
                 else:
                     nouns = [t for t in g if t.get("kind") in ("noun", "proper_noun")]
                     head_word = str((nouns[-1].get("lemma") if nouns and nouns[-1].get("kind") == "noun"
@@ -2246,7 +2246,7 @@ class DirectNotusProcess:
         if surface and surface[0] in ("my", "our"):
             owner = "user"
         elif surface and surface[0] in ("your",):
-            owner = "monday"
+            owner = "mercy"
         if owner and isinstance(start, int) and isinstance(mention.get("end"), int):
             # "my cat's name": the name is the cat's, and the cat is his.
             # ("Lily's dog's name": past "Lily's", which says whose, the dog is hers.)
@@ -2331,8 +2331,8 @@ class DirectNotusProcess:
         """Memory on its own, between moments: reminders when their day comes,
         and, when nobody has said anything for a while, a memory coming up the
         way memories do (the strongest ones, not the same one twice in a row)."""
-        wait = float(os.environ.get("MONDAY_MEMORY_WATCH_SECONDS") or 60)
-        quiet_after = float(os.environ.get("MONDAY_MEMORY_QUIET_SECONDS") or 600)
+        wait = float(os.environ.get("MERCY_MEMORY_WATCH_SECONDS") or 60)
+        quiet_after = float(os.environ.get("MERCY_MEMORY_QUIET_SECONDS") or 600)
         while not self._watch_stop.wait(wait):
             try:
                 self._remind()
@@ -2371,7 +2371,7 @@ class DirectNotusProcess:
         if not callable(announce) or not user_id:
             return
         last = self.__dict__.get("_last_brought_up")
-        memories = [m for m in self.recent_memories(user_id, 40) if m.get("role") != "monday" and m.get("id") != last]
+        memories = [m for m in self.recent_memories(user_id, 40) if m.get("role") != "mercy" and m.get("id") != last]
         if not memories:
             return
         felt = self._feelings_for_memories([m["id"] for m in memories])
@@ -2433,7 +2433,7 @@ class DirectNotusProcess:
         """"a penguin" / "penguins" said about the whole kind -> "penguin"; "the
         penguin" (one in particular), names and owned things stay as they are."""
         words = subject.split()
-        if not words or subject[:1].isupper() or "'s " in subject or subject in ("user", "monday"):
+        if not words or subject[:1].isupper() or "'s " in subject or subject in ("user", "mercy"):
             return subject
         try:
             from reasoning_engine import base_noun, words_plural
@@ -2655,7 +2655,7 @@ relocate to: live in
             return []
         name = str(inside[-1].get("surface") or "")
         first = str(inside[0].get("surface") or "").casefold()
-        owner = {"my": "user", "our": "user", "your": "monday"}.get(first)
+        owner = {"my": "user", "our": "user", "your": "mercy"}.get(first)
         try:
             fact = self.store_brain_fact(name[:1].upper() + name[1:], "is_a",
                                          str(inside[-2].get("lemma") or "").casefold(), value=owner,
@@ -2817,7 +2817,7 @@ relocate to: live in
     def _mark_held_by(self, facts: List[Dict[str, Any]], frame: Dict[str, Any], tokens: List[Dict[str, Any]]) -> None:
         """Facts said as someone's view ("I think ...", "she said ...")."""
         who = " ".join(str(w) for w in frame.get("who") or []).casefold()
-        who = {"i": "user", "you": "monday"}.get(who, who)
+        who = {"i": "user", "you": "mercy"}.get(who, who)
         held = f"{who} {frame.get('verb') or ''}".strip()
         if not held or not facts:
             return
@@ -2873,8 +2873,8 @@ relocate to: live in
                 return extra + self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
         subject_mention = mentions.get(subject_id) or {}
         members = [m.strip() for m in subject.split(" and ")]
-        if subject[:1].islower() and "'s " not in subject and subject not in ("user", "monday") \
-                and not any(m in ("user", "monday") or "'s " in m for m in members) \
+        if subject[:1].islower() and "'s " not in subject and subject not in ("user", "mercy") \
+                and not any(m in ("user", "mercy") or "'s " in m for m in members) \
                 and not subject_mention.get("refers_to"):
             # A thing, kept as he said it ("the dog", "a castle").
             subject = " ".join(str(subject_mention.get("surface") or subject).split()) or subject
@@ -2910,7 +2910,7 @@ relocate to: live in
                 if word in ("my", "our"):
                     owner = "user"
                 elif word == "your":
-                    owner = "monday"
+                    owner = "mercy"
                 elif word in ("his", "her", "their", "its"):
                     # Whose? Only if Language worked out who it means.
                     ref = next((r for r in reading.get("references") or []
@@ -2936,7 +2936,7 @@ relocate to: live in
                     return self._file(whose, thing, name[:1].upper() + name[1:], negative, user_id)
                 with_article = named is not None and any(
                     t.get("index") == named.get("index", 0) - 1 and t.get("kind") == "determiner" for t in tokens)
-                if named and subject in ("user", "monday") and not owner and not with_article:
+                if named and subject in ("user", "mercy") and not owner and not with_article:
                     # "I'm Claude": a person saying a name about themself is giving
                     # their name, not a kind of thing they are.
                     name = str(named.get("surface") or "")
@@ -2989,7 +2989,7 @@ relocate to: live in
         def as_said(mention_id: Any) -> Optional[str]:
             mention = mentions.get(mention_id) or {}
             who = self._who(mention, tokens, reading.get("references"))
-            if not who or "'s " in who or who[:1].isupper() or who in ("user", "monday") \
+            if not who or "'s " in who or who[:1].isupper() or who in ("user", "mercy") \
                     or mention.get("refers_to"):
                 return who
             surface = " ".join(w for w in str(mention.get("surface") or "").casefold().split()
@@ -3537,7 +3537,7 @@ relocate to: live in
             said = str(payload.get("text") or "").strip()
             if not said:
                 return {"status": "success", "content": {"stored": False, "reason": "she said nothing"}}
-            return self._store({"role": "monday", "content": said,
+            return self._store({"role": "mercy", "content": said,
                                 "user_id": payload.get("user_id") or self._talking_with or "default",
                                 "memory_type": "conversation", "tag": "Spoken", "importance": 6.5,
                                 "mode": "memory"})

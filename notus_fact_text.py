@@ -41,7 +41,7 @@ class FactText:
     _WEAK_QUERY_TOKENS = frozenset(
         {
             "remind", "call", "tell", "please", "know", "said", "say",
-            # Speech-recall meta fillers must not AND-gate Monday's own lines
+            # Speech-recall meta fillers must not AND-gate Mercy's own lines
             # ("the thing you said", "exact words", "earlier about…").
             "thing", "things", "word", "words", "exact", "earlier", "before",
             "previously", "phrase", "told", "called", "mention", "mentioned",
@@ -560,8 +560,8 @@ class FactText:
                 t = (text or "").strip()
                 if t.casefold() == "user":
                     return "you"
-                if t.casefold() == "monday":
-                    return "Monday"
+                if t.casefold() == "mercy":
+                    return "Mercy"
                 if t.casefold().startswith("user's "):
                     return "your " + t[7:]
                 return t

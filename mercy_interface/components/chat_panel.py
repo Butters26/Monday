@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Chat Panel Component - Displays conversation between user and Monday
+Chat Panel Component - Displays conversation between user and Mercy
 """
 
 from PyQt5.QtWidgets import QTextEdit, QWidget, QVBoxLayout
@@ -12,7 +12,7 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from monday_interface.styles import (
+from mercy_interface.styles import (
     CHAT_PANEL_STYLE, 
     COLORS, 
     FONTS
@@ -20,7 +20,7 @@ from monday_interface.styles import (
 
 
 class ChatPanel(QWidget):
-    """Chat display widget showing user and Monday's conversation"""
+    """Chat display widget showing user and Mercy's conversation"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,9 +47,9 @@ class ChatPanel(QWidget):
         """Add a user message to the chat"""
         self._add_message("You", message, COLORS['user_text'])
     
-    def add_monday_message(self, message: str):
-        """Add a Monday response to the chat"""
-        self._add_message("Monday", message, COLORS['monday_text'])
+    def add_mercy_message(self, message: str):
+        """Add a Mercy response to the chat"""
+        self._add_message("Mercy", message, COLORS['mercy_text'])
     
     def add_system_message(self, message: str):
         """Add a system message to the chat"""
@@ -84,7 +84,7 @@ class ChatPanel(QWidget):
         self.chat_display.clear()
     
     def add_thinking_indicator(self):
-        """Show that Monday is thinking"""
+        """Show that Mercy is thinking"""
         cursor = self.chat_display.textCursor()
         cursor.movePosition(QTextCursor.End)
         
@@ -92,7 +92,7 @@ class ChatPanel(QWidget):
         format.setForeground(QColor(COLORS['debug_text']))
         format.setFontItalic(True)
         
-        cursor.insertText("Monday is thinking...\n", format)
+        cursor.insertText("Mercy is thinking...\n", format)
         
         self.chat_display.setTextCursor(cursor)
         self.chat_display.ensureCursorVisible()
@@ -100,7 +100,7 @@ class ChatPanel(QWidget):
     def remove_thinking_indicator(self):
         """Remove the thinking indicator (removes last line if it's the indicator)"""
         text = self.chat_display.toPlainText()
-        if text.endswith("Monday is thinking...\n"):
+        if text.endswith("Mercy is thinking...\n"):
             # Remove the last line
             cursor = self.chat_display.textCursor()
             cursor.movePosition(QTextCursor.End)

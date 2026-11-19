@@ -175,7 +175,7 @@ class AutonomousThinkingLoop:
         # (Not what she said herself: what happened and what she was told.)
         memories = [m for m in recent.get("memories") or []
                     if isinstance(m, dict) and m.get("id") not in self._thought_about
-                    and m.get("role") != "monday" and str(m.get("content") or "").strip()]
+                    and m.get("role") != "mercy" and str(m.get("content") or "").strip()]
         if not memories:
             return None
         memories.sort(key=lambda m: float(m.get("strength") or 1.0), reverse=True)
@@ -222,7 +222,7 @@ class AutonomousThinkingLoop:
             # Her mind wanders on to what this thought is most strongly tied to.
             # (On to something that happened or she was told, not to her own words about it.)
             onward = [m for m in associated if m.get("id") not in self._thought_about
-                      and m.get("role") != "monday"]
+                      and m.get("role") != "mercy"]
             onward.sort(key=lambda m: float(m.get("strength") or 1.0), reverse=True)
             self._led_to = onward[0] if onward else None
 

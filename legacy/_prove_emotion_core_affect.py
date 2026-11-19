@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Proof harness: MondayCoreAffect + SelfImpact live path.
+Proof harness: MercyCoreAffect + SelfImpact live path.
 Design lock: _emotion_what_we_must_build.txt §7
 
 Required cases:
@@ -57,7 +57,7 @@ def _va(body: Dict[str, Any]) -> Tuple[float, float, str, float]:
     a = body.get("arousal")
     if a is None and isinstance(body.get("pad"), dict):
         a = body["pad"].get("a")
-    emo = body.get("monday_emotion") or body.get("current_emotion") or body.get("emotion")
+    emo = body.get("mercy_emotion") or body.get("current_emotion") or body.get("emotion")
     inten = float(body.get("intensity") or 0.0)
     return float(v), float(a), str(emo), inten
 
@@ -71,7 +71,7 @@ def main() -> int:
         results.append((name, ok, detail))
         lines.append(f"{tag}: {name} — {detail}")
 
-    with tempfile.TemporaryDirectory(prefix="monday_emotion_proof_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="mercy_emotion_proof_") as tmp:
         runtime = Path(tmp) / "runtime"
         systems = create_core_systems(
             runtime_directory=str(runtime),
@@ -81,8 +81,8 @@ def main() -> int:
         try:
             engine = systems["emotion"].engine
             # Fresh core affect baseline
-            from monday_core_affect import MondayCoreAffect
-            engine.core_affect = MondayCoreAffect()
+            from mercy_core_affect import MercyCoreAffect
+            engine.core_affect = MercyCoreAffect()
             engine._sync_from_core_affect(trigger="proof_reset")
             v0, a0 = engine.core_affect.valence, engine.core_affect.arousal
             lines.append(f"BASELINE core_affect v={v0:.3f} a={a0:.3f} label={engine.core_affect.label()}")
@@ -118,7 +118,7 @@ def main() -> int:
             )
 
             # --- Case 2: Insult aimed at her ---
-            engine.core_affect = MondayCoreAffect()
+            engine.core_affect = MercyCoreAffect()
             engine._sync_from_core_affect(trigger="proof_reset2")
             v_before = engine.core_affect.valence
             body = _emo(systems, "You're stupid and worthless")
@@ -155,7 +155,7 @@ def main() -> int:
             )
 
             # --- Case 3: Quiet turns alone — decay toward calm, no random flip ---
-            engine.core_affect = MondayCoreAffect(valence=-0.40, arousal=0.30)
+            engine.core_affect = MercyCoreAffect(valence=-0.40, arousal=0.30)
             engine._sync_from_core_affect(trigger="proof_quiet")
             labels = []
             vals = []
@@ -171,7 +171,7 @@ def main() -> int:
             thin = set(labels) <= {"calm", "happy", "sad", "angry", "worried", "scared", "excited"}
             # Intensity never stuck at hardcoded 0.8±0.2 solely from quiet
             ints = []
-            engine.core_affect = MondayCoreAffect()
+            engine.core_affect = MercyCoreAffect()
             engine._sync_from_core_affect(trigger="proof_int")
             for _ in range(5):
                 b = _emo(systems, "okay")
@@ -184,7 +184,7 @@ def main() -> int:
             )
 
             # --- Case 4: Internal thought capped nudge ---
-            engine.core_affect = MondayCoreAffect()
+            engine.core_affect = MercyCoreAffect()
             engine._sync_from_core_affect(trigger="proof_internal")
             v_i0 = engine.core_affect.valence
             # Phrase that WOULD slam hard if full user classifiers ran ("i'm sad" → rejection PAD)
@@ -204,10 +204,10 @@ def main() -> int:
             )
 
             # Bonus: praise should raise valence
-            engine.core_affect = MondayCoreAffect()
+            engine.core_affect = MercyCoreAffect()
             engine._sync_from_core_affect(trigger="proof_praise")
             vb = engine.core_affect.valence
-            b = _emo(systems, "I love you Monday")
+            b = _emo(systems, "I love you Mercy")
             vp, ap, ep, _ = _va(b)
             record(
                 "praise_raises_valence",

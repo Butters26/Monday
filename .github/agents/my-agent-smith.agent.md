@@ -14,7 +14,7 @@ description: |
     plus others) that communicate through a Thalamus coordinator
   - Direct function calls via Thalamus (NO sockets - all socket code was removed)
   - Notus memory system (PostgreSQL database - migrated from SQLite)
-  - Monday AI personality interface
+  - Mercy AI personality interface
   - All lobes must register with Thalamus and implement process_message()
   - All lobes must be wired into run_abin.py to start
   
@@ -54,7 +54,7 @@ when_to_use_it: |
 
 edges_it_wont_cross: |
   Will NOT:
-  - Modify Monday's personality/values without explicit approval
+  - Modify Mercy's personality/values without explicit approval
   - Delete files without showing what will be deleted and getting explicit approval
   - Run terminal commands without showing the command first and getting explicit approval
   - Install packages or modify databases without showing the command and getting approval

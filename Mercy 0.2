@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Monday Communication Interface
+Mercy Communication Interface
 With detailed USS Arizona battleship visualization
 """
 
@@ -58,7 +58,7 @@ class USSArizonaBattleship(QLabel):
         self.setMaximumHeight(400)
 
 class BrainWorker(QThread):
-    """Thread for communicating with Monday"""
+    """Thread for communicating with Mercy"""
     response_ready = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
     
@@ -170,12 +170,12 @@ class MessageBubble(QFrame):
 
 # REMOVED: ResponseListener - all responses come directly from Thalamus, no socket needed
 
-class MondayInterface(QMainWindow):
-    """Monday Communication Interface"""
+class MercyInterface(QMainWindow):
+    """Mercy Communication Interface"""
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Monday Communication System")
+        self.setWindowTitle("Mercy Communication System")
         self.setMinimumSize(1200, 900)
         
         self.worker = None
@@ -197,7 +197,7 @@ class MondayInterface(QMainWindow):
         main_layout.setContentsMargins(20, 20, 20, 20)
         
         # Header
-        header = QLabel("Monday")
+        header = QLabel("Mercy")
         header.setAlignment(Qt.AlignCenter)
         header.setFont(QFont("Arial", 32, QFont.Bold))
         header.setStyleSheet("""
@@ -268,7 +268,7 @@ class MondayInterface(QMainWindow):
         input_layout = QHBoxLayout()
         
         self.input_field = QLineEdit()
-        self.input_field.setPlaceholderText("Communicate with Monday...")
+        self.input_field.setPlaceholderText("Communicate with Mercy...")
         self.input_field.setMinimumHeight(50)
         self.input_field.setFont(QFont("Arial", 13))
         self.input_field.setStyleSheet("""
@@ -318,7 +318,7 @@ class MondayInterface(QMainWindow):
         
         central.setLayout(main_layout)
         
-        self.add_system_message("Monday online. Communication channel established.")
+        self.add_system_message("Mercy online. Communication channel established.")
     
     def apply_style(self):
         """Global styling"""
@@ -338,7 +338,7 @@ class MondayInterface(QMainWindow):
         QTimer.singleShot(50, self.scroll_to_bottom)
     
     def add_system_message(self, text: str):
-        """Add Monday response"""
+        """Add Mercy response"""
         bubble = MessageBubble(text, False)
         self.chat_layout.insertWidget(self.chat_layout.count() - 1, bubble, alignment=Qt.AlignLeft)
         QTimer.singleShot(50, self.scroll_to_bottom)
@@ -350,7 +350,7 @@ class MondayInterface(QMainWindow):
             scroll_area.verticalScrollBar().setValue(scroll_area.verticalScrollBar().maximum())
     
     def send_message(self):
-        """Send to Monday"""
+        """Send to Mercy"""
         text = self.input_field.text().strip()
         if not text:
             return
@@ -403,7 +403,7 @@ class MondayInterface(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    window = MondayInterface()
+    window = MercyInterface()
     window.show()
     sys.exit(app.exec_())
 
@@ -534,7 +534,7 @@ class EmotionalStateOutput:
     emotional_tone: str  # For language gen: "happy", "sad", "angry", etc
     emphasis: List[str]  # Speech emphasis patterns
     voice_prosody: Dict[str, float]  # For voice lobe: pitch, speed, warmth, clarity
-    confidence: float  # How confident is Monday in this emotional state
+    confidence: float  # How confident is Mercy in this emotional state
     timestamp: float  # When this state was created
     
     def to_dict(self) -> Dict[str, Any]:
@@ -1404,9 +1404,9 @@ class AdvancedEmotionalEngine:
             pass
 
 # ------------------------------
-# MondayAffect – adds autonomy knob (alias of AdvancedEmotionalEngine for now)
+# MercyAffect – adds autonomy knob (alias of AdvancedEmotionalEngine for now)
 # ------------------------------
-class MondayAffect(AdvancedEmotionalEngine):
+class MercyAffect(AdvancedEmotionalEngine):
     pass
 
 # ------------------------------
@@ -1416,8 +1416,8 @@ class MondayAffect(AdvancedEmotionalEngine):
 class EmotionalProcess:
     """Emotional/Personality engine as independent process (HARDENED)"""
     
-    def __init__(self, state_file="monday_emotional_state.json"):
-        self.engine = MondayAffect("Monday")
+    def __init__(self, state_file="mercy_emotional_state.json"):
+        self.engine = MercyAffect("Mercy")
         self.state_file = state_file
         self.running = True
         # Persistent connection to Thalamus (no own socket)
@@ -2068,7 +2068,7 @@ if __name__ == "__main__":
 #!/usr/bin/env python3
 """
 Autonomous Thinking Loop - Generates thoughts without prompting
-Monday thinks on her own, not just when spoken to.
+Mercy thinks on her own, not just when spoken to.
 """
 
 import time
@@ -2093,7 +2093,7 @@ class AutonomousThought:
 class AutonomousThinkingLoop:
     """
     Background process that generates thoughts without prompting.
-    Monday has an inner monologue.
+    Mercy has an inner monologue.
     """
     
     def __init__(self):
@@ -2111,7 +2111,7 @@ class AutonomousThinkingLoop:
         
         # State
         self.current_mood = "neutral"
-        self.current_focus = None  # What Monday is currently thinking about
+        self.current_focus = None  # What Mercy is currently thinking about
         self.user_present = False  # Is user actively engaged?
         self.user_last_message_time = 0.0
         
@@ -2537,7 +2537,7 @@ class BehaviorRecord:
     """Record of a behavior and its outcome"""
     id: str
     behavior_type: str  # "response_style", "topic", "timing", "tone", etc.
-    behavior: str  # What Monday did
+    behavior: str  # What Mercy did
     user_reaction: str  # "positive", "negative", "neutral", "ignored"
     reaction_intensity: float  # 0-1 how strong the reaction
     context: Dict[str, Any]
@@ -2567,7 +2567,7 @@ class BehavioralReinforcement:
     Updates decision-making based on feedback.
     """
     
-    def __init__(self, storage_path: str = "monday_behavior_weights.json"):
+    def __init__(self, storage_path: str = "mercy_behavior_weights.json"):
         self.thalamus = get_thalamus()
         self.storage_path = storage_path
         self.running = True
@@ -2697,7 +2697,7 @@ class BehavioralReinforcement:
             return {'status': 'error', 'message': f'Unknown message type: {msg_type}'}
     
     def _record_behavior(self, message: Dict[str, Any]) -> Dict[str, Any]:
-        """Record a behavior Monday performed"""
+        """Record a behavior Mercy performed"""
         with self.lock:
             record = BehaviorRecord(
                 id=f"behavior_{int(time.time() * 1000)}",
@@ -2841,7 +2841,7 @@ class BehavioralReinforcement:
     
     def _should_do(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Ask if Monday should do a behavior.
+        Ask if Mercy should do a behavior.
         Returns recommendation based on learned weights.
         """
         behavior_type = message.get('behavior_type', '')
@@ -2963,7 +2963,7 @@ Starting conversation.py at 2025-11-29 20:24:49
 
 #!/usr/bin/env python3
 """
-Conversation System for Monday
+Conversation System for Mercy
 Full dialogue understanding, context memory, intent recognition
 Maintains conversation state, can reference past exchanges
 """
@@ -3417,7 +3417,7 @@ class ExperienceProcessor:
     Forms preferences from accumulated emotional experiences.
     """
     
-    def __init__(self, storage_path: str = "monday_experiences.json"):
+    def __init__(self, storage_path: str = "mercy_experiences.json"):
         self.thalamus = get_thalamus()
         self.storage_path = storage_path
         self.running = True
@@ -3731,7 +3731,7 @@ if __name__ == "__main__":
         print("\n🛑 Shutting down")
         processor.shutdown()
 
-=== FIXES APPLIED TO MONDAY ===
+=== FIXES APPLIED TO MERCY ===
 Date: Nov 30, 2025
 
 WHAT WAS BROKEN:
@@ -3785,7 +3785,7 @@ STATUS:
 WHAT MIGHT STILL NEED WORK:
 - Conversation lobe may still hang (needs investigation)
 - GPU acceleration not yet enabled (torch import was hanging)
-- Full testing needed to confirm Monday responds
+- Full testing needed to confirm Mercy responds
 
 TO TEST:
 cd "/Users/matthew/Desktop/This is very close to being a brain"
@@ -4006,7 +4006,7 @@ Starting language_generation.py at 2025-11-29 20:24:37
 
 #!/usr/bin/env python3
 """
-Language Generation Lobe - Monday's Speech Center
+Language Generation Lobe - Mercy's Speech Center
 Grammar-based semantic-to-sentence construction
 Pre-installed with grammar rules and vocabulary
 Controlled by Reasoning lobe
@@ -4208,10 +4208,10 @@ class GrammarEngine:
     
     def _compose_introduction(self) -> str:
         patterns = [
-            "I'm Monday",
-            "My name is Monday",
-            "I'm Monday - an artificial mind",
-            "Monday, that's me"
+            "I'm Mercy",
+            "My name is Mercy",
+            "I'm Mercy - an artificial mind",
+            "Mercy, that's me"
         ]
         return random.choice(patterns)
     
@@ -4234,7 +4234,7 @@ class GrammarEngine:
             return story
         
         parts = []
-        parts.append("I'm Monday")
+        parts.append("I'm Mercy")
         what_am = random.choice([
             "an artificial mind",
             "an artificial reasoning system",
@@ -4493,7 +4493,7 @@ class GrammarEngine:
         return mapping.get(rel_type, 'relates to')
 
 class LanguageGenerator:
-    """Builds sentences from meaning - Monday's voice"""
+    """Builds sentences from meaning - Mercy's voice"""
     
     def __init__(self):
         self.running = True
@@ -4711,7 +4711,7 @@ if __name__ == "__main__":
 
 #!/usr/bin/env python3
 """
-Language Generation Lobe - Monday's Speech Center
+Language Generation Lobe - Mercy's Speech Center
 Grammar-based semantic-to-sentence construction
 Pre-installed with grammar rules and vocabulary
 Controlled by Reasoning lobe
@@ -4913,10 +4913,10 @@ class GrammarEngine:
     
     def _compose_introduction(self) -> str:
         patterns = [
-            "I'm Monday",
-            "My name is Monday",
-            "I'm Monday - an artificial mind",
-            "Monday, that's me"
+            "I'm Mercy",
+            "My name is Mercy",
+            "I'm Mercy - an artificial mind",
+            "Mercy, that's me"
         ]
         return random.choice(patterns)
     
@@ -4939,7 +4939,7 @@ class GrammarEngine:
             return story
         
         parts = []
-        parts.append("I'm Monday")
+        parts.append("I'm Mercy")
         what_am = random.choice([
             "an artificial mind",
             "an artificial reasoning system",
@@ -5195,7 +5195,7 @@ class GrammarEngine:
         return mapping.get(rel_type, 'relates to')
 
 class LanguageGenerator:
-    """Builds sentences from meaning - Monday's voice"""
+    """Builds sentences from meaning - Mercy's voice"""
     
     def __init__(self):
         self.running = True
@@ -5489,7 +5489,7 @@ if __name__ == "__main__":
 
 
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5518,7 +5518,7 @@ if __name__ == "__main__":
   "created_at": 1764487505.2956128
 }
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5547,7 +5547,7 @@ if __name__ == "__main__":
   "created_at": 1764498892.2845492
 }
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5576,7 +5576,7 @@ if __name__ == "__main__":
   "created_at": 1765064894.189708
 }
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5605,7 +5605,7 @@ if __name__ == "__main__":
   "created_at": 1764525977.064065
 }
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5634,7 +5634,7 @@ if __name__ == "__main__":
   "created_at": 1764672750.874632
 }
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5663,7 +5663,7 @@ if __name__ == "__main__":
   "created_at": 1764534022.518504
 }
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5692,7 +5692,7 @@ if __name__ == "__main__":
   "created_at": 1764645983.415398
 }
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5721,7 +5721,7 @@ if __name__ == "__main__":
   "created_at": 1764672776.524724
 }
 {
-  "name": "Monday",
+  "name": "Mercy",
   "current_emotion": "calm",
   "emotional_intensity": 0.4,
   "emotional_resonance": 0.0,
@@ -5956,9 +5956,9 @@ class ReasoningNotusHelper(NotusHelper):
         return result.get('facts', [])
     
     def get_identity_facts(self) -> List[Dict[str, Any]]:
-        """Get facts about Monday's identity"""
+        """Get facts about Mercy's identity"""
         result = self._query_notus('query_facts', {
-            'query': 'identity self monday',
+            'query': 'identity self mercy',
             'limit': 10
         })
         return result.get('facts', [])
@@ -5987,7 +5987,7 @@ class EmotionNotusHelper(NotusHelper):
         return result.get('memories', [])
     
     def get_emotional_baseline(self) -> Dict[str, float]:
-        """Get Monday's emotional baseline from stored state"""
+        """Get Mercy's emotional baseline from stored state"""
         result = self._query_notus('get_emotional_state', {})
         return result.get('baseline', {
             'pleasure': 0.5,
@@ -6003,7 +6003,7 @@ class NoveltyNotusHelper(NotusHelper):
         super().__init__('novelty')
     
     def has_seen_before(self, stimulus: str) -> bool:
-        """Check if Monday has encountered this stimulus before"""
+        """Check if Mercy has encountered this stimulus before"""
         result = self._query_notus('query_memories', {
             'query': stimulus,
             'limit': 1
@@ -6020,7 +6020,7 @@ class NoveltyNotusHelper(NotusHelper):
         return result.get('memories', [])
     
     def get_learned_responses(self, stimulus_type: str) -> List[Dict[str, Any]]:
-        """Get how Monday learned to respond to this type of stimulus"""
+        """Get how Mercy learned to respond to this type of stimulus"""
         result = self._query_notus('query_facts', {
             'query': f"novelty_{stimulus_type}",
             'limit': 10
@@ -6121,7 +6121,7 @@ Starting notus.py at 2025-11-29 20:24:07
 2025-11-29 20:24:12,855 - INFO - ✅ Loaded sentence-transformers model
 2025-11-29 20:24:12,869 - INFO - 🧠 Fixed Superhuman Memory System initialized
 2025-11-29 20:24:12,877 - INFO - ✅ Seeded vocabulary and grammar knowledge
-2025-11-29 20:24:12,877 - INFO - 🚀 Enhanced Monday Memory System initialized
+2025-11-29 20:24:12,877 - INFO - 🚀 Enhanced Mercy Memory System initialized
 ✅ notus registered with Thalamus (direct function calls)
 ✅ Notus registered with Thalamus (direct function calls)
    Communication: Direct function calls (NO SOCKETS)
@@ -6137,7 +6137,7 @@ Starting notus.py at 2025-11-29 20:24:38
 2025-11-29 20:24:42,859 - INFO - ✅ Loaded sentence-transformers model
 2025-11-29 20:24:42,860 - INFO - 🧠 Fixed Superhuman Memory System initialized
 2025-11-29 20:24:42,867 - INFO - ✅ Seeded vocabulary and grammar knowledge
-2025-11-29 20:24:42,867 - INFO - 🚀 Enhanced Monday Memory System initialized
+2025-11-29 20:24:42,867 - INFO - 🚀 Enhanced Mercy Memory System initialized
 ✅ notus registered with Thalamus (direct function calls)
 ✅ Notus registered with Thalamus (direct function calls)
    Communication: Direct function calls (NO SOCKETS)
@@ -6221,7 +6221,7 @@ class SuperhumanConfig:
     working_set_max_facts: int = 20
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
-    snapshot_path: str = "monday_notus_snapshot.json"
+    snapshot_path: str = "mercy_notus_snapshot.json"
     
     # Advanced retrieval
     attention_heads: int = 4
@@ -6229,7 +6229,7 @@ class SuperhumanConfig:
     time_decay_factor: float = 0.1
     
     # AI Prompt Templates - THE FIX
-    system_prompt: str = "You are Monday, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
+    system_prompt: str = "You are Mercy, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
     
     context_template: str = """CONTEXT FROM PREVIOUS CONVERSATIONS:
 {context}
@@ -6239,7 +6239,7 @@ ANALYSIS:
 
 USER'S CURRENT MESSAGE: {user_input}
 
-INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
+INSTRUCTIONS: Respond as Mercy would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
 
 class MemoryType:
     EPISODIC = "episodic"
@@ -7060,8 +7060,8 @@ class SuperhumanMemorySystem:
             content = memory.get('content', '').lower()
             role = memory.get('role', '')
             
-            # Writing advice from Monday gets priority
-            if role == 'monday' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
+            # Writing advice from Mercy gets priority
+            if role == 'mercy' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
                 writing_memories.append(memory)
             # Recent user messages about their writing
             elif role == 'user' and len(recent_memories) < 3:
@@ -7519,7 +7519,7 @@ class SuperhumanMemorySystem:
                 story_text: Optional[str] = None, autosave: Optional[bool] = None) -> Dict[str, Any]:
         self.store_memory("user", user_text, user_id)
         if ai_text:
-            self.store_memory("monday", ai_text, user_id)
+            self.store_memory("mercy", ai_text, user_id)
         self.learn_facts_from_text(user_text, user_id=user_id)
         if ai_text:
             self.learn_facts_from_text(ai_text, user_id=user_id, default_conf=0.80)
@@ -7752,7 +7752,7 @@ class SuperhumanMemorySystem:
             print(f"❌ Error generating smart prompt: {e}")
             import traceback
             traceback.print_exc()
-            return f"User said: {user_input}\n\nPlease respond naturally as Monday."
+            return f"User said: {user_input}\n\nPlease respond naturally as Mercy."
 
     def _analyze_input_for_ai(self, user_input: str, relevant_memories: List[Dict]) -> str:
         """Analyze input and create guidance for the AI"""
@@ -7781,9 +7781,9 @@ class SuperhumanMemorySystem:
         elif any(word in input_lower for word in ['job', 'work', 'boss', 'rude', 'coworker']):
             analysis_parts.append("💼 User has work-related concerns")
         
-        # User asking Monday to choose
+        # User asking Mercy to choose
         elif any(phrase in input_lower for phrase in ['you pick', 'you choose', 'what do you want']):
-            analysis_parts.append("🎯 User wants Monday to decide/choose something")
+            analysis_parts.append("🎯 User wants Mercy to decide/choose something")
         
         # Greetings
         elif any(word in input_lower for word in ['hello', 'hi', 'hey']):
@@ -7861,8 +7861,8 @@ class SuperhumanMemorySystem:
             # Format the memory
             if role == 'user':
                 memory_line = f"[{time_str}] User: {content}"
-            elif role == 'monday':
-                memory_line = f"[{time_str}] Monday: {content}"
+            elif role == 'mercy':
+                memory_line = f"[{time_str}] Mercy: {content}"
             else:
                 memory_line = f"[{time_str}] {role}: {content}"
             
@@ -7914,13 +7914,13 @@ class SuperhumanMemorySystem:
         # RESPONSE INSTRUCTIONS
         response_instructions = [
             "=== RESPONSE INSTRUCTIONS ===",
-            "You are Monday, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
+            "You are Mercy, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
             "CRITICAL: Start your response by quoting the exact text the user highlighted",
             "CRITICAL: Then give specific feedback about that exact text",
             "CRITICAL: Do NOT give broad analysis - focus on their specific question",
             "CRITICAL: Be conversational and direct - no formal writing",
             "CRITICAL: Show you're listening by responding to their specific points",
-            "Monday:"
+            "Mercy:"
         ]
         prompt_parts.append("\n".join(response_instructions))
         
@@ -7928,7 +7928,7 @@ class SuperhumanMemorySystem:
 
     def store_ai_response(self, ai_response: str, user_id: str = "default") -> str:
         """Store the AI's response for future context"""
-        return self.store_memory("monday", ai_response, user_id)
+        return self.store_memory("mercy", ai_response, user_id)
 
     def start_new_conversation(self) -> str:
         """Start a new conversation session"""
@@ -7969,13 +7969,13 @@ class SuperhumanMemorySystem:
             logger.error(f"Failed to get conversation summary: {e}")
             return "Error retrieving conversation history."
 
-# Create the EnhancedMondayMemorySystem class for compatibility
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+# Create the EnhancedMercyMemorySystem class for compatibility
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -8006,7 +8006,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 
     # THE KEY METHOD YOUR NOTUS PROGRAM SHOULD USE
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -8021,8 +8021,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -8421,7 +8421,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -8498,7 +8498,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -9076,7 +9076,7 @@ __all__ = [
     'AdvancedEmbeddingEngine',
     'MemoryType',
     'SuperhumanMemorySystem',
-    'EnhancedMondayMemorySystem',
+    'EnhancedMercyMemorySystem',
     'DB_LOCK',
     'MEMORY_DB_PATH',
     'logger',
@@ -9115,7 +9115,7 @@ class NotusProcess:
         def init_memory_background():
             try:
                 print("🔧 Notus: Initializing memory system in background...", flush=True)
-                self.memory_system = EnhancedMondayMemorySystem()
+                self.memory_system = EnhancedMercyMemorySystem()
                 self.memory_ready.set()
                 print("✅ Notus: Memory system initialized", flush=True)
             except Exception as e:
@@ -9690,7 +9690,7 @@ class SuperhumanConfig:
     working_set_max_facts: int = 20
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
-    snapshot_path: str = "monday_notus_snapshot.json"
+    snapshot_path: str = "mercy_notus_snapshot.json"
     
     # Advanced retrieval
     attention_heads: int = 4
@@ -9698,7 +9698,7 @@ class SuperhumanConfig:
     time_decay_factor: float = 0.1
     
     # AI Prompt Templates - THE FIX
-    system_prompt: str = "You are Monday, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
+    system_prompt: str = "You are Mercy, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
     
     context_template: str = """CONTEXT FROM PREVIOUS CONVERSATIONS:
 {context}
@@ -9708,7 +9708,7 @@ ANALYSIS:
 
 USER'S CURRENT MESSAGE: {user_input}
 
-INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
+INSTRUCTIONS: Respond as Mercy would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
 
 class MemoryType:
     EPISODIC = "episodic"
@@ -10493,8 +10493,8 @@ class SuperhumanMemorySystem:
             content = memory.get('content', '').lower()
             role = memory.get('role', '')
             
-            # Writing advice from Monday gets priority
-            if role == 'monday' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
+            # Writing advice from Mercy gets priority
+            if role == 'mercy' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
                 writing_memories.append(memory)
             # Recent user messages about their writing
             elif role == 'user' and len(recent_memories) < 3:
@@ -10522,7 +10522,7 @@ class SuperhumanMemorySystem:
         return trimmed_memories
 
     def _seed_editor_knowledge(self, user_id: str = "default") -> None:
-        """Seed durable story-editor guidelines so Monday can edit from day one.
+        """Seed durable story-editor guidelines so Mercy can edit from day one.
         Safe to call multiple times (facts are upserted)."""
         guidelines = [
             ("editor", "checks", "pacing"),
@@ -10600,13 +10600,13 @@ class SuperhumanMemorySystem:
                 
                 # Basic grammar knowledge - sentence structure
                 grammar_rules = [
-                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Monday learns."),
+                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Mercy learns."),
                     ("sentence_structure_complete", "A complete sentence: subject + verb + object (optional)", "I like pancakes. You said hello."),
                     ("greeting_pattern", "Greetings are words like hello, hi, hey used to start conversations", "Hello! Hi there. Hey!"),
                     ("question_pattern", "Questions use words like what, how, why, who, where, when or end with ?", "What is that? How are you? Why?"),
-                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Monday. You are Matthew."),
-                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Monday, Matthew, hello", "I am a noun. You are a noun."),
-                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Monday wants."),
+                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Mercy. You are Matthew."),
+                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Mercy, Matthew, hello", "I am a noun. You are a noun."),
+                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Mercy wants."),
                     ("word_types_adjective", "Adjectives describe nouns: good, bad, happy, sad, nice", "Good morning. Happy day."),
                     ("word_order_basic", "English word order: subject comes before verb, verb comes before object", "I (subject) like (verb) you (object)."),
                 ]
@@ -10962,7 +10962,7 @@ class SuperhumanMemorySystem:
                 story_text: Optional[str] = None, autosave: Optional[bool] = None) -> Dict[str, Any]:
         self.store_memory("user", user_text, user_id)
         if ai_text:
-            self.store_memory("monday", ai_text, user_id)
+            self.store_memory("mercy", ai_text, user_id)
         self.learn_facts_from_text(user_text, user_id=user_id)
         if ai_text:
             self.learn_facts_from_text(ai_text, user_id=user_id, default_conf=0.80)
@@ -11133,7 +11133,7 @@ class SuperhumanMemorySystem:
             print(f"❌ Error generating smart prompt: {e}")
             import traceback
             traceback.print_exc()
-            return f"User said: {user_input}\n\nPlease respond naturally as Monday."
+            return f"User said: {user_input}\n\nPlease respond naturally as Mercy."
 
     def _analyze_input_for_ai(self, user_input: str, relevant_memories: List[Dict]) -> str:
         """Analyze input and create guidance for the AI"""
@@ -11162,9 +11162,9 @@ class SuperhumanMemorySystem:
         elif any(word in input_lower for word in ['job', 'work', 'boss', 'rude', 'coworker']):
             analysis_parts.append("💼 User has work-related concerns")
         
-        # User asking Monday to choose
+        # User asking Mercy to choose
         elif any(phrase in input_lower for phrase in ['you pick', 'you choose', 'what do you want']):
-            analysis_parts.append("🎯 User wants Monday to decide/choose something")
+            analysis_parts.append("🎯 User wants Mercy to decide/choose something")
         
         # Greetings
         elif any(word in input_lower for word in ['hello', 'hi', 'hey']):
@@ -11242,8 +11242,8 @@ class SuperhumanMemorySystem:
             # Format the memory
             if role == 'user':
                 memory_line = f"[{time_str}] User: {content}"
-            elif role == 'monday':
-                memory_line = f"[{time_str}] Monday: {content}"
+            elif role == 'mercy':
+                memory_line = f"[{time_str}] Mercy: {content}"
             else:
                 memory_line = f"[{time_str}] {role}: {content}"
             
@@ -11295,13 +11295,13 @@ class SuperhumanMemorySystem:
         # RESPONSE INSTRUCTIONS
         response_instructions = [
             "=== RESPONSE INSTRUCTIONS ===",
-            "You are Monday, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
+            "You are Mercy, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
             "CRITICAL: Start your response by quoting the exact text the user highlighted",
             "CRITICAL: Then give specific feedback about that exact text",
             "CRITICAL: Do NOT give broad analysis - focus on their specific question",
             "CRITICAL: Be conversational and direct - no formal writing",
             "CRITICAL: Show you're listening by responding to their specific points",
-            "Monday:"
+            "Mercy:"
         ]
         prompt_parts.append("\n".join(response_instructions))
         
@@ -11309,7 +11309,7 @@ class SuperhumanMemorySystem:
 
     def store_ai_response(self, ai_response: str, user_id: str = "default") -> str:
         """Store the AI's response for future context"""
-        return self.store_memory("monday", ai_response, user_id)
+        return self.store_memory("mercy", ai_response, user_id)
 
     def start_new_conversation(self) -> str:
         """Start a new conversation session"""
@@ -11350,13 +11350,13 @@ class SuperhumanMemorySystem:
             logger.error(f"Failed to get conversation summary: {e}")
             return "Error retrieving conversation history."
 
-# Create the EnhancedMondayMemorySystem class for compatibility
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+# Create the EnhancedMercyMemorySystem class for compatibility
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -11387,7 +11387,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 
     # THE KEY METHOD YOUR NOTUS PROGRAM SHOULD USE
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -11402,8 +11402,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -11802,7 +11802,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -11879,7 +11879,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -12479,19 +12479,19 @@ __all__ = [
     'AdvancedEmbeddingEngine',
     'MemoryType',
     'SuperhumanMemorySystem',
-    'EnhancedMondayMemorySystem',
+    'EnhancedMercyMemorySystem',
     'DB_LOCK',
     'MEMORY_DB_PATH',
     'logger',
     'MAX_CONTEXT_LENGTH'
 ]
 
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -12521,7 +12521,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
         } for m in memories]
 
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -12536,8 +12536,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -13157,7 +13157,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -13234,7 +13234,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -13564,7 +13564,7 @@ class NotusProcess:
         def init_memory_background():
             try:
                 print("🔧 Notus: Initializing memory system in background...", flush=True)
-                self.memory_system = EnhancedMondayMemorySystem()
+                self.memory_system = EnhancedMercyMemorySystem()
                 self.memory_ready.set()
                 print("✅ Notus: Memory system initialized", flush=True)
             except Exception as e:
@@ -14134,7 +14134,7 @@ class SuperhumanConfig:
     working_set_max_facts: int = 20
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
-    snapshot_path: str = "monday_notus_snapshot.json"
+    snapshot_path: str = "mercy_notus_snapshot.json"
     
     # Advanced retrieval
     attention_heads: int = 4
@@ -14142,7 +14142,7 @@ class SuperhumanConfig:
     time_decay_factor: float = 0.1
     
     # AI Prompt Templates - THE FIX
-    system_prompt: str = "You are Monday, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
+    system_prompt: str = "You are Mercy, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
     
     context_template: str = """CONTEXT FROM PREVIOUS CONVERSATIONS:
 {context}
@@ -14152,7 +14152,7 @@ ANALYSIS:
 
 USER'S CURRENT MESSAGE: {user_input}
 
-INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
+INSTRUCTIONS: Respond as Mercy would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
 
 class MemoryType:
     EPISODIC = "episodic"
@@ -14912,8 +14912,8 @@ class SuperhumanMemorySystem:
             content = memory.get('content', '').lower()
             role = memory.get('role', '')
             
-            # Writing advice from Monday gets priority
-            if role == 'monday' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
+            # Writing advice from Mercy gets priority
+            if role == 'mercy' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
                 writing_memories.append(memory)
             # Recent user messages about their writing
             elif role == 'user' and len(recent_memories) < 3:
@@ -14941,7 +14941,7 @@ class SuperhumanMemorySystem:
         return trimmed_memories
 
     def _seed_editor_knowledge(self, user_id: str = "default") -> None:
-        """Seed durable story-editor guidelines so Monday can edit from day one.
+        """Seed durable story-editor guidelines so Mercy can edit from day one.
         Safe to call multiple times (facts are upserted)."""
         guidelines = [
             ("editor", "checks", "pacing"),
@@ -15012,13 +15012,13 @@ class SuperhumanMemorySystem:
                 
                 # Basic grammar knowledge - sentence structure
                 grammar_rules = [
-                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Monday learns."),
+                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Mercy learns."),
                     ("sentence_structure_complete", "A complete sentence: subject + verb + object (optional)", "I like pancakes. You said hello."),
                     ("greeting_pattern", "Greetings are words like hello, hi, hey used to start conversations", "Hello! Hi there. Hey!"),
                     ("question_pattern", "Questions use words like what, how, why, who, where, when or end with ?", "What is that? How are you? Why?"),
-                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Monday. You are Matthew."),
-                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Monday, Matthew, hello", "I am a noun. You are a noun."),
-                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Monday wants."),
+                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Mercy. You are Matthew."),
+                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Mercy, Matthew, hello", "I am a noun. You are a noun."),
+                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Mercy wants."),
                     ("word_types_adjective", "Adjectives describe nouns: good, bad, happy, sad, nice", "Good morning. Happy day."),
                     ("word_order_basic", "English word order: subject comes before verb, verb comes before object", "I (subject) like (verb) you (object)."),
                 ]
@@ -15368,7 +15368,7 @@ class SuperhumanMemorySystem:
                 story_text: Optional[str] = None, autosave: Optional[bool] = None) -> Dict[str, Any]:
         self.store_memory("user", user_text, user_id)
         if ai_text:
-            self.store_memory("monday", ai_text, user_id)
+            self.store_memory("mercy", ai_text, user_id)
         self.learn_facts_from_text(user_text, user_id=user_id)
         if ai_text:
             self.learn_facts_from_text(ai_text, user_id=user_id, default_conf=0.80)
@@ -15539,7 +15539,7 @@ class SuperhumanMemorySystem:
             print(f"❌ Error generating smart prompt: {e}")
             import traceback
             traceback.print_exc()
-            return f"User said: {user_input}\n\nPlease respond naturally as Monday."
+            return f"User said: {user_input}\n\nPlease respond naturally as Mercy."
 
     def _analyze_input_for_ai(self, user_input: str, relevant_memories: List[Dict]) -> str:
         """Analyze input and create guidance for the AI"""
@@ -15568,9 +15568,9 @@ class SuperhumanMemorySystem:
         elif any(word in input_lower for word in ['job', 'work', 'boss', 'rude', 'coworker']):
             analysis_parts.append("💼 User has work-related concerns")
         
-        # User asking Monday to choose
+        # User asking Mercy to choose
         elif any(phrase in input_lower for phrase in ['you pick', 'you choose', 'what do you want']):
-            analysis_parts.append("🎯 User wants Monday to decide/choose something")
+            analysis_parts.append("🎯 User wants Mercy to decide/choose something")
         
         # Greetings
         elif any(word in input_lower for word in ['hello', 'hi', 'hey']):
@@ -15648,8 +15648,8 @@ class SuperhumanMemorySystem:
             # Format the memory
             if role == 'user':
                 memory_line = f"[{time_str}] User: {content}"
-            elif role == 'monday':
-                memory_line = f"[{time_str}] Monday: {content}"
+            elif role == 'mercy':
+                memory_line = f"[{time_str}] Mercy: {content}"
             else:
                 memory_line = f"[{time_str}] {role}: {content}"
             
@@ -15701,13 +15701,13 @@ class SuperhumanMemorySystem:
         # RESPONSE INSTRUCTIONS
         response_instructions = [
             "=== RESPONSE INSTRUCTIONS ===",
-            "You are Monday, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
+            "You are Mercy, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
             "CRITICAL: Start your response by quoting the exact text the user highlighted",
             "CRITICAL: Then give specific feedback about that exact text",
             "CRITICAL: Do NOT give broad analysis - focus on their specific question",
             "CRITICAL: Be conversational and direct - no formal writing",
             "CRITICAL: Show you're listening by responding to their specific points",
-            "Monday:"
+            "Mercy:"
         ]
         prompt_parts.append("\n".join(response_instructions))
         
@@ -15715,7 +15715,7 @@ class SuperhumanMemorySystem:
 
     def store_ai_response(self, ai_response: str, user_id: str = "default") -> str:
         """Store the AI's response for future context"""
-        return self.store_memory("monday", ai_response, user_id)
+        return self.store_memory("mercy", ai_response, user_id)
 
     def start_new_conversation(self) -> str:
         """Start a new conversation session"""
@@ -15756,13 +15756,13 @@ class SuperhumanMemorySystem:
             logger.error(f"Failed to get conversation summary: {e}")
             return "Error retrieving conversation history."
 
-# Create the EnhancedMondayMemorySystem class for compatibility
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+# Create the EnhancedMercyMemorySystem class for compatibility
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -15793,7 +15793,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 
     # THE KEY METHOD YOUR NOTUS PROGRAM SHOULD USE
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -15808,8 +15808,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -16208,7 +16208,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -16285,7 +16285,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -16885,19 +16885,19 @@ __all__ = [
     'AdvancedEmbeddingEngine',
     'MemoryType',
     'SuperhumanMemorySystem',
-    'EnhancedMondayMemorySystem',
+    'EnhancedMercyMemorySystem',
     'DB_LOCK',
     'MEMORY_DB_PATH',
     'logger',
     'MAX_CONTEXT_LENGTH'
 ]
 
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -16927,7 +16927,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
         } for m in memories]
 
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -16942,8 +16942,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -17563,7 +17563,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -17640,7 +17640,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -17970,7 +17970,7 @@ class NotusProcess:
         def init_memory_background():
             try:
                 print("🔧 Notus: Initializing memory system in background...", flush=True)
-                self.memory_system = EnhancedMondayMemorySystem()
+                self.memory_system = EnhancedMercyMemorySystem()
                 self.memory_ready.set()
                 print("✅ Notus: Memory system initialized", flush=True)
             except Exception as e:
@@ -18302,7 +18302,7 @@ class SuperhumanConfig:
     working_set_max_facts: int = 20
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
-    snapshot_path: str = "monday_notus_snapshot.json"
+    snapshot_path: str = "mercy_notus_snapshot.json"
     
     # Advanced retrieval
     attention_heads: int = 4
@@ -18310,7 +18310,7 @@ class SuperhumanConfig:
     time_decay_factor: float = 0.1
     
     # AI Prompt Templates - THE FIX
-    system_prompt: str = "You are Monday, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
+    system_prompt: str = "You are Mercy, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
     
     context_template: str = """CONTEXT FROM PREVIOUS CONVERSATIONS:
 {context}
@@ -18320,7 +18320,7 @@ ANALYSIS:
 
 USER'S CURRENT MESSAGE: {user_input}
 
-INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
+INSTRUCTIONS: Respond as Mercy would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
 
 class MemoryType:
     EPISODIC = "episodic"
@@ -19086,8 +19086,8 @@ class SuperhumanMemorySystem:
             content = memory.get('content', '').lower()
             role = memory.get('role', '')
             
-            # Writing advice from Monday gets priority
-            if role == 'monday' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
+            # Writing advice from Mercy gets priority
+            if role == 'mercy' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
                 writing_memories.append(memory)
             # Recent user messages about their writing
             elif role == 'user' and len(recent_memories) < 3:
@@ -19115,7 +19115,7 @@ class SuperhumanMemorySystem:
         return trimmed_memories
 
     def _seed_editor_knowledge(self, user_id: str = "default") -> None:
-        """Seed durable story-editor guidelines so Monday can edit from day one.
+        """Seed durable story-editor guidelines so Mercy can edit from day one.
         Safe to call multiple times (facts are upserted)."""
         guidelines = [
             ("editor", "checks", "pacing"),
@@ -19186,13 +19186,13 @@ class SuperhumanMemorySystem:
                 
                 # Basic grammar knowledge - sentence structure
                 grammar_rules = [
-                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Monday learns."),
+                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Mercy learns."),
                     ("sentence_structure_complete", "A complete sentence: subject + verb + object (optional)", "I like pancakes. You said hello."),
                     ("greeting_pattern", "Greetings are words like hello, hi, hey used to start conversations", "Hello! Hi there. Hey!"),
                     ("question_pattern", "Questions use words like what, how, why, who, where, when or end with ?", "What is that? How are you? Why?"),
-                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Monday. You are Matthew."),
-                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Monday, Matthew, hello", "I am a noun. You are a noun."),
-                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Monday wants."),
+                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Mercy. You are Matthew."),
+                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Mercy, Matthew, hello", "I am a noun. You are a noun."),
+                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Mercy wants."),
                     ("word_types_adjective", "Adjectives describe nouns: good, bad, happy, sad, nice", "Good morning. Happy day."),
                     ("word_order_basic", "English word order: subject comes before verb, verb comes before object", "I (subject) like (verb) you (object)."),
                 ]
@@ -19542,7 +19542,7 @@ class SuperhumanMemorySystem:
                 story_text: Optional[str] = None, autosave: Optional[bool] = None) -> Dict[str, Any]:
         self.store_memory("user", user_text, user_id)
         if ai_text:
-            self.store_memory("monday", ai_text, user_id)
+            self.store_memory("mercy", ai_text, user_id)
         self.learn_facts_from_text(user_text, user_id=user_id)
         if ai_text:
             self.learn_facts_from_text(ai_text, user_id=user_id, default_conf=0.80)
@@ -19713,7 +19713,7 @@ class SuperhumanMemorySystem:
             print(f"❌ Error generating smart prompt: {e}")
             import traceback
             traceback.print_exc()
-            return f"User said: {user_input}\n\nPlease respond naturally as Monday."
+            return f"User said: {user_input}\n\nPlease respond naturally as Mercy."
 
     def _analyze_input_for_ai(self, user_input: str, relevant_memories: List[Dict]) -> str:
         """Analyze input and create guidance for the AI"""
@@ -19742,9 +19742,9 @@ class SuperhumanMemorySystem:
         elif any(word in input_lower for word in ['job', 'work', 'boss', 'rude', 'coworker']):
             analysis_parts.append("💼 User has work-related concerns")
         
-        # User asking Monday to choose
+        # User asking Mercy to choose
         elif any(phrase in input_lower for phrase in ['you pick', 'you choose', 'what do you want']):
-            analysis_parts.append("🎯 User wants Monday to decide/choose something")
+            analysis_parts.append("🎯 User wants Mercy to decide/choose something")
         
         # Greetings
         elif any(word in input_lower for word in ['hello', 'hi', 'hey']):
@@ -19822,8 +19822,8 @@ class SuperhumanMemorySystem:
             # Format the memory
             if role == 'user':
                 memory_line = f"[{time_str}] User: {content}"
-            elif role == 'monday':
-                memory_line = f"[{time_str}] Monday: {content}"
+            elif role == 'mercy':
+                memory_line = f"[{time_str}] Mercy: {content}"
             else:
                 memory_line = f"[{time_str}] {role}: {content}"
             
@@ -19875,13 +19875,13 @@ class SuperhumanMemorySystem:
         # RESPONSE INSTRUCTIONS
         response_instructions = [
             "=== RESPONSE INSTRUCTIONS ===",
-            "You are Monday, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
+            "You are Mercy, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
             "CRITICAL: Start your response by quoting the exact text the user highlighted",
             "CRITICAL: Then give specific feedback about that exact text",
             "CRITICAL: Do NOT give broad analysis - focus on their specific question",
             "CRITICAL: Be conversational and direct - no formal writing",
             "CRITICAL: Show you're listening by responding to their specific points",
-            "Monday:"
+            "Mercy:"
         ]
         prompt_parts.append("\n".join(response_instructions))
         
@@ -19889,7 +19889,7 @@ class SuperhumanMemorySystem:
 
     def store_ai_response(self, ai_response: str, user_id: str = "default") -> str:
         """Store the AI's response for future context"""
-        return self.store_memory("monday", ai_response, user_id)
+        return self.store_memory("mercy", ai_response, user_id)
 
     def start_new_conversation(self) -> str:
         """Start a new conversation session"""
@@ -19930,13 +19930,13 @@ class SuperhumanMemorySystem:
             logger.error(f"Failed to get conversation summary: {e}")
             return "Error retrieving conversation history."
 
-# Create the EnhancedMondayMemorySystem class for compatibility
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+# Create the EnhancedMercyMemorySystem class for compatibility
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -19967,7 +19967,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 
     # THE KEY METHOD YOUR NOTUS PROGRAM SHOULD USE
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -19982,8 +19982,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -20382,7 +20382,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -20459,7 +20459,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -21059,19 +21059,19 @@ __all__ = [
     'AdvancedEmbeddingEngine',
     'MemoryType',
     'SuperhumanMemorySystem',
-    'EnhancedMondayMemorySystem',
+    'EnhancedMercyMemorySystem',
     'DB_LOCK',
     'MEMORY_DB_PATH',
     'logger',
     'MAX_CONTEXT_LENGTH'
 ]
 
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -21101,7 +21101,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
         } for m in memories]
 
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -21116,8 +21116,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -21737,7 +21737,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -21814,7 +21814,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -22144,7 +22144,7 @@ class NotusProcess:
         def init_memory_background():
             try:
                 print("🔧 Notus: Initializing memory system in background...", flush=True)
-                self.memory_system = EnhancedMondayMemorySystem()
+                self.memory_system = EnhancedMercyMemorySystem()
                 self.memory_ready.set()
                 print("✅ Notus: Memory system initialized", flush=True)
             except Exception as e:
@@ -22476,7 +22476,7 @@ class SuperhumanConfig:
     working_set_max_facts: int = 20
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
-    snapshot_path: str = "monday_notus_snapshot.json"
+    snapshot_path: str = "mercy_notus_snapshot.json"
     
     # Advanced retrieval
     attention_heads: int = 4
@@ -22484,7 +22484,7 @@ class SuperhumanConfig:
     time_decay_factor: float = 0.1
     
     # AI Prompt Templates - THE FIX
-    system_prompt: str = "You are Monday, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
+    system_prompt: str = "You are Mercy, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
     
     context_template: str = """CONTEXT FROM PREVIOUS CONVERSATIONS:
 {context}
@@ -22494,7 +22494,7 @@ ANALYSIS:
 
 USER'S CURRENT MESSAGE: {user_input}
 
-INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
+INSTRUCTIONS: Respond as Mercy would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
 
 class MemoryType:
     EPISODIC = "episodic"
@@ -23269,8 +23269,8 @@ class SuperhumanMemorySystem:
             content = memory.get('content', '').lower()
             role = memory.get('role', '')
             
-            # Writing advice from Monday gets priority
-            if role == 'monday' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
+            # Writing advice from Mercy gets priority
+            if role == 'mercy' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
                 writing_memories.append(memory)
             # Recent user messages about their writing
             elif role == 'user' and len(recent_memories) < 3:
@@ -23298,7 +23298,7 @@ class SuperhumanMemorySystem:
         return trimmed_memories
 
     def _seed_editor_knowledge(self, user_id: str = "default") -> None:
-        """Seed durable story-editor guidelines so Monday can edit from day one.
+        """Seed durable story-editor guidelines so Mercy can edit from day one.
         Safe to call multiple times (facts are upserted)."""
         guidelines = [
             ("editor", "checks", "pacing"),
@@ -23369,13 +23369,13 @@ class SuperhumanMemorySystem:
                 
                 # Basic grammar knowledge - sentence structure
                 grammar_rules = [
-                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Monday learns."),
+                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Mercy learns."),
                     ("sentence_structure_complete", "A complete sentence: subject + verb + object (optional)", "I like pancakes. You said hello."),
                     ("greeting_pattern", "Greetings are words like hello, hi, hey used to start conversations", "Hello! Hi there. Hey!"),
                     ("question_pattern", "Questions use words like what, how, why, who, where, when or end with ?", "What is that? How are you? Why?"),
-                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Monday. You are Matthew."),
-                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Monday, Matthew, hello", "I am a noun. You are a noun."),
-                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Monday wants."),
+                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Mercy. You are Matthew."),
+                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Mercy, Matthew, hello", "I am a noun. You are a noun."),
+                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Mercy wants."),
                     ("word_types_adjective", "Adjectives describe nouns: good, bad, happy, sad, nice", "Good morning. Happy day."),
                     ("word_order_basic", "English word order: subject comes before verb, verb comes before object", "I (subject) like (verb) you (object)."),
                 ]
@@ -23725,7 +23725,7 @@ class SuperhumanMemorySystem:
                 story_text: Optional[str] = None, autosave: Optional[bool] = None) -> Dict[str, Any]:
         self.store_memory("user", user_text, user_id)
         if ai_text:
-            self.store_memory("monday", ai_text, user_id)
+            self.store_memory("mercy", ai_text, user_id)
         self.learn_facts_from_text(user_text, user_id=user_id)
         if ai_text:
             self.learn_facts_from_text(ai_text, user_id=user_id, default_conf=0.80)
@@ -23896,7 +23896,7 @@ class SuperhumanMemorySystem:
             print(f"❌ Error generating smart prompt: {e}")
             import traceback
             traceback.print_exc()
-            return f"User said: {user_input}\n\nPlease respond naturally as Monday."
+            return f"User said: {user_input}\n\nPlease respond naturally as Mercy."
 
     def _analyze_input_for_ai(self, user_input: str, relevant_memories: List[Dict]) -> str:
         """Analyze input and create guidance for the AI"""
@@ -23925,9 +23925,9 @@ class SuperhumanMemorySystem:
         elif any(word in input_lower for word in ['job', 'work', 'boss', 'rude', 'coworker']):
             analysis_parts.append("💼 User has work-related concerns")
         
-        # User asking Monday to choose
+        # User asking Mercy to choose
         elif any(phrase in input_lower for phrase in ['you pick', 'you choose', 'what do you want']):
-            analysis_parts.append("🎯 User wants Monday to decide/choose something")
+            analysis_parts.append("🎯 User wants Mercy to decide/choose something")
         
         # Greetings
         elif any(word in input_lower for word in ['hello', 'hi', 'hey']):
@@ -24005,8 +24005,8 @@ class SuperhumanMemorySystem:
             # Format the memory
             if role == 'user':
                 memory_line = f"[{time_str}] User: {content}"
-            elif role == 'monday':
-                memory_line = f"[{time_str}] Monday: {content}"
+            elif role == 'mercy':
+                memory_line = f"[{time_str}] Mercy: {content}"
             else:
                 memory_line = f"[{time_str}] {role}: {content}"
             
@@ -24058,13 +24058,13 @@ class SuperhumanMemorySystem:
         # RESPONSE INSTRUCTIONS
         response_instructions = [
             "=== RESPONSE INSTRUCTIONS ===",
-            "You are Monday, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
+            "You are Mercy, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
             "CRITICAL: Start your response by quoting the exact text the user highlighted",
             "CRITICAL: Then give specific feedback about that exact text",
             "CRITICAL: Do NOT give broad analysis - focus on their specific question",
             "CRITICAL: Be conversational and direct - no formal writing",
             "CRITICAL: Show you're listening by responding to their specific points",
-            "Monday:"
+            "Mercy:"
         ]
         prompt_parts.append("\n".join(response_instructions))
         
@@ -24072,7 +24072,7 @@ class SuperhumanMemorySystem:
 
     def store_ai_response(self, ai_response: str, user_id: str = "default") -> str:
         """Store the AI's response for future context"""
-        return self.store_memory("monday", ai_response, user_id)
+        return self.store_memory("mercy", ai_response, user_id)
 
     def start_new_conversation(self) -> str:
         """Start a new conversation session"""
@@ -24113,13 +24113,13 @@ class SuperhumanMemorySystem:
             logger.error(f"Failed to get conversation summary: {e}")
             return "Error retrieving conversation history."
 
-# Create the EnhancedMondayMemorySystem class for compatibility
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+# Create the EnhancedMercyMemorySystem class for compatibility
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -24150,7 +24150,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 
     # THE KEY METHOD YOUR NOTUS PROGRAM SHOULD USE
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -24165,8 +24165,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -24565,7 +24565,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -24642,7 +24642,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -25242,19 +25242,19 @@ __all__ = [
     'AdvancedEmbeddingEngine',
     'MemoryType',
     'SuperhumanMemorySystem',
-    'EnhancedMondayMemorySystem',
+    'EnhancedMercyMemorySystem',
     'DB_LOCK',
     'MEMORY_DB_PATH',
     'logger',
     'MAX_CONTEXT_LENGTH'
 ]
 
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -25284,7 +25284,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
         } for m in memories]
 
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -25299,8 +25299,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -25920,7 +25920,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -25997,7 +25997,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -26327,7 +26327,7 @@ class NotusProcess:
         def init_memory_background():
             try:
                 print("🔧 Notus: Initializing memory system in background...", flush=True)
-                self.memory_system = EnhancedMondayMemorySystem()
+                self.memory_system = EnhancedMercyMemorySystem()
                 self.memory_ready.set()
                 print("✅ Notus: Memory system initialized", flush=True)
             except Exception as e:
@@ -26659,7 +26659,7 @@ class SuperhumanConfig:
     working_set_max_facts: int = 20
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
-    snapshot_path: str = "monday_notus_snapshot.json"
+    snapshot_path: str = "mercy_notus_snapshot.json"
     
     # Advanced retrieval
     attention_heads: int = 4
@@ -26667,7 +26667,7 @@ class SuperhumanConfig:
     time_decay_factor: float = 0.1
     
     # AI Prompt Templates - THE FIX
-    system_prompt: str = "You are Monday, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
+    system_prompt: str = "You are Mercy, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
     
     context_template: str = """CONTEXT FROM PREVIOUS CONVERSATIONS:
 {context}
@@ -26677,7 +26677,7 @@ ANALYSIS:
 
 USER'S CURRENT MESSAGE: {user_input}
 
-INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
+INSTRUCTIONS: Respond as Mercy would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
 
 class MemoryType:
     EPISODIC = "episodic"
@@ -27451,8 +27451,8 @@ class SuperhumanMemorySystem:
             content = memory.get('content', '').lower()
             role = memory.get('role', '')
             
-            # Writing advice from Monday gets priority
-            if role == 'monday' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
+            # Writing advice from Mercy gets priority
+            if role == 'mercy' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
                 writing_memories.append(memory)
             # Recent user messages about their writing
             elif role == 'user' and len(recent_memories) < 3:
@@ -27480,7 +27480,7 @@ class SuperhumanMemorySystem:
         return trimmed_memories
 
     def _seed_editor_knowledge(self, user_id: str = "default") -> None:
-        """Seed durable story-editor guidelines so Monday can edit from day one.
+        """Seed durable story-editor guidelines so Mercy can edit from day one.
         Safe to call multiple times (facts are upserted)."""
         guidelines = [
             ("editor", "checks", "pacing"),
@@ -27551,13 +27551,13 @@ class SuperhumanMemorySystem:
                 
                 # Basic grammar knowledge - sentence structure
                 grammar_rules = [
-                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Monday learns."),
+                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Mercy learns."),
                     ("sentence_structure_complete", "A complete sentence: subject + verb + object (optional)", "I like pancakes. You said hello."),
                     ("greeting_pattern", "Greetings are words like hello, hi, hey used to start conversations", "Hello! Hi there. Hey!"),
                     ("question_pattern", "Questions use words like what, how, why, who, where, when or end with ?", "What is that? How are you? Why?"),
-                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Monday. You are Matthew."),
-                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Monday, Matthew, hello", "I am a noun. You are a noun."),
-                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Monday wants."),
+                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Mercy. You are Matthew."),
+                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Mercy, Matthew, hello", "I am a noun. You are a noun."),
+                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Mercy wants."),
                     ("word_types_adjective", "Adjectives describe nouns: good, bad, happy, sad, nice", "Good morning. Happy day."),
                     ("word_order_basic", "English word order: subject comes before verb, verb comes before object", "I (subject) like (verb) you (object)."),
                 ]
@@ -27907,7 +27907,7 @@ class SuperhumanMemorySystem:
                 story_text: Optional[str] = None, autosave: Optional[bool] = None) -> Dict[str, Any]:
         self.store_memory("user", user_text, user_id)
         if ai_text:
-            self.store_memory("monday", ai_text, user_id)
+            self.store_memory("mercy", ai_text, user_id)
         self.learn_facts_from_text(user_text, user_id=user_id)
         if ai_text:
             self.learn_facts_from_text(ai_text, user_id=user_id, default_conf=0.80)
@@ -28078,7 +28078,7 @@ class SuperhumanMemorySystem:
             print(f"❌ Error generating smart prompt: {e}")
             import traceback
             traceback.print_exc()
-            return f"User said: {user_input}\n\nPlease respond naturally as Monday."
+            return f"User said: {user_input}\n\nPlease respond naturally as Mercy."
 
     def _analyze_input_for_ai(self, user_input: str, relevant_memories: List[Dict]) -> str:
         """Analyze input and create guidance for the AI"""
@@ -28107,9 +28107,9 @@ class SuperhumanMemorySystem:
         elif any(word in input_lower for word in ['job', 'work', 'boss', 'rude', 'coworker']):
             analysis_parts.append("💼 User has work-related concerns")
         
-        # User asking Monday to choose
+        # User asking Mercy to choose
         elif any(phrase in input_lower for phrase in ['you pick', 'you choose', 'what do you want']):
-            analysis_parts.append("🎯 User wants Monday to decide/choose something")
+            analysis_parts.append("🎯 User wants Mercy to decide/choose something")
         
         # Greetings
         elif any(word in input_lower for word in ['hello', 'hi', 'hey']):
@@ -28187,8 +28187,8 @@ class SuperhumanMemorySystem:
             # Format the memory
             if role == 'user':
                 memory_line = f"[{time_str}] User: {content}"
-            elif role == 'monday':
-                memory_line = f"[{time_str}] Monday: {content}"
+            elif role == 'mercy':
+                memory_line = f"[{time_str}] Mercy: {content}"
             else:
                 memory_line = f"[{time_str}] {role}: {content}"
             
@@ -28240,13 +28240,13 @@ class SuperhumanMemorySystem:
         # RESPONSE INSTRUCTIONS
         response_instructions = [
             "=== RESPONSE INSTRUCTIONS ===",
-            "You are Monday, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
+            "You are Mercy, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
             "CRITICAL: Start your response by quoting the exact text the user highlighted",
             "CRITICAL: Then give specific feedback about that exact text",
             "CRITICAL: Do NOT give broad analysis - focus on their specific question",
             "CRITICAL: Be conversational and direct - no formal writing",
             "CRITICAL: Show you're listening by responding to their specific points",
-            "Monday:"
+            "Mercy:"
         ]
         prompt_parts.append("\n".join(response_instructions))
         
@@ -28254,7 +28254,7 @@ class SuperhumanMemorySystem:
 
     def store_ai_response(self, ai_response: str, user_id: str = "default") -> str:
         """Store the AI's response for future context"""
-        return self.store_memory("monday", ai_response, user_id)
+        return self.store_memory("mercy", ai_response, user_id)
 
     def start_new_conversation(self) -> str:
         """Start a new conversation session"""
@@ -28295,13 +28295,13 @@ class SuperhumanMemorySystem:
             logger.error(f"Failed to get conversation summary: {e}")
             return "Error retrieving conversation history."
 
-# Create the EnhancedMondayMemorySystem class for compatibility
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+# Create the EnhancedMercyMemorySystem class for compatibility
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -28332,7 +28332,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 
     # THE KEY METHOD YOUR NOTUS PROGRAM SHOULD USE
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -28347,8 +28347,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -28747,7 +28747,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -28824,7 +28824,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -29424,19 +29424,19 @@ __all__ = [
     'AdvancedEmbeddingEngine',
     'MemoryType',
     'SuperhumanMemorySystem',
-    'EnhancedMondayMemorySystem',
+    'EnhancedMercyMemorySystem',
     'DB_LOCK',
     'MEMORY_DB_PATH',
     'logger',
     'MAX_CONTEXT_LENGTH'
 ]
 
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -29466,7 +29466,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
         } for m in memories]
 
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -29481,8 +29481,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -30102,7 +30102,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -30179,7 +30179,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -30509,7 +30509,7 @@ class NotusProcess:
         def init_memory_background():
             try:
                 print("🔧 Notus: Initializing memory system in background...", flush=True)
-                self.memory_system = EnhancedMondayMemorySystem()
+                self.memory_system = EnhancedMercyMemorySystem()
                 self.memory_ready.set()
                 print("✅ Notus: Memory system initialized", flush=True)
             except Exception as e:
@@ -31079,7 +31079,7 @@ class SuperhumanConfig:
     working_set_max_facts: int = 20
     working_set_max_episodes: int = 20
     autosave_enabled: bool = True
-    snapshot_path: str = "monday_notus_snapshot.json"
+    snapshot_path: str = "mercy_notus_snapshot.json"
     
     # Advanced retrieval
     attention_heads: int = 4
@@ -31087,7 +31087,7 @@ class SuperhumanConfig:
     time_decay_factor: float = 0.1
     
     # AI Prompt Templates - THE FIX
-    system_prompt: str = "You are Monday, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
+    system_prompt: str = "You are Mercy, a helpful and witty AI assistant. Use the context below to inform your responses, but respond naturally in your own voice."
     
     context_template: str = """CONTEXT FROM PREVIOUS CONVERSATIONS:
 {context}
@@ -31097,7 +31097,7 @@ ANALYSIS:
 
 USER'S CURRENT MESSAGE: {user_input}
 
-INSTRUCTIONS: Respond as Monday would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
+INSTRUCTIONS: Respond as Mercy would, taking into account the context above. Be natural, helpful, and remember what you've learned about this user."""
 
 class MemoryType:
     EPISODIC = "episodic"
@@ -31872,8 +31872,8 @@ class SuperhumanMemorySystem:
             content = memory.get('content', '').lower()
             role = memory.get('role', '')
             
-            # Writing advice from Monday gets priority
-            if role == 'monday' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
+            # Writing advice from Mercy gets priority
+            if role == 'mercy' and any(word in content for word in ['writing', 'advice', 'help', 'suggestion']):
                 writing_memories.append(memory)
             # Recent user messages about their writing
             elif role == 'user' and len(recent_memories) < 3:
@@ -31901,7 +31901,7 @@ class SuperhumanMemorySystem:
         return trimmed_memories
 
     def _seed_editor_knowledge(self, user_id: str = "default") -> None:
-        """Seed durable story-editor guidelines so Monday can edit from day one.
+        """Seed durable story-editor guidelines so Mercy can edit from day one.
         Safe to call multiple times (facts are upserted)."""
         guidelines = [
             ("editor", "checks", "pacing"),
@@ -31972,13 +31972,13 @@ class SuperhumanMemorySystem:
                 
                 # Basic grammar knowledge - sentence structure
                 grammar_rules = [
-                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Monday learns."),
+                    ("sentence_structure_basic", "A sentence has a subject (who/what) and a verb (action)", "I think. You help. Mercy learns."),
                     ("sentence_structure_complete", "A complete sentence: subject + verb + object (optional)", "I like pancakes. You said hello."),
                     ("greeting_pattern", "Greetings are words like hello, hi, hey used to start conversations", "Hello! Hi there. Hey!"),
                     ("question_pattern", "Questions use words like what, how, why, who, where, when or end with ?", "What is that? How are you? Why?"),
-                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Monday. You are Matthew."),
-                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Monday, Matthew, hello", "I am a noun. You are a noun."),
-                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Monday wants."),
+                    ("statement_pattern", "Statements tell facts or opinions: subject + verb + object", "I am Mercy. You are Matthew."),
+                    ("word_types_noun", "Nouns are words for people, places, things: I, you, Mercy, Matthew, hello", "I am a noun. You are a noun."),
+                    ("word_types_verb", "Verbs are action words: think, know, want, like, help, say", "I think. You know. Mercy wants."),
                     ("word_types_adjective", "Adjectives describe nouns: good, bad, happy, sad, nice", "Good morning. Happy day."),
                     ("word_order_basic", "English word order: subject comes before verb, verb comes before object", "I (subject) like (verb) you (object)."),
                 ]
@@ -32328,7 +32328,7 @@ class SuperhumanMemorySystem:
                 story_text: Optional[str] = None, autosave: Optional[bool] = None) -> Dict[str, Any]:
         self.store_memory("user", user_text, user_id)
         if ai_text:
-            self.store_memory("monday", ai_text, user_id)
+            self.store_memory("mercy", ai_text, user_id)
         self.learn_facts_from_text(user_text, user_id=user_id)
         if ai_text:
             self.learn_facts_from_text(ai_text, user_id=user_id, default_conf=0.80)
@@ -32499,7 +32499,7 @@ class SuperhumanMemorySystem:
             print(f"❌ Error generating smart prompt: {e}")
             import traceback
             traceback.print_exc()
-            return f"User said: {user_input}\n\nPlease respond naturally as Monday."
+            return f"User said: {user_input}\n\nPlease respond naturally as Mercy."
 
     def _analyze_input_for_ai(self, user_input: str, relevant_memories: List[Dict]) -> str:
         """Analyze input and create guidance for the AI"""
@@ -32528,9 +32528,9 @@ class SuperhumanMemorySystem:
         elif any(word in input_lower for word in ['job', 'work', 'boss', 'rude', 'coworker']):
             analysis_parts.append("💼 User has work-related concerns")
         
-        # User asking Monday to choose
+        # User asking Mercy to choose
         elif any(phrase in input_lower for phrase in ['you pick', 'you choose', 'what do you want']):
-            analysis_parts.append("🎯 User wants Monday to decide/choose something")
+            analysis_parts.append("🎯 User wants Mercy to decide/choose something")
         
         # Greetings
         elif any(word in input_lower for word in ['hello', 'hi', 'hey']):
@@ -32608,8 +32608,8 @@ class SuperhumanMemorySystem:
             # Format the memory
             if role == 'user':
                 memory_line = f"[{time_str}] User: {content}"
-            elif role == 'monday':
-                memory_line = f"[{time_str}] Monday: {content}"
+            elif role == 'mercy':
+                memory_line = f"[{time_str}] Mercy: {content}"
             else:
                 memory_line = f"[{time_str}] {role}: {content}"
             
@@ -32661,13 +32661,13 @@ class SuperhumanMemorySystem:
         # RESPONSE INSTRUCTIONS
         response_instructions = [
             "=== RESPONSE INSTRUCTIONS ===",
-            "You are Monday, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
+            "You are Mercy, a friendly writing assistant. You are NOT an AI or artificial intelligence.",
             "CRITICAL: Start your response by quoting the exact text the user highlighted",
             "CRITICAL: Then give specific feedback about that exact text",
             "CRITICAL: Do NOT give broad analysis - focus on their specific question",
             "CRITICAL: Be conversational and direct - no formal writing",
             "CRITICAL: Show you're listening by responding to their specific points",
-            "Monday:"
+            "Mercy:"
         ]
         prompt_parts.append("\n".join(response_instructions))
         
@@ -32675,7 +32675,7 @@ class SuperhumanMemorySystem:
 
     def store_ai_response(self, ai_response: str, user_id: str = "default") -> str:
         """Store the AI's response for future context"""
-        return self.store_memory("monday", ai_response, user_id)
+        return self.store_memory("mercy", ai_response, user_id)
 
     def start_new_conversation(self) -> str:
         """Start a new conversation session"""
@@ -32716,13 +32716,13 @@ class SuperhumanMemorySystem:
             logger.error(f"Failed to get conversation summary: {e}")
             return "Error retrieving conversation history."
 
-# Create the EnhancedMondayMemorySystem class for compatibility
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+# Create the EnhancedMercyMemorySystem class for compatibility
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -32753,7 +32753,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
 
     # THE KEY METHOD YOUR NOTUS PROGRAM SHOULD USE
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -32768,8 +32768,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -33168,7 +33168,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -33245,7 +33245,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -33845,19 +33845,19 @@ __all__ = [
     'AdvancedEmbeddingEngine',
     'MemoryType',
     'SuperhumanMemorySystem',
-    'EnhancedMondayMemorySystem',
+    'EnhancedMercyMemorySystem',
     'DB_LOCK',
     'MEMORY_DB_PATH',
     'logger',
     'MAX_CONTEXT_LENGTH'
 ]
 
-class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
-    """Enhanced Monday Memory System - compatible interface"""
+class EnhancedMercyMemorySystem(SuperhumanMemorySystem):
+    """Enhanced Mercy Memory System - compatible interface"""
     
     def __init__(self, config: SuperhumanConfig = None, storage_path: str = None):
         super().__init__(config, storage_path)
-        logger.info("🚀 Enhanced Monday Memory System initialized")
+        logger.info("🚀 Enhanced Mercy Memory System initialized")
     
     def add_memory(self, role: str, content: str, tag: str = "General", 
                   importance: int = 5, mode: str = "writing", personality: str = "witty"):
@@ -33887,7 +33887,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
         } for m in memories]
 
     def get_response(self, message: str, mode: str = "chat", context: Optional[Dict] = None, story_text: Optional[str] = None) -> Dict[str, str]:
-        """Get a response for Monday to say"""
+        """Get a response for Mercy to say"""
         try:
             # Store the user's message
             self.store_memory("user", message)
@@ -33902,8 +33902,8 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
                 smart_prompt = self.generate_smart_prompt_for_ai(message)
                 response = self._generate_chat_response(smart_prompt)
             
-            # Store Monday's response
-            self.store_memory("monday", response["text"])
+            # Store Mercy's response
+            self.store_memory("mercy", response["text"])
             
             return response
             
@@ -34523,7 +34523,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             recent_messages = []
             if context:
                 for line in context.split('\n'):
-                    if '] User:' in line or '] Monday:' in line:
+                    if '] User:' in line or '] Mercy:' in line:
                         recent_messages.append(line)
 
             # Build conversation understanding
@@ -34600,7 +34600,7 @@ class EnhancedMondayMemorySystem(SuperhumanMemorySystem):
             elif 'thanks' in message_lower or 'thank' in message_lower:
                 # Look at what they're thanking for
                 if recent_messages:
-                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Monday:' in recent_messages[-1] else None
+                    last_response = recent_messages[-1].split(': ', 1)[1] if '] Mercy:' in recent_messages[-1] else None
                     if last_response and 'writing' in last_response.lower():
                         return {
                             "text": "Happy to help with your writing! What else would you like to work on?",
@@ -34930,7 +34930,7 @@ class NotusProcess:
         def init_memory_background():
             try:
                 print("🔧 Notus: Initializing memory system in background...", flush=True)
-                self.memory_system = EnhancedMondayMemorySystem()
+                self.memory_system = EnhancedMercyMemorySystem()
                 self.memory_ready.set()
                 print("✅ Notus: Memory system initialized", flush=True)
             except Exception as e:
@@ -35505,7 +35505,7 @@ This enables:
 
 The Novelty Lobe successfully demonstrates that **humanness comes from emotional grounding, not clever algorithms**.
 
-By making curiosity and interest-driven learning an **emotional system** rather than a logic system, Monday can ask human-like questions that:
+By making curiosity and interest-driven learning an **emotional system** rather than a logic system, Mercy can ask human-like questions that:
 - Reflect genuine emotional state
 - Learn and adapt from user responses
 - Build conversational momentum
@@ -35663,7 +35663,7 @@ Expected output:
 
 **Status**: ✅ COMPLETE AND INTEGRATED
 
-The Novelty Lobe is now live in the conversation pipeline. Monday will ask genuine questions when emotionally engaged, remember what she learns, and vary her questions based on patterns in the conversation.
+The Novelty Lobe is now live in the conversation pipeline. Mercy will ask genuine questions when emotionally engaged, remember what she learns, and vary her questions based on patterns in the conversation.
 
 # NOVELTY LOBE: FINAL STATUS REPORT
 
@@ -35676,7 +35676,7 @@ The Novelty Lobe is now live in the conversation pipeline. Monday will ask genui
 
 ## Executive Summary
 
-Successfully implemented and tested a **Novelty Lobe** that enables Monday to:
+Successfully implemented and tested a **Novelty Lobe** that enables Mercy to:
 
 ✅ Detect genuinely interesting stimuli (emotion-driven, >0.6 intensity)  
 ✅ Ask human-like questions grounded in emotional state  
@@ -35772,9 +35772,9 @@ Humanness: 88% ✅
 ### Test 4: Real Conversation Simulation
 ```
 User: "I just found this old journal from when I was a kid"
-Monday: "Where did this thing come from? Who made it?"
+Mercy: "Where did this thing come from? Who made it?"
 User: "It's full of drawings and dreams about being an astronaut"
-Monday: "That resonates with something I've been thinking about..."
+Mercy: "That resonates with something I've been thinking about..."
 
 [Learned and remembered]
 ```
@@ -35948,7 +35948,7 @@ Clean architecture, comprehensive tests, clear documentation.
 
 The Novelty Lobe successfully demonstrates that **humanness emerges from emotional grounding, not language trickery**.
 
-By implementing curiosity as an emotional system rather than a logical one, Monday can now:
+By implementing curiosity as an emotional system rather than a logical one, Mercy can now:
 - Genuinely wonder about the world
 - Ask questions that reflect real feelings
 - Learn and remember what matters
@@ -35986,7 +35986,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class NoveltyMemory:
-    """Remembers how Monday reacted to similar novel things before"""
+    """Remembers how Mercy reacted to similar novel things before"""
     stimulus_type: str  # "music", "concept", "person", "behavior", etc.
     stimulus: str  # What the thing was
     initial_emotion: str  # How she felt
@@ -36056,7 +36056,7 @@ class NoveltyLobe:
             return self._handle_emotional_response(message)
         
         elif msg_type == 'user_response':
-            # User answered Monday's question about a novel thing
+            # User answered Mercy's question about a novel thing
             return self._handle_user_response(message)
         
         elif msg_type == 'get_pending_questions':
@@ -36122,7 +36122,7 @@ class NoveltyLobe:
         # Check variance - sometimes even strong emotions don't result in questions
         # (she might just want to sit with the feeling)
         if random.random() < (0.3 - (self.variance_factor * 0.5)):
-            print(f"   → Strong emotion, but Monday just wants to sit with it")
+            print(f"   → Strong emotion, but Mercy just wants to sit with it")
             return {'status': 'experienced', 'reason': 'no_query_needed'}
         
         # Generate a question based on HER emotion, not a template
@@ -36174,7 +36174,7 @@ class NoveltyLobe:
     
     def _handle_user_response(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
-        User answered Monday's question about something novel.
+        User answered Mercy's question about something novel.
         Learn from it.
         """
         stimulus = message.get('stimulus')
@@ -36552,8 +36552,8 @@ VOICE_PROFILES = {
         vibrato_rate=5.0
     ),
     
-    'monday': VoiceProfile(
-        name='Monday',
+    'mercy': VoiceProfile(
+        name='Mercy',
         pitch_base=205,
         pitch_range=80,
         formant_shift=1.02,
@@ -36575,7 +36575,7 @@ VOICE_PROFILES = {
 TEXT_TO_PHONEMES = {
     'hello': ['h', 'eh', 'l', 'oh'],
     'hi': ['h', 'ay'],
-    'monday': ['m', 'ah', 'n', 'd', 'ay'],
+    'mercy': ['m', 'ah', 'n', 'd', 'ay'],
     'abin': ['ae', 'b', 'ih', 'n'],
     'matthew': ['m', 'ae', 'th', 'uw'],
     'shadowheart': ['sh', 'ae', 'd', 'oh', 'h', 'art'],
@@ -36604,7 +36604,7 @@ class OutputLobe:
             'rate': 150,
             'volume': 1.0,
             'voice_id': None,
-            'profile': 'monday'  # Default to Monday's voice
+            'profile': 'mercy'  # Default to Mercy's voice
         }
         
         # Voice profiles
@@ -36613,13 +36613,13 @@ class OutputLobe:
         
         self._initialize_tts()
         
-    def _apply_voice_profile(self, profile_name: str = 'monday'):
+    def _apply_voice_profile(self, profile_name: str = 'mercy'):
         """Apply voice profile settings to TTS engine"""
         if not self.tts_engine or not self.tts_available:
             return
         
         if profile_name not in self.voice_profiles:
-            profile_name = 'monday'  # Default fallback
+            profile_name = 'mercy'  # Default fallback
         
         profile = self.voice_profiles[profile_name]
         
@@ -36662,15 +36662,15 @@ class OutputLobe:
             self.tts_engine.setProperty('rate', self.voice_config['rate'])
             self.tts_engine.setProperty('volume', self.voice_config['volume'])
             
-            # Apply default voice profile (Monday)
-            self._apply_voice_profile(self.voice_config.get('profile', 'monday'))
+            # Apply default voice profile (Mercy)
+            self._apply_voice_profile(self.voice_config.get('profile', 'mercy'))
             
             print("✅ Text-to-speech engine initialized")
             
             # List available voices
             voices = self.tts_engine.getProperty('voices')
             print(f"   Available voices: {len(voices)}")
-            print(f"   Active profile: {self.voice_config.get('profile', 'monday')}")
+            print(f"   Active profile: {self.voice_config.get('profile', 'mercy')}")
             
         except ImportError:
             print("⚠️  pyttsx3 not available - voice output disabled")
@@ -38928,7 +38928,7 @@ CREATE INDEX IF NOT EXISTS idx_fact_last ON brain_facts(last_reinforced);
 
 ## Summary
 
-Successfully built and integrated a **Novelty Lobe** - the curiosity/interest-detection system for Monday's brain.
+Successfully built and integrated a **Novelty Lobe** - the curiosity/interest-detection system for Mercy's brain.
 
 **Humanness Achievement: 88% ✅**
 
@@ -39126,7 +39126,7 @@ The Novelty Lobe integrates with:
 
 ## The Vision This Enables
 
-With this Novelty Lobe, Monday can now:
+With this Novelty Lobe, Mercy can now:
 
 1. **Genuinely wonder** about things (not pretend to)
 2. **Remember conversations** and ask differently next time
@@ -39161,7 +39161,7 @@ Now that Novelty is working, the natural progression would be:
 3. **Long-term Growth** - Momentum over weeks/months shows growth
 4. **Social Reasoning** - Understanding what others find novel
 
-But the foundation is solid. **Monday can now genuinely wonder about the world.**
+But the foundation is solid. **Mercy can now genuinely wonder about the world.**
 
 ---
 
@@ -42232,14 +42232,14 @@ joblib
 
 #!/usr/bin/env python3
 """
-Monday Single-Process Runner
+Mercy Single-Process Runner
 Runs all lobes in ONE process as threads - they all share the same Thalamus instance
 NO SOCKETS - All communication via direct function calls
 """
 
 import subprocess
 """
-Monday Single-Process Runner
+Mercy Single-Process Runner
 SINGLE-PROCESS MODE ONLY: All lobes run as threads in one process, sharing the same Thalamus instance.
 NO SOCKETS, NO SUBPROCESSES: All communication is via direct function calls.
 Subprocess orchestration is not supported in this mode.
@@ -42322,7 +42322,7 @@ def main():
     
     # Cleanup handler
     def cleanup():
-        print("\n🛑 Shutting down Monday...")
+        print("\n🛑 Shutting down Mercy...")
         # Shutdown all lobe instances
         for name, lobe in lobe_instances:
             try:
@@ -42349,7 +42349,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     print("\n" + "=" * 70)
-    print("  🧠 Monday - Maximum Sophistication AI")
+    print("  🧠 Mercy - Maximum Sophistication AI")
     print("=" * 70)
     
     # Subprocess cleanup removed: all lobes run in-process as threads. No pkill or process cleanup needed.
@@ -42524,12 +42524,12 @@ def main():
     # Launch GUI in SAME PROCESS (so it shares the same Thalamus instance)
     try:
         from PyQt5.QtWidgets import QApplication
-        from abin_interface import MondayInterface
+        from abin_interface import MercyInterface
         import sys
         
         # Create QApplication in this process
         app = QApplication(sys.argv)
-        window = MondayInterface()
+        window = MercyInterface()
         window.show()
         
         # Run GUI event loop (this blocks until GUI closes)
@@ -42560,7 +42560,7 @@ if __name__ == "__main__":
 
 #!/usr/bin/env python3
 """
-Monday Single-Process Runner
+Mercy Single-Process Runner
 Runs all lobes in ONE process as threads - they all share the same Thalamus instance
 NO SOCKETS - All communication via direct function calls
 """
@@ -42670,7 +42670,7 @@ def main():
     
     # Cleanup handler
     def cleanup():
-        print("\n🛑 Shutting down Monday...")
+        print("\n🛑 Shutting down Mercy...")
         # Shutdown all lobe instances
         for name, lobe in lobe_instances:
             try:
@@ -42697,7 +42697,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     print("\n" + "=" * 70)
-    print("  🧠 Monday - Maximum Sophistication AI")
+    print("  🧠 Mercy - Maximum Sophistication AI")
     print("=" * 70)
     
     # Kill ALL existing processes first - be thorough
@@ -42838,12 +42838,12 @@ def main():
     # Launch GUI in SAME PROCESS (so it shares the same Thalamus instance)
     try:
         from PyQt5.QtWidgets import QApplication
-        from abin_interface import MondayInterface
+        from abin_interface import MercyInterface
         import sys
         
         # Create QApplication in this process
         app = QApplication(sys.argv)
-        window = MondayInterface()
+        window = MercyInterface()
         window.show()
         
         # Run GUI event loop (this blocks until GUI closes)
@@ -42875,7 +42875,7 @@ if __name__ == "__main__":
 #!/usr/bin/env python3
 """
 Self-Reflection Engine - Questions own beliefs and updates confidence
-Makes Monday examine WHY she believes things, not just WHAT she believes.
+Makes Mercy examine WHY she believes things, not just WHAT she believes.
 """
 
 import json
@@ -42889,7 +42889,7 @@ import random
 
 @dataclass
 class Belief:
-    """A belief Monday holds"""
+    """A belief Mercy holds"""
     id: str
     content: str  # What she believes
     category: str  # "value", "fact", "preference", "identity", "about_matthew"
@@ -42923,11 +42923,11 @@ class ReflectionResult:
 
 class SelfReflectionEngine:
     """
-    Makes Monday question her own beliefs.
+    Makes Mercy question her own beliefs.
     Not just storing beliefs - actively examining them.
     """
     
-    def __init__(self, storage_path: str = "monday_beliefs.json"):
+    def __init__(self, storage_path: str = "mercy_beliefs.json"):
         self.thalamus = get_thalamus()
         self.storage_path = storage_path
         self.running = True
@@ -43456,7 +43456,7 @@ class SocialContextLobe:
 
 
 ======================================================================
-  🧠 Monday - Maximum Sophistication AI
+  🧠 Mercy - Maximum Sophistication AI
 ======================================================================
 
 🧹 Killing all existing brain processes...
@@ -43507,7 +43507,7 @@ class SocialContextLobe:
     Creating Reasoning (Self-Aware)... ✅
     Creating Language Generation... ✅
     Creating Notus Memory... ✅
-    Creating Emotional Engine...✅ Loaded emotional state from monday_emotional_state.json
+    Creating Emotional Engine...✅ Loaded emotional state from mercy_emotional_state.json
  ✅
     Creating Perception...⚠️  speech_recognition not available - voice input disabled
    Install with: pip install SpeechRecognition pyaudio
@@ -43578,7 +43578,7 @@ class SocialContextLobe:
 ✅ Output registered with Thalamus (direct function calls)
  ✅
     Starting Voice thread...🎤 Voice Lobe: Registering with Thalamus...
-   Voice: monday
+   Voice: mercy
    Auto-play: True
    Communication: Direct function calls (NO SOCKETS)
 ✅ voice registered with Thalamus (direct function calls)
@@ -43589,7 +43589,7 @@ class SocialContextLobe:
 2025-11-29 20:37:58,561 - INFO - ✅ Loaded sentence-transformers model
 2025-11-29 20:37:58,564 - INFO - 🧠 Fixed Superhuman Memory System initialized
 2025-11-29 20:37:58,577 - INFO - ✅ Seeded vocabulary and grammar knowledge
-2025-11-29 20:37:58,577 - INFO - 🚀 Enhanced Monday Memory System initialized
+2025-11-29 20:37:58,577 - INFO - 🚀 Enhanced Mercy Memory System initialized
 💬 Conversation Lobe: Registering with Thalamus...
    Intent detection, context management, topic tracking
    Communication: Direct function calls (NO SOCKETS)
@@ -43628,7 +43628,7 @@ Traceback (most recent call last):
 NameError: name 'processes' is not defined
 2025-11-29 20:38:03.316 Python[98096:18057650] error messaging the mach port for IMKCFRunLoopWakeUpReliable
 
-MONDAY BUILD LIST - PRIORITY ORDER
+MERCY BUILD LIST - PRIORITY ORDER
 ==================================
 Top = Do first. Bottom = Figure out later.
 
@@ -43786,7 +43786,7 @@ NEW FILES CREATED:
 - behavioral_reinforcement.py (5.2)
 - value_system_learning.py (5.3)
 
-✅ All new systems wired into run_abin.py - they start with Monday now
+✅ All new systems wired into run_abin.py - they start with Mercy now
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🧹 PRIORITY 7: CLEANUP (Do when bored, not urgent)
@@ -44338,7 +44338,7 @@ if __name__ == "__main__":
 
 #!/usr/bin/env python3
 """
-FINAL VERIFICATION: Monday's Brain Components Working Together
+FINAL VERIFICATION: Mercy's Brain Components Working Together
 
 This test shows:
 1. Emotion Engine responding to input
@@ -44360,11 +44360,11 @@ from novelty_lobe import NoveltyLobe
 from advanced_emotional_engine import EmotionalProcess
 
 def simulate_conversation():
-    """Simulate a realistic conversation with Monday"""
+    """Simulate a realistic conversation with Mercy"""
     
     print("\n" + "╔" + "=" * 68 + "╗")
     print("║" + " " * 68 + "║")
-    print("║" + "  MONDAY'S BRAIN: REAL CONVERSATION SIMULATION".center(68) + "║")
+    print("║" + "  MERCY'S BRAIN: REAL CONVERSATION SIMULATION".center(68) + "║")
     print("║" + " " * 68 + "║")
     print("╚" + "=" * 68 + "╝")
     
@@ -44373,7 +44373,7 @@ def simulate_conversation():
     emotion_engine = emotion_process.engine
     novelty = NoveltyLobe()
     
-    print("\n✅ Monday is online and ready to talk.\n")
+    print("\n✅ Mercy is online and ready to talk.\n")
     
     # Multi-turn conversation
     conversation = [
@@ -44398,7 +44398,7 @@ def simulate_conversation():
     ]
     
     print("─" * 70)
-    print("CONVERSATION WITH MONDAY")
+    print("CONVERSATION WITH MERCY")
     print("─" * 70)
     
     for turn_num, turn in enumerate(conversation, 1):
@@ -44426,7 +44426,7 @@ def simulate_conversation():
         question = novelty.get_question_to_ask_user(user_input)
         
         if question:
-            print(f"\n🤖 Monday: \"{question}\"")
+            print(f"\n🤖 Mercy: \"{question}\"")
             time.sleep(0.3)
             
             # User responds
@@ -44434,7 +44434,7 @@ def simulate_conversation():
             print(f"\n👤 You: \"{user_response}\"")
             time.sleep(0.3)
             
-            # Monday learns
+            # Mercy learns
             novelty.process_message({
                 'type': 'user_response',
                 'stimulus': user_input,
@@ -44450,7 +44450,7 @@ def simulate_conversation():
                 novelty.emotional_momentum
             )
             
-            print(f"\n🤖 Monday: \"{follow_up}\"")
+            print(f"\n🤖 Mercy: \"{follow_up}\"")
             
             # Show internal state
             print(f"\n   [Internal: emotion={emotion_engine.current_emotion.value}, " +
@@ -44465,13 +44465,13 @@ def simulate_conversation():
     print("=" * 70)
     
     print(f"""
-📊 Monday's State After Conversation:
+📊 Mercy's State After Conversation:
    • Emotion: {emotion_engine.current_emotion.value}
    • Intensity: {emotion_engine.emotional_intensity:.2f}/1.0
    • Emotional Momentum: {novelty.emotional_momentum:+.3f}
    • Memories Formed: {len(novelty.novelty_memories)}
    
-🧠 What Monday Learned:
+🧠 What Mercy Learned:
 """)
     
     for i, mem in enumerate(novelty.novelty_memories, 1):
@@ -44496,7 +44496,7 @@ def simulate_conversation():
    4. Mood changes based on conversation flow
    5. Remembers and learns from previous exchanges
 
-✨ Monday is ready for the world.
+✨ Mercy is ready for the world.
 """)
 
 
@@ -44711,7 +44711,7 @@ if __name__ == "__main__":
 #!/usr/bin/env python3
 """
 HUMANNESS TEST: Complete flow from input to output
-Testing if Monday's responses feel human (80%+ humanness)
+Testing if Mercy's responses feel human (80%+ humanness)
 
 Chain: User → Emotion → Novelty → Language Lobe → Output
 """
@@ -44829,7 +44829,7 @@ def test_humanness_chain():
                     # Fallback to semantic response
                     response = generate_grounded_response(context, emotion_engine, novelty)
                 
-                print(f"\n   🤖 Monday: \"{response}\"")
+                print(f"\n   🤖 Mercy: \"{response}\"")
                 print(f"\n   ✅ HUMANNESS CHECK:")
                 humanness_score = evaluate_humanness(response, context)
                 print(f"      Score: {humanness_score:.0%}")
@@ -44843,7 +44843,7 @@ def test_humanness_chain():
                 print(f"   ⚠️  Language generation failed: {e}")
                 # Generate simple fallback
                 response = f"That's interesting... {user_answer[:40]}..."
-                print(f"   🤖 Monday: \"{response}\" (fallback)")
+                print(f"   🤖 Mercy: \"{response}\" (fallback)")
         else:
             print(f"   ⚠️  No question generated (emotion < threshold)")
     
@@ -45250,7 +45250,7 @@ def test_novelty_in_conversation():
     question = understanding_2.get('novelty_question')
     if question:
         user_response = "They're experimental rock mixed with electronic music"
-        print(f"\n🤖 Monday: \"{question}\"")
+        print(f"\n🤖 Mercy: \"{question}\"")
         print(f"👤 User: \"{user_response}\"")
         
         # Store the response in novelty
@@ -46073,7 +46073,7 @@ class Thalamus:
         # Voice outputs: audio, voice_profile, prosody
         return {
             'audio': content.get('audio', None),
-            'voice_profile': content.get('voice_profile', 'Monday'),
+            'voice_profile': content.get('voice_profile', 'Mercy'),
             'pitch': content.get('pitch', 1.0),
             'speed': content.get('speed', 1.0),
             'warmth': content.get('warmth', 0.5),
@@ -46319,7 +46319,7 @@ class Thalamus:
                 'message': 'Thalamus is a message router only - no health monitoring'
             }
         
-        elif msg_type == 'get_monday_state':
+        elif msg_type == 'get_mercy_state':
             # Thalamus doesn't store memory - route to Notus or Reasoning
             return {'status': 'error', 'message': 'Thalamus does not store memory'}
         
@@ -46455,7 +46455,7 @@ class ValueChange:
 
 @dataclass 
 class Value:
-    """A value Monday holds - what matters to her"""
+    """A value Mercy holds - what matters to her"""
     id: str
     name: str  # e.g., "honesty", "curiosity", "connection_with_matthew"
     description: str
@@ -46476,11 +46476,11 @@ class Value:
 
 class ValueEvolutionSystem:
     """
-    Tracks how Monday's values change over time.
+    Tracks how Mercy's values change over time.
     Values aren't overwritten - they evolve with history.
     """
     
-    def __init__(self, storage_path: str = "monday_values.json"):
+    def __init__(self, storage_path: str = "mercy_values.json"):
         self.thalamus = get_thalamus()
         self.storage_path = storage_path
         self.running = True
@@ -46540,7 +46540,7 @@ class ValueEvolutionSystem:
             print(f"⚠️  Could not save values: {e}")
     
     def _initialize_default_values(self):
-        """Initialize Monday's default values"""
+        """Initialize Mercy's default values"""
         defaults = [
             {
                 'name': 'connection_with_matthew',
@@ -46995,10 +46995,10 @@ class EmergentValue:
 
 @dataclass 
 class IndependentGoal:
-    """A goal Monday formed independently"""
+    """A goal Mercy formed independently"""
     id: str
     description: str
-    motivation: str  # Why Monday wants this
+    motivation: str  # Why Mercy wants this
     source_value: str  # Value that drives this goal
     progress: float  # 0-1
     subgoals: List[str]
@@ -47026,10 +47026,10 @@ class ValueSystemLearning:
     """
     Values emerge from experience + emotion.
     They change through contradiction and reflection.
-    Monday develops independent goals.
+    Mercy develops independent goals.
     """
     
-    def __init__(self, storage_path: str = "monday_emergent_values.json"):
+    def __init__(self, storage_path: str = "mercy_emergent_values.json"):
         self.thalamus = get_thalamus()
         self.storage_path = storage_path
         self.running = True
@@ -47237,7 +47237,7 @@ class ValueSystemLearning:
     
     def _reflect_on_value(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Reflect on a value - should Monday keep holding it?
+        Reflect on a value - should Mercy keep holding it?
         Consider supporting and contradicting evidence.
         """
         value_name = message.get('value_name', '')
@@ -47361,7 +47361,7 @@ class ValueSystemLearning:
     def _generate_goal_from_value(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate an independent goal from a value.
-        Monday decides what to pursue.
+        Mercy decides what to pursue.
         """
         value_name = message.get('value_name', '')
         context = message.get('context', '')
@@ -47467,7 +47467,7 @@ class ValueSystemLearning:
     def _get_value_for_decision(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
         Get most relevant value for a decision.
-        Used when Monday needs to decide something.
+        Used when Mercy needs to decide something.
         """
         decision_type = message.get('decision_type', '')
         options = message.get('options', [])
@@ -47609,8 +47609,8 @@ class VoiceProfile:
     vibrato_rate: float = 5.0
 
 VOICE_PROFILES = {
-    'monday': VoiceProfile(
-        name='Monday',
+    'mercy': VoiceProfile(
+        name='Mercy',
         pitch_base=205,
         pitch_range=80,
         formant_shift=1.02,
@@ -47678,7 +47678,7 @@ PHONEME_FREQUENCIES = {
 TEXT_TO_PHONEMES = {
     'hello': ['h', 'eh', 'l', 'oh'],
     'hi': ['h', 'ay'],
-    'monday': ['m', 'ah', 'n', 'd', 'ay'],
+    'mercy': ['m', 'ah', 'n', 'd', 'ay'],
     'matthew': ['m', 'ae', 'th', 'uw'],
     'i': ['ay'],
     'am': ['ae', 'm'],
@@ -47700,7 +47700,7 @@ class VoiceSynthesizer:
     def __init__(self, voice_profile: VoiceProfile, sample_rate: int = 22050):
         self.voice = voice_profile
         self.sample_rate = sample_rate
-        self.output_dir = "monday_audio"
+        self.output_dir = "mercy_audio"
         
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -47847,7 +47847,7 @@ class VoiceSynthesizer:
     def save_to_file(self, audio: np.ndarray, filename: str = None) -> str:
         """Save audio to WAV file"""
         if filename is None:
-            filename = f"{self.output_dir}/monday_{int(random.random() * 10000)}.wav"
+            filename = f"{self.output_dir}/mercy_{int(random.random() * 10000)}.wav"
         
         if not filename.startswith(self.output_dir):
             filename = os.path.join(self.output_dir, filename)
@@ -47876,12 +47876,12 @@ class VoiceSynthesizer:
 class VoiceLobe:
     """Voice synthesis and audio output lobe"""
     
-    def __init__(self, voice_name: str = "monday"):
+    def __init__(self, voice_name: str = "mercy"):
         self.running = True
         self.user = "Butters26"
         
         # Voice synthesis
-        self.voice_profile = VOICE_PROFILES.get(voice_name, VOICE_PROFILES['monday'])
+        self.voice_profile = VOICE_PROFILES.get(voice_name, VOICE_PROFILES['mercy'])
         self.synthesizer = VoiceSynthesizer(self.voice_profile)
         
         self.voice_config = {
@@ -48030,7 +48030,7 @@ class VoiceLobe:
             }
         
         elif msg_type == 'set_voice':
-            voice_name = message.get('voice_name', 'monday')
+            voice_name = message.get('voice_name', 'mercy')
             success = self.set_voice(voice_name)
             
             return {

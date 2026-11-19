@@ -24,7 +24,7 @@ try:
     from runtime_paths import runtime_dir
 except Exception:  # pragma: no cover
     def runtime_dir():
-        return Path(os.environ.get("MONDAY_RUNTIME_DIR") or (Path.home() / ".local/state/monday"))
+        return Path(os.environ.get("MERCY_RUNTIME_DIR") or (Path.home() / ".local/state/mercy"))
 
 # ============================================================================
 # VOICE PROFILES
@@ -102,8 +102,8 @@ VOICE_PROFILES = {
         vibrato_rate=5.0
     ),
     
-    'monday': VoiceProfile(
-        name='Monday',
+    'mercy': VoiceProfile(
+        name='Mercy',
         pitch_base=205,
         pitch_range=80,
         formant_shift=1.02,
@@ -125,7 +125,7 @@ VOICE_PROFILES = {
 TEXT_TO_PHONEMES = {
     'hello': ['h', 'eh', 'l', 'oh'],
     'hi': ['h', 'ay'],
-    'monday': ['m', 'ah', 'n', 'd', 'ay'],
+    'mercy': ['m', 'ah', 'n', 'd', 'ay'],
     'abin': ['ae', 'b', 'ih', 'n'],
     'matthew': ['m', 'ae', 'th', 'uw'],
     'shadowheart': ['sh', 'ae', 'd', 'oh', 'h', 'art'],
@@ -184,7 +184,7 @@ class OutputLobe:
             'rate': 150,
             'volume': 1.0,
             'voice_id': None,
-            'profile': 'monday'  # Default to Monday's voice
+            'profile': 'mercy'  # Default to Mercy's voice
         }
         
         # Voice profiles
@@ -200,12 +200,12 @@ class OutputLobe:
         try:
             self._speech_buffer_path = Path(runtime_dir()) / "output_speech_buffer.txt"
         except Exception:
-            self._speech_buffer_path = Path("/tmp/monday_output_speech_buffer.txt")
+            self._speech_buffer_path = Path("/tmp/mercy_output_speech_buffer.txt")
         self._speech_buffer: List[str] = []
         if enable_tts:
             self._initialize_tts()
         
-    def _apply_voice_profile(self, profile_name: str = 'monday'):
+    def _apply_voice_profile(self, profile_name: str = 'mercy'):
         """Map VoiceProfile.speed/pitch_base onto pyttsx3 only.
 
         formant_shift / nasality / vibrato_* / breathiness / warmth / clarity /
@@ -215,7 +215,7 @@ class OutputLobe:
             return
         
         if profile_name not in self.voice_profiles:
-            profile_name = 'monday'  # Default fallback
+            profile_name = 'mercy'  # Default fallback
         
         profile = self.voice_profiles[profile_name]
         
@@ -258,15 +258,15 @@ class OutputLobe:
             self.tts_engine.setProperty('rate', self.voice_config['rate'])
             self.tts_engine.setProperty('volume', self.voice_config['volume'])
             
-            # Apply default voice profile (Monday)
-            self._apply_voice_profile(self.voice_config.get('profile', 'monday'))
+            # Apply default voice profile (Mercy)
+            self._apply_voice_profile(self.voice_config.get('profile', 'mercy'))
             
             print("✅ Text-to-speech engine initialized")
             
             # List available voices
             voices = self.tts_engine.getProperty('voices')
             print(f"   Available voices: {len(voices)}")
-            print(f"   Active profile: {self.voice_config.get('profile', 'monday')}")
+            print(f"   Active profile: {self.voice_config.get('profile', 'mercy')}")
             
         except ImportError:
             print("⚠️  pyttsx3 not available - voice output disabled")

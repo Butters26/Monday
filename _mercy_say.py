@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Send one line to the Monday chat daemon and print her reply.
+"""Send one line to the Mercy chat daemon and print her reply.
 
 Usage:
-  _monday_say.py <message>          # prompted turn
-  _monday_say.py --poll [user_id]   # drain unprompted pending
+  _mercy_say.py <message>          # prompted turn
+  _mercy_say.py --poll [user_id]   # drain unprompted pending
 """
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ import socket
 import sys
 from pathlib import Path
 
-SOCK = Path(os.environ.get("MONDAY_RUNTIME_DIR", os.path.expanduser("~/.local/state/monday-chat"))) / "chat.sock"
+SOCK = Path(os.environ.get("MERCY_RUNTIME_DIR", os.path.expanduser("~/.local/state/mercy-chat"))) / "chat.sock"
 
 
 def _request(payload: dict) -> dict:
     if not SOCK.exists():
-        raise SystemExit(f"Monday chat daemon not running (no {SOCK})")
+        raise SystemExit(f"Mercy chat daemon not running (no {SOCK})")
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(str(SOCK))
     s.sendall((json.dumps(payload) + "\n").encode())
@@ -31,7 +31,7 @@ def _request(payload: dict) -> dict:
     s.close()
     data = json.loads(buf.decode() or "{}")
     if not data.get("ok"):
-        raise SystemExit(data.get("error") or "Monday error")
+        raise SystemExit(data.get("error") or "Mercy error")
     return data
 
 
@@ -57,5 +57,5 @@ if __name__ == "__main__":
         raise SystemExit(0)
     msg = " ".join(args).strip() or sys.stdin.read().strip()
     if not msg:
-        raise SystemExit("usage: _monday_say.py <message> | --poll [user_id]")
+        raise SystemExit("usage: _mercy_say.py <message> | --poll [user_id]")
     print(say(msg))

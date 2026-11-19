@@ -101,11 +101,11 @@ def test_primary_notus_success_path(tmp_path):
         shutdown_core_systems(systems)
 
 
-def test_no_legacy_monday_memory_apis():
+def test_no_legacy_mercy_memory_apis():
     from thalamus import Thalamus
 
     t = Thalamus()
-    assert not hasattr(t, "monday_memory")
+    assert not hasattr(t, "mercy_memory")
     assert not hasattr(t, "retrieve_relevant_memory")
     assert not hasattr(t, "sync_memory_to_notus")
     # The Thalamus holds no memories of its own and runs no turn.

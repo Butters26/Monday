@@ -1,12 +1,12 @@
 """How words are meant (well or badly, and about whom).
 
 USED BY SOCIAL CONTEXT, NOT FOR HER FEELINGS (Matthew, Nov 3): her feelings
-come from her needs and what happens to her (monday_inner_life.py). Social
+come from her needs and what happens to her (mercy_inner_life.py). Social
 context uses this to read what kind of move was made (a compliment, an
 insult, how he feels); Emotion then feels what that move means for her.
 
 Earlier description, kept for the record:
-Appraisal: how what happens affects Monday herself.
+Appraisal: how what happens affects Mercy herself.
 
 This is the Emotion lobe's own job (its contract: "processes how situations and
 internal activity affect her emotionally"). It replaces SelfImpact's regex
@@ -21,7 +21,7 @@ How it works:
   (adjust_word_feeling); her changes are kept in her own state and win over the
   starting rating.
 - Who it is about decides how much it moves her:
-    aimed at her (you / Monday / Mercy)   -> her own feeling moves most
+    aimed at her (you / Mercy / Mercy)   -> her own feeling moves most
     about him (I / me / my)               -> she is moved for him, gently;
                                              she does not adopt his feeling
     about something else                  -> a little

@@ -5,7 +5,7 @@ Language owns linguistic comprehension and expression. This module is the
 comprehension half: observed text → linguistic meaning packet.
 
 HARD RULES:
-- Meaning source is the offline OEWN lexicon on disk under Monday/lexicon/.
+- Meaning source is the offline OEWN lexicon on disk under Mercy/lexicon/.
 - Runtime never reaches the internet.
 - Unknown words are marked unknown — never forced into a toy verb/noun list.
 - Does NOT decide truth, importance, emotion, memory policy, reasoning, or intent.
@@ -2878,7 +2878,7 @@ class LanguageComprehensionEngine:
         first_meaning = str(senses[0].definition() or "").casefold() if senses else ""
         saying = "express in words" in first_meaning or " say" in f" {first_meaning}"
         if saying and not roles.get("about") and not roles.get("recipient"):
-            # "Say hello", "repeat after me: I am Monday": the words to say are
+            # "Say hello", "repeat after me: I am Mercy": the words to say are
             # what comes after the verb, as he wrote them.
             words = raw.split(":", 1)[1] if ":" in raw else raw.split(None, 1)[1] if len(raw.split()) > 1 else ""
             words = words.strip().strip('"\'“”').strip()

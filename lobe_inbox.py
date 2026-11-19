@@ -45,7 +45,7 @@ except Exception:  # tracer is optional
         return None
 
 
-ANSWER_TIMEOUT_SEC = float(os.environ.get("MONDAY_LOBE_ANSWER_TIMEOUT", "60"))
+ANSWER_TIMEOUT_SEC = float(os.environ.get("MERCY_LOBE_ANSWER_TIMEOUT", "60"))
 
 _current = threading.local()  # .chain = chain id of the message this thread is handling
 _chain_numbers = itertools.count(1)

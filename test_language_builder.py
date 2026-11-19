@@ -25,7 +25,7 @@ class NoSynonyms(Lexicon):
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
-    monkeypatch.setenv("MONDAY_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("MERCY_RUNTIME_DIR", str(tmp_path))
     return tmp_path
 
 

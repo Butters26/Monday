@@ -58,9 +58,9 @@ class ReasoningNotusHelper(NotusHelper):
         return result.get('facts', [])
     
     def get_identity_facts(self) -> List[Dict[str, Any]]:
-        """Get facts about Monday's identity"""
+        """Get facts about Mercy's identity"""
         result = self._query_notus('query_facts', {
-            'query': 'identity self monday',
+            'query': 'identity self mercy',
             'limit': 10
         })
         return result.get('facts', [])
@@ -89,7 +89,7 @@ class EmotionNotusHelper(NotusHelper):
         return result.get('memories', [])
     
     def get_emotional_baseline(self) -> Dict[str, float]:
-        """Get Monday's emotional baseline from stored state"""
+        """Get Mercy's emotional baseline from stored state"""
         result = self._query_notus('get_emotional_state', {})
         return result.get('baseline', {
             'pleasure': 0.5,
@@ -105,7 +105,7 @@ class NoveltyNotusHelper(NotusHelper):
         super().__init__('novelty')
     
     def has_seen_before(self, stimulus: str) -> bool:
-        """Check if Monday has encountered this stimulus before"""
+        """Check if Mercy has encountered this stimulus before"""
         result = self._query_notus('query_memories', {
             'query': stimulus,
             'limit': 1
@@ -122,7 +122,7 @@ class NoveltyNotusHelper(NotusHelper):
         return result.get('memories', [])
     
     def get_learned_responses(self, stimulus_type: str) -> List[Dict[str, Any]]:
-        """Get how Monday learned to respond to this type of stimulus"""
+        """Get how Mercy learned to respond to this type of stimulus"""
         result = self._query_notus('query_facts', {
             'query': f"novelty_{stimulus_type}",
             'limit': 10

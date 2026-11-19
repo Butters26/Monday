@@ -94,7 +94,7 @@ class SocialContextLobe:
 
     # --- what social moves call for ------------------------------------------
 
-    _PLACEHOLDER = """# Monday's starting social beliefs: what a social move calls for.
+    _PLACEHOLDER = """# Mercy's starting social beliefs: what a social move calls for.
 # One per line:  <move> -> <what she does> (sure 0.0-1.0)
 #   <what she does> is a move answered in kind (greeting, goodbye) or words in quotes.
 # Moves are named as the dictionary names them (greeting, goodbye, thanks, apology).
@@ -296,7 +296,7 @@ compliment -> "thank you" (sure 0.7)
         context's knowledge of how words are meant (beliefs she can change),
         read from Language's reading. This is understanding the move, not
         feeling it; Emotion feels what the move means for her."""
-        from monday_appraisal import WordFeelings, appraise
+        from mercy_appraisal import WordFeelings, appraise
         if SocialContextLobe._meaning_beliefs is None:
             SocialContextLobe._meaning_beliefs = WordFeelings(self._stored_meanings())
         return appraise(reading, SocialContextLobe._meaning_beliefs)
@@ -702,7 +702,7 @@ compliment -> "thank you" (sure 0.7)
             word = str(content.get("word") or "").strip()
             if not word or "good" not in content:
                 return {"status": "error", "message": "adjust_word_meaning needs a word and good (-1..1)"}
-            from monday_appraisal import WordFeelings
+            from mercy_appraisal import WordFeelings
             if SocialContextLobe._meaning_beliefs is None:
                 SocialContextLobe._meaning_beliefs = WordFeelings(self._stored_meanings())
             old = SocialContextLobe._meaning_beliefs.feel(word)

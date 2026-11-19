@@ -63,7 +63,7 @@ class ExperienceProcessor:
     
     def __init__(self, storage_path: Optional[str] = None):
         self.thalamus = get_thalamus()
-        self.storage_path = storage_path or runtime_file("monday_experiences.json")
+        self.storage_path = storage_path or runtime_file("mercy_experiences.json")
         self.running = True
         
         # Experience storage

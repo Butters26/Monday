@@ -90,7 +90,7 @@ class BrainWorker(threading.Thread):
         # Send response back
         response_data = {
             "content": response,
-            "sender": "Monday",
+            "sender": "Mercy",
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "emotional_state": self.battleship.get_emotional_state()
         }
@@ -185,12 +185,12 @@ class BrainWorker(threading.Thread):
 
 class MondarInterface:
     """
-    Main GUI interface for Monday AI assistant.
+    Main GUI interface for Mercy AI assistant.
     Provides chat display, input controls, and emotional state monitoring.
     """
     def __init__(self, root):
         self.root = root
-        self.root.title("Monday - AI Assistant Interface")
+        self.root.title("Mercy - AI Assistant Interface")
         self.root.geometry("800x600")
         self.root.configure(bg="#2b2b2b")
         
@@ -214,7 +214,7 @@ class MondarInterface:
         # Title label
         title_label = tk.Label(
             main_frame,
-            text="🤖 Monday AI Assistant",
+            text="🤖 Mercy AI Assistant",
             font=("Arial", 18, "bold"),
             bg="#2b2b2b",
             fg="#00ff00"
@@ -270,7 +270,7 @@ class MondarInterface:
         
         # Configure text tags for different message types
         self.chat_display.tag_config("user", foreground="#00ccff")
-        self.chat_display.tag_config("monday", foreground="#00ff00")
+        self.chat_display.tag_config("mercy", foreground="#00ff00")
         self.chat_display.tag_config("timestamp", foreground="#888888")
         self.chat_display.tag_config("system", foreground="#ffaa00")
         
@@ -320,7 +320,7 @@ class MondarInterface:
         self.send_button.pack(side=tk.RIGHT)
         
         # Add welcome message
-        self.add_system_message("Monday AI Assistant initialized. How can I help you today?")
+        self.add_system_message("Mercy AI Assistant initialized. How can I help you today?")
         
     def send_message(self):
         """Send user message to the brain worker"""
@@ -347,9 +347,9 @@ class MondarInterface:
             self.chat_display.insert(tk.END, f"[{timestamp}] ", "timestamp")
             self.chat_display.insert(tk.END, "You: ", "user")
             self.chat_display.insert(tk.END, f"{message}\n\n")
-        elif sender == "Monday":
+        elif sender == "Mercy":
             self.chat_display.insert(tk.END, f"[{timestamp}] ", "timestamp")
-            self.chat_display.insert(tk.END, "Monday: ", "monday")
+            self.chat_display.insert(tk.END, "Mercy: ", "mercy")
             self.chat_display.insert(tk.END, f"{message}\n\n")
             
         self.chat_display.config(state=tk.DISABLED)
@@ -385,7 +385,7 @@ class MondarInterface:
         
         if response_data:
             # Display response
-            self.display_message(response_data["content"], "Monday")
+            self.display_message(response_data["content"], "Mercy")
             
             # Update emotional state
             emotional_state = response_data.get("emotional_state", "neutral")
@@ -403,7 +403,7 @@ class MondarInterface:
 
 def main():
     """
-    Main entry point for the Monday AI Assistant interface.
+    Main entry point for the Mercy AI Assistant interface.
     Initializes the GUI and starts the application.
     """
     root = tk.Tk()

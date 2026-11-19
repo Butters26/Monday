@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Brain Connector - Thread-safe connection to Monday's brain systems
+Brain Connector - Thread-safe connection to Mercy's brain systems
 Handles communication with Thalamus, emotional engine, and thinking systems
 """
 
@@ -19,7 +19,7 @@ from thalamus import get_thalamus
 
 
 class BrainConnector:
-    """Thread-safe connector to Monday's brain systems"""
+    """Thread-safe connector to Mercy's brain systems"""
     
     def __init__(self):
         self.thalamus = get_thalamus()
@@ -53,7 +53,7 @@ class BrainConnector:
         self.monitor_thread.start()
     
     def send_message(self, user_input: str):
-        """Send a message to Monday (thread-safe)"""
+        """Send a message to Mercy (thread-safe)"""
         self.input_queue.put(user_input)
     
     def _process_loop(self):
@@ -116,8 +116,8 @@ class BrainConnector:
         """Update emotional state from the engine"""
         try:
             # Try to get emotional state from Thalamus
-            if hasattr(self.thalamus, 'monday_memory'):
-                emotional_state = self.thalamus.monday_memory.get('emotional_state', {})
+            if hasattr(self.thalamus, 'mercy_memory'):
+                emotional_state = self.thalamus.mercy_memory.get('emotional_state', {})
                 
                 # Calculate dominant emotion
                 if emotional_state:
@@ -141,8 +141,8 @@ class BrainConnector:
         """Update thinking/processing state"""
         try:
             # Check if there are recent thoughts
-            if hasattr(self.thalamus, 'monday_memory'):
-                past_convs = self.thalamus.monday_memory.get('past_conversations', [])
+            if hasattr(self.thalamus, 'mercy_memory'):
+                past_convs = self.thalamus.mercy_memory.get('past_conversations', [])
                 
                 # Get last few conversations
                 recent = list(past_convs)[-3:] if past_convs else []
@@ -172,8 +172,8 @@ class BrainConnector:
                 state['lobes'] = dict(self.thalamus.lobe_status)
             
             # Get memory info
-            if hasattr(self.thalamus, 'monday_memory'):
-                memory = self.thalamus.monday_memory
+            if hasattr(self.thalamus, 'mercy_memory'):
+                memory = self.thalamus.mercy_memory
                 state['beliefs'] = memory.get('beliefs', [])
                 state['learned_facts'] = memory.get('learned_facts', {})
                 state['conversation_count'] = len(memory.get('past_conversations', []))

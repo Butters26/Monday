@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cyberpunk Theme Styles for Monday AI Interface
+Cyberpunk Theme Styles for Mercy AI Interface
 Dark navy/black background with cyan accents and neon glow effects
 """
 
@@ -9,7 +9,7 @@ COLORS = {
     'background': '#0a0e1a',      # Deep navy
     'accent': '#00d9ff',          # Electric cyan
     'user_text': '#00d9ff',       # User messages
-    'monday_text': '#00ff88',     # Monday responses (neon green)
+    'mercy_text': '#00ff88',     # Mercy responses (neon green)
     'debug_text': '#ffaa00',      # Debug info (orange)
     'border': '#1a2332',          # Panel borders
     'hover': '#152030',           # Hover state
@@ -44,7 +44,7 @@ QMainWindow {{
 CHAT_PANEL_STYLE = f"""
 QTextEdit {{
     background-color: {COLORS['background']};
-    color: {COLORS['monday_text']};
+    color: {COLORS['mercy_text']};
     border: 1px solid {COLORS['border']};
     border-radius: 5px;
     padding: 10px;
@@ -104,7 +104,7 @@ QPushButton:disabled {{
 EMOTION_DISPLAY_STYLE = f"""
 QLabel {{
     background-color: {COLORS['input_bg']};
-    color: {COLORS['monday_text']};
+    color: {COLORS['mercy_text']};
     border: 1px solid {COLORS['border']};
     border-radius: 5px;
     padding: 10px;

@@ -38,8 +38,8 @@ _QUESTIONISH = re.compile(
     re.IGNORECASE,
 )
 
-_SPEAKER_ROLES = frozenset({"user", "fact", "note", "monday", "assistant", "abin"})
-_MONDAY_ROLES = frozenset({"monday", "assistant", "abin"})
+_SPEAKER_ROLES = frozenset({"user", "fact", "note", "mercy", "assistant", "abin"})
+_MERCY_ROLES = frozenset({"mercy", "assistant", "abin"})
 
 
 _MILD_SOCIAL_EXACT = frozenset(
@@ -203,7 +203,7 @@ def looks_questionish(text: str) -> bool:
 
 
 def _looks_like_question_memory(text: str) -> bool:
-    """Prior user/monday questions are not answer evidence."""
+    """Prior user/mercy questions are not answer evidence."""
     t = (text or "").strip()
     if not t:
         return True
@@ -436,7 +436,7 @@ def _normalize_snippet_content(memory: Dict[str, Any]) -> Optional[str]:
     content = content.strip()
     if "How it felt:" in content or "What it meant:" in content:
         return None
-    if re.match(r"^\s*(?:user|abin|monday|assistant)\s*:", content, re.IGNORECASE):
+    if re.match(r"^\s*(?:user|abin|mercy|assistant)\s*:", content, re.IGNORECASE):
         return None
     pred = str(memory.get("predicate", "") or "")
     obj = str(memory.get("object", "") or "")
@@ -521,7 +521,7 @@ def _narrative_answer(query: str, snippets: List[tuple]) -> Optional[str]:
     q = query or ""
     narratives = []
     for role, text in snippets:
-        if role in _MONDAY_ROLES:
+        if role in _MERCY_ROLES:
             continue
         if _looks_like_question_memory(text):
             continue
@@ -579,8 +579,8 @@ def _narrative_answer(query: str, snippets: List[tuple]) -> Optional[str]:
     return None
 
 
-def _asks_about_monday_own_speech(query: str) -> bool:
-    """True when the user is asking what Monday herself previously said/told/called.
+def _asks_about_mercy_own_speech(query: str) -> bool:
+    """True when the user is asking what Mercy herself previously said/told/called.
 
     Intent-level match — not a whitelist of example sentences. Covers phrasing
     like "what did you say/tell/call", "your exact words", "remind me what you
@@ -611,29 +611,29 @@ def _asks_about_monday_own_speech(query: str) -> bool:
     return False
 
 
-def _monday_speech_answer(query: str, snippets: List[tuple]) -> Optional[str]:
-    """Use stored Monday speech when asked what she herself said.
+def _mercy_speech_answer(query: str, snippets: List[tuple]) -> Optional[str]:
+    """Use stored Mercy speech when asked what she herself said.
 
     Returns:
-      - None when the question is not about Monday's prior speech
-      - "" when it is, but no monday/assistant/abin row grounds an answer
+      - None when the question is not about Mercy's prior speech
+      - "" when it is, but no mercy/assistant/abin row grounds an answer
         (caller must not fall through to user facts/memories)
-      - the best matching Monday line otherwise
+      - the best matching Mercy line otherwise
     """
     q = query or ""
-    if not _asks_about_monday_own_speech(q):
+    if not _asks_about_mercy_own_speech(q):
         return None
-    monday = [
+    mercy = [
         (relevance_score(q, text), text)
         for role, text in snippets
-        if role in _MONDAY_ROLES and not _looks_like_question_memory(text)
+        if role in _MERCY_ROLES and not _looks_like_question_memory(text)
     ]
-    monday = [(s, t) for s, t in monday if s >= 0.15 or (content_tokens(q) & content_tokens(t))]
-    if not monday:
-        # Asked what Monday said — do not impersonate from user/fact rows.
+    mercy = [(s, t) for s, t in mercy if s >= 0.15 or (content_tokens(q) & content_tokens(t))]
+    if not mercy:
+        # Asked what Mercy said — do not impersonate from user/fact rows.
         return ""
-    monday.sort(key=lambda item: (-item[0], item[1]))
-    best = monday[0][1]
+    mercy.sort(key=lambda item: (-item[0], item[1]))
+    best = mercy[0][1]
     return best if best.endswith((".", "!", "?")) else best + "."
 
 
@@ -656,7 +656,7 @@ def answer_from_grounded_memories(
             continue
         role = str(memory.get("role", "") or "user").lower()
         if role in {"assistant", "abin"}:
-            role = "monday"
+            role = "mercy"
         key = content.casefold()
         if key in seen or key == q.casefold():
             continue
@@ -667,12 +667,12 @@ def answer_from_grounded_memories(
         return None
 
 
-    # Prefer Monday's own prior speech when asked what she said.
-    # "" means speech-intent matched but no monday/assistant/abin grounding —
-    # do not answer from user memories or durable facts as if Monday said them.
-    monday_ans = _monday_speech_answer(q, snippets)
-    if monday_ans is not None:
-        return monday_ans or None
+    # Prefer Mercy's own prior speech when asked what she said.
+    # "" means speech-intent matched but no mercy/assistant/abin grounding —
+    # do not answer from user memories or durable facts as if Mercy said them.
+    mercy_ans = _mercy_speech_answer(q, snippets)
+    if mercy_ans is not None:
+        return mercy_ans or None
 
     def _name_answer() -> Optional[str]:
         # Possessive / noun name first: "what is my dog's name"
@@ -907,7 +907,7 @@ def answer_from_grounded_memories(
         score = relevance_score(q, text_snip)
         if role == "fact":
             score += 0.05
-        if role in _MONDAY_ROLES:
+        if role in _MERCY_ROLES:
             score += 0.02
         # Require real stem overlap — no cosine-style invention.
         if not (q_stems & _stem_set(content_tokens(text_snip))):

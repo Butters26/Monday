@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Persistent Mercy chat daemon for live talk.
 
-Protocol over Unix socket ~/.local/state/monday-chat/chat.sock:
+Protocol over Unix socket ~/.local/state/mercy-chat/chat.sock:
   client sends one JSON line:
     {"text": "...", "user_id": "<who, or empty>"}       -> say something to her
     {"type": "poll", "user_id": "<who, or empty>"}     -> collect what she said on her own
@@ -16,8 +16,8 @@ says (outside_world.py). Her lobes do everything in between on their own.
 Anything she says when nobody is waiting on a reply is kept for the next poll.
 
 Memory: one shared Notus SQLite file at shared_direct_notus_path() (default
-~/.local/state/monday/notus_memory.sqlite3, override MONDAY_NOTUS_SQLITE), the
-same one run_abin uses. Sock/pid stay under MONDAY_RUNTIME_DIR.
+~/.local/state/mercy/notus_memory.sqlite3, override MERCY_NOTUS_SQLITE), the
+same one run_abin uses. Sock/pid stay under MERCY_RUNTIME_DIR.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from run_abin import (
     shutdown_core_systems,
 )
 
-RUNTIME = Path(os.environ.get("MONDAY_RUNTIME_DIR", os.path.expanduser("~/.local/state/monday-chat")))
+RUNTIME = Path(os.environ.get("MERCY_RUNTIME_DIR", os.path.expanduser("~/.local/state/mercy-chat")))
 SOCK_PATH = RUNTIME / "chat.sock"
 PID_PATH = RUNTIME / "chat.pid"
 
@@ -45,7 +45,7 @@ def main() -> int:
     if SOCK_PATH.exists():
         SOCK_PATH.unlink()
 
-    print(f"Booting Monday core (runtime={RUNTIME})...", flush=True)
+    print(f"Booting Mercy core (runtime={RUNTIME})...", flush=True)
     # No notus_factory: open_primary_notus — same mind as run_abin REPL.
     systems = create_core_systems(
         runtime_directory=str(RUNTIME),
@@ -67,7 +67,7 @@ def main() -> int:
     server.bind(str(SOCK_PATH))
     server.listen(8)
     SOCK_PATH.chmod(0o600)
-    print(f"Monday chat ready on {SOCK_PATH}", flush=True)
+    print(f"Mercy chat ready on {SOCK_PATH}", flush=True)
 
     def _stop(*_a):
         stopping["v"] = True
@@ -143,7 +143,7 @@ def main() -> int:
                     )
     finally:
         stopping["v"] = True
-        print("Shutting down Monday...", flush=True)
+        print("Shutting down Mercy...", flush=True)
         try:
             shutdown_core_systems(systems)
         except Exception:

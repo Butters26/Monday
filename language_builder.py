@@ -1,7 +1,7 @@
 """Sentence builder for the Language lobe: meaning in, sentence out, learning always on.
 
 Language's expression half. It takes a meaning (who, what, to whom, and whether
-Monday is telling, asking, or greeting) and builds the sentence itself:
+Mercy is telling, asking, or greeting) and builds the sentence itself:
 
 - words come from the meaning and the offline OEWN dictionary (synonyms, word
   types, irregular forms) -- never from canned replies or copied user sentences;
@@ -209,7 +209,7 @@ class Built:
     sentence: str
     choices: List[Tuple[str, str, float]] = field(default_factory=list)  # (point, option, starting score)
     meaning: Any = None
-    learner: str = "monday"
+    learner: str = "mercy"
     problems: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -221,7 +221,7 @@ class Built:
         choices = [(str(c[0]), str(c[1]), float(c[2])) for c in data.get("choices", [])
                    if isinstance(c, (list, tuple)) and len(c) == 3]
         return cls(sentence=str(data.get("sentence", "")), choices=choices,
-                   learner=str(data.get("learner") or "monday"),
+                   learner=str(data.get("learner") or "mercy"),
                    problems=list(data.get("problems") or []))
 
 
@@ -304,7 +304,7 @@ class ChoiceMemory:
 # --------------------------------------------------------------------------
 
 class SentenceBuilder:
-    def __init__(self, learner: str = "monday", store: Any = None,
+    def __init__(self, learner: str = "mercy", store: Any = None,
                  rng: Optional[random.Random] = None, explore_rate: float = EXPLORE_RATE,
                  lexicon: Optional[Lexicon] = None) -> None:
         self.learner = learner

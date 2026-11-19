@@ -1,5 +1,5 @@
 """
-MetaCognitionLobe — Monday watching her own thinking on the live path.
+MetaCognitionLobe — Mercy watching her own thinking on the live path.
 
 Observes reasoning/language outputs for empty grounding, uncertainty markers,
 surface contradiction, and overconfidence without evidence. Emits control

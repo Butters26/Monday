@@ -1,4 +1,4 @@
-"""Simple wrapper helpers for Monday's learning features."""
+"""Simple wrapper helpers for Mercy's learning features."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ def _as_content(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return payload.copy() if isinstance(payload, dict) else {}
 
 
-def teach_monday(thalamus: Any, lesson: str, user_id: str = "default", **kwargs: Any) -> Dict[str, Any]:
-    """Teach Monday once and let Thalamus route the lesson to relevant lobes."""
+def teach_mercy(thalamus: Any, lesson: str, user_id: str = "default", **kwargs: Any) -> Dict[str, Any]:
+    """Teach Mercy once and let Thalamus route the lesson to relevant lobes."""
     if not isinstance(lesson, str) or not lesson.strip():
         return {"status": "error", "message": "lesson must be a non-empty string", "content": {}}
     payload = {"lesson": lesson, "user_id": user_id, **kwargs}
-    return thalamus.handle_request({"type": "teach_monday", "content": payload})
+    return thalamus.handle_request({"type": "teach_mercy", "content": payload})
 
 
 def learning_overview(thalamus: Any, user_id: str = "default", limit: int = 5) -> Dict[str, Any]:

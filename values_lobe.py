@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 
 from runtime_paths import runtime_file
 
-_PLACEHOLDER = """# Monday's starting values: one per line, "name: what it means (strength 0.0-1.0)".
+_PLACEHOLDER = """# Mercy's starting values: one per line, "name: what it means (strength 0.0-1.0)".
 # PLACEHOLDERS: these six are the old monday-with-more defaults (Jan 2, 2026),
 # written here because no values file existed. Matthew: replace them with yours.
 # "(about: ...)" says which of her needs or feelings a value is about, so
