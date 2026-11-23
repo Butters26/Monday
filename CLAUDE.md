@@ -6,7 +6,7 @@
 
 Do not find, file, recall, judge, sort, classify or decide anything by matching words, keywords, phrases, strings or regex against what someone said or what she knows. Work from meaning instead.
 
-The only exception is where word matching is genuinely required and nothing else can do the job. Before it goes in, tell Matthew exactly where it is and why it's required. If you can't justify it to him, it doesn't go in.
+This ban applies everywhere in Mercy: every lobe, every runtime path, and every fallback. There are no exceptions. Treat any existing keyword or word matching covered by this rule as a violation, not as permission to keep or reuse it.
 
 Breaking this rule is the most serious way to break Matthew's rules.
 

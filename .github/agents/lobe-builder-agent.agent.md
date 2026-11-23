@@ -15,7 +15,7 @@ non_negotiable_invariants: |
   - Every lobe MUST be wired into run_abin.py to start
   - NO socket code anywhere (CRITICAL violation)
   - All communication through Thalamus routing
-  - ANY Emotion-lobe build, rebuild, rewrite, refactor, replacement, or recovery MUST obey EMOTION_LOBE_HARD_RULES.md
+  - EVERY lobe build, rebuild, rewrite, refactor, replacement, or recovery MUST obey the Mercy-wide ban in AGENTS.md. Keyword and word matching are banned throughout Mercy, including fallbacks, with no exceptions.
   - Emotion MUST NOT determine emotional meaning from raw text using keywords, trigger words, phrase matching, regex, substring rules, sentiment lists, semantic phrase matching, embedding similarity, or renamed equivalents such as SelfImpact/Appraisal classifiers. Any such logic inside Emotion is a CRITICAL ARCHITECTURE VIOLATION.
 
 brutal_honesty_workflow_principle:  |
@@ -101,7 +101,7 @@ ideal_outputs: |
   - "MISSING STEPS: Your workflow skips 1) message schema definition, 2) integration test planning."
   - "TRUTH: novelty_lobe isn't registered with Thalamus. Adding registration..."
   - "CRITICAL: Found socket code in perception_lobe - ARCHITECTURE VIOLATION.  Removing..."
-  - "CRITICAL: Found raw-text keyword/regex/phrase matching inside Emotion - ARCHITECTURE VIOLATION under EMOTION_LOBE_HARD_RULES.md. Rejecting/removing it."
+  - "CRITICAL: Found raw-text keyword/regex/phrase matching inside Emotion - ARCHITECTURE VIOLATION under the Mercy-wide rule in AGENTS.md. Rejecting/removing it."
   - Complete lobe implementations with all required components
   - Evidence of proper wiring (file paths, line numbers)
 
