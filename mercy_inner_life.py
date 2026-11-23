@@ -190,8 +190,11 @@ class InnerLife:
         # Good he did or got.
         if about == "him" and good > 0.3 and m.get("tense") == "past":
             add(0.15, 0.10, "admiring", "something good he did or got")
-        # His bad news, felt with him; terrible news is horrifying.
-        if about == "him" and good < -0.6:
+        # His bad news, felt with him; terrible news is horrifying. When he is
+        # only telling her how he feels about something ("I hate mornings"),
+        # nothing happened to him: she can be sorry for him, never horrified.
+        his_feeling_only = about == "him" and _says_how_he_feels(m.get("verbs") or [])
+        if about == "him" and good < -0.6 and not his_feeling_only:
             add(-0.40 * (0.5 + bond), 0.30, "horrified", "something terrible happened to him")
         elif about == "him" and good < -0.3:
             add(-0.20 * (0.5 + bond), 0.0, "sympathetic", "something bad happened to him")
@@ -287,3 +290,21 @@ class InnerLife:
 
 
 __all__ = ["InnerLife", "Felt", "EVENTS", "FEELING_OF"]
+
+
+def _says_how_he_feels(verbs: List[str]) -> bool:
+    """True when his sentence only says how he feels about something ("I hate
+    mornings"): it has a feeling verb (first dictionary sense in WordNet's
+    verb.emotion: hate, love, dread) and no verb of something happening
+    (every other verb's first sense is a state, like "be")."""
+    try:
+        from lexicon.oewn_offline import get_wordnet
+        wordnet = get_wordnet()
+    except Exception:
+        return False
+    kinds = []
+    for verb in verbs:
+        senses = list(wordnet.synsets(verb, pos="v"))
+        if senses:
+            kinds.append(str(senses[0].lexfile()))
+    return "verb.emotion" in kinds and all(k in ("verb.emotion", "verb.stative") for k in kinds)
