@@ -1,22 +1,19 @@
 """How a lobe works with the rest of her through the Thalamus.
 
 In unison, not in a line. Every lobe hears each moment at the same time, the
-same full moment as her senses built it, and takes it in on its own. No lobe
-waits for another to finish before it starts. A lobe that needs what another
-lobe makes of the moment asks that lobe about it (about_moment); the lobe
-asked takes the moment in right then if it hasn't yet, and answers with what
-it made of it. Each lobe takes a moment in exactly once.
+same full moment as her senses built it, and takes it in on its own. Each
+lobe takes a moment in exactly once.
 
 What a lobe can do here: sign up for announcements (listen), tell everyone who
 signed up that something happened (announce), ask another lobe for something
-(ask), and ask another lobe what it made of a moment (about_moment).
+(ask), and read what another lobe fired about a moment (about_moment).
 
-Sharing, like a brain: the moment a lobe has finished taking a moment in, what
-it made of it goes to every other lobe on its own (Thalamus.share). No lobe
-has to sign up for it or ask for it. A lobe sees everything the others have
-shared about a moment so far with shared_with_me. When a lobe asks another
-lobe what it made of a moment and that lobe has already shared it, the answer
-is already here and nobody is asked again.
+Like a brain, nothing asks. When a lobe has taken a moment in it fires: what
+it made of it goes to every other lobe on its own (Thalamus.share). A lobe
+that needs what other lobes made of the moment says which lobes it reads
+from (take_moment's `reads`) and takes the moment in once they have fired;
+about_moment then reads what reached it. shared_with_me shows everything the
+others have fired about a moment so far.
 
 Announcements, and who makes them:
 
@@ -41,7 +38,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 def listen(thalamus: Any, name: str, *topics: str) -> None:
@@ -95,9 +92,17 @@ def moment_key(payload: Dict[str, Any]) -> str:
     return rid or f"{payload.get('user_id')}|{words_of(moment)}"
 
 
+def _trace(kind: str, **data: Any) -> None:
+    try:
+        from trace_monitor import trace_event
+        trace_event(kind, **data)
+    except Exception:
+        pass
+
+
 def shared_with_me(thalamus: Any, name: str, payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """Everything the other lobes have shared with this lobe about this moment
-    so far: {lobe: what it made of it}."""
+    """Everything the other lobes have fired to this lobe about this moment so
+    far: {lobe: what it made of it}."""
     held = getattr(thalamus, "shared_with", None)
     if not callable(held):
         return {}
@@ -107,89 +112,127 @@ def shared_with_me(thalamus: Any, name: str, payload: Dict[str, Any]) -> Dict[st
         return {}
 
 
+def fire(thalamus: Any, name: str, payload: Dict[str, Any], made: Dict[str, Any]) -> None:
+    """This lobe fires: what it made of the moment goes to every other lobe."""
+    share = getattr(thalamus, "share", None)
+    if not callable(share):
+        return
+    key = moment_key(payload)
+    try:
+        share(name, key, made if isinstance(made, dict) else {"result": made})
+    except Exception as exc:
+        _trace("share_failed", lobe=name, moment=key, error=f"{type(exc).__name__}: {exc}")
+
+
 def about_moment(thalamus: Any, lobe: str, payload: Dict[str, Any], source: str) -> Dict[str, Any]:
-    """What another lobe made of this moment. If it has already shared it, that
-    is used; otherwise it is asked, and takes the moment in right then if it
-    hasn't yet. {} if it couldn't answer."""
-    already = shared_with_me(thalamus, source, payload).get(lobe)
-    if already is not None:
-        try:
-            from trace_monitor import trace_event
-            trace_event("used_shared", lobe=source, from_lobe=lobe, moment=moment_key(payload))
-        except Exception:
-            pass
-        return already
-    return ask(thalamus, lobe, "about_moment",
-               {"user_id": payload.get("user_id"), "recognition_id": payload.get("recognition_id"),
-                "moment": payload.get("moment")}, source)
+    """What another lobe fired about this moment, as it has reached this lobe.
+    Never asks: a lobe that reads from another lobe takes the moment in only
+    once that lobe has fired (take_moment's `reads`). {} if it fired nothing."""
+    made = shared_with_me(thalamus, source, payload).get(lobe)
+    return dict(made) if isinstance(made, dict) else {}
+
+
+# Every lobe that takes moments in and fires about them. Executive Control
+# decides once all of these (that are part of her and hear the moment) have fired.
+FIRES_ABOUT_MOMENTS = ("notus", "attention", "novelty", "pattern", "conversation", "emotion", "reasoning",
+                       "language", "social_context", "motor_action", "meta_awareness", "shared_representation")
 
 
 class TakesIn:
-    """A lobe's way of taking each moment in exactly once, whether it heard the
-    moment itself or another lobe asked it about the moment first."""
+    """A lobe's way of taking each moment in, the way a brain does it: nothing
+    asks. The lobe takes the moment in once every lobe it reads from has fired
+    about it (they reach it as signals), and then fires what it made of it to
+    every other lobe. Each moment is taken in exactly once."""
 
     def __init__(self, lobe: str, take_in: Callable[[Dict[str, Any]], Dict[str, Any]],
-                 thalamus: Any = None) -> None:
+                 thalamus: Any = None, reads: Tuple[str, ...] = ()) -> None:
         self.lobe = lobe
         self._take_in = take_in
         self._thalamus = thalamus
+        self._reads = tuple(reads)
         self._made: "OrderedDict[str, Optional[Dict[str, Any]]]" = OrderedDict()
+        self._waiting: "OrderedDict[str, Tuple[Dict[str, Any], Any]]" = OrderedDict()
         self._lock = threading.RLock()
+
+    def _still_to_fire(self, key: str) -> List[str]:
+        """The lobes this one reads from that haven't fired about this moment yet
+        (only lobes that are part of her and hear the moment)."""
+        th = self._thalamus
+        if not self._reads or th is None:
+            return []
+        held_by = getattr(th, "shared_with", None)
+        held = held_by(self.lobe, key) if callable(held_by) else {}
+        hearing = set((getattr(th, "listeners", None) or {}).get("moment") or [])
+        joined = set(getattr(th, "lobe_handlers", None) or {})
+        return [lobe for lobe in self._reads
+                if lobe != self.lobe and lobe in joined and lobe in hearing and lobe not in held]
 
     def take(self, payload: Dict[str, Any],
              then: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None) -> Dict[str, Any]:
-        """`then` runs once, after what the lobe made of the moment is ready for
-        anyone who asks (bidding for it, for one: a lobe bids with a finished
-        take on the moment, not while another lobe is still waiting on it)."""
+        """`then` runs once, when the lobe has made what it makes of the moment,
+        before it fires (its bids are in by the time the others hear it)."""
         key = moment_key(payload)
         with self._lock:
             if key in self._made:
                 made = self._made[key]
-                if made is None:
-                    # Asked about a moment it is still in the middle of taking in.
-                    try:
-                        from trace_monitor import trace_event
-                        trace_event("asked_midway", lobe=self.lobe, moment=key)
-                    except Exception:
-                        pass
-                    return {"still_taking_it_in": True}
-                return made
+                return {"still_taking_it_in": True} if made is None else made
+            missing = self._still_to_fire(key)
+            if missing:
+                first = key not in self._waiting
+                self._waiting[key] = (payload, then)
+                while len(self._waiting) > 30:
+                    self._waiting.popitem(last=False)
+                if first:
+                    _trace("waiting_for_signals", lobe=self.lobe, moment=key, waiting_for=missing)
+                return {"waiting_for": missing}
+            self._waiting.pop(key, None)
             self._made[key] = None
             while len(self._made) > 30:
                 self._made.popitem(last=False)
+        return self._run(key, payload, then)
+
+    def heard(self, signal: Dict[str, Any]) -> None:
+        """Another lobe fired about a moment. If this lobe was waiting on it and
+        everything it reads from has now fired, it takes the moment in."""
+        key = str(signal.get("moment") or "")
+        with self._lock:
+            waiting = self._waiting.get(key)
+        if waiting is not None and not self._still_to_fire(key):
+            self.take(*waiting)
+
+    def _run(self, key: str, payload: Dict[str, Any], then: Any) -> Dict[str, Any]:
         try:
             made = self._take_in(payload)
-        except Exception:
+        except Exception as exc:
+            # It still fires, so no lobe that reads from it waits forever.
+            made = {"failed": f"{type(exc).__name__}: {exc}"}
             with self._lock:
-                self._made.pop(key, None)
+                self._made[key] = made
+            fire(self._thalamus, self.lobe, payload, made)
             raise
         made = made if isinstance(made, dict) else {}
         with self._lock:
             self._made[key] = made
-        # Finished with it: what it made of the moment goes to every other lobe now.
-        share = getattr(self._thalamus, "share", None)
-        if callable(share):
-            try:
-                share(self.lobe, key, made)
-            except Exception as exc:
-                try:
-                    from trace_monitor import trace_event
-                    trace_event("share_failed", lobe=self.lobe, moment=key, error=f"{type(exc).__name__}: {exc}")
-                except Exception:
-                    pass
         if then is not None:
-            then(payload, made)
+            try:
+                then(payload, made)
+            finally:
+                fire(self._thalamus, self.lobe, payload, made)
+        else:
+            fire(self._thalamus, self.lobe, payload, made)
         return made
 
 
 def take_moment(lobe: Any, name: str, take_in: Callable[[Dict[str, Any]], Dict[str, Any]],
                 payload: Dict[str, Any],
-                then: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None) -> Dict[str, Any]:
-    """What this lobe makes of the moment: taken in now if it hasn't been yet."""
+                then: Optional[Callable[[Dict[str, Any], Dict[str, Any]], None]] = None,
+                reads: Tuple[str, ...] = ()) -> Dict[str, Any]:
+    """This lobe takes the moment in once the lobes it reads from have fired
+    about it, and fires what it made of it."""
     taker = lobe.__dict__.get("_takes_in")
     if taker is None:
         taker = lobe.__dict__.setdefault(
-            "_takes_in", TakesIn(name, take_in, getattr(lobe, "thalamus", None)))
+            "_takes_in", TakesIn(name, take_in, getattr(lobe, "thalamus", None), reads))
     return taker.take(payload, then)
 
 
@@ -207,4 +250,4 @@ def words_of(moment: Dict[str, Any]) -> str:
     return ""
 
 
-__all__ = ["listen", "announce", "ask", "bid", "about_moment", "shared_with_me", "moment_key", "TakesIn", "take_moment", "words_of"]
+__all__ = ["listen", "announce", "ask", "bid", "about_moment", "shared_with_me", "fire", "FIRES_ABOUT_MOMENTS", "moment_key", "TakesIn", "take_moment", "words_of"]

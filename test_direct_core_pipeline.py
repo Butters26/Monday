@@ -204,8 +204,9 @@ def test_reasoning_reviews_language_reply_before_output(tmp_path):
         def process_message(self, message):
             if message.get("type") == "moment":
                 # A stand-in Reasoning: hears the moment and announces a thought.
-                turn = message.get("content") or {}
-                turn = {"user_id": turn.get("user_id"), "user_input": (turn.get("moment") or {}).get("text")}
+                heard = message.get("content") or {}
+                turn = {"user_id": heard.get("user_id"), "user_input": (heard.get("moment") or {}).get("text"),
+                        "recognition_id": heard.get("recognition_id")}
                 # ...and, like the real one, bids for what it has to offer.
                 systems["thalamus"].send_and_wait("executive_control", "bid", {
                     "from": "reasoning", "impulse": "that she doesn't know", "strength": 0.7,
@@ -213,7 +214,11 @@ def test_reasoning_reviews_language_reply_before_output(tmp_path):
                 systems["thalamus"].announce("thought", {
                     "user_id": turn.get("user_id"), "user_input": turn.get("user_input"),
                     "semantic_input": {"answer": "IGNORED_PASS_THROUGH"}, "memories": [],
+                    "recognition_id": turn.get("recognition_id"),
                 }, "reasoning")
+                # ...and fires about the moment, like every lobe that takes moments in.
+                from team import fire
+                fire(systems["thalamus"], "reasoning", heard, {"thought": True})
                 return {"status": "success", "content": {}}
             if message.get("type") == "review_reply":
                 content = message.get("content") or {}

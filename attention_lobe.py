@@ -568,7 +568,8 @@ class AttentionLobe:
 
         if msg_type in ("moment", "about_moment"):
             from team import take_moment
-            return {"status": "success", "content": take_moment(self, "attention", self._take_in, content)}
+            return {"status": "success", "content": take_moment(self, "attention", self._take_in, content,
+                                                               reads=("novelty", "language", "emotion"))}
 
         if msg_type == "get_focus":
             body = self.get_focus()

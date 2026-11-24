@@ -46,6 +46,7 @@ except Exception:  # tracer is optional
 
 
 ANSWER_TIMEOUT_SEC = float(os.environ.get("MERCY_LOBE_ANSWER_TIMEOUT", "60"))
+SIGNAL = "signal"  # the kind of letter that carries what another lobe fired
 SHARED_MOMENTS_KEPT = 30  # how many recent moments a lobe keeps what the others shared about
 
 _current = threading.local()  # .chain = chain id of the message this thread is handling
@@ -141,6 +142,20 @@ class LobeInbox:
                 while len(self._shared) > SHARED_MOMENTS_KEPT:
                     self._shared.popitem(last=False)
             this_moment[from_lobe] = made
+
+    def reacts(self) -> bool:
+        """Does this lobe do anything when another lobe fires? (It takes moments in
+        once what it reads from has fired, or it has its own on_signal.)"""
+        return "_takes_in" in getattr(self.lobe, "__dict__", {}) or callable(getattr(self.lobe, "on_signal", None))
+
+    def _react(self, signal: Dict[str, Any]) -> Dict[str, Any]:
+        taker = getattr(self.lobe, "__dict__", {}).get("_takes_in")
+        if taker is not None:
+            taker.heard(signal)
+        hook = getattr(self.lobe, "on_signal", None)
+        if callable(hook):
+            hook(signal)
+        return {"status": "success", "content": {}}
 
     def held(self, moment: str) -> Dict[str, Dict[str, Any]]:
         """Everything the other lobes have shared with this one about a moment so far."""
@@ -253,10 +268,14 @@ class LobeInbox:
         waited_ms = round((time.perf_counter() - letter.posted_at) * 1000, 2)
         started = time.perf_counter()
         try:
-            handler = getattr(self.lobe, "process_message", None) or getattr(
-                self.lobe, "process_message_safe", None
-            )
-            response = handler(envelope)
+            if envelope.get("type") == SIGNAL:
+                # Another lobe fired about a moment: this lobe reacts to it on its own.
+                response = self._react(envelope.get("content") or {})
+            else:
+                handler = getattr(self.lobe, "process_message", None) or getattr(
+                    self.lobe, "process_message_safe", None
+                )
+                response = handler(envelope)
             if not isinstance(response, dict):
                 response = {"status": "success", "content": {"result": response}}
             response.setdefault("status", "success")

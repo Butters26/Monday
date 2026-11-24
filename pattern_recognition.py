@@ -1906,7 +1906,7 @@ class AdvancedPatternRecognition:
             "statement": str(where.get("user_input") or ""),
             "items": list(words), "words": list(words),
             "perception": moment,
-            "attention": ask(self.thalamus, "attention", "get_focus", {}, "pattern"),
+            "attention": about_moment(self.thalamus, "attention", payload, "pattern"),
             "understanding": where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
             "emotion": about_moment(self.thalamus, "emotion", payload, "pattern"),
             "user_id": user_id,
@@ -2342,7 +2342,8 @@ class AdvancedPatternRecognition:
         
         if msg_type in ('moment', 'about_moment'):
             from team import take_moment
-            return {'status': 'success', 'content': take_moment(self, 'pattern', self._take_in, payload)}
+            return {'status': 'success', 'content': take_moment(self, 'pattern', self._take_in, payload,
+                                                                    reads=('conversation', 'emotion', 'attention'))}
 
         if msg_type == 'observe' or msg_type == 'process_input':
             data = nested if nested is not None else payload

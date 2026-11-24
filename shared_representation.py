@@ -760,7 +760,7 @@ class SharedRepresentationSystem:
             # In unison: she hears the moment herself and asks Language what it read;
             # the concepts in it become active here.
             from team import take_moment
-            return {"status":"success","content":take_moment(self,"shared_representation",self._light_up,content)}
+            return {"status":"success","content":take_moment(self,"shared_representation",self._light_up,content,reads=("language",))}
         if msg_type=="health": return {"status":"success","healthy":True,"concept_count":len(self.concepts),"global_relationship_count":len(self.global_relationships),"transient_instance_count":len(self.instances),"transient_proposition_count":len(self.propositions),"live_co_occurrence_producer":True,"store_path":str(self.store_path)}
         if msg_type=="resolve_from_text":
             return {"status":"error","message":"raw text interpretation belongs to language","content":{}}

@@ -1215,7 +1215,8 @@ class ConversationSystem:
         if msg_type in ("moment", "about_moment"):
             from team import take_moment
             return {"status": "success",
-                    "content": take_moment(self, "conversation", self._take_in, payload if isinstance(payload, dict) else {})}
+                    "content": take_moment(self, "conversation", self._take_in, payload if isinstance(payload, dict) else {},
+                                       reads=("language", "novelty"))}
 
         if msg_type == "understand":
             user_input = payload.get("user_input", "")

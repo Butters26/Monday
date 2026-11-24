@@ -457,7 +457,7 @@ class MetaAwareness:
 
         if msg_type in ("moment", "about_moment"):
             from team import take_moment
-            snap = take_moment(self, "meta_awareness", self._take_in, content)
+            snap = take_moment(self, "meta_awareness", self._take_in, content, reads=("conversation",))
             return {"status": "success", "content": snap, "meta_awareness": snap}
 
         if msg_type in ("observe_turn", "observe", "update_from_turn"):

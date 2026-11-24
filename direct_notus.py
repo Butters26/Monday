@@ -3530,7 +3530,13 @@ relocate to: live in
         if msg_type == "read_again":
             return self.file_again(str(payload.get("text") or ""), str(payload.get("user_id") or self._talking_with or "default"))
         if msg_type in ("moment", "about_moment"):
-            return self.hear_moment(payload)
+            heard = self.hear_moment(payload)
+            # He fires once it is filed, so the lobes that read from memory take it in now.
+            from team import fire
+            body = heard.get("content") if isinstance(heard.get("content"), dict) else {}
+            fire(self.thalamus, "notus", payload,
+                 body if heard.get("status") == "success" else {"not_filed": str(heard.get("message") or "")})
+            return heard
         if msg_type == "thought_arose":
             return self.replay(payload)
         if msg_type == "delivered":

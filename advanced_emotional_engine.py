@@ -1054,7 +1054,7 @@ class EmotionalProcess:
                 # In unison: she hears the moment herself and feels about it (once).
                 from team import take_moment
                 return {'status': 'success', **take_moment(self, 'emotion', self._feel_moment, message,
-                                                           then=self._bid_feeling)}
+                                                           then=self._bid_feeling, reads=('social_context',))}
 
             if msg_type == 'how_she_felt':
                 # What she felt about the last thing said (to this person), for any

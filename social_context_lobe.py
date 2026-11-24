@@ -674,7 +674,8 @@ compliment -> "thank you" (sure 0.7)
 
         if msg_type in ("moment", "about_moment"):
             from team import take_moment
-            snap = take_moment(self, "social_context", self._take_in, content, then=self._bid_for)
+            snap = take_moment(self, "social_context", self._take_in, content, then=self._bid_for,
+                               reads=("conversation",))
             return {"status": "success", "content": snap, "social_context": snap}
 
         if msg_type in ("observe_turn", "observe", "update_from_turn"):

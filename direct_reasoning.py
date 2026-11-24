@@ -2106,7 +2106,9 @@ class DirectReasoningAdapter:
         if message.get("type") in ("moment", "about_moment"):
             from team import take_moment
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
-            return {"status": "success", "content": take_moment(self, "reasoning", self._think_about_moment, payload)}
+            return {"status": "success", "content": take_moment(self, "reasoning", self._think_about_moment, payload,
+                                reads=("conversation", "notus", "shared_representation", "social_context",
+                                       "emotion", "attention", "pattern"))}
         if message.get("type") in ("work_out", "think_through"):
             # Another lobe (Autonomous Thinking, Executive Control...) asks her to
             # think something through: what she knows about it, what follows, why.

@@ -9,6 +9,7 @@ from __future__ import annotations
 import collections
 import json
 import sys
+from typing import Dict
 from pathlib import Path
 
 PROBLEM_OUTCOMES = ("CRASHED", "NOT_UNDERSTOOD", "REJECTED", "NO_RECEIVER", "NO_ANSWER")
@@ -75,21 +76,25 @@ def main() -> int:
             print(f"{n:4d}  {src} announced {topic!r} -> {heard}")
 
     shared = [r for r in records if r.get("kind") == "shared"]
-    used = collections.Counter((r.get("lobe"), r.get("from_lobe"))
-                               for r in records if r.get("kind") == "used_shared")
+    waited = [r for r in records if r.get("kind") == "waiting_for_signals"]
     share_failed = [r for r in records if r.get("kind") == "share_failed"]
-    if shared or used or share_failed:
-        print("\n== SHARED BETWEEN LOBES (what each lobe made of a moment, sent to all the others) ==")
-        by_lobe = collections.Counter(r.get("from_lobe") for r in shared)
+    if shared or waited or share_failed:
+        print("\n== SIGNALS (each lobe fires what it made of a moment to all the others; nobody asks) ==")
+        by_moment: Dict[str, list] = collections.OrderedDict()
+        for r in shared:
+            by_moment.setdefault(r.get("moment"), []).append(r.get("from_lobe"))
+        for moment, order in by_moment.items():
+            print(f"  {moment}: fired in this order: {', '.join(str(o) for o in order)}")
+        fired = {(r.get("from_lobe"), r.get("moment")) for r in shared}
         empty = collections.Counter(r.get("from_lobe") for r in shared if r.get("empty"))
-        reach = {r.get("from_lobe"): len(r.get("to") or []) for r in shared}
-        for lobe, n in by_lobe.most_common():
-            note = f"; {empty[lobe]} of them empty" if empty.get(lobe) else ""
-            print(f"{n:4d}  {lobe} shared what it made of a moment -> {reach.get(lobe, 0)} lobes{note}")
-        for (lobe, other), n in used.most_common():
-            print(f"{n:4d}  {lobe} already had what {other} shared (didn't need to ask)")
+        for lobe, n in empty.most_common():
+            print(f"{n:4d}  {lobe} fired nothing about a moment")
+        for r in waited:
+            if (r.get("lobe"), r.get("moment")) not in fired:
+                print(f"  NEVER FIRED: {r.get('lobe')} on {r.get('moment')} "
+                      f"(was waiting for {', '.join(r.get('waiting_for') or [])})")
         for r in share_failed:
-            print(f"  SHARE FAILED: {r.get('lobe')} on {r.get('moment')}: {r.get('error')}")
+            print(f"  FIRING FAILED: {r.get('lobe')} on {r.get('moment')}: {r.get('error')}")
 
     volumes = [r for r in records if r.get("kind") == "thalamus_volume"]
     ahead = collections.Counter((r.get("lobe"), r.get("sender"), r.get("msg_type"))

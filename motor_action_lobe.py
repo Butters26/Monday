@@ -383,7 +383,7 @@ class MotorActionLobe:
 
         if msg_type in ("moment", "about_moment"):
             from team import take_moment
-            body = take_moment(self, "motor_action", self._take_in, content)
+            body = take_moment(self, "motor_action", self._take_in, content, reads=("conversation",))
             return {"status": "success", "content": body}
 
         if msg_type in ("plan_from_turn", "plan_turn"):

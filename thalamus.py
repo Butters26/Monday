@@ -12,9 +12,9 @@ What it does:
   back (send_message / send_and_wait), or delivers without waiting (tell);
 - delivers an announcement to every lobe that listens for it (listen /
   announce); the lobes choose what they listen for;
-- shares what each lobe made of a moment with every other lobe as soon as it
-  is ready (share / shared_with), the way parts of a brain fire to each other
-  without being asked;
+- carries what each lobe fires about a moment to every other lobe as soon as
+  it fires (share / fire / shared_with), the way parts of a brain fire to
+  each other without being asked. Lobes react to the signals; nobody asks;
 - applies the volume Attention sets (set_volume): of the things told and
   announced to a lobe, louder ones are delivered first and quieter ones wait.
   Nothing is ever dropped. Only Attention can set it;
@@ -33,7 +33,7 @@ import time
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
-from lobe_inbox import ANSWER_TIMEOUT_SEC, Letter, LobeInbox, Reply, current_chain, new_chain, next_birth
+from lobe_inbox import ANSWER_TIMEOUT_SEC, SIGNAL, Letter, LobeInbox, Reply, current_chain, new_chain, next_birth
 
 try:
     from trace_monitor import trace_event as _trace_event
@@ -252,11 +252,12 @@ class Thalamus:
         moment: str,
         made: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """A lobe has finished with a moment: what it made of it reaches every
-        other lobe, without any lobe signing up or asking. Like one part of a
-        brain firing to every part it is wired to. Each lobe keeps it and uses
-        it when it wants; nothing waits on it and nothing is dropped.
-        Thalamus doesn't look inside what is shared."""
+        """A lobe fires: what it made of a moment goes down every connection it
+        has, to every other lobe, without anyone asking. Each lobe holds it
+        straight away, even while busy, and a lobe that reacts to signals is
+        woken by it on its own thread (Attention's volume says which signals
+        it reacts to first). A lobe can fire again about the same moment; the
+        newer signal replaces the older one. Thalamus doesn't look inside it."""
         if not source or not moment:
             return {"status": "error", "message": "A lobe and a moment are required", "content": {}}
         if not isinstance(made, dict):
@@ -264,15 +265,23 @@ class Thalamus:
         with self.lobe_handlers_lock:
             inboxes = [(name, inbox) for name, inbox in self.inboxes.items() if name != source]
         reached: List[str] = []
-        for name, inbox in inboxes:
+        woke: List[str] = []
+        born = next_birth()
+        for index, (name, inbox) in enumerate(inboxes):
             if not inbox.alive:
                 continue
             inbox.hold(source, moment, made)
             reached.append(name)
+            if inbox.reacts():
+                self._post(name, SIGNAL, {"from": source, "moment": moment}, source,
+                           want_answer=False, chain=new_chain(born, index))
+                woke.append(name)
         self._carried += 1
-        _trace_event("shared", from_lobe=source, moment=moment, to=reached,
+        _trace_event("shared", from_lobe=source, moment=moment, to=reached, woke=woke,
                      what=sorted(str(key) for key in made)[:20], empty=not made)
         return {"status": "delivered", "content": {"from": source, "moment": moment, "to": reached}}
+
+    fire = share
 
     def shared_with(self, lobe: str, moment: str) -> Dict[str, Dict[str, Any]]:
         """Everything the other lobes have shared with `lobe` about a moment so far."""

@@ -18,7 +18,7 @@ is the part learning can tune later.
 
 Then, the way the prefrontal cortex and basal ganglia do it:
 - it decides what she says only once every lobe that heard the moment has
-  had its say;
+  fired about it (nobody is asked; it reacts to their signals);
 - one winner per channel (she has one mouth: one thing to say; one thing to do);
 - the winner is her purpose: it is held until it is done, and Attention is
   steered to it;
@@ -273,21 +273,21 @@ class ExecutiveControlLobe:
     # What she means to say: which impulse won (Language words it on its own)
     # ------------------------------------------------------------------
 
-    def _hear_everyone_out(self) -> None:
-        """Before deciding what she says: every lobe that heard this moment gets
-        to finish with it, so its bids are in. (A lobe answers this only after
-        what it was already handling; Executive Control takes bids while it waits.)"""
-        listeners = getattr(self.thalamus, "listeners", None) or {}
-        heard_it = []
-        for lobe in listeners.get("moment") or []:
-            if lobe != self.name and lobe not in heard_it:
-                heard_it.append(lobe)
-        for lobe in heard_it:
-            self._ask(lobe, "health", {})
+    def _settled(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Every lobe that heard this moment has fired about it (their bids went
+        in before they fired): she has settled, and Executive Control decides
+        what she means to say. What it decides is fired to every lobe; Language
+        words it when it reaches it."""
+        from team import words_of
+        moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
+        said = words_of(moment)
+        user_id = str(payload.get("user_id") or moment.get("user_id") or "default")
+        if not said:
+            return {"say": None, "reason": "nothing was said in this moment"}
+        return self.what_to_say(user_id, said)
 
     def what_to_say(self, user_id: str, heard: str = "") -> Dict[str, Any]:
         about = heard or self.now_about.get(user_id, "")
-        self._hear_everyone_out()
         purpose = self._decide(user_id, about, "say", "Language is ready to word a reply")
         if purpose is None:
             answer = {"say": None, "reason": "no lobe had anything to say about it"}
@@ -486,7 +486,11 @@ class ExecutiveControlLobe:
             # In unison: she hears the moment herself. Bids about anything older stop competing.
             from team import words_of
             said = words_of(content.get("moment") if isinstance(content.get("moment"), dict) else {})
-            body = self.hear_turn(said, user_id) if said else self.get_goal()
+            if said:
+                self.hear_turn(said, user_id)
+            # It decides once every lobe that heard the moment has fired about it.
+            from team import FIRES_ABOUT_MOMENTS, take_moment
+            body = take_moment(self, "executive_control", self._settled, content, reads=FIRES_ABOUT_MOMENTS)
             return {"status": "success", "content": body}
         if msg_type == "delivered":
             self._heard_delivery(content)

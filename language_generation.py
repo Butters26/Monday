@@ -540,10 +540,28 @@ class LanguageGenerator:
                                   if isinstance(i, dict)],
         }
 
+    def on_signal(self, signal: Dict[str, Any]) -> None:
+        """A lobe fired. When it is Executive Control's decision about a moment
+        she has a thought waiting on, she words it now."""
+        if signal.get("from") != "executive_control":
+            return
+        waiting = self.__dict__.get("_thoughts_waiting") or {}
+        thought = waiting.pop(str(signal.get("moment") or ""), None)
+        if thought is not None:
+            self._hear_thought(thought)
+
     def _hear_thought(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Reasoning has something to say about what was said. Have Meta-Cognition
         look it over, word it, have the wording looked over, and hand it to Output."""
-        from team import ask
+        from team import about_moment, ask, moment_key
+        # What she means to say is Executive Control's: it fires its decision once
+        # every lobe has fired about the moment. Until it reaches her, the thought waits.
+        decided = about_moment(self.thalamus, "executive_control", payload, "language")
+        if not decided:
+            self.__dict__.setdefault("_thoughts_waiting", {})[moment_key(payload)] = payload
+            return {"status": "success", "content": {"waiting_for": "executive_control"}}
+        self.__dict__.get("_thoughts_waiting", {}).pop(moment_key(payload), None)
+        self._decided = decided
         semantic_input = payload.get("semantic_input") if isinstance(payload.get("semantic_input"), dict) else {}
         heard = str(payload.get("user_input") or "")
         user_id = str(payload.get("user_id") or "default")
@@ -1623,7 +1641,7 @@ class LanguageGenerator:
                 pieces["expected_reply"].append(said)
         # Executive Control decides what she means to say; Language only words it.
         self._ec_pieces = self._ec_forms = None
-        told = self._ask("executive_control", "what_to_say", {"user_id": user_id, "heard": user_input})
+        told = dict(self.__dict__.get("_decided") or {})  # Executive Control's decision, as it fired it
         say = str(told.get("say") or "").strip()
         self._trace("wording_for_executive", say=say or None, purpose=told.get("purpose"), reason=told.get("reason"))
         if not say:
