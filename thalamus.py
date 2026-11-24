@@ -12,6 +12,9 @@ What it does:
   back (send_message / send_and_wait), or delivers without waiting (tell);
 - delivers an announcement to every lobe that listens for it (listen /
   announce); the lobes choose what they listen for;
+- shares what each lobe made of a moment with every other lobe as soon as it
+  is ready (share / shared_with), the way parts of a brain fire to each other
+  without being asked;
 - applies the volume Attention sets (set_volume): of the things told and
   announced to a lobe, louder ones are delivered first and quieter ones wait.
   Nothing is ever dropped. Only Attention can set it;
@@ -242,6 +245,40 @@ class Thalamus:
         results = {name: self.tell(name, topic, content, source, chain=new_chain(born, index))
                    for index, name in enumerate(names)}
         return {"status": "delivered", "content": {"topic": topic, "to": names, "results": results}}
+
+    def share(
+        self,
+        source: str,
+        moment: str,
+        made: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """A lobe has finished with a moment: what it made of it reaches every
+        other lobe, without any lobe signing up or asking. Like one part of a
+        brain firing to every part it is wired to. Each lobe keeps it and uses
+        it when it wants; nothing waits on it and nothing is dropped.
+        Thalamus doesn't look inside what is shared."""
+        if not source or not moment:
+            return {"status": "error", "message": "A lobe and a moment are required", "content": {}}
+        if not isinstance(made, dict):
+            made = {"result": made}
+        with self.lobe_handlers_lock:
+            inboxes = [(name, inbox) for name, inbox in self.inboxes.items() if name != source]
+        reached: List[str] = []
+        for name, inbox in inboxes:
+            if not inbox.alive:
+                continue
+            inbox.hold(source, moment, made)
+            reached.append(name)
+        self._carried += 1
+        _trace_event("shared", from_lobe=source, moment=moment, to=reached,
+                     what=sorted(str(key) for key in made)[:20], empty=not made)
+        return {"status": "delivered", "content": {"from": source, "moment": moment, "to": reached}}
+
+    def shared_with(self, lobe: str, moment: str) -> Dict[str, Dict[str, Any]]:
+        """Everything the other lobes have shared with `lobe` about a moment so far."""
+        with self.lobe_handlers_lock:
+            inbox = self.inboxes.get(lobe)
+        return inbox.held(moment) if inbox is not None else {}
 
     def broadcast_message(
         self,

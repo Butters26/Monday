@@ -74,6 +74,23 @@ def main() -> int:
         for (src, topic, heard), n in sorted(announces.items()):
             print(f"{n:4d}  {src} announced {topic!r} -> {heard}")
 
+    shared = [r for r in records if r.get("kind") == "shared"]
+    used = collections.Counter((r.get("lobe"), r.get("from_lobe"))
+                               for r in records if r.get("kind") == "used_shared")
+    share_failed = [r for r in records if r.get("kind") == "share_failed"]
+    if shared or used or share_failed:
+        print("\n== SHARED BETWEEN LOBES (what each lobe made of a moment, sent to all the others) ==")
+        by_lobe = collections.Counter(r.get("from_lobe") for r in shared)
+        empty = collections.Counter(r.get("from_lobe") for r in shared if r.get("empty"))
+        reach = {r.get("from_lobe"): len(r.get("to") or []) for r in shared}
+        for lobe, n in by_lobe.most_common():
+            note = f"; {empty[lobe]} of them empty" if empty.get(lobe) else ""
+            print(f"{n:4d}  {lobe} shared what it made of a moment -> {reach.get(lobe, 0)} lobes{note}")
+        for (lobe, other), n in used.most_common():
+            print(f"{n:4d}  {lobe} already had what {other} shared (didn't need to ask)")
+        for r in share_failed:
+            print(f"  SHARE FAILED: {r.get('lobe')} on {r.get('moment')}: {r.get('error')}")
+
     volumes = [r for r in records if r.get("kind") == "thalamus_volume"]
     ahead = collections.Counter((r.get("lobe"), r.get("sender"), r.get("msg_type"))
                                 for r in records if r.get("kind") == "thalamus_priority")

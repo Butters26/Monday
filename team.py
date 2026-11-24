@@ -11,6 +11,13 @@ What a lobe can do here: sign up for announcements (listen), tell everyone who
 signed up that something happened (announce), ask another lobe for something
 (ask), and ask another lobe what it made of a moment (about_moment).
 
+Sharing, like a brain: the moment a lobe has finished taking a moment in, what
+it made of it goes to every other lobe on its own (Thalamus.share). No lobe
+has to sign up for it or ask for it. A lobe sees everything the others have
+shared about a moment so far with shared_with_me. When a lobe asks another
+lobe what it made of a moment and that lobe has already shared it, the answer
+is already here and nobody is asked again.
+
 Announcements, and who makes them:
 
   heard_words / heard_sound / saw   Perception: something reached a sense
@@ -88,9 +95,30 @@ def moment_key(payload: Dict[str, Any]) -> str:
     return rid or f"{payload.get('user_id')}|{words_of(moment)}"
 
 
+def shared_with_me(thalamus: Any, name: str, payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Everything the other lobes have shared with this lobe about this moment
+    so far: {lobe: what it made of it}."""
+    held = getattr(thalamus, "shared_with", None)
+    if not callable(held):
+        return {}
+    try:
+        return held(name, moment_key(payload)) or {}
+    except Exception:
+        return {}
+
+
 def about_moment(thalamus: Any, lobe: str, payload: Dict[str, Any], source: str) -> Dict[str, Any]:
-    """Ask another lobe what it made of this moment. It takes the moment in
-    right then if it hasn't yet. {} if it couldn't answer."""
+    """What another lobe made of this moment. If it has already shared it, that
+    is used; otherwise it is asked, and takes the moment in right then if it
+    hasn't yet. {} if it couldn't answer."""
+    already = shared_with_me(thalamus, source, payload).get(lobe)
+    if already is not None:
+        try:
+            from trace_monitor import trace_event
+            trace_event("used_shared", lobe=source, from_lobe=lobe, moment=moment_key(payload))
+        except Exception:
+            pass
+        return already
     return ask(thalamus, lobe, "about_moment",
                {"user_id": payload.get("user_id"), "recognition_id": payload.get("recognition_id"),
                 "moment": payload.get("moment")}, source)
@@ -100,9 +128,11 @@ class TakesIn:
     """A lobe's way of taking each moment in exactly once, whether it heard the
     moment itself or another lobe asked it about the moment first."""
 
-    def __init__(self, lobe: str, take_in: Callable[[Dict[str, Any]], Dict[str, Any]]) -> None:
+    def __init__(self, lobe: str, take_in: Callable[[Dict[str, Any]], Dict[str, Any]],
+                 thalamus: Any = None) -> None:
         self.lobe = lobe
         self._take_in = take_in
+        self._thalamus = thalamus
         self._made: "OrderedDict[str, Optional[Dict[str, Any]]]" = OrderedDict()
         self._lock = threading.RLock()
 
@@ -136,6 +166,17 @@ class TakesIn:
         made = made if isinstance(made, dict) else {}
         with self._lock:
             self._made[key] = made
+        # Finished with it: what it made of the moment goes to every other lobe now.
+        share = getattr(self._thalamus, "share", None)
+        if callable(share):
+            try:
+                share(self.lobe, key, made)
+            except Exception as exc:
+                try:
+                    from trace_monitor import trace_event
+                    trace_event("share_failed", lobe=self.lobe, moment=key, error=f"{type(exc).__name__}: {exc}")
+                except Exception:
+                    pass
         if then is not None:
             then(payload, made)
         return made
@@ -147,7 +188,8 @@ def take_moment(lobe: Any, name: str, take_in: Callable[[Dict[str, Any]], Dict[s
     """What this lobe makes of the moment: taken in now if it hasn't been yet."""
     taker = lobe.__dict__.get("_takes_in")
     if taker is None:
-        taker = lobe.__dict__.setdefault("_takes_in", TakesIn(name, take_in))
+        taker = lobe.__dict__.setdefault(
+            "_takes_in", TakesIn(name, take_in, getattr(lobe, "thalamus", None)))
     return taker.take(payload, then)
 
 
@@ -165,4 +207,4 @@ def words_of(moment: Dict[str, Any]) -> str:
     return ""
 
 
-__all__ = ["listen", "announce", "ask", "bid", "about_moment", "moment_key", "TakesIn", "take_moment", "words_of"]
+__all__ = ["listen", "announce", "ask", "bid", "about_moment", "shared_with_me", "moment_key", "TakesIn", "take_moment", "words_of"]

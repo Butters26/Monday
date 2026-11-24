@@ -32,7 +32,7 @@ import itertools
 import os
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from typing import Any, Callable, Deque, Dict, Optional
 
 try:
@@ -46,6 +46,7 @@ except Exception:  # tracer is optional
 
 
 ANSWER_TIMEOUT_SEC = float(os.environ.get("MERCY_LOBE_ANSWER_TIMEOUT", "60"))
+SHARED_MOMENTS_KEPT = 30  # how many recent moments a lobe keeps what the others shared about
 
 _current = threading.local()  # .chain = chain id of the message this thread is handling
 _chain_numbers = itertools.count(1)
@@ -124,6 +125,27 @@ class LobeInbox:
         self._depth = 0   # messages this lobe is in the middle of handling
         self.thread_idents: set = set()
         self.thread = threading.Thread(target=self._run, name=f"lobe:{name}", daemon=True)
+        # What the other lobes made of each moment, as they shared it (Thalamus.share):
+        # moment -> {lobe: what it made of it}. The newest moments are kept.
+        self._shared: "OrderedDict[str, Dict[str, Dict[str, Any]]]" = OrderedDict()
+        self._shared_lock = threading.Lock()
+
+    # --- what the other lobes shared with this one -----------------------------
+    def hold(self, from_lobe: str, moment: str, made: Dict[str, Any]) -> None:
+        """Keep what another lobe made of a moment. It reaches this lobe the
+        moment it is shared, even while this lobe is busy with something else."""
+        with self._shared_lock:
+            this_moment = self._shared.get(moment)
+            if this_moment is None:
+                this_moment = self._shared[moment] = {}
+                while len(self._shared) > SHARED_MOMENTS_KEPT:
+                    self._shared.popitem(last=False)
+            this_moment[from_lobe] = made
+
+    def held(self, moment: str) -> Dict[str, Dict[str, Any]]:
+        """Everything the other lobes have shared with this one about a moment so far."""
+        with self._shared_lock:
+            return dict(self._shared.get(moment) or {})
 
     # --- delivery -----------------------------------------------------------
     def start(self) -> "LobeInbox":
