@@ -2341,9 +2341,10 @@ class AdvancedPatternRecognition:
             return {'status': 'success', 'healthy': True, 'pid': os.getpid(), 'content': {'healthy': True}}
         
         if msg_type in ('moment', 'about_moment'):
-            from team import take_moment
+            from team import nothing_more, take_moment
             return {'status': 'success', 'content': take_moment(self, 'pattern', self._take_in, payload,
-                                                                    reads=('conversation', 'emotion', 'attention'))}
+                                                                    reads=('conversation', 'emotion', 'attention'),
+                                                                    settle=nothing_more, keeps=('*',))}
 
         if msg_type == 'observe' or msg_type == 'process_input':
             data = nested if nested is not None else payload

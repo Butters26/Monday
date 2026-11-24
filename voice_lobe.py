@@ -564,7 +564,8 @@ class VoiceLobe:
         text = str(content.get("text") or "").strip()
         if not text:
             return {"status": "success", "content": {"spoke": False, "reason": "she said nothing"}}
-        last = ask(self.thalamus, "output", "get_last_envelope", {}, "voice")
+        from team import now
+        last = now(self.thalamus, "voice", "output")  # what Output last delivered, as it shared it
         envelope = last.get("envelope") if isinstance(last.get("envelope"), dict) else last
         try:
             intensity = float(envelope.get("intensity") or 0.5)

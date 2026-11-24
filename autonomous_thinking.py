@@ -33,7 +33,7 @@ import time
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional
 
-from team import announce, ask, listen
+from team import announce, ask, listen, now
 
 
 def _trace(kind: str, **data: Any) -> None:
@@ -164,7 +164,7 @@ class AutonomousThinkingLoop:
         if led and led.get("id") not in self._thought_about and str(led.get("content") or "").strip():
             return {"about": str(led["content"]).strip(), "memory": led, "user_id": user_id,
                     "started_from": "where her last thought led"}
-        goal = ask(self.thalamus, "executive_control", "get_goal", {}, self.name)
+        goal = now(self.thalamus, self.name, "executive_control")  # as Executive Control shared it
         for owed in goal.get("owed") or []:
             about = str((owed or {}).get("about") or "").strip()
             if about and ("owed", about) not in self._thought_about:

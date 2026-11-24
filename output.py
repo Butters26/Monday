@@ -302,16 +302,8 @@ class OutputLobe:
         if voice_registered:
             if not voice_prosody:
                 try:
-                    emotion_result = th.send_message(
-                        "emotion",
-                        "get_emotional_state",
-                        {},
-                        source="output",
-                    )
-                    if emotion_result and emotion_result.get("status") == "success":
-                        voice_prosody = (
-                            emotion_result.get("content", {}) or {}
-                        ).get("voice_prosody", {})
+                    from team import now
+                    voice_prosody = now(th, "output", "emotion").get("voice_prosody", {})  # as Emotion shared it
                 except Exception as e:
                     print(f"⚠️  Could not get emotional prosody: {e}")
                     voice_prosody = {}
@@ -679,6 +671,10 @@ class OutputLobe:
         announce = getattr(self.thalamus, "announce", None)
         if not callable(announce):
             return
+        share_state = getattr(self.thalamus, "share_state", None)
+        if callable(share_state):
+            # How it was delivered reaches every lobe before they hear it was delivered.
+            share_state("output", self.state_now())
         try:
             announce("delivered", {"text": str(text or "").strip(), "user_id": user_id or "default"},
                      source="output")
@@ -742,6 +738,10 @@ class OutputLobe:
         while self.running:
             time.sleep(0.1)
     
+    def state_now(self) -> Dict[str, Any]:
+        """What she last delivered and how: shared with every lobe whenever it changes."""
+        return {"envelope": self.get_last_envelope()}
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Process incoming message"""
         msg_type = message.get('type')

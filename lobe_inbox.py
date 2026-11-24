@@ -46,7 +46,9 @@ except Exception:  # tracer is optional
 
 
 ANSWER_TIMEOUT_SEC = float(os.environ.get("MERCY_LOBE_ANSWER_TIMEOUT", "60"))
-SIGNAL = "signal"  # the kind of letter that carries what another lobe fired
+SIGNAL = "signal"    # what another lobe just shared about a moment
+SETTLED = "settled"  # every lobe has gone quiet about a moment: she has settled on it
+BEAT = "beat"        # her steady beat: every lobe keeps running between moments
 SHARED_MOMENTS_KEPT = 30  # how many recent moments a lobe keeps what the others shared about
 
 _current = threading.local()  # .chain = chain id of the message this thread is handling
@@ -113,12 +115,16 @@ class LobeInbox:
         on_status: Callable[[str, str], None],
         volume: Optional[Callable[[Letter], float]] = None,
         waits_on: Optional[Callable[[str, str], bool]] = None,
+        on_idle: Optional[Callable[[], None]] = None,
+        share_state: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
         self.name = name
         self.lobe = lobe
         self._on_status = on_status
         self._volume = volume          # how loud Attention has set this letter (Thalamus keeps the knob)
         self._waits_on = waits_on      # is this lobe waiting on that lobe, directly or through others
+        self._on_idle = on_idle        # told whenever this lobe has nothing left to do (Thalamus: has she settled?)
+        self._share_state = share_state  # how this lobe is right now goes to every lobe whenever it changes
         self._letters: Deque[Letter] = deque()
         self._cond = threading.Condition()
         self._running = True
@@ -148,14 +154,46 @@ class LobeInbox:
         once what it reads from has fired, or it has its own on_signal.)"""
         return "_takes_in" in getattr(self.lobe, "__dict__", {}) or callable(getattr(self.lobe, "on_signal", None))
 
-    def _react(self, signal: Dict[str, Any]) -> Dict[str, Any]:
+    def _react(self, kind: str, signal: Dict[str, Any]) -> Dict[str, Any]:
+        """Something reached this lobe that isn't a message to it: another lobe
+        shared something, she settled on a moment, or her beat. The lobe reacts
+        on its own; nothing answers."""
         taker = getattr(self.lobe, "__dict__", {}).get("_takes_in")
-        if taker is not None:
-            taker.heard(signal)
-        hook = getattr(self.lobe, "on_signal", None)
+        if kind == SIGNAL:
+            if taker is not None:
+                taker.heard(signal)
+            hook = getattr(self.lobe, "on_signal", None)
+        elif kind == SETTLED:
+            if taker is not None:
+                taker.settled(signal)
+            hook = getattr(self.lobe, "on_settled", None)
+        else:
+            hook = getattr(self.lobe, "on_beat", None)
         if callable(hook):
             hook(signal)
         return {"status": "success", "content": {}}
+
+    def share_state(self) -> None:
+        """How this lobe is right now (its state_now), shared with every lobe
+        if it changed. Done after everything it handles, so the others always
+        have it without asking."""
+        state_now = getattr(self.lobe, "state_now", None)
+        if self._share_state is None or not callable(state_now):
+            return
+        try:
+            state = state_now()
+        except Exception:
+            return
+        if isinstance(state, dict):
+            self._share_state(self.name, state)
+
+    def pending(self, kind: str, moment: Optional[str], senders: Optional[tuple] = None) -> int:
+        """How many letters of this kind about this moment (from these lobes, if
+        given) are still waiting here."""
+        with self._cond:
+            return sum(1 for letter in self._letters if letter.envelope.get("type") == kind
+                       and (letter.envelope.get("content") or {}).get("moment") == moment
+                       and (senders is None or (letter.envelope.get("content") or {}).get("from") in senders))
 
     def held(self, moment: str) -> Dict[str, Dict[str, Any]]:
         """Everything the other lobes have shared with this one about a moment so far."""
@@ -234,6 +272,12 @@ class LobeInbox:
             finally:
                 with self._cond:
                     self._depth -= 1
+                    now_idle = not self._letters and self._depth == 0
+                if now_idle and self._on_idle is not None:
+                    try:
+                        self._on_idle()
+                    except Exception:
+                        pass
 
     def _for_me_while_waiting(self, chain: str) -> Optional[Letter]:
         """A letter this lobe must handle now, though it is waiting for an answer.
@@ -268,9 +312,9 @@ class LobeInbox:
         waited_ms = round((time.perf_counter() - letter.posted_at) * 1000, 2)
         started = time.perf_counter()
         try:
-            if envelope.get("type") == SIGNAL:
-                # Another lobe fired about a moment: this lobe reacts to it on its own.
-                response = self._react(envelope.get("content") or {})
+            if envelope.get("type") in (SIGNAL, SETTLED, BEAT):
+                # Not a message to this lobe: something it reacts to on its own.
+                response = self._react(envelope.get("type"), envelope.get("content") or {})
             else:
                 handler = getattr(self.lobe, "process_message", None) or getattr(
                     self.lobe, "process_message_safe", None
@@ -295,6 +339,7 @@ class LobeInbox:
         finally:
             _current.chain = previous
         self.handled += 1
+        self.share_state()
         if _trace_enabled():
             _trace_event(
                 "handled", lobe=self.name, msg_type=envelope.get("type"), source=envelope.get("source"),
@@ -333,4 +378,4 @@ class LobeInbox:
             reply.waker = None
 
 
-__all__ = ["ANSWER_TIMEOUT_SEC", "Letter", "LobeInbox", "Reply", "current_chain", "new_chain", "next_birth"]
+__all__ = ["ANSWER_TIMEOUT_SEC", "SIGNAL", "SETTLED", "BEAT", "Letter", "LobeInbox", "Reply", "current_chain", "new_chain", "next_birth"]

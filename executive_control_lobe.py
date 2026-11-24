@@ -160,6 +160,21 @@ class ExecutiveControlLobe:
             self._decide(entry["user_id"], entry["about"], entry["channel"], "a new bid came in")
         return {"taken": True}
 
+    def take_bids(self, content: Dict[str, Any], sender: str) -> Dict[str, Any]:
+        """A lobe's bids about a moment as they stand now: they take the place of
+        the bids it made before about the same thing (its take changed)."""
+        lobe = str(content.get("from") or sender or "")
+        about = str(content.get("about") or "").strip()
+        user_id = str(content.get("user_id") or "default")
+        with self.lock:
+            for b in self.bids:
+                if b["from"] == lobe and b["about"] == about and b["user_id"] == user_id and b["status"] == "live":
+                    b["status"] = "replaced"
+        for entry in content.get("bids") or []:
+            if isinstance(entry, dict):
+                self.take_bid(entry, lobe)
+        return {"taken": True}
+
     def _state_now(self, bids: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Her own state, asked for once per decision and only if a bid needs it."""
         state: Dict[str, Any] = {"feeling": None, "values": None, "focus": None}
@@ -173,14 +188,19 @@ class ExecutiveControlLobe:
         if any(b["feeling"] for b in bids):
             felt = fired.get("emotion")
             if felt is None:
-                felt = self._ask("emotion", "get_emotional_state", {})
+                from team import now
+                felt = now(self.thalamus, self.name, "emotion")
             state["feeling"] = _unit(felt.get("intensity"))
         if any(b["serves"] for b in bids):
-            held = self._ask("values", "get_values", {}).get("values") or []
+            from team import now
+            held = now(self.thalamus, self.name, "values").get("values") or []
             state["values"] = {str(v.get("name") or "").casefold(): _unit(v.get("strength"))
                                for v in held if isinstance(v, dict)}
         focus = fired.get("attention")
-        state["focus"] = focus if focus is not None else self._ask("attention", "get_focus", {})
+        if focus is None:
+            from team import now
+            focus = now(self.thalamus, self.name, "attention")
+        state["focus"] = focus
         return state
 
     def _score(self, bid: Dict[str, Any], state: Dict[str, Any], weights: Dict[str, Any]) -> Dict[str, Any]:
@@ -283,6 +303,11 @@ class ExecutiveControlLobe:
     # ------------------------------------------------------------------
     # What she means to say: which impulse won (Language words it on its own)
     # ------------------------------------------------------------------
+
+    def _decide_settled(self, payload: Dict[str, Any], _made: Dict[str, Any]) -> None:
+        """She has settled on the moment: decide what she says, and share it."""
+        from team import fire
+        fire(self.thalamus, self.name, payload, self._settled(payload))
 
     def _settled(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Every lobe that heard this moment has fired about it (their bids went
@@ -485,6 +510,10 @@ class ExecutiveControlLobe:
             self.tasks.clear()
             self.inhibition_state = False
 
+    def state_now(self) -> Dict[str, Any]:
+        """Her goal right now: shared with every lobe whenever it changes."""
+        return self.get_goal()
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         content = message.get("content") if isinstance(message.get("content"), dict) else {
@@ -494,6 +523,8 @@ class ExecutiveControlLobe:
 
         if msg_type == "bid":
             return {"status": "success", "content": self.take_bid(content, source)}
+        if msg_type == "bids":
+            return {"status": "success", "content": self.take_bids(content, source)}
         if msg_type in ("moment", "about_moment"):
             # In unison: she hears the moment herself. Bids about anything older stop competing.
             from team import words_of
@@ -501,9 +532,11 @@ class ExecutiveControlLobe:
             if said:
                 self.hear_turn(said, user_id)
                 self._moment_now = None  # a new moment: she hasn't settled on it yet
-            # It decides once every lobe that heard the moment has fired about it.
-            from team import FIRES_ABOUT_MOMENTS, take_moment
-            body = take_moment(self, "executive_control", self._settled, content, reads=FIRES_ABOUT_MOMENTS)
+            # It listens while the moment is still changing, and decides once she
+            # has settled on it (every lobe's bids are in by then).
+            from team import take_moment
+            body = take_moment(self, "executive_control", lambda _payload: {}, content,
+                               settle=self._decide_settled)
             return {"status": "success", "content": body}
         if msg_type == "delivered":
             self._heard_delivery(content)

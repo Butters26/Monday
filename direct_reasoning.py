@@ -740,7 +740,8 @@ class DirectReasoningAdapter:
         self._bid_for_turn(turn, user_input, user_id, semantic_input)
         announce = getattr(self.thalamus, "announce", None)
         if callable(announce):
-            announce("thought", {
+            from team import once
+            once(announce, "thought", {
                 "user_id": user_id, "user_input": user_input, "recognition_id": turn.get("recognition_id"),
                 "semantic_input": semantic_input,
                 "memories": list(memory.get("memories") or []) if isinstance(memory, dict) else [],
@@ -884,7 +885,18 @@ class DirectReasoningAdapter:
                 before.add(k)
                 fresh.append(c)
         understood["conclusions"] = fresh
-        for c in understood.get("conclusions") or []:
+        # Filing what follows is done once, when she has settled on the moment.
+        from team import once
+        once(self._file_conclusions, list(understood.get("conclusions") or []), user_id)
+        self.__dict__.setdefault("_understood", {})[user_id] = understood
+        announce = getattr(self.thalamus, "announce", None)
+        if callable(announce):
+            once(announce, "understood", understood, "reasoning")
+        return understood
+
+    def _file_conclusions(self, conclusions: List[Dict[str, Any]], user_id: str) -> None:
+        from reasoning_understanding import Understanding
+        for c in conclusions:
             if (c.get("value") and not str(c.get("value")).startswith("said:")) or c.get("modal") \
                     or c.get("keep") is False:
                 # (Amounts and time order are worked out again from what he said
@@ -899,14 +911,6 @@ class DirectReasoningAdapter:
                        for k in ("subject", "predicate", "object"))
             if fact.get("id") is not None and same:
                 Understanding.remember_concluded(fact["id"])
-        self.__dict__.setdefault("_understood", {})[user_id] = understood
-        announce = getattr(self.thalamus, "announce", None)
-        if callable(announce):
-            try:
-                announce("understood", understood, "reasoning")
-            except Exception:
-                pass
-        return understood
 
     def _hear_remembered(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         about = str(payload.get("about") or "").strip().casefold()
@@ -2107,11 +2111,12 @@ class DirectReasoningAdapter:
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return self._hear_social(payload)
         if message.get("type") in ("moment", "about_moment"):
-            from team import take_moment
+            from team import nothing_more as _nothing, take_moment
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return {"status": "success", "content": take_moment(self, "reasoning", self._think_about_moment, payload,
                                 reads=("conversation", "notus", "shared_representation", "social_context",
-                                       "emotion", "attention", "pattern", "language", "novelty"))}
+                                       "emotion", "attention", "pattern", "language", "novelty"),
+                                settle=_nothing, keeps=("*",))}
         if message.get("type") in ("work_out", "think_through"):
             # Another lobe (Autonomous Thinking, Executive Control...) asks her to
             # think something through: what she knows about it, what follows, why.

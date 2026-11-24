@@ -219,6 +219,8 @@ def create_core_systems(
         if result["status"] != "success":
             raise RuntimeError(f"Could not register {name}: {result.get('message')}")
 
+    # Her steady beat: every lobe keeps running and sharing how it is between moments.
+    thalamus.start_beat(float(os.environ.get("MERCY_BEAT_SECONDS") or 1.0))
     if enable_autonomous:
         autonomous = AutonomousThinkingLoop(thalamus=thalamus)
         result = thalamus.register_lobe("autonomous", autonomous)

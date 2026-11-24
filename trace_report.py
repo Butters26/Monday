@@ -95,6 +95,21 @@ def main() -> int:
                       f"(was waiting for {', '.join(r.get('waiting_for') or [])})")
         for r in share_failed:
             print(f"  FIRING FAILED: {r.get('lobe')} on {r.get('moment')}: {r.get('error')}")
+        redid = collections.Counter(r.get("lobe") for r in records if r.get("kind") == "redid_take")
+        acted = collections.Counter(r.get("lobe") for r in records if r.get("kind") == "acted_on_settled")
+        settled = sum(1 for r in records if r.get("kind") == "settled")
+        now = collections.Counter(r.get("from_lobe") for r in records if r.get("kind") == "state_shared")
+        if redid:
+            print("  redid its take when something new reached it: "
+                  + ", ".join(f"{lobe} {n}x" for lobe, n in redid.most_common()))
+        print(f"  she settled {settled} times; acted once on its final take: "
+              + (", ".join(f"{lobe} {n}x" for lobe, n in acted.most_common()) or "nobody"))
+        if now:
+            print("  shared how it is right now (whenever it changed): "
+                  + ", ".join(f"{lobe} {n}x" for lobe, n in now.most_common()))
+        for r in records:
+            if r.get("kind") == "act_failed":
+                print(f"  ACT FAILED: {r.get('lobe')} on {r.get('moment')}: {r.get('error')}")
 
     volumes = [r for r in records if r.get("kind") == "thalamus_volume"]
     ahead = collections.Counter((r.get("lobe"), r.get("sender"), r.get("msg_type"))

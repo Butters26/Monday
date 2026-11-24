@@ -33,13 +33,16 @@ import time
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
-from lobe_inbox import ANSWER_TIMEOUT_SEC, SIGNAL, Letter, LobeInbox, Reply, current_chain, new_chain, next_birth
+from lobe_inbox import ANSWER_TIMEOUT_SEC, BEAT, SETTLED, SIGNAL, Letter, LobeInbox, Reply, current_chain, new_chain, next_birth
 
 try:
     from trace_monitor import trace_event as _trace_event
 except Exception:  # tracer is optional
     def _trace_event(kind: str, **data: Any) -> None:
         return None
+
+
+NOW = "now"  # what lobes share about how they are right now (not about one moment)
 
 
 class Thalamus:
@@ -59,6 +62,12 @@ class Thalamus:
         self._waiting: Dict[str, List[str]] = {}
         self._waiting_lock = threading.Lock()
         self._carried = 0  # how many messages it has carried (to tell when she has gone quiet)
+        # Moments lobes have shared about that she hasn't settled on yet.
+        self._unsettled: Dict[str, None] = {}
+        self._settle_lock = threading.Lock()
+        self._beat: Optional[threading.Thread] = None
+        # How each lobe is right now, as it last shared it (state_now).
+        self._now: Dict[str, Dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Lobes joining
@@ -71,7 +80,13 @@ class Thalamus:
             getattr(lobe, "process_message_safe", None)
         ):
             return {"status": "error", "message": f"{name} has no message handler"}
-        inbox = LobeInbox(name, lobe, self._set_status, volume=self._volume_of, waits_on=self.waits_on)
+        inbox = LobeInbox(name, lobe, self._set_status, volume=self._volume_of, waits_on=self.waits_on,
+                          on_idle=self._maybe_settled, share_state=self.share_state)
+        with self.lobe_handlers_lock:
+            known = dict(self._now)
+        for other, state in known.items():
+            if other != name:
+                inbox.hold(other, NOW, state)  # a lobe that joins has how every other lobe is right now
         with self.lobe_handlers_lock:
             old = self.inboxes.get(name)
             self.lobe_handlers[name] = lobe
@@ -85,6 +100,7 @@ class Thalamus:
             # The lobe signs itself up for the announcements it wants
             # (thalamus.listen); Thalamus doesn't choose them.
             joined(name)
+        inbox.share_state()
         return {
             "status": "success",
             "content": {"registered": name},
@@ -276,12 +292,87 @@ class Thalamus:
                 self._post(name, SIGNAL, {"from": source, "moment": moment}, source,
                            want_answer=False, chain=new_chain(born, index))
                 woke.append(name)
+        with self._settle_lock:
+            self._unsettled[moment] = None
         self._carried += 1
         _trace_event("shared", from_lobe=source, moment=moment, to=reached, woke=woke,
                      what=sorted(str(key) for key in made)[:20], empty=not made)
         return {"status": "delivered", "content": {"from": source, "moment": moment, "to": reached}}
 
     fire = share
+
+    def share_state(self, source: str, state: Dict[str, Any]) -> None:
+        """How a lobe is right now goes to every other lobe whenever it changes:
+        they all hold it and read it when they need it. Nobody asks."""
+        with self.lobe_handlers_lock:
+            if self._now.get(source) == state:
+                return
+            self._now[source] = state
+            inboxes = [inbox for name, inbox in self.inboxes.items() if name != source]
+        for inbox in inboxes:
+            inbox.hold(source, NOW, state)
+        _trace_event("state_shared", from_lobe=source, what=sorted(str(k) for k in state)[:20])
+
+    def pending_signals(self, lobe: str, moment: str, senders: Optional[tuple] = None) -> int:
+        """How many shared signals about a moment (from these lobes) are still
+        waiting in a lobe's inbox (it redoes its take once, with all of them)."""
+        with self.lobe_handlers_lock:
+            inbox = self.inboxes.get(lobe)
+        return inbox.pending(SIGNAL, moment, senders) if inbox is not None else 0
+
+    def _lobes_idle(self) -> bool:
+        with self.lobe_handlers_lock:
+            inboxes = list(self.inboxes.values())
+        return all(inbox.idle for inbox in inboxes)
+
+    def _maybe_settled(self) -> None:
+        """A lobe has nothing left to do. If no lobe has anything left to do,
+        everything shared about the moments still open has gone round and
+        nothing is changing any more: she has settled on them. Every lobe hears
+        it (the way a brain settles, nobody decides it)."""
+        if not self._lobes_idle():
+            return
+        with self._settle_lock:
+            if not self._unsettled:
+                return
+            moments = list(self._unsettled)
+            self._unsettled.clear()
+        with self.lobe_handlers_lock:
+            inboxes = list(self.inboxes.items())
+        for moment in moments:
+            born = next_birth()
+            told = []
+            for index, (name, inbox) in enumerate(inboxes):
+                if inbox.alive and (inbox.reacts() or callable(getattr(inbox.lobe, "on_settled", None))):
+                    self._post(name, SETTLED, {"moment": moment}, "thalamus",
+                               want_answer=False, chain=new_chain(born, index))
+                    told.append(name)
+            _trace_event("settled", moment=moment, told=told)
+
+    def start_beat(self, every: float = 1.0) -> None:
+        """Her steady beat: every lobe that keeps running on its own (on_beat)
+        hears it, so nothing in her stops between moments. Each lobe shares
+        whatever changes in it."""
+        if self._beat is not None and self._beat.is_alive():
+            return
+
+        def beat() -> None:
+            count = 0
+            while self.running:
+                time.sleep(every)
+                count += 1
+                with self.lobe_handlers_lock:
+                    inboxes = list(self.inboxes.items())
+                born = next_birth()
+                for index, (name, inbox) in enumerate(inboxes):
+                    keeps_running = callable(getattr(inbox.lobe, "on_beat", None)) \
+                        or callable(getattr(inbox.lobe, "state_now", None))
+                    if inbox.alive and keeps_running and not inbox.pending(BEAT, None):
+                        self._post(name, BEAT, {"beat": count, "every": every, "moment": None}, "thalamus",
+                                   want_answer=False, chain=new_chain(born, index))
+
+        self._beat = threading.Thread(target=beat, name="thalamus-beat", daemon=True)
+        self._beat.start()
 
     def shared_with(self, lobe: str, moment: str) -> Dict[str, Dict[str, Any]]:
         """Everything the other lobes have shared with `lobe` about a moment so far."""
@@ -356,10 +447,12 @@ class Thalamus:
     # ------------------------------------------------------------------
 
     def is_quiet(self) -> bool:
-        """No lobe has a message waiting or is in the middle of one."""
-        with self.lobe_handlers_lock:
-            inboxes = list(self.inboxes.values())
-        return all(inbox.idle for inbox in inboxes)
+        """No lobe has a message waiting or is in the middle of one, and she has
+        settled on everything that was shared."""
+        with self._settle_lock:
+            if self._unsettled:
+                return False
+        return self._lobes_idle()
 
     def wait_until_quiet(self, timeout: float = ANSWER_TIMEOUT_SEC) -> bool:
         deadline = time.monotonic() + timeout

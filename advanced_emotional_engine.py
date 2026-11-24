@@ -377,7 +377,8 @@ class AdvancedEmotionalEngine:
         if not callable(tell):
             return
         try:
-            tell("values", "apply_experience", {
+            from team import once
+            once(tell, "values", "apply_experience", {
                 # A strong feeling tied to a value shows the value matters to her
                 # (guilt shows she cares about honesty; hurt from Matthew shows the
                 # connection matters), so it is reported as the value mattering.
@@ -389,8 +390,8 @@ class AdvancedEmotionalEngine:
 
     def _load_values(self) -> None:
         """Her values, as the values lobe holds them now (once per moment)."""
-        response = self._query_lobe('values', {'type': 'get_values'}) or {}
-        found = response.get('values') or (response.get('content') or {}).get('values') or []
+        from team import now
+        found = now(self.thalamus, 'emotion', 'values').get('values') or []  # as Values shared them
         self._values_now = [v for v in found if isinstance(v, dict)]
 
     def _settle_for_time(self) -> None:
@@ -469,7 +470,8 @@ class AdvancedEmotionalEngine:
         enhanced = self.current_emotion.value
 
         try:
-            self._query_lobe('notus', {
+            from team import once
+            once(self._query_lobe, 'notus', {
                 'type': 'store_emotional_memory',
                 'emotion': self.current_emotion.value,
                 'intensity': self.emotional_intensity,
@@ -1018,8 +1020,9 @@ class EmotionalProcess:
         if not said:
             return {}
         read = about_moment(self.thalamus, 'social_context', payload, 'emotion')
-        if read:
-            self.engine.__dict__.setdefault('_social_reads', {})[user_id] = dict(read)
+        # What Social Context has shared so far (nothing yet on her first take: she
+        # feels about it again when it comes). She never asks for it.
+        self.engine.__dict__.setdefault('_social_reads', {})[user_id] = dict(read) if read else {'said': said}
         self.engine._novelty_now = about_moment(self.thalamus, 'novelty', payload, 'emotion')
         felt = self.process_message_safe({'type': 'process_input', 'content': {'user_input': said, 'user_id': user_id}})
         return {k: v for k, v in felt.items() if k != 'status'}
@@ -1033,6 +1036,10 @@ class EmotionalProcess:
             bid(self.thalamus, 'emotion', 'how she feels', felt.get('intensity'), words_of(moment),
                 str(payload.get('user_id') or moment.get('user_id') or 'default'),
                 why=f"she feels {felt.get('current_emotion')}")
+
+    def state_now(self) -> Dict[str, Any]:
+        """How she feels right now: shared with every lobe whenever it changes."""
+        return self.get_emotional_state_output().to_dict()
 
     def process_message_safe(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Safe dispatcher with validation (FIX)"""
@@ -1053,9 +1060,10 @@ class EmotionalProcess:
             
             if msg_type in ('moment', 'about_moment'):
                 # In unison: she hears the moment herself and feels about it (once).
-                from team import take_moment
+                from team import nothing_more, take_moment
                 return {'status': 'success', **take_moment(self, 'emotion', self._feel_moment, message,
-                                                           then=self._bid_feeling, reads=('social_context', 'novelty'))}
+                                                           then=self._bid_feeling, reads=('social_context', 'novelty'),
+                                                           settle=nothing_more, keeps=('engine', '_felt'))}
 
             if msg_type == 'how_she_felt':
                 # What she felt about the last thing said (to this person), for any
@@ -1080,7 +1088,8 @@ class EmotionalProcess:
                 
                 # If strong response, notify Novelty Lobe
                 if intensity > 0.6:
-                    self._notify_novelty_lobe(user_input, emotion, intensity)
+                    from team import once
+                    once(self._notify_novelty_lobe, user_input, emotion, intensity)
                 
                 unresolved = [
                     {'event_type': et, 'severity': float(sev), 'timestamp': float(ts)}

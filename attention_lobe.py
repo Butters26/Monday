@@ -555,6 +555,10 @@ class AttentionLobe:
         self.signal_meta.clear()
         self._last_decay_at = time.time()
 
+    def state_now(self) -> Dict[str, Any]:
+        """Where her focus is right now: shared with every lobe whenever it changes."""
+        return self.get_focus()
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         if "content" in message and isinstance(message.get("content"), dict):
@@ -567,9 +571,10 @@ class AttentionLobe:
             }
 
         if msg_type in ("moment", "about_moment"):
-            from team import take_moment
+            from team import nothing_more, take_moment
             return {"status": "success", "content": take_moment(self, "attention", self._take_in, content,
-                                                               reads=("novelty", "language", "emotion"))}
+                                                               reads=("novelty", "language", "emotion"),
+                                                               settle=nothing_more)}
 
         if msg_type == "get_focus":
             body = self.get_focus()

@@ -170,6 +170,12 @@ class ValuesLobe:
         return {"status": "success", "content": {"value": value.name, "old_strength": old,
                                                  "new_strength": new_strength, "reason": reason}}
 
+    def state_now(self) -> Dict[str, Any]:
+        """Her values as they are right now: shared with every lobe whenever they change."""
+        with self.lock:
+            found = sorted(self.values.values(), key=lambda v: v.strength, reverse=True)
+            return {"values": [v.to_dict() for v in found]}
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         payload = message.get("content") if isinstance(message.get("content"), dict) else {}

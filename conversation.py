@@ -1213,10 +1213,10 @@ class ConversationSystem:
             return {"status": "success", "healthy": True, "pid": os.getpid()}
 
         if msg_type in ("moment", "about_moment"):
-            from team import take_moment
+            from team import nothing_more, take_moment
             return {"status": "success",
                     "content": take_moment(self, "conversation", self._take_in, payload if isinstance(payload, dict) else {},
-                                       reads=("language", "novelty"))}
+                                       reads=("language", "novelty"), settle=nothing_more, keeps=("state",))}
 
         if msg_type == "understand":
             user_input = payload.get("user_input", "")

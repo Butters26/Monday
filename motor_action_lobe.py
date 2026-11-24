@@ -117,14 +117,8 @@ class MotorActionLobe:
             has_exec = False
         if not has_exec:
             return {}
-        try:
-            resp = th.send_and_wait(
-                "executive_control", "get_goal", {}, source="motor_action"
-            )
-        except Exception:
-            return {}
-        body = resp.get("content") if isinstance(resp.get("content"), dict) else resp
-        return body if isinstance(body, dict) else {}
+        from team import now
+        return now(th, "motor_action", "executive_control")  # her goal, as Executive Control shared it
 
     def _build_action(
         self,
@@ -382,8 +376,9 @@ class MotorActionLobe:
             return {"status": "success", "healthy": True}
 
         if msg_type in ("moment", "about_moment"):
-            from team import take_moment
-            body = take_moment(self, "motor_action", self._take_in, content, reads=("conversation",))
+            from team import nothing_more, take_moment
+            body = take_moment(self, "motor_action", self._take_in, content, reads=("conversation",),
+                               settle=nothing_more, keeps=("*",))
             return {"status": "success", "content": body}
 
         if msg_type in ("plan_from_turn", "plan_turn"):
