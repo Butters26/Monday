@@ -441,7 +441,7 @@ class AdvancedEmotionalEngine:
         his = social.get("his_feeling") if isinstance(social.get("his_feeling"), dict) else {}
         if his.get("good") is not None:
             felt += self.inner.feel_for(float(his["good"]))
-        novelty = self._query_lobe('novelty', {'type': 'get_assessment'}) or {}
+        novelty = dict(self.__dict__.get('_novelty_now') or {})  # as Novelty fired it about this moment
         score = float(novelty.get('novelty_score') or (novelty.get('content') or {}).get('score') or 0.0)
         if score > 0.6:
             felt += self.inner.happen("novel", strength=score)
@@ -1020,6 +1020,7 @@ class EmotionalProcess:
         read = about_moment(self.thalamus, 'social_context', payload, 'emotion')
         if read:
             self.engine.__dict__.setdefault('_social_reads', {})[user_id] = dict(read)
+        self.engine._novelty_now = about_moment(self.thalamus, 'novelty', payload, 'emotion')
         felt = self.process_message_safe({'type': 'process_input', 'content': {'user_input': said, 'user_id': user_id}})
         return {k: v for k, v in felt.items() if k != 'status'}
 
@@ -1054,7 +1055,7 @@ class EmotionalProcess:
                 # In unison: she hears the moment herself and feels about it (once).
                 from team import take_moment
                 return {'status': 'success', **take_moment(self, 'emotion', self._feel_moment, message,
-                                                           then=self._bid_feeling, reads=('social_context',))}
+                                                           then=self._bid_feeling, reads=('social_context', 'novelty'))}
 
             if msg_type == 'how_she_felt':
                 # What she felt about the last thing said (to this person), for any

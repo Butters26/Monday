@@ -697,9 +697,12 @@ class DirectReasoningAdapter:
         about_moment(self.thalamus, "notus", payload, "reasoning")  # he has it filed before she asks him
         query = {"query": user_input, "user_id": user_id, "limit": 15}
         memory = self._ask_lobe("notus", "query_context", query) or self._ask_lobe("notus", "query", query)
-        about_moment(self.thalamus, "shared_representation", payload, "reasoning")
-        active = self._ask_lobe("shared_representation", "get_active", {"user_id": user_id})
-        highly = self._ask_lobe("shared_representation", "get_highly_active", {})
+        active = highly = about_moment(self.thalamus, "shared_representation", payload, "reasoning")
+        # What she heard, as Language read it and fired it: kept, so she never asks for it again.
+        heard = (about_moment(self.thalamus, "language", payload, "reasoning") or {}).get("language_understanding")
+        if isinstance(heard, dict):
+            self.__dict__.setdefault("_readings", {})[user_input] = heard
+        self._novelty_now = about_moment(self.thalamus, "novelty", payload, "reasoning")
         reading = turn.get("language_understanding") if isinstance(turn.get("language_understanding"), dict) else None
         social = about_moment(self.thalamus, "social_context", payload, "reasoning")
         if social:
@@ -819,7 +822,7 @@ class DirectReasoningAdapter:
         emotion = direct_input.get("emotion_result") if isinstance(direct_input.get("emotion_result"), dict) else {}
         if not emotion.get("mercy_emotion"):
             emotion = self._ask_lobe("emotion", "get_state", {}) or emotion
-        novelty_body = self._ask_lobe("novelty", "get_assessment", {})
+        novelty_body = dict(self.__dict__.get("_novelty_now") or {})  # as Novelty fired it
         novelty = novelty_body.get("novelty_score", novelty_body.get("score"))
         attention = direct_input.get("attention") if isinstance(direct_input.get("attention"), dict) else {}
         focus = (getattr(self, "_last_attention_focus", None) or {}).get("focus_text") or attention.get("focus_text")
@@ -2108,7 +2111,7 @@ class DirectReasoningAdapter:
             payload = message.get("content", {}) if isinstance(message.get("content"), dict) else {}
             return {"status": "success", "content": take_moment(self, "reasoning", self._think_about_moment, payload,
                                 reads=("conversation", "notus", "shared_representation", "social_context",
-                                       "emotion", "attention", "pattern"))}
+                                       "emotion", "attention", "pattern", "language", "novelty"))}
         if message.get("type") in ("work_out", "think_through"):
             # Another lobe (Autonomous Thinking, Executive Control...) asks her to
             # think something through: what she knows about it, what follows, why.

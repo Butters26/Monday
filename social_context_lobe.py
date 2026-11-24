@@ -241,6 +241,9 @@ compliment -> "thank you" (sure 0.7)
 
     def _read(self, text: str) -> Dict[str, Any]:
         """Ask Language to read what he said (Language owns understanding words)."""
+        fired = self.__dict__.get("_readings") or {}
+        if text in fired:
+            return fired[text]  # the moment's own words, as Language read them and fired it
         send = getattr(self.thalamus, "send_message", None)
         if not callable(send) or not text.strip():
             return {}
@@ -660,6 +663,12 @@ compliment -> "thank you" (sure 0.7)
         said = str(where.get("user_input") or "")
         if not said.strip():
             return {}
+        heard = (about_moment(self.thalamus, "language", payload, "social_context") or {}).get("language_understanding")
+        readings = self.__dict__.setdefault("_readings", {})
+        if isinstance(heard, dict):
+            readings[said] = heard
+            while len(readings) > 30:
+                readings.pop(next(iter(readings)))
         return self.observe_turn(
             user_input=said,
             understanding=where.get("understanding") if isinstance(where.get("understanding"), dict) else {},
@@ -675,7 +684,7 @@ compliment -> "thank you" (sure 0.7)
         if msg_type in ("moment", "about_moment"):
             from team import take_moment
             snap = take_moment(self, "social_context", self._take_in, content, then=self._bid_for,
-                               reads=("conversation",))
+                               reads=("conversation", "language"))
             return {"status": "success", "content": snap, "social_context": snap}
 
         if msg_type in ("observe_turn", "observe", "update_from_turn"):

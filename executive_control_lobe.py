@@ -163,13 +163,24 @@ class ExecutiveControlLobe:
     def _state_now(self, bids: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Her own state, asked for once per decision and only if a bid needs it."""
         state: Dict[str, Any] = {"feeling": None, "values": None, "focus": None}
+        # Once she has settled on a moment, her feeling and focus are what Emotion
+        # and Attention fired about it; nobody is asked.
+        moment = self.__dict__.get("_moment_now")
+        fired: Dict[str, Dict[str, Any]] = {}
+        if moment is not None:
+            from team import shared_with_me
+            fired = shared_with_me(self.thalamus, self.name, moment)
         if any(b["feeling"] for b in bids):
-            state["feeling"] = _unit(self._ask("emotion", "get_emotional_state", {}).get("intensity"))
+            felt = fired.get("emotion")
+            if felt is None:
+                felt = self._ask("emotion", "get_emotional_state", {})
+            state["feeling"] = _unit(felt.get("intensity"))
         if any(b["serves"] for b in bids):
             held = self._ask("values", "get_values", {}).get("values") or []
             state["values"] = {str(v.get("name") or "").casefold(): _unit(v.get("strength"))
                                for v in held if isinstance(v, dict)}
-        state["focus"] = self._ask("attention", "get_focus", {})
+        focus = fired.get("attention")
+        state["focus"] = focus if focus is not None else self._ask("attention", "get_focus", {})
         return state
 
     def _score(self, bid: Dict[str, Any], state: Dict[str, Any], weights: Dict[str, Any]) -> Dict[str, Any]:
@@ -284,6 +295,7 @@ class ExecutiveControlLobe:
         user_id = str(payload.get("user_id") or moment.get("user_id") or "default")
         if not said:
             return {"say": None, "reason": "nothing was said in this moment"}
+        self._moment_now = payload
         return self.what_to_say(user_id, said)
 
     def what_to_say(self, user_id: str, heard: str = "") -> Dict[str, Any]:
@@ -488,6 +500,7 @@ class ExecutiveControlLobe:
             said = words_of(content.get("moment") if isinstance(content.get("moment"), dict) else {})
             if said:
                 self.hear_turn(said, user_id)
+                self._moment_now = None  # a new moment: she hasn't settled on it yet
             # It decides once every lobe that heard the moment has fired about it.
             from team import FIRES_ABOUT_MOMENTS, take_moment
             body = take_moment(self, "executive_control", self._settled, content, reads=FIRES_ABOUT_MOMENTS)

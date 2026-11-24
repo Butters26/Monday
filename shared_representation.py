@@ -747,7 +747,9 @@ class SharedRepresentationSystem:
         reading=about_moment(self.thalamus,"language",payload,"shared_representation")
         lit=[str(c) for c in (reading.get("concept_ids") or []) if c]
         for cid in lit: self.activate(cid,1.0,user_id=payload.get("user_id"),spread=True)
-        return {"activated":lit}
+        # What is active once the moment has lit up and spread: fired with it.
+        active=[{"id":c.concept_id,"name":c.canonical_name,"activation":float(c.activation)} for c in self.get_active_concepts()]
+        return {"activated":lit,"active_concepts":active,"highly_active_concepts":self.get_highly_active()}
 
     def on_joined(self, name: str) -> None:
         from team import listen
