@@ -58,8 +58,13 @@ Every time you test Mercy, the test runs live where he can watch it:
    boots her with the tracer on, runs `live_view.py`, says each line of
    `live_test_messages.txt` to her, and shows everything in the run's log as
    it happens.
-2. Right away, without being asked, give Matthew the link to that live run
-   (and send him a notification with it). Do this every time you test.
+2. Automatically, every time, the moment the run starts (before she boots),
+   open that live run on Matthew's screen so he watches it as it happens
+   without clicking anything. In the Claude desktop app that means opening
+   it in the browser pane beside the chat; elsewhere, open it in front of
+   him however your tools allow. Also give him the link. Don't wait to be
+   asked, and don't open it after it has finished: a run he only sees
+   afterwards wasn't watched live.
 3. Do not report what the run shows. Give the link and let the run speak.
 
 **A test Matthew can't watch live, as it happens, is a failure.** That
