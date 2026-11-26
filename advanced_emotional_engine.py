@@ -298,16 +298,6 @@ class AdvancedEmotionalEngine:
         self._embedding_model_type = 'unavailable'
 
     # --------------- Public API ---------------
-    def _query_lobe(self, lobe_name: str, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Query a lobe through Thalamus - DIRECT FUNCTION CALL"""
-        if not self.thalamus:
-            return None
-        try:
-            msg_type = message.get('type', 'query')
-            return self.thalamus.send_message(lobe_name, msg_type, message, source='emotion')
-        except Exception:
-            return None
-    
     def feel(self, felt: List[Any], main: bool = False) -> None:
         """What happened moves her core affect; the strongest named feeling is
         what she feels now."""
@@ -403,24 +393,9 @@ class AdvancedEmotionalEngine:
         self.core_affect.decay_toward_setpoint(min(4.0, 0.3 + minutes / 10.0))
 
     def _social_read(self, text: str, user_id: str) -> Dict[str, Any]:
+        """What Social Context has shared about what was said (it shares; she never asks)."""
         heard = (getattr(self, "_social_reads", {}) or {}).get(user_id) or {}
-        if str(heard.get("said") or "").strip() == text.strip():
-            return heard
-        response = self._query_lobe('social_context', {'type': 'get_context', 'user_id': user_id}) or {}
-        body = response.get('content') if isinstance(response.get('content'), dict) else {}
-        return body if str(body.get("said") or "").strip() == text.strip() else {}
-
-    def _read(self, text: str) -> Dict[str, Any]:
-        """Language reads the sentence; Emotion doesn't parse grammar itself."""
-        if not text.strip():
-            return {}
-        response = self._query_lobe('language', {'type': 'analyze', 'text': text})
-        if not isinstance(response, dict) or response.get('status') != 'success':
-            print(f"⚠️  Emotion: Language couldn't read {text[:40]!r} for her: "
-                  f"{(response or {}).get('message') if isinstance(response, dict) else 'no answer'}")
-            return {}
-        content = response.get('content') if isinstance(response.get('content'), dict) else response
-        return content.get('understanding') or {}
+        return heard if str(heard.get("said") or "").strip() == text.strip() else {}
 
     def get_emotional_response(self, user_input: str, user_id: str = "default") -> str:
         """What she feels: her inner life (needs, what happens, time), on her core affect."""
@@ -471,14 +446,14 @@ class AdvancedEmotionalEngine:
 
         try:
             from team import once
-            once(self._query_lobe, 'notus', {
-                'type': 'store_emotional_memory',
+            # She tells Notus what to keep; nobody waits on it.
+            once(self.thalamus.tell, 'notus', 'store_emotional_memory', {
                 'emotion': self.current_emotion.value,
                 'intensity': self.emotional_intensity,
                 'trigger': user_input,
                 'context': self._last_self_impact_reason,
                 'response': enhanced,
-            })
+            }, source='emotion')
         except Exception:
             pass
         return enhanced
@@ -880,14 +855,6 @@ class EmotionalProcess:
                 print(f"❌ Emotional engine error: {e}")
                 time.sleep(0.1)
     
-    def _query_lobe(self, lobe_name: str, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Query a lobe through Thalamus - DIRECT FUNCTION CALL"""
-        try:
-            msg_type = message.get('type', 'query')
-            return self.thalamus.send_message(lobe_name, msg_type, message, source='emotion')
-        except Exception:
-            return None
-    
     def get_emotional_state_output(self) -> EmotionalStateOutput:
         """Generate standardized emotional state output readable by other lobes"""
         # Tone map: live thin labels first; unused/legacy keys kept for feel_emotion compat only.
@@ -1038,8 +1005,11 @@ class EmotionalProcess:
                 why=f"she feels {felt.get('current_emotion')}")
 
     def state_now(self) -> Dict[str, Any]:
-        """How she feels right now: shared with every lobe whenever it changes."""
-        return self.get_emotional_state_output().to_dict()
+        """How she feels right now, and what she felt about the last thing each
+        person said: shared with every lobe whenever it changes."""
+        felt = self.__dict__.get('_felt') or {}
+        return {**self.get_emotional_state_output().to_dict(),
+                'felt': {str(who): dict(f) for who, f in felt.items() if isinstance(f, dict)}}
 
     def process_message_safe(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Safe dispatcher with validation (FIX)"""
@@ -1349,7 +1319,8 @@ class EmotionalProcess:
 
             valence = float(self.engine.core_affect.valence)  # her real valence, not a list of names
 
-            thalamus.send_message(
+            from team import once
+            once(thalamus.tell,
                 'novelty',
                 'emotional_response_to_novelty',
                 {

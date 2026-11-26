@@ -554,7 +554,8 @@ class MetaCognitionLobe:
             try:
                 handlers = getattr(self.thalamus, "lobe_handlers", None) or {}
                 if "executive_control" in handlers:
-                    self.thalamus.send_message(
+                    from team import once
+                    once(self.thalamus.tell,
                         "executive_control",
                         "add_task",
                         {"task": {"type": "remediate", "error": error}},

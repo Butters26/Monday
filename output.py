@@ -308,7 +308,9 @@ class OutputLobe:
                     print(f"⚠️  Could not get emotional prosody: {e}")
                     voice_prosody = {}
             try:
-                result = th.send_message(
+                # Output hands the words to Voice and doesn't wait: Voice tells
+                # Output what came of it (voice_output) when it is done.
+                handed = th.tell(
                     "voice",
                     "speak_for_output",
                     {
@@ -320,22 +322,7 @@ class OutputLobe:
                     },
                     source="output",
                 )
-                voice = None
-                if isinstance(result, dict):
-                    content = result.get("content") if isinstance(result.get("content"), dict) else {}
-                    voice = content.get("voice") or result.get("voice")
-                if isinstance(voice, dict):
-                    self.last_voice = dict(voice)
-                    if isinstance(self.last_envelope, dict):
-                        env = dict(self.last_envelope)
-                        env["voice"] = dict(voice)
-                        self.last_envelope = env
-                    return voice.get("status") in (
-                        "synthesized",
-                        "play_unavailable",
-                        "played",
-                    )
-                return result.get("status") == "success"
+                return isinstance(handed, dict) and handed.get("status") == "delivered"
             except Exception as e:
                 print(f"❌ Voice handoff error: {e}")
 
@@ -352,20 +339,6 @@ class OutputLobe:
     
     def generate_text_output(self, content: Dict[str, Any]) -> str:
         """Generate formatted text output"""
-        # Query Notus for context
-        try:
-            notus_context = self._send_to_thalamus({
-                'type': 'route_message',
-                'destination': 'notus',
-                'msg_type': 'query',
-                'content': {'type': 'get_context', 'content': content}
-            })
-            if notus_context and notus_context.get('status') == 'success':
-                # Use context to inform output generation
-                pass
-        except Exception:
-            pass
-        
         output_type = content.get('type', 'response')
         text = content.get('text', '')
         
@@ -386,20 +359,6 @@ class OutputLobe:
     
     def format_output(self, content: Dict[str, Any]) -> Dict[str, Any]:
         """Format output with emotion and personality"""
-        # Query Notus for past output patterns
-        try:
-            notus_patterns = self._send_to_thalamus({
-                'type': 'route_message',
-                'destination': 'notus',
-                'msg_type': 'query',
-                'content': {'type': 'get_output_patterns'}
-            })
-            if notus_patterns and notus_patterns.get('status') == 'success':
-                patterns = notus_patterns.get('patterns', [])
-                # Use learned patterns if available
-        except Exception:
-            pass
-        
         text = content.get('text', '')
         emotion = content.get('emotion')
         intensity = content.get('intensity', 0.5)
@@ -704,7 +663,9 @@ class OutputLobe:
                 destination = message.get('destination')
                 route_msg_type = message.get('msg_type')
                 content = message.get('content', {})
-                return self.thalamus.send_message(destination, route_msg_type, content, source='output')
+                # Told, not asked: nothing waits on it.
+                from team import once
+                return once(self.thalamus.tell, destination, route_msg_type, content, source='output')
             else:
                 return self.thalamus.handle_request(message)
         except Exception:
@@ -754,11 +715,13 @@ class OutputLobe:
         if msg_type == 'generate_output':
             content = payload if isinstance(payload, dict) else {}
             if 'emotion' not in content and 'expression' not in content:
-                # On the team: how she feels shapes how it comes out; Output asks
-                # Emotion itself.
-                from team import ask
-                felt = ask(self.thalamus, 'emotion', 'how_she_felt',
-                           {'user_id': content.get('user_id') or 'default'}, 'output')
+                # On the team: how she feels shapes how it comes out. Output reads
+                # it as Emotion shared it (what she felt about what this person
+                # said, or how she is right now); it never asks.
+                from team import now
+                shared = now(self.thalamus, 'output', 'emotion')
+                felt = (shared.get('felt') or {}).get(str(content.get('user_id') or 'default')) or \
+                    {k: v for k, v in shared.items() if k != 'felt'}
                 if felt:
                     content = {
                         **content,

@@ -528,18 +528,9 @@ class NoveltyLobe:
 
     def _query_notus_for_similar_stimuli(self, stimulus: str) -> List[NoveltyMemory]:
         # Prefer local memories; Notus query is best-effort glue.
-        similar = self._query_local_similar(stimulus)
-        if similar or self.thalamus is None:
-            return similar
-        try:
-            self.thalamus.send_message(
-                "notus",
-                "query_facts",
-                {"query": f"novelty {stimulus}", "limit": 5}, source='novelty'
-            )
-        except Exception as e:
-            logger.error(f"Failed to query Notus: {e}")
-        return similar
+        # Only what Novelty holds itself. (It used to ask Notus too, wait, and
+        # throw the answer away; nothing asks now.)
+        return self._query_local_similar(stimulus)
 
     def _generate_question_from_emotion(
         self,
@@ -624,7 +615,8 @@ class NoveltyLobe:
         if self.thalamus is None:
             return
         try:
-            self.thalamus.send_message(
+            from team import once
+            once(self.thalamus.tell,
                 "notus",
                 "remember_fact",
                 {

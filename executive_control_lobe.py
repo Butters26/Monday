@@ -445,9 +445,10 @@ class ExecutiveControlLobe:
                   "source": "executive_control", "modality": "control",
                   "priority": round(min(1.0, purpose["score"] / top), 3),
                   "concepts": ["purpose", purpose["purpose"]]}
-        self._ask("attention", "remove_signals", {"prefix": _LEGACY_GOAL_SIGNAL_PREFIX})
-        body = self._ask("attention", "replace_signals", {"signals": [signal]})
-        return {"steered": bool(body), "signal": signal}
+        # She tells Attention what won; nobody waits on it.
+        self._tell("attention", "remove_signals", {"prefix": _LEGACY_GOAL_SIGNAL_PREFIX})
+        told = self._tell("attention", "replace_signals", {"signals": [signal]})
+        return {"steered": told, "signal": signal}
 
     # ------------------------------------------------------------------
     # Team plumbing
@@ -463,17 +464,15 @@ class ExecutiveControlLobe:
         except Exception:
             return False
 
-    def _ask(self, lobe: str, msg_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _tell(self, lobe: str, msg_type: str, payload: Dict[str, Any]) -> bool:
+        """Tell another lobe something without waiting for it."""
         if not self._has(lobe):
-            return {}
+            return False
         try:
-            resp = self.thalamus.send_and_wait(lobe, msg_type, payload, source="executive_control")
+            told = self.thalamus.tell(lobe, msg_type, payload, source="executive_control")
         except Exception:
-            return {}
-        if not isinstance(resp, dict) or resp.get("status") not in ("success", "delivered"):
-            return {}
-        body = resp.get("content")
-        return body if isinstance(body, dict) else {k: v for k, v in resp.items() if k != "status"}
+            return False
+        return isinstance(told, dict) and told.get("status") == "delivered"
 
     def on_joined(self, name: str) -> None:
         self.name = name

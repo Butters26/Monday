@@ -305,7 +305,8 @@ class MotorActionLobe:
         if th is None:
             return
         try:
-            th.send_message(
+            from team import once
+            once(th.tell,
                 "output",
                 "motor_output",
                 {"action": action},

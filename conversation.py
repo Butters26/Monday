@@ -123,32 +123,6 @@ class ConversationSystem:
                 return value
         return None
 
-    def _request_language_packet(self, user_input: str) -> Optional[Dict[str, Any]]:
-        """Ask Language via Thalamus — Conversation does not run OEWN itself."""
-        if self.thalamus is None or not user_input:
-            return None
-        try:
-            if not self.thalamus._has_lobe("language"):
-                return None
-            response = self.thalamus.send_and_wait(
-                "language",
-                "comprehend",
-                {"text": user_input, "user_input": user_input}, source='conversation'
-            )
-            if response.get("status") != "success":
-                return None
-            body = response.get("content") if isinstance(response.get("content"), dict) else {}
-            understanding = body.get("language_understanding")
-            if isinstance(understanding, dict):
-                return understanding
-            if isinstance(body, dict) and (
-                "speech_act" in body or "clauses" in body or "tokens" in body
-            ):
-                return body
-        except Exception:
-            return None
-        return None
-
     # ------------------------------------------------------------------
     # Meaning → dialogue features (Language packet structure only)
     # ------------------------------------------------------------------
@@ -830,11 +804,10 @@ class ConversationSystem:
             }
         )
 
+        # What Language shared about the words. Conversation never asks for it:
+        # if it hasn't reached her yet, she redoes this when Language shares.
         packet = self._packet_from_context(context)
-        packet_source = "context"
-        if packet is None:
-            packet = self._request_language_packet(text)
-            packet_source = "language_via_thalamus" if packet is not None else "missing"
+        packet_source = "context" if packet is not None else "missing"
 
         representation_referent_ids = context.get("referent_ids") or context.get(
             "representation_referent_ids"
@@ -1093,7 +1066,8 @@ class ConversationSystem:
             suggested_strategy = "referent_continue"
 
         try:
-            self.thalamus.send_message(
+            from team import once
+            once(self.thalamus.tell,
                 destination="reasoning",
                 msg_type="intent_hints",
                 content={

@@ -528,7 +528,8 @@ class VoiceLobe:
         if th is None:
             return
         try:
-            th.send_message(
+            from team import once
+            once(th.tell,
                 "output",
                 "voice_output",
                 {"voice": envelope},
