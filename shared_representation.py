@@ -742,14 +742,263 @@ class SharedRepresentationSystem:
         b=dict(resolve_result or {})
         return {"status":"success","resolved":b.get("resolved") or [],"concept_ids":list(b.get("concept_ids") or []),"highly_active_concepts":list(b.get("highly_active_concepts") or []),"active_concepts":list(b.get("active_concepts") or []),"activation":dict(b.get("activation") or {}),"user_id":b.get("user_id"),"relationship_edges":b.get("relationship_edges",0),"co_occurrence_edges_added":b.get("co_occurrence_edges_added",0),"spread_had_edges":bool(b.get("spread_had_edges")),"source":"shared_representation","timestamp":time.time()}
 
+    # ------------------------------------------------------------------
+    # Filing what Language read, and what Reasoning means, as they share it.
+    # (Moved here from Language and Reasoning, the same rules as before, so
+    # neither has to ask: Shared Representation hears what they shared, files
+    # it, and shares what it filed.)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _det_id(prefix: str, turn_id: Optional[str], part: str) -> Optional[str]:
+        """The same thing filed again for the same moment gets the same ID, so
+        filing it again (when a lobe redoes its take) files nothing twice."""
+        if not turn_id or not part:
+            return None
+        return f"{prefix}_{turn_id}_{part}"
+
+    def _concept_for(self, surface: str, *, allow_create: bool) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+        """One concept for the surface: that one. Several: unclear (none chosen).
+        None: a new one, if allowed."""
+        candidates = [c.to_public() for c in self.get_candidate_concepts(surface)]
+        if len(candidates) == 1:
+            cid = candidates[0].get("concept_id") or candidates[0].get("id")
+            return (str(cid) if cid else None), candidates
+        if len(candidates) > 1:
+            return None, candidates
+        if not allow_create:
+            return None, []
+        body = self.resolve_terms([surface], activate=False)
+        ids = list(body.get("concept_ids") or [])
+        resolved = [dict(item) for item in (body.get("resolved") or []) if isinstance(item, dict)]
+        return (str(ids[0]) if ids else None), resolved
+
+    def _instance(self, concept_id: str, iid: Optional[str], **kw: Any) -> Optional[ReferentInstance]:
+        if iid and iid in self.instances:
+            return self.instances[iid]
+        return self.register_instance(concept_id, instance_id=iid, **kw)
+
+    def _proposition(self, predicate_id: str, roles: Dict[str, str], pid: Optional[str], **kw: Any) -> Optional[Proposition]:
+        if pid and pid in self.propositions:
+            return self.propositions[pid]
+        return self.register_proposition(predicate_id, roles, proposition_id=pid, **kw)
+
+    def file_reading(self, understanding: Dict[str, Any], *, user_id: Optional[str] = None,
+                     turn_id: Optional[str] = None) -> Dict[str, Any]:
+        """What Language read, filed: each thing mentioned gets its concept and
+        an instance, and each clause its meaning. Returns the reading with the
+        IDs filled in."""
+        import copy
+        understanding = copy.deepcopy(understanding) if isinstance(understanding, dict) else {}
+        mentions = [dict(m) for m in understanding.get("mentions") or [] if isinstance(m, dict)]
+        clauses = [dict(c) for c in understanding.get("clauses") or [] if isinstance(c, dict)]
+        resolved_concepts: Dict[str, Dict[str, Any]] = {}
+        concept_ids: List[str] = []
+        referent_ids: List[str] = []
+        proposition_ids: List[str] = []
+        mention_refs: Dict[str, str] = {}
+        unresolved: List[Dict[str, Any]] = []
+
+        for mention in mentions:
+            mention_id = str(mention.get("mention_id") or "")
+            surface = str(mention.get("concept_surface") or "").strip()
+            if not mention_id or not surface:
+                mention["selected_concept_id"] = None
+                mention["instance_id"] = None
+                continue
+            selected, candidates = self._concept_for(surface, allow_create=True)
+            mention["candidate_concepts"] = candidates
+            mention["candidate_concept_ids"] = [str(c.get("concept_id") or c.get("id"))
+                                                for c in candidates if c.get("concept_id") or c.get("id")]
+            mention["selected_concept_id"] = selected
+            if len(candidates) > 1 and selected is None:
+                unresolved.append({"mention_id": mention_id, "surface": surface,
+                                   "candidate_concept_ids": list(mention["candidate_concept_ids"])})
+                mention["instance_id"] = None
+                continue
+            if not selected:
+                mention["instance_id"] = None
+                continue
+            if selected not in concept_ids:
+                concept_ids.append(selected)
+            for candidate in candidates:
+                cid = candidate.get("concept_id") or candidate.get("id")
+                if cid and str(cid) == selected:
+                    resolved_concepts[selected] = candidate
+                    break
+            item = self._instance(
+                selected, self._det_id("i", turn_id, mention_id),
+                label=mention.get("surface"),
+                properties={"mention_id": mention_id, "linguistic_kind": mention.get("kind"),
+                            "quantity": mention.get("quantity"), "pronoun": bool(mention.get("pronoun"))},
+                user_id=user_id,
+                provenance={"producer_lobe": "language", "source_type": "user_utterance_linguistic_interpretation",
+                            "turn_id": turn_id, "confidence": float(understanding.get("confidence") or 0.0)})
+            if item is not None:
+                mention["instance_id"] = item.instance_id
+                mention_refs[mention_id] = item.instance_id
+                referent_ids.append(item.instance_id)
+            else:
+                mention["instance_id"] = None
+
+        for index, clause in enumerate(clauses):
+            predicate_surface = str(clause.get("predicate_surface") or "").strip()
+            if predicate_surface:
+                predicate_id, predicate_candidates = self._concept_for(
+                    predicate_surface, allow_create=bool(clause.get("predicate_known")))
+            else:
+                predicate_id, predicate_candidates = None, []
+            clause["predicate_candidate_concepts"] = predicate_candidates
+            clause["predicate_candidate_concept_ids"] = [str(c.get("concept_id") or c.get("id"))
+                                                         for c in predicate_candidates if c.get("concept_id") or c.get("id")]
+            clause["predicate_id"] = predicate_id
+            if predicate_id and predicate_id not in concept_ids:
+                concept_ids.append(predicate_id)
+            for candidate in predicate_candidates:
+                cid = candidate.get("concept_id") or candidate.get("id")
+                if cid and str(cid) == predicate_id:
+                    resolved_concepts[predicate_id] = candidate
+                    break
+            role_mentions = clause.get("roles") if isinstance(clause.get("roles"), dict) else {}
+            shared_roles: Dict[str, str] = {}
+            unresolved_roles: List[str] = []
+            for role, mention_id in role_mentions.items():
+                ref = mention_refs.get(str(mention_id))
+                if ref:
+                    shared_roles[str(role)] = ref
+                else:
+                    unresolved_roles.append(str(role))
+            clause["shared_roles"] = shared_roles
+            clause["unresolved_roles"] = unresolved_roles
+            if not predicate_id or unresolved_roles or not shared_roles:
+                clause["proposition_id"] = None
+                continue
+            qualifiers = dict(clause.get("qualifiers") or {})
+            qualifiers.setdefault("linguistic_voice", clause.get("voice"))
+            part = str(clause.get("clause_id") or f"c{index}")
+            item = self._proposition(
+                predicate_id, shared_roles, self._det_id("p", turn_id, part),
+                qualifiers=qualifiers, user_id=user_id,
+                provenance={"producer_lobe": "language", "source_type": "user_utterance_linguistic_interpretation",
+                            "turn_id": turn_id, "clause_id": clause.get("clause_id"),
+                            "confidence": float(clause.get("confidence") or understanding.get("confidence") or 0.0)})
+            if item is not None:
+                clause["proposition_id"] = item.proposition_id
+                proposition_ids.append(item.proposition_id)
+            else:
+                clause["proposition_id"] = None
+
+        understanding["mentions"] = mentions
+        understanding["clauses"] = clauses
+        understanding["unresolved_ambiguities"] = unresolved
+        understanding["concept_ids"] = concept_ids
+        understanding["referent_ids"] = referent_ids
+        understanding["proposition_ids"] = proposition_ids
+        understanding["representation_contract"] = "shared_representation_native"
+        understanding["user_id"] = user_id
+        return {"language_understanding": understanding, "resolved_concepts": list(resolved_concepts.values()),
+                "concept_ids": concept_ids, "referent_ids": referent_ids, "proposition_ids": proposition_ids}
+
+    def file_structures(self, structures: Any, *, user_id: Optional[str] = None,
+                        turn_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """What Reasoning means (its grounded structures), filed as propositions."""
+        def concept(value: Any) -> Optional[str]:
+            if isinstance(value, bool):
+                value = "true" if value else "false"
+            if not isinstance(value, (str, int, float)) or not str(value).strip():
+                return None
+            ids = self.resolve_terms([str(value).strip()], activate=False).get("concept_ids") or []
+            return str(ids[0]) if ids else None
+
+        filed: List[Dict[str, Any]] = []
+        for index, structure in enumerate(structures if isinstance(structures, list) else []):
+            if not isinstance(structure, dict):
+                continue
+            predicate_id = concept(structure.get("predicate") or structure.get("relation"))
+            if not predicate_id:
+                continue
+            roles: Dict[str, str] = {}
+            supplied = structure.get("roles")
+            if isinstance(supplied, dict):
+                for role, target in supplied.items():
+                    target_id = concept(target)
+                    if str(role or "").strip() and target_id:
+                        roles[str(role).strip()] = target_id
+            else:
+                for role, value in (("subject", structure.get("subject")),
+                                    ("object", structure.get("object", structure.get("value")))):
+                    target_id = concept(value)
+                    if target_id:
+                        roles[role] = target_id
+            if not roles:
+                continue
+            try:
+                certainty = max(0.0, min(1.0, float(structure.get("certainty", 1.0))))
+            except (TypeError, ValueError):
+                certainty = 1.0
+            qualifiers = dict(structure.get("qualifiers") or {}) if isinstance(structure.get("qualifiers"), dict) else {}
+            qualifiers.setdefault("certainty", certainty)
+            item = self._proposition(
+                predicate_id, roles, self._det_id("p", turn_id, f"r{index}"), qualifiers=qualifiers, user_id=user_id,
+                provenance={"producer_lobe": "reasoning", "source_type": "reasoning_grounded_structure",
+                            "turn_id": turn_id, "confidence": certainty})
+            if item is not None:
+                filed.append({**item.to_public(), "structure_index": index})
+        return filed
+
+    def _records_for(self, ids: Iterable[str], user_id: Optional[str]) -> Dict[str, Dict[str, Any]]:
+        """The concepts, instances and meanings behind these IDs (and the
+        concepts they stand on), for any lobe that reads what was filed."""
+        records: Dict[str, Dict[str, Any]] = {}
+        todo = [str(i) for i in ids if i]
+        while todo:
+            ref = todo.pop()
+            if ref in records:
+                continue
+            item: Any = self.get_concept(ref) or self.get_instance(ref, user_id=user_id) \
+                or self.get_proposition(ref, user_id=user_id)
+            if item is None:
+                continue
+            public = item.to_public()
+            records[ref] = public
+            for key in ("concept_id", "predicate_id"):
+                if public.get(key):
+                    todo.append(str(public[key]))
+            if isinstance(public.get("roles"), dict):
+                todo.extend(str(v) for v in public["roles"].values())
+        return records
+
     def _light_up(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         from team import about_moment
-        reading=about_moment(self.thalamus,"language",payload,"shared_representation")
-        lit=[str(c) for c in (reading.get("concept_ids") or []) if c]
-        for cid in lit: self.activate(cid,1.0,user_id=payload.get("user_id"),spread=True)
+        user_id = payload.get("user_id")
+        turn_id = str(payload.get("recognition_id") or "") or None
+        made: Dict[str, Any] = {}
+        # What Language shared that it read: filed here (Language never asks).
+        reading = about_moment(self.thalamus, "language", payload, "shared_representation")
+        raw = reading.get("reading") if isinstance(reading.get("reading"), dict) else None
+        lit: List[str] = []
+        ids: List[str] = []
+        if raw is not None and reading.get("text"):
+            filed = self.file_reading(raw, user_id=user_id, turn_id=turn_id)
+            made["filed_reading"] = {"text": reading.get("text"), **filed}
+            lit = [str(c) for c in filed.get("concept_ids") or [] if c]
+            ids += lit + list(filed.get("referent_ids") or []) + list(filed.get("proposition_ids") or [])
+        # What Reasoning shared that it means: filed here (Reasoning never asks).
+        thought = about_moment(self.thalamus, "reasoning", payload, "shared_representation")
+        semantic = thought.get("semantic_input") if isinstance(thought.get("semantic_input"), dict) else {}
+        if isinstance(semantic.get("grounded_structures"), list) and semantic["grounded_structures"]:
+            filed_meaning = self.file_structures(semantic["grounded_structures"], user_id=user_id, turn_id=turn_id)
+            made["filed_for_reasoning"] = filed_meaning
+            ids += [str(p.get("proposition_id")) for p in filed_meaning if p.get("proposition_id")]
+        for cid in lit:
+            self.activate(cid, 1.0, user_id=user_id, spread=True)
+        if ids:
+            made["records"] = self._records_for(ids, user_id)
         # What is active once the moment has lit up and spread: fired with it.
-        active=[{"id":c.concept_id,"name":c.canonical_name,"activation":float(c.activation)} for c in self.get_active_concepts()]
-        return {"activated":lit,"active_concepts":active,"highly_active_concepts":self.get_highly_active()}
+        active = [{"id": c.concept_id, "name": c.canonical_name, "activation": float(c.activation)}
+                  for c in self.get_active_concepts()]
+        return {**made, "activated": lit, "active_concepts": active,
+                "highly_active_concepts": self.get_highly_active()}
 
     def on_joined(self, name: str) -> None:
         from team import listen
@@ -759,10 +1008,10 @@ class SharedRepresentationSystem:
         msg_type=message.get("type") or message.get("message_type") or ""; content=message.get("content") if isinstance(message.get("content"),dict) else {}
         if not content and isinstance(message,dict): content={k:v for k,v in message.items() if k not in {"type","message_type","source","message_id","content"}}
         if msg_type in {"moment","about_moment"}:
-            # In unison: she hears the moment herself and asks Language what it read;
-            # the concepts in it become active here.
+            # In unison: she hears the moment herself, files what Language read and
+            # what Reasoning means as they share it, and the concepts become active here.
             from team import nothing_more, take_moment
-            return {"status":"success","content":take_moment(self,"shared_representation",self._light_up,content,reads=("language",),settle=nothing_more)}
+            return {"status":"success","content":take_moment(self,"shared_representation",self._light_up,content,reads=("language","reasoning"),settle=nothing_more)}
         if msg_type=="health": return {"status":"success","healthy":True,"concept_count":len(self.concepts),"global_relationship_count":len(self.global_relationships),"transient_instance_count":len(self.instances),"transient_proposition_count":len(self.propositions),"live_co_occurrence_producer":True,"store_path":str(self.store_path)}
         if msg_type=="resolve_from_text":
             return {"status":"error","message":"raw text interpretation belongs to language","content":{}}

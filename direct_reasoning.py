@@ -178,22 +178,6 @@ class DirectReasoningAdapter:
             return text or None
         return None
 
-    def _resolve_shared_concept(self, value: Any) -> Optional[str]:
-        surface = self._surface(value)
-        if not surface or self.thalamus is None:
-            return None
-        response = self.thalamus.send_message(
-            "shared_representation",
-            "resolve_terms",
-            {"terms": [surface], "activate": False},
-            source="reasoning",
-        )
-        if not isinstance(response, dict) or response.get("status") != "success":
-            return None
-        body = self._response_content(response)
-        ids = body.get("concept_ids") or []
-        return str(ids[0]) if isinstance(ids, list) and ids else None
-
     def _register_grounded_structures(
         self,
         structures: Any,
@@ -201,75 +185,19 @@ class DirectReasoningAdapter:
         turn_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Publish Reasoning-owned meaning to SR; SR stores but does not infer it."""
+        """What Shared Representation filed of Reasoning's meaning. Reasoning
+        shares its meaning with its take; Shared Representation hears it, files
+        it and shares what it filed, and Reasoning reads that here (redoing its
+        take when it arrives). Never asks."""
         if not isinstance(structures, list) or self.thalamus is None:
             return []
-        registered: List[Dict[str, Any]] = []
-        for structure in structures:
-            if not isinstance(structure, dict):
-                continue
-            predicate_surface = self._surface(
-                structure.get("predicate") or structure.get("relation")
-            )
-            if not predicate_surface:
-                continue
-            predicate_id = self._resolve_shared_concept(predicate_surface)
-            if not predicate_id:
-                continue
-
-            roles: Dict[str, str] = {}
-            supplied_roles = structure.get("roles")
-            if isinstance(supplied_roles, dict):
-                for role, target in supplied_roles.items():
-                    role_name = str(role or "").strip()
-                    target_id = self._resolve_shared_concept(target)
-                    if role_name and target_id:
-                        roles[role_name] = target_id
-            else:
-                subject_id = self._resolve_shared_concept(structure.get("subject"))
-                object_id = self._resolve_shared_concept(
-                    structure.get("object", structure.get("value"))
-                )
-                if subject_id:
-                    roles["subject"] = subject_id
-                if object_id:
-                    roles["object"] = object_id
-            if not roles:
-                continue
-
-            try:
-                certainty = max(0.0, min(1.0, float(structure.get("certainty", 1.0))))
-            except (TypeError, ValueError):
-                certainty = 1.0
-            qualifiers = (
-                dict(structure.get("qualifiers") or {})
-                if isinstance(structure.get("qualifiers"), dict)
-                else {}
-            )
-            qualifiers.setdefault("certainty", certainty)
-            response = self.thalamus.send_message(
-                "shared_representation",
-                "register_proposition",
-                {
-                    "predicate_id": predicate_id,
-                    "roles": roles,
-                    "qualifiers": qualifiers,
-                    "user_id": user_id,
-                    "provenance": {
-                        "producer_lobe": "reasoning",
-                        "source_type": "reasoning_grounded_structure",
-                        "turn_id": turn_id,
-                        "confidence": certainty,
-                    },
-                },
-                source="reasoning",
-            )
-            if not isinstance(response, dict) or response.get("status") != "success":
-                continue
-            body = self._response_content(response)
-            if body.get("proposition_id") or body.get("id"):
-                registered.append(dict(body))
-        return registered
+        payload = self.__dict__.get("_moment_payload")
+        if not isinstance(payload, dict):
+            return []
+        from team import about_moment
+        filed = about_moment(self.thalamus, "shared_representation", payload, "reasoning").get("filed_for_reasoning")
+        return [dict(p) for p in filed or [] if isinstance(p, dict)
+                and isinstance(p.get("structure_index"), int) and p["structure_index"] < len(structures)]
 
     @staticmethod
     def _clean_memories(memories: Any, user_input: str) -> List[Dict[str, Any]]:
@@ -689,6 +617,7 @@ class DirectReasoningAdapter:
         think, and announce what there is to say."""
         from team import about_moment
         message = {"message_id": payload.get("recognition_id")}
+        self._moment_payload = payload  # which moment she is thinking about (to read what was shared about it)
         turn = about_moment(self.thalamus, "conversation", payload, "reasoning")
         user_input = str(turn.get("user_input") or "")
         user_id = str(payload.get("user_id") or turn.get("user_id") or "default")
