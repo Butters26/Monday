@@ -60,9 +60,9 @@ Every time you test Mercy, the test runs live where he can watch it:
    it happens.
 2. Automatically, every time, the moment the run starts (before she boots),
    open that live run on Matthew's screen so he watches it as it happens
-   without clicking anything. In the Claude desktop app that means opening
-   it in the browser pane beside the chat; elsewhere, open it in front of
-   him however your tools allow. Also give him the link. Don't wait to be
+   without clicking anything. Open it in his own browser, where he is
+   already signed in to GitHub (on his Mac: `open <run link>`), because
+   GitHub hides the log from anyone not signed in. Also give him the link. Don't wait to be
    asked, and don't open it after it has finished: a run he only sees
    afterwards wasn't watched live.
 3. Do not report what the run shows. Give the link and let the run speak.
