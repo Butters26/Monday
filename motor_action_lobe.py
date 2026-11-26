@@ -67,7 +67,9 @@ class MotorActionLobe:
         return "generic_request"
 
     def _check_inhibit(self, action_name: str = "motor_action") -> Dict[str, Any]:
-        """Query Executive should_inhibit; allow if Executive absent."""
+        """Her brake as Executive Control shares it, standing (part of how she is
+        right now). Nobody is asked. Allowed if Executive Control isn't there or
+        hasn't shared her brake yet."""
         th = self.thalamus
         if th is None:
             return {"inhibited": False, "allowed": True, "reason": "no_thalamus"}
@@ -78,32 +80,24 @@ class MotorActionLobe:
             has_exec = False
         if not has_exec:
             return {"inhibited": False, "allowed": True, "reason": "no_executive"}
-        try:
-            send = getattr(th, "send_and_wait", None)
-            if not callable(send):
-                return {"inhibited": False, "allowed": True, "reason": "no_send"}
-            resp = send(
-                "executive_control",
-                "should_inhibit",
-                {"action": action_name},
-                source="motor_action",
-            )
-        except Exception as exc:
-            return {
-                "inhibited": False,
-                "allowed": True,
-                "reason": f"inhibit_check_error:{exc}",
-            }
-        body = resp.get("content") if isinstance(resp.get("content"), dict) else resp
-        if not isinstance(body, dict):
-            body = {}
-        inhibited = bool(body.get("inhibited"))
+        from team import now, once
+        brake = (now(th, "motor_action", "executive_control").get("brake") or {}).get("motor_action")
+        if not isinstance(brake, dict):
+            return {"inhibited": False, "allowed": True, "reason": "no_brake_shared_yet"}
+        inhibited = bool(brake.get("inhibited"))
+        reason = str(brake.get("reason") or ("blocked" if inhibited else "allowed"))
+        if inhibited:
+            # It tells Executive Control it held back (nobody waits), once she has settled.
+            tell = getattr(th, "tell", None)
+            if callable(tell):
+                once(tell, "executive_control", "held_back", {"action": action_name, "reason": reason},
+                     source="motor_action")
         return {
             "inhibited": inhibited,
             "allowed": not inhibited,
-            "reason": str(body.get("reason") or ("blocked" if inhibited else "allowed")),
-            "goal": body.get("goal"),
-            "priority": body.get("priority"),
+            "reason": reason,
+            "goal": brake.get("goal"),
+            "priority": brake.get("priority"),
         }
 
     def _current_goal(self) -> Dict[str, Any]:

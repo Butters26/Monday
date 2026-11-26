@@ -380,13 +380,43 @@ class ExecutiveControlLobe:
     # ------------------------------------------------------------------
 
     def should_inhibit(self, action: str, strength: Any = None, serves: str = "", source: str = "") -> Dict[str, Any]:
+        result = self._brake(action, strength, serves, source)
+        if result["inhibited"]:
+            self._held_back(result["action"], source, result["reason"])
+        else:
+            _trace("executive_allowed", action=result["action"], source=source, reason=result["reason"])
+        return result
+
+    def _held_back(self, action: str, source: str, reason: str) -> None:
+        """Something was held back by her brake: kept, and seen by the tracer."""
+        with self.lock:
+            self.held_back.append({"action": action, "from": source, "reason": reason, "at": time.time()})
+            self.held_back = self.held_back[-50:]
+        _trace("executive_held_back", action=action, source=source, reason=reason)
+
+    def standing_brake(self) -> Dict[str, Dict[str, Any]]:
+        """Her brake as it stands right now, for each lobe's plain impulse (one
+        that doesn't say how strong it is or what it serves). It is part of how
+        she is right now (state_now), so every lobe has it without asking."""
+        th = getattr(self, "thalamus", None)
+        try:
+            with getattr(th, "lobe_handlers_lock", _NullCM()):
+                lobes = sorted(getattr(th, "lobe_handlers", None) or {})
+        except Exception:
+            lobes = []
+        breaks_through = float(self._weights()["break through"])
+        return {lobe: self._brake(lobe, None, "", lobe, breaks_through) for lobe in lobes if lobe != self.name}
+
+    def _brake(self, action: str, strength: Any = None, serves: str = "", source: str = "",
+               breaks_through: Optional[float] = None) -> Dict[str, Any]:
         action_s = (action or "").strip()
         with self.lock:
             holding = [p for p in self.current.values() if p.get("status") == "active"]
             winners = {p["from"] for p in holding}
         purpose = holding[0]["purpose"] if holding else None
         power = _unit(strength)
-        breaks_through = float(self._weights()["break through"])
+        if breaks_through is None:
+            breaks_through = float(self._weights()["break through"])
         if self.inhibition_state:
             held, reason = True, "everything is on hold"
         elif not holding:
@@ -399,14 +429,8 @@ class ExecutiveControlLobe:
             held, reason = False, f"strong enough ({power:.2f} >= {breaks_through:.2f}) to break through"
         else:
             held, reason = True, f"another impulse won ({purpose}) and this one isn't strong enough to break through"
-        result = {"action": action_s, "inhibited": held, "allowed": not held, "reason": reason,
-                  "goal": purpose, "priority": holding[0]["score"] if holding else 0.0}
-        if held:
-            with self.lock:
-                self.held_back.append({"action": action_s, "from": source, "reason": reason, "at": time.time()})
-                self.held_back = self.held_back[-50:]
-        _trace("executive_held_back" if held else "executive_allowed", action=action_s, source=source, reason=reason)
-        return result
+        return {"action": action_s, "inhibited": held, "allowed": not held, "reason": reason,
+                "goal": purpose, "priority": holding[0]["score"] if holding else 0.0}
 
     # ------------------------------------------------------------------
     # Attention: steered to what won
@@ -511,8 +535,9 @@ class ExecutiveControlLobe:
             self.inhibition_state = False
 
     def state_now(self) -> Dict[str, Any]:
-        """Her goal right now: shared with every lobe whenever it changes."""
-        return self.get_goal()
+        """Her goal right now, and her brake as it stands: shared with every lobe
+        whenever either changes."""
+        return {**self.get_goal(), "brake": self.standing_brake()}
 
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
@@ -557,6 +582,10 @@ class ExecutiveControlLobe:
             body = self.should_inhibit(str(content.get("action") or ""), content.get("strength"),
                                        str(content.get("serves") or ""), source)
             return {**body, "status": "success", "content": body}
+        if msg_type == "held_back":
+            # A lobe held something back by her standing brake: it tells her, nobody waits.
+            self._held_back(str(content.get("action") or ""), source, str(content.get("reason") or ""))
+            return {"status": "success", "content": {"heard": True}}
         if msg_type in ("steer_attention", "steer"):
             with self.lock:
                 now = self.current.get("say") or next(iter(self.current.values()), None)
