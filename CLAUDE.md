@@ -70,7 +70,8 @@ Every time you test Mercy, the test runs live where he can watch it:
 **A test Matthew can't watch live, as it happens, is a failure.** That
 includes quick checks and bug hunting before a push. Never run her, or test
 any part of her, where he can't see it (a hidden shell, your own machine or
-container, a background process). If you need to try something before
-pushing, do it where he watches it as it happens, such as the Terminal panel
-on his screen, and tell him where to look first. Matthew can run the live test
+container, a background process). And Matthew never has to press anything
+(approve a command, click a button) before a test runs: don't run checks
+that need his approval. Push, and the live run is the test; it shows any
+error itself. Matthew can run the live test
 himself any time by editing `live_test_messages.txt` on GitHub.
