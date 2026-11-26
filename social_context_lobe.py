@@ -240,19 +240,13 @@ compliment -> "thank you" (sure 0.7)
         return state
 
     def _read(self, text: str) -> Dict[str, Any]:
-        """Ask Language to read what he said (Language owns understanding words)."""
+        """What he said, as Language read it and shared it (Language owns understanding words)."""
         fired = self.__dict__.get("_readings") or {}
         if text in fired:
             return fired[text]  # the moment's own words, as Language read them and fired it
-        send = getattr(self.thalamus, "send_message", None)
-        if not callable(send) or not text.strip():
-            return {}
-        response = send("language", "analyze", {"text": text}, source="social_context")
-        if not isinstance(response, dict) or response.get("status") != "success":
-            return {}
-        body = response.get("content") if isinstance(response.get("content"), dict) else {}
-        reading = body.get("understanding") if isinstance(body.get("understanding"), dict) else body
-        return reading if isinstance(reading, dict) else {}
+        # Not shared by Language yet: nothing to go on until it is (she redoes her
+        # take when Language shares). She never asks.
+        return {}
 
     def _extract_cue(
         self,

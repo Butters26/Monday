@@ -117,6 +117,7 @@ class LobeInbox:
         waits_on: Optional[Callable[[str, str], bool]] = None,
         on_idle: Optional[Callable[[], None]] = None,
         share_state: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        pass_back: Optional[Callable[[str, Dict[str, Any], Dict[str, Any]], None]] = None,
     ) -> None:
         self.name = name
         self.lobe = lobe
@@ -125,6 +126,7 @@ class LobeInbox:
         self._waits_on = waits_on      # is this lobe waiting on that lobe, directly or through others
         self._on_idle = on_idle        # told whenever this lobe has nothing left to do (Thalamus: has she settled?)
         self._share_state = share_state  # how this lobe is right now goes to every lobe whenever it changes
+        self._pass_back = pass_back    # what this lobe made of something passed on to it goes back as a new message
         self._letters: Deque[Letter] = deque()
         self._cond = threading.Condition()
         self._running = True
@@ -348,6 +350,14 @@ class LobeInbox:
             )
         if letter.reply is not None:
             letter.reply.set(response)
+        elif isinstance(envelope.get("pass_back"), dict) and self._pass_back is not None:
+            # It was passed on, not asked: what this lobe made of it goes back to
+            # whoever passed it on, as a message of its own. Nobody waited for it.
+            try:
+                self._pass_back(self.name, envelope["pass_back"], response)
+            except Exception as exc:
+                if _trace_enabled():
+                    _trace_event("pass_back_failed", lobe=self.name, error=f"{type(exc).__name__}: {exc}")
         elif response.get("status") == "error" and _trace_enabled():
             _trace_event("tell_failed", lobe=self.name, msg_type=envelope.get("type"),
                          message=str(response.get("message", ""))[:300])

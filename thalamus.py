@@ -81,7 +81,8 @@ class Thalamus:
         ):
             return {"status": "error", "message": f"{name} has no message handler"}
         inbox = LobeInbox(name, lobe, self._set_status, volume=self._volume_of, waits_on=self.waits_on,
-                          on_idle=self._maybe_settled, share_state=self.share_state)
+                          on_idle=self._maybe_settled, share_state=self.share_state,
+                          pass_back=self._pass_back)
         with self.lobe_handlers_lock:
             known = dict(self._now)
         for other, state in known.items():
@@ -128,7 +129,7 @@ class Thalamus:
 
     def _post(
         self, destination: str, msg_type: str, content: Optional[Dict[str, Any]], source: str,
-        want_answer: bool, chain: Optional[str] = None,
+        want_answer: bool, chain: Optional[str] = None, pass_back: Optional[Dict[str, Any]] = None,
     ):
         """Put one envelope in the destination's inbox. Returns (reply, chain, error)."""
         if content is None:
@@ -146,6 +147,8 @@ class Thalamus:
             "source": source,
             "message_id": str(uuid.uuid4()),
         }
+        if pass_back is not None:
+            envelope["pass_back"] = dict(pass_back)
         # An ask stays on the asker's chain; something told without waiting
         # starts a new chain for whoever receives it (see lobe_inbox.py).
         chain = chain or (current_chain() if want_answer else None) or new_chain()
@@ -246,6 +249,35 @@ class Thalamus:
             if lobe_name not in names:
                 names.append(lobe_name)
         return {"status": "success", "content": {"listening": topic, "lobe": lobe_name}}
+
+    def pass_on(
+        self,
+        destination: str,
+        msg_type: str,
+        content: Optional[Dict[str, Any]] = None,
+        source: str = "thalamus",
+        step: str = "",
+    ) -> Dict[str, Any]:
+        """Give another lobe something without waiting. When it has taken it in,
+        what it made of it is carried back to the source as a message of its own
+        ("passed_back", with `step` so the source knows what it is about).
+        Nobody waits on anybody."""
+        _reply, _chain, error = self._post(destination, msg_type, content, source, want_answer=False,
+                                           pass_back={"to": source, "step": step, "type": msg_type})
+        status = "error" if error is not None else "delivered"
+        self._log_route(source, destination, msg_type, status)
+        return error if error is not None else {"status": "delivered", "content": {"to": destination}}
+
+    def _pass_back(self, lobe: str, pass_back: Dict[str, Any], response: Dict[str, Any]) -> None:
+        """What a lobe made of something passed on to it, carried back."""
+        to = str(pass_back.get("to") or "")
+        if not to:
+            return
+        body = response.get("content") if isinstance(response.get("content"), dict) else {}
+        self.tell(to, "passed_back", {"step": pass_back.get("step"), "from": lobe, "about": pass_back.get("type"),
+                                      "status": response.get("status"),
+                                      "content": body if response.get("status") == "success" else {}},
+                  source=lobe)
 
     def announce(
         self,

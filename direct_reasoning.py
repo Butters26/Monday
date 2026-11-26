@@ -670,11 +670,21 @@ class DirectReasoningAdapter:
         announce = getattr(self.thalamus, "announce", None)
         if callable(announce):
             from team import once
-            once(announce, "thought", {
+            # With the thought goes what she understood of it and, for a question,
+            # what she worked out about it, so Language has it without asking.
+            understood = dict((self.__dict__.get("_understood") or {}).get(user_id) or {})
+            asked = str(((turn.get("language_understanding") or {}) if isinstance(turn.get("language_understanding"), dict)
+                         else {}).get("speech_act") or "") == "question"
+            def announce_thought(content: Dict[str, Any]) -> None:
+                # Worked out once she has settled, not on every redo.
+                if asked:
+                    content = dict(content, worked_out=self._work_out(user_input, user_id))
+                announce("thought", content, "reasoning")
+            once(announce_thought, {
                 "user_id": user_id, "user_input": user_input, "recognition_id": turn.get("recognition_id"),
-                "semantic_input": semantic_input,
+                "semantic_input": semantic_input, "understood": understood, "worked_out": None,
                 "memories": list(memory.get("memories") or []) if isinstance(memory, dict) else [],
-            }, "reasoning")
+            })
         return {"thought": True, "semantic_input": semantic_input}
 
     def _bid_for_turn(self, turn: Dict[str, Any], user_input: str, user_id: str,

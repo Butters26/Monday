@@ -342,9 +342,11 @@ class LanguageGenerator:
             self._hear_thought(thought)
 
     def _hear_thought(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Reasoning has something to say about what was said. Have Meta-Cognition
-        look it over, word it, have the wording looked over, and hand it to Output."""
-        from team import about_moment, ask, moment_key
+        """Reasoning has something to say about what was said. Once Executive
+        Control's decision has reached her, she words it: she gives what she
+        has to Meta-Cognition and Reasoning as she goes and carries on with what
+        they pass back, then hands it to Output. Nobody waits on anybody."""
+        from team import about_moment, moment_key
         # What she means to say is Executive Control's: it fires its decision once
         # every lobe has fired about the moment. Until it reaches her, the thought waits.
         decided = about_moment(self.thalamus, "executive_control", payload, "language")
@@ -352,23 +354,76 @@ class LanguageGenerator:
             self.__dict__.setdefault("_thoughts_waiting", {})[moment_key(payload)] = payload
             return {"status": "success", "content": {"waiting_for": "executive_control"}}
         self.__dict__.get("_thoughts_waiting", {}).pop(moment_key(payload), None)
+        if self.__dict__.get("_wording") is not None:
+            # She is still wording the last one: this one is next.
+            self.__dict__.setdefault("_to_word", []).append((payload, decided))
+            return {"status": "success", "content": {"next_to_word": True}}
+        self._start_wording(payload, decided)
+        return {"status": "success", "content": {"wording": True}}
+
+    def _start_wording(self, payload: Dict[str, Any], decided: Dict[str, Any]) -> None:
         self._decided = decided
+        self._thought_now = dict(payload)
+        self._wording = self._thought_steps(payload)
+        self._wording_step = 0
+        self._carry_on({}, first=True)
+
+    def _carry_on(self, back: Dict[str, Any], first: bool = False) -> None:
+        """Take the wording on to the next point where she gives something to
+        another lobe, or to its end."""
+        steps = self.__dict__.get("_wording")
+        if steps is None:
+            return
+        try:
+            step = next(steps) if first else steps.send(back)
+        except StopIteration:
+            step = None
+        except Exception as exc:
+            self._trace("wording_failed", error=f"{type(exc).__name__}: {exc}")
+            step = None
+        if step is not None:
+            lobe, what, content = step
+            self._wording_step += 1
+            pass_on = getattr(self.thalamus, "pass_on", None)
+            handed = pass_on(lobe, what, content, source="language", step=str(self._wording_step)) \
+                if callable(pass_on) else {"status": "error"}
+            if isinstance(handed, dict) and handed.get("status") == "delivered":
+                return  # carries on when that lobe passes its take back
+            self._carry_on({})  # that lobe isn't there: carries on without its take
+            return
+        self._wording = None
+        waiting = self.__dict__.get("_to_word") or []
+        if waiting:
+            payload, decided = waiting.pop(0)
+            self._start_wording(payload, decided)
+
+    def _passed_back(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        """A lobe passed back what it made of what she gave it."""
+        if self.__dict__.get("_wording") is None or str(content.get("step")) != str(self.__dict__.get("_wording_step")):
+            return {"status": "success", "content": {"stale": True}}
+        body = content.get("content") if isinstance(content.get("content"), dict) else {}
+        self._carry_on(body)
+        return {"status": "success", "content": {"carried_on": True}}
+
+    def _thought_steps(self, payload: Dict[str, Any]):
         semantic_input = payload.get("semantic_input") if isinstance(payload.get("semantic_input"), dict) else {}
         heard = str(payload.get("user_input") or "")
         user_id = str(payload.get("user_id") or "default")
-        checked = ask(self.thalamus, "meta_cognition", "monitor_reasoning", {
+        checked = yield ("meta_cognition", "monitor_reasoning", {
             "user_input": heard, "semantic_input": semantic_input,
             "reasoning_answer": semantic_input.get("answer"),
             "memories": list(payload.get("memories") or []), "apply": True,
-        }, "language")
+        })
+        checked = checked if isinstance(checked, dict) else {}
         verdict = checked.get("verdict") if isinstance(checked.get("verdict"), dict) else None
         if isinstance(checked.get("semantic_input"), dict):
             semantic_input = checked["semantic_input"]
-        made = self._generate({"semantic_input": semantic_input, "user_input": heard, "user_id": user_id})
+        made = yield from self._generate_steps({"semantic_input": semantic_input, "user_input": heard, "user_id": user_id})
         sentence = made.get("sentence") if isinstance(made.get("sentence"), str) else ""
-        looked = ask(self.thalamus, "meta_cognition", "monitor_language", {
+        looked = yield ("meta_cognition", "monitor_language", {
             "sentence": sentence, "semantic_input": semantic_input, "prior_verdict": verdict,
-        }, "language")
+        })
+        looked = looked if isinstance(looked, dict) else {}
         if isinstance(looked.get("verdict"), dict):
             verdict = looked["verdict"]
             if isinstance(verdict.get("corrected_sentence"), str):
@@ -380,10 +435,13 @@ class LanguageGenerator:
                 "text": sentence, "user_input": heard, "user_id": user_id, "preserve_text": True,
                 "recognition_id": payload.get("recognition_id"), "meta_cognition": verdict,
             }, source="language")
-        return {"status": "success", "content": {"sentence": sentence, "silence": made.get("silence"),
-                                                 "reason": made.get("reason")}}
+        return {"sentence": sentence, "silence": made.get("silence"), "reason": made.get("reason")}
 
     def _generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Word a reply from what there is to say, here and now (nothing passed on)."""
+        return self._steps_here(self._generate_steps(payload))
+
+    def _generate_steps(self, payload: Dict[str, Any]):
         """Word a reply from what there is to say."""
         semantic_input = payload.get('semantic_input', payload)
         semantic_input = dict(semantic_input) if isinstance(semantic_input, dict) else {}
@@ -406,7 +464,7 @@ class LanguageGenerator:
             understanding = self.comprehension.analyze(heard)
             understanding['user_id'] = semantic_input.get('user_id', 'default')
             semantic_input['language_understanding'] = understanding
-        return self.respond(semantic_input)
+        return (yield from self._respond_steps(semantic_input))
 
     def _hear_social(self, read: Dict[str, Any]) -> Dict[str, Any]:
         self.__dict__.setdefault("_social_reads", {})[str(read.get("user_id") or "default")] = dict(read)
@@ -1106,11 +1164,14 @@ class LanguageGenerator:
         anything else, what it just worked out and what he corrected. A guess
         is said as one: "probably" or "maybe", by how sure it is."""
         out: List[Dict[str, Any]] = []
+        # What Reasoning worked out and understood came with its thought (it gives
+        # them to Language with it); Language never asks for them.
+        thought = self.__dict__.get("_thought_now") or {}
         if question:
-            body = self._ask("reasoning", "work_out", {"question": text, "user_id": user_id})
+            body = thought.get("worked_out") if isinstance(thought.get("worked_out"), dict) else {}
             guesses = body.get("answers") or []
         else:
-            body = self._ask("reasoning", "get_understanding", {"user_id": user_id})
+            body = thought.get("understood") if isinstance(thought.get("understood"), dict) else {}
             if str(body.get("said") or "").strip() and str(body.get("said")).strip() != text.strip():
                 return out  # it's about something else he said
             self._didnt_get = body.get("didnt_get")
@@ -1361,7 +1422,25 @@ class LanguageGenerator:
             builder.steer_avoid.setdefault(prefix, set()).update(values)
 
     def respond(self, semantic_input: Dict[str, Any]) -> Dict[str, Any]:
-        """Compose from the pieces, build, have Reasoning review, learn, redo. Always reports why."""
+        """The reply, worked out here and now, without passing it on to anyone
+        (for callers outside her live path: nothing is asked, so nothing
+        reviews it)."""
+        return self._steps_here(self._respond_steps(semantic_input))
+
+    @staticmethod
+    def _steps_here(steps: Any) -> Any:
+        """Run reply steps without passing anything on: each step gets nothing back."""
+        try:
+            step = next(steps)
+            while True:
+                step = steps.send({})
+        except StopIteration as done:
+            return done.value
+
+    def _respond_steps(self, semantic_input: Dict[str, Any]):
+        """Compose from the pieces, build, give it to Reasoning, learn, redo. Always reports why.
+        A generator: where it gives something to another lobe it yields
+        (lobe, what, content) and carries on with what that lobe passes back."""
         from language_builder import Built
 
         understanding = semantic_input.get("language_understanding") or {}
@@ -1508,7 +1587,7 @@ class LanguageGenerator:
                     if not say:
                         continue
                     # Nothing to word what Executive Control chose: it decides again.
-                    told = self._ask("executive_control", "say_failed",
+                    told = yield ("executive_control", "say_failed",
                                      {"user_id": user_id, "heard": user_input, "say": say, "reason": last_reason})
                     new_say = str(told.get("say") or "").strip()
                     self._trace("wording_for_executive", say=new_say or None, purpose=told.get("purpose"),
@@ -1523,7 +1602,7 @@ class LanguageGenerator:
                         situation = self._take_his_move(told, situation, his)
                     continue
                 built.choices = plan.choices + built.choices
-                review = self._ask("reasoning", "review_reply", {
+                review = yield ("reasoning", "review_reply", {
                     "sentence": built.sentence, "problems": built.problems, "situation": situation,
                     "meaning": meaning, "user_input": user_input, "user_id": user_id,
                     "resolved_input": resolved_input,
@@ -1553,7 +1632,7 @@ class LanguageGenerator:
                             plan=[f"{p}={o}" for p, o, _ in plan.choices])
                 if not ok and attempt % 5 == 0 and attempt < self.MAX_REPLY_ATTEMPTS:
                     # What Executive Control chose keeps getting sent back: it decides again.
-                    told = self._ask("executive_control", "say_failed",
+                    told = yield ("executive_control", "say_failed",
                                      {"user_id": user_id, "heard": user_input, "say": say, "reason": last_reason})
                     new_say = str(told.get("say") or "").strip()
                     self._trace("wording_for_executive", say=new_say or None, purpose=told.get("purpose"),
@@ -1679,6 +1758,8 @@ class LanguageGenerator:
             return {'status': 'success',
                     'content': take_moment(self, 'language', self._read_moment, payload if isinstance(payload, dict) else {},
                                            reads=('shared_representation',), settle=nothing_more)}
+        if msg_type == 'passed_back':
+            return self._passed_back(payload if isinstance(payload, dict) else {})
         if msg_type == 'thought':
             return self._hear_thought(payload if isinstance(payload, dict) else {})
         if msg_type == 'comprehend':

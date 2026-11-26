@@ -516,8 +516,8 @@ class MetaCognitionLobe:
         handlers = getattr(self.thalamus, "lobe_handlers", None) or {}
         if "attention" not in handlers:
             return {"nudged": False, "reason": "attention_offline"}
-        send = getattr(self.thalamus, "send_message", None)
-        if not callable(send):
+        tell = getattr(self.thalamus, "tell", None)
+        if not callable(tell):
             return {"nudged": False, "reason": "no_send"}
         payload = {
             "signals": [
@@ -531,14 +531,10 @@ class MetaCognitionLobe:
             ]
         }
         try:
-            resp = send(
-                "attention",
-                "update_salience",
-                payload,
-                source="meta_cognition",
-            )
+            # Told, not asked: nobody waits on it.
+            resp = tell("attention", "update_salience", payload, source="meta_cognition")
             return {
-                "nudged": resp.get("status") == "success",
+                "nudged": resp.get("status") == "delivered",
                 "response": resp,
                 "reason": reason,
             }
