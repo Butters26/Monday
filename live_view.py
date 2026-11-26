@@ -40,10 +40,33 @@ def _clock(record: dict) -> str:
         return "--:--:--.---"
 
 
+# What was passed on and hasn't come back yet: (to, step) -> when, and how
+# much the other lobes handled in the meantime (so you see nobody waited).
+_out: dict = {}
+
+
 def _line(record: dict, everything: bool) -> str:
     """One trace record in plain words, or "" to leave it out."""
     kind = record.get("kind")
     r = record
+    if kind == "handled":
+        for out in _out.values():
+            out["handled"] += 1
+            out["lobes"].add(r.get("lobe"))
+    if kind == "passed_on":
+        _out[(r.get("to"), str(r.get("step")))] = {"at": float(r.get("ts") or 0), "handled": 0, "lobes": set()}
+        return f"    {r.get('from_lobe')} passed {r.get('what')!r} on to {r.get('to')} (doesn't wait)"
+    if kind == "passed_back":
+        out = _out.pop((r.get("from_lobe"), str(r.get("step"))), None)
+        if out is None:
+            return f"    {r.get('from_lobe')} passed its take on {r.get('what')!r} back to {r.get('to')}"
+        ms = round((float(r.get("ts") or 0) - out["at"]) * 1000, 1)
+        lobes = sorted(str(l) for l in out["lobes"] if l)
+        return (f"    {r.get('from_lobe')} passed its take on {r.get('what')!r} back to {r.get('to')} "
+                f"({ms} ms later; meanwhile {out['handled']} messages were handled by "
+                f"{len(lobes)} lobes: {', '.join(lobes) or 'none'})")
+    if kind == "echo_not_redone":
+        return f"    {r.get('lobe')} did NOT redo its take: {r.get('because')} shared again but nothing it uses changed"
     if kind == "boot":
         return f"MERCY BOOTED  lobes running on their own: {', '.join(r.get('running_on_own') or [])}"
     if kind == "turn_start":

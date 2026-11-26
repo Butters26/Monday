@@ -266,6 +266,7 @@ class Thalamus:
                                            pass_back={"to": source, "step": step, "type": msg_type})
         status = "error" if error is not None else "delivered"
         self._log_route(source, destination, msg_type, status)
+        _trace_event("passed_on", from_lobe=source, to=destination, what=msg_type, step=step, status=status)
         return error if error is not None else {"status": "delivered", "content": {"to": destination}}
 
     def _pass_back(self, lobe: str, pass_back: Dict[str, Any], response: Dict[str, Any]) -> None:
@@ -274,6 +275,8 @@ class Thalamus:
         if not to:
             return
         body = response.get("content") if isinstance(response.get("content"), dict) else {}
+        _trace_event("passed_back", from_lobe=lobe, to=to, what=pass_back.get("type"), step=pass_back.get("step"),
+                     status=response.get("status"))
         self.tell(to, "passed_back", {"step": pass_back.get("step"), "from": lobe, "about": pass_back.get("type"),
                                       "status": response.get("status"),
                                       "content": body if response.get("status") == "success" else {}},

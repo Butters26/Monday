@@ -211,12 +211,106 @@ def now(thalamus: Any, me: str, lobe: str) -> Dict[str, Any]:
     return dict(state) if isinstance(state, dict) else {}
 
 
+_ALL = object()  # the lobe used all of what was shared
+
+
+class _Used(dict):
+    """What another lobe shared, as handed to a lobe working out its take. It
+    notes which parts the lobe actually uses, so the lobe redoes its take only
+    when one of those parts changes (not when the other lobe only echoes)."""
+
+    def __init__(self, made: Dict[str, Any], lobe: str, used: Dict[str, Any]) -> None:
+        super().__init__(made)
+        self._lobe, self._used = lobe, used
+        used.setdefault(lobe, set())
+
+    def _note(self, key: Any) -> None:
+        held = self._used.get(self._lobe)
+        if held is not _ALL:
+            held.add(key)
+
+    def _note_all(self) -> None:
+        self._used[self._lobe] = _ALL
+
+    def __getitem__(self, key: Any) -> Any:
+        self._note(key)
+        return super().__getitem__(key)
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self._note(key)
+        return super().get(key, default)
+
+    def __contains__(self, key: Any) -> bool:
+        self._note(key)
+        return super().__contains__(key)
+
+    def pop(self, key: Any, *default: Any) -> Any:
+        self._note(key)
+        return super().pop(key, *default)
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        self._note(key)
+        return super().setdefault(key, default)
+
+    def __iter__(self):
+        self._note_all()
+        return super().__iter__()
+
+    def keys(self):
+        self._note_all()
+        return super().keys()
+
+    def items(self):
+        self._note_all()
+        return super().items()
+
+    def values(self):
+        self._note_all()
+        return super().values()
+
+    def copy(self) -> Dict[str, Any]:
+        self._note_all()
+        return dict(super().items())
+
+    def __eq__(self, other: Any) -> bool:
+        self._note_all()
+        return dict.__eq__(self, other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __len__(self) -> int:
+        self._note_all()
+        return super().__len__()
+
+    def __bool__(self) -> bool:
+        return super().__len__() > 0
+
+    def __reduce_ex__(self, protocol: Any) -> Any:
+        self._note_all()
+        return (dict, (dict(super().items()),))
+
+
+def _parts(made: Any, used: Any) -> Any:
+    """The parts of a share a lobe used, to tell whether they changed. Whether
+    anything had been shared at all always counts (a lobe that found nothing
+    yet redoes its take when something comes)."""
+    if not isinstance(made, dict):
+        return (False, made)
+    if used is _ALL:
+        return (bool(made), dict(made))
+    return (bool(made), {key: made.get(key, _MISSING) for key in used})
+
+
 def about_moment(thalamus: Any, lobe: str, payload: Dict[str, Any], source: str) -> Dict[str, Any]:
     """What another lobe has shared about this moment so far, as it has reached
     this lobe. Never asks. {} if nothing has reached it yet (a lobe that keeps
     going redoes its take when it does)."""
     made = shared_with_me(thalamus, source, payload).get(lobe)
-    return dict(made) if isinstance(made, dict) else {}
+    made = dict(made) if isinstance(made, dict) else {}
+    used = getattr(_working, "used", None)
+    if used is not None:
+        return _Used(made, lobe, used)
+    return made
 
 
 # Every lobe that takes moments in and fires about them. Executive Control
@@ -322,6 +416,16 @@ class TakesIn:
                     return
                 if open_["redos"] >= REDOS_PER_MOMENT:
                     return
+                sender = str(signal.get("from") or "")
+                used = (open_.get("used") or {}).get(sender)
+            if used is not None:
+                # It redoes its take only when a part of this lobe's share that it
+                # actually used has changed. Anything else is an echo: no redo.
+                parts, then = used
+                now_shared = shared_with_me(self._thalamus, self.lobe, open_["payload"]).get(sender)
+                if _parts(now_shared, parts) == then:
+                    _trace("echo_not_redone", lobe=self.lobe, moment=key, because=sender)
+                    return
             pending = getattr(self._thalamus, "pending_signals", None)
             if callable(pending) and pending(self.lobe, key, self._reads):
                 return  # more is on its way: it redoes its take once, with all of it
@@ -362,7 +466,7 @@ class TakesIn:
             open_ = self._open.get(key) or {}
         if not first and open_.get("saved"):
             _put_back(open_["saved"])
-        _working.acts, _working.bids = [], []
+        _working.acts, _working.bids, _working.used = [], [], {}
         failed: Optional[BaseException] = None
         try:
             made = self._take_in(payload)
@@ -373,13 +477,17 @@ class TakesIn:
             failed = exc
             made = {"failed": f"{type(exc).__name__}: {exc}"}
         finally:
-            acts, bids = _working.acts, _working.bids
-            _working.acts = _working.bids = None
+            acts, bids, used = _working.acts, _working.bids, _working.used
+            _working.acts = _working.bids = _working.used = None
+        # What it used of each lobe's share, as it was when it used it.
+        seen = shared_with_me(self._thalamus, self.lobe, payload) if self._thalamus is not None else {}
+        used_now = {lobe: (parts, _parts(seen.get(lobe), parts)) for lobe, parts in (used or {}).items()}
         with self._lock:
             before = self._made.get(key)
             self._made[key] = made
             if key in self._open:
                 self._open[key]["acts"] = acts
+                self._open[key]["used"] = used_now
         if bids or not first:
             # Its bids as they stand now, in place of any it made before about this moment.
             moment = payload.get("moment") if isinstance(payload.get("moment"), dict) else {}
