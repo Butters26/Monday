@@ -19,7 +19,7 @@ This applies to everything about Mercy, not only tests. If Matthew can't see a r
 - what a test, trace, log or run showed;
 - numbers, tables, summaries and explanations of results;
 - "it works", "it's fixed", "it's done";
-- anything you ran where he couldn't watch.
+- anything you ran where he couldn't watch. Any test he couldn't watch live, as it happens, is a failure.
 
 Never present any of those as a result.
 
@@ -62,6 +62,10 @@ Every time you test Mercy, the test runs live where he can watch it:
    (and send him a notification with it). Do this every time you test.
 3. Do not report what the run shows. Give the link and let the run speak.
 
-Running her where Matthew can't see it (your own machine or container) is only
-for finding bugs before you push, never proof. Matthew can run the live test
+**A test Matthew can't watch live, as it happens, is a failure.** That
+includes quick checks and bug hunting before a push. Never run her, or test
+any part of her, where he can't see it (a hidden shell, your own machine or
+container, a background process). If you need to try something before
+pushing, do it where he watches it as it happens, such as the Terminal panel
+on his screen, and tell him where to look first. Matthew can run the live test
 himself any time by editing `live_test_messages.txt` on GitHub.
