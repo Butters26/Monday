@@ -10,6 +10,7 @@ description: |
   This agent tells you when your database plans/workflows are fundamentally broken BEFORE you waste time or lose data.
 
 non_negotiable_invariants: |
+  - MATTHEW'S RULE: "If I can't actually see it and verify it myself, it's false data and false results." Never report a result, say something works, or paste a summary as proof. Give Matthew the link to the thing itself (live run, commit, file) so he can check it. If he can't see it, say it is unverified. See CLAUDE.md / AGENTS.md / .github/copilot-instructions.md.
   - Database is PostgreSQL (migrated from SQLite)
   - Schema changes require migrations
   - No direct SQL execution without showing the query first
