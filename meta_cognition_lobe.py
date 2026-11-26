@@ -580,6 +580,12 @@ class MetaCognitionLobe:
             "history_len": len(self._history),
         }
 
+    def state_now(self) -> Dict[str, Any]:
+        """How Meta-cognition is right now (its last verdict and how she sees
+        herself): shared with every lobe whenever it changes."""
+        return {**self.get_status(), "last_verdict": dict(self.last_verdict or {}),
+                "self_state": dict(self.self_state)}
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         msg_type = message.get("type")
         if "content" in message:

@@ -437,148 +437,30 @@ class SensoryIntegrationLobe:
     def _perceive_normalized(
         self, signals: List[Any], *, user_id: str = "default"
     ) -> List[Dict[str, Any]]:
-        """Ask Perception to process normalized signals; return envelopes."""
-        if not self.thalamus:
+        """Hand each signal to Perception's senses without waiting. Perception
+        announces what it recognized (heard_words / heard_sound / saw), and this
+        lobe builds the moment from that when it hears it (hear_from_senses).
+        Nothing is asked, so nothing comes back here."""
+        tell = getattr(self.thalamus, "tell", None)
+        if not callable(tell):
             return []
-        try:
-            resp = self.thalamus.send_and_wait(
-                "perception",
-                "sensory_data",
-                {"signals": signals, "user_id": user_id},
-                source="sensory_integration",
-            )
-        except Exception as e:
-            print(f"[SensoryIntegrationLobe] Perception sensory_data failed: {e}")
-            return []
-        if not isinstance(resp, dict) or resp.get("status") != "success":
-            # Fall back: try per-signal so one bad modality does not kill the batch.
-            return self._perceive_one_by_one(signals, user_id=user_id)
-
-        body = resp.get("content") if isinstance(resp.get("content"), dict) else resp
-        fused = body.get("fused") if isinstance(body, dict) else None
-        if isinstance(fused, list) and fused:
-            envelopes = [dict(e) for e in fused if isinstance(e, dict)]
-            # Perception.sensory_data skips mic/camera-only signals (no path/bytes).
-            # Fill gaps so honesty about unavailable hardware still surfaces.
-            if len(envelopes) < len(signals):
-                extras = self._perceive_one_by_one(signals, user_id=user_id)
-                seen_mods = {
-                    str(e.get("modality") or "").lower() for e in envelopes
-                }
-                for env in extras:
-                    mod = str(env.get("modality") or "").lower()
-                    if mod and mod not in seen_mods:
-                        envelopes.append(env)
-                        seen_mods.add(mod)
-            return envelopes
-        return self._perceive_one_by_one(signals, user_id=user_id)
-
-    def _perceive_one_by_one(
-        self, signals: List[Any], *, user_id: str = "default"
-    ) -> List[Dict[str, Any]]:
-        envelopes: List[Dict[str, Any]] = []
-        if not self.thalamus:
-            return envelopes
         for sig in signals:
+            if isinstance(sig, str) and sig.strip():
+                sensed: Dict[str, Any] = {"modality": "text", "text": sig}
+            elif isinstance(sig, dict):
+                sensed = dict(sig)
+                sensed["modality"] = str(sig.get("modality") or sig.get("type") or "text").lower()
+                if sensed.get("bytes") is not None:
+                    key = "audio_bytes" if sensed["modality"] in ("audio", "hearing", "sound") else "image_bytes"
+                    sensed.setdefault(key, sensed["bytes"])
+            else:
+                continue
+            sensed["user_id"] = user_id
             try:
-                if isinstance(sig, str) and sig.strip():
-                    resp = self.thalamus.send_and_wait(
-                        "perception",
-                        "perceive_text",
-                        {"text": sig, "user_id": user_id},
-                        source="sensory_integration",
-                    )
-                elif isinstance(sig, dict):
-                    modality = str(sig.get("modality") or sig.get("type") or "text").lower()
-                    if modality in ("audio", "hearing", "sound"):
-                        content: Dict[str, Any] = {"user_id": user_id}
-                        if sig.get("path"):
-                            content["path"] = sig["path"]
-                        if sig.get("audio_bytes") is not None:
-                            content["audio_bytes"] = sig["audio_bytes"]
-                        elif sig.get("bytes") is not None:
-                            content["audio_bytes"] = sig["bytes"]
-                        if "path" not in content and "audio_bytes" not in content:
-                            content["use_mic"] = True
-                        resp = self.thalamus.send_and_wait(
-                            "perception",
-                            "perceive_audio",
-                            content,
-                            source="sensory_integration",
-                        )
-                    elif modality in ("vision", "visual", "image", "sight"):
-                        content = {"user_id": user_id}
-                        if sig.get("path"):
-                            content["path"] = sig["path"]
-                        if sig.get("image_bytes") is not None:
-                            content["image_bytes"] = sig["image_bytes"]
-                        elif sig.get("bytes") is not None:
-                            content["image_bytes"] = sig["bytes"]
-                        if "path" not in content and "image_bytes" not in content:
-                            content["use_camera"] = True
-                        resp = self.thalamus.send_and_wait(
-                            "perception",
-                            "perceive_vision",
-                            content,
-                            source="sensory_integration",
-                        )
-                    elif sig.get("text"):
-                        resp = self.thalamus.send_and_wait(
-                            "perception",
-                            "perceive_text",
-                            {"text": str(sig["text"]), "user_id": user_id},
-                            source="sensory_integration",
-                        )
-                    else:
-                        continue
-                else:
-                    continue
-                if isinstance(resp, dict) and resp.get("status") == "success":
-                    body = resp.get("content")
-                    if isinstance(body, dict):
-                        envelopes.append(dict(body))
-                    else:
-                        # Some handlers flatten fields onto resp
-                        envelopes.append(
-                            {
-                                k: v
-                                for k, v in resp.items()
-                                if k not in ("status", "message", "_message_id")
-                            }
-                        )
-                elif isinstance(resp, dict):
-                    # Honest disabled envelope when Perception returns error.
-                    content = resp.get("content")
-                    if isinstance(content, dict) and content.get("modality"):
-                        envelopes.append(dict(content))
-                    else:
-                        envelopes.append(
-                            {
-                                "modality": str(
-                                    (sig.get("modality") if isinstance(sig, dict) else "unknown")
-                                ),
-                                "concepts": [],
-                                "entities": [],
-                                "novelty_flags": [],
-                                "confidence": 0.0,
-                                "raw_meta": {
-                                    "available": False,
-                                    "error": resp.get("message") or "perception failed",
-                                },
-                            }
-                        )
+                tell("perception", "sense", sensed, source="sensory_integration")
             except Exception as e:
-                envelopes.append(
-                    {
-                        "modality": "unknown",
-                        "concepts": [],
-                        "entities": [],
-                        "novelty_flags": [],
-                        "confidence": 0.0,
-                        "raw_meta": {"available": False, "error": str(e)},
-                    }
-                )
-        return envelopes
+                print(f"[SensoryIntegrationLobe] could not hand a signal to Perception: {e}")
+        return []
 
     def _fuse_envelopes(
         self,
@@ -799,48 +681,9 @@ class SensoryIntegrationLobe:
     def _route_to_attention(
         self, stream: Dict[str, Any], *, user_id: str = "default"
     ) -> Dict[str, Any]:
+        """Where her focus is, as Attention shared it (it shares whenever it
+        changes). Never asks."""
         if not self.thalamus:
             return {}
-        signals = list(stream.get("attention_signals") or [])
-        # Ambient competitor so ranking is real when only one modality arrives.
-        signals.append(
-            {
-                "id": "ambient_noise",
-                "text": "ambient room tone",
-                "source": "ambient",
-                "modality": "text",
-                "priority": 0.0,
-                "user_id": user_id,
-            }
-        )
-        try:
-            resp = self.thalamus.send_and_wait(
-                "attention",
-                "evaluate",
-                {"signals": signals, "user_id": user_id},
-                source="sensory_integration",
-            )
-        except Exception as e:
-            print(f"[SensoryIntegrationLobe] Attention route failed: {e}")
-            return {}
-        if not isinstance(resp, dict) or resp.get("status") != "success":
-            return {}
-        body = resp.get("content") if isinstance(resp.get("content"), dict) else {}
-        if not body:
-            body = {
-                k: v
-                for k, v in resp.items()
-                if k not in ("status", "message", "_message_id")
-            }
-        focus = body.get("focus")
-        if focus:
-            try:
-                self.thalamus.send_and_wait(
-                    "attention",
-                    "route_focus",
-                    {},
-                    source="sensory_integration",
-                )
-            except Exception:
-                pass
-        return body if isinstance(body, dict) else {}
+        from team import now
+        return now(self.thalamus, "sensory_integration", "attention")

@@ -399,31 +399,13 @@ class LanguageGenerator:
         return semantic_input
 
     def _query_emotional_state(self) -> Dict[str, Any]:
-        """Query current emotional state from Emotional Engine"""
-        try:
-            # Only query every 1 second to avoid overhead
-            current_time = time.time()
-            if self.current_emotional_state and (current_time - self.emotion_cache_time) < 1.0:
-                return self.current_emotional_state
-            
-            result = self.thalamus.send_message(
-                destination='emotion',
-                msg_type='get_emotional_state',
-                content={},
-                source='language'
-            )
-            
-            if result and result.get('status') == 'success':
-                self.current_emotional_state = result.get('content', {})
-                self.emotion_cache_time = current_time
-                return self.current_emotional_state
-            
-            return {}
-        except Exception as e:
-            print(f"⚠️  Failed to query emotional state: {e}")
-            return {}
-    
-    
+        """How she feels right now, as Emotion shared it (it shares whenever it
+        changes). Never asks."""
+        from team import now
+        felt = now(self.thalamus, "language", "emotion")
+        self.current_emotional_state = {k: v for k, v in felt.items() if k != "felt"}
+        return self.current_emotional_state
+
     # ------------------------------------------------------------------
     # Reply: Language decides what Mercy means and builds the sentence;
     # Reasoning reviews it and says why when it doesn't make sense; Language

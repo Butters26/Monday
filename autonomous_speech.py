@@ -83,6 +83,15 @@ class AutonomousSpeechSystem:
         from team import listen
         listen(self.thalamus, name, "moment")
 
+    def state_now(self) -> Dict[str, Any]:
+        """How Speech is right now (whether he is typing, busy or here, and its
+        last decision about speaking up): shared with every lobe whenever it changes."""
+        with self.lock:
+            return {"user_is_typing": self.user_is_typing, "user_is_busy": self.user_is_busy,
+                    "user_present": self.user_present, "conversation_active": self.conversation_active,
+                    "last_speech_time": self.last_speech_time,
+                    "last_decision": dict(getattr(self, "last_decision", None) or {})}
+
     def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """Handle incoming messages (Thalamus envelope or direct)."""
         msg_type = message.get('type')
